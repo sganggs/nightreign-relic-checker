@@ -1,0 +1,741 @@
+{
+  "excludedQuickRefIdsNotInCurrentParam": [
+    6800000,
+    6800200,
+    6810100,
+    6850000,
+    6850100,
+    7033300,
+    7043900,
+    7331600,
+    7341600,
+    7351600,
+    7370500
+  ],
+  "unnamedEffectIds": [],
+  "fallbackNamedEffectIds": [],
+  "popularityMatches": [
+    {
+      "effectId": 7060000,
+      "queryCount": 251345,
+      "rank": 1,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "每次打倒封印监牢里的囚犯，能永久性提升攻击力"
+    },
+    {
+      "effectId": 7090000,
+      "queryCount": 217204,
+      "rank": 2,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "提升打倒敌人时，绝招量表的累积量表"
+    },
+    {
+      "effectId": 6610400,
+      "queryCount": 189802,
+      "rank": 3,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "提升血量上限"
+    },
+    {
+      "effectId": 7005600,
+      "queryCount": 187456,
+      "rank": 4,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "受到损伤的当下，能通过攻击恢复部分血量"
+    },
+    {
+      "effectId": 6090000,
+      "queryCount": 143960,
+      "rank": 5,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "提升打倒敌人时，绝招量表的累积量＋１"
+    },
+    {
+      "effectId": 7043600,
+      "queryCount": 142313,
+      "rank": 6,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "强化结晶人的魔法"
+    },
+    {
+      "effectId": 7100100,
+      "queryCount": 140029,
+      "rank": 7,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "攻击成功时，能恢复精力"
+    },
+    {
+      "effectId": 7001502,
+      "queryCount": 138556,
+      "rank": 8,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "提升魔力属性攻击力＋２"
+    },
+    {
+      "effectId": 7000002,
+      "queryCount": 135495,
+      "rank": 9,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "生命力＋３"
+    },
+    {
+      "effectId": 7000802,
+      "queryCount": 129253,
+      "rank": 10,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "缩短技艺的冷却时间＋３"
+    },
+    {
+      "effectId": 7040000,
+      "queryCount": 123986,
+      "rank": 11,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "强化轻攻击的第一记攻击"
+    },
+    {
+      "effectId": 7120900,
+      "queryCount": 118805,
+      "rank": 12,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "出击时，会持有“石剑钥匙”"
+    },
+    {
+      "effectId": 7060200,
+      "queryCount": 118207,
+      "rank": 13,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "每次打倒黑夜入侵者，能提升攻击力"
+    },
+    {
+      "effectId": 7060100,
+      "queryCount": 109913,
+      "rank": 14,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "每次解开魔法师塔的机关，能永久性提升专注值上限"
+    },
+    {
+      "effectId": 6001501,
+      "queryCount": 105320,
+      "rank": 15,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "提升魔力属性攻击力＋４"
+    },
+    {
+      "effectId": 7044100,
+      "queryCount": 102437,
+      "rank": 16,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "强化王城古龙信仰的祷告"
+    },
+    {
+      "effectId": 7012300,
+      "queryCount": 101825,
+      "rank": 17,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "血量偏低时，能提升减伤率"
+    },
+    {
+      "effectId": 7240000,
+      "queryCount": 97928,
+      "rank": 18,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "受到损伤并被弹飞时，能提升强韧度与减伤率"
+    },
+    {
+      "effectId": 7122100,
+      "queryCount": 97636,
+      "rank": 19,
+      "sourceSnapshot": "2026-03-12",
+      "matchedVia": "archived-exact-name",
+      "archivedName": "出击时，会持有“召咒魂铃”"
+    }
+  ],
+  "popularityAmbiguous": [],
+  "popularityUnmatched": [
+    {
+      "name": "加快累积绝招量表＋３",
+      "queryCount": 93728
+    }
+  ],
+  "archivedHotCompoundChecks": [
+    {
+      "effectIds": [
+        7082500,
+        7060100,
+        7001500
+      ],
+      "sortKeys": [
+        [
+          10,
+          7082500
+        ],
+        [
+          100,
+          7060100
+        ],
+        [
+          1000,
+          7001500
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        7082500,
+        7060100,
+        100
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 5246
+    },
+    {
+      "effectIds": [
+        7060000,
+        7070000,
+        7120900
+      ],
+      "sortKeys": [
+        [
+          100,
+          7060000
+        ],
+        [
+          100,
+          7070000
+        ],
+        [
+          100,
+          7120900
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        100,
+        7070000,
+        7120900
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 4281
+    },
+    {
+      "effectIds": [
+        7110000,
+        7120900,
+        7230000
+      ],
+      "sortKeys": [
+        [
+          100,
+          7110000
+        ],
+        [
+          100,
+          7120900
+        ],
+        [
+          100,
+          7230000
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        7110000,
+        7120900,
+        7230000
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3527
+    },
+    {
+      "effectIds": [
+        7290000,
+        7000401,
+        7000501
+      ],
+      "sortKeys": [
+        [
+          1,
+          7290000
+        ],
+        [
+          1000,
+          7000401
+        ],
+        [
+          1000,
+          7000501
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000400,
+        7000500
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3373
+    },
+    {
+      "effectIds": [
+        7011700,
+        7000401,
+        7000701
+      ],
+      "sortKeys": [
+        [
+          1,
+          7011700
+        ],
+        [
+          1000,
+          7000401
+        ],
+        [
+          1000,
+          7000701
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000400,
+        7000700
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3283
+    },
+    {
+      "effectIds": [
+        7010500,
+        7000301,
+        7000401
+      ],
+      "sortKeys": [
+        [
+          1,
+          7010500
+        ],
+        [
+          1000,
+          7000301
+        ],
+        [
+          1000,
+          7000401
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000300,
+        7000400
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3277
+    },
+    {
+      "effectIds": [
+        7280000,
+        7000201,
+        7000401
+      ],
+      "sortKeys": [
+        [
+          1,
+          7280000
+        ],
+        [
+          1000,
+          7000201
+        ],
+        [
+          1000,
+          7000401
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000200,
+        7000400
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3258
+    },
+    {
+      "effectIds": [
+        7012200,
+        7012300,
+        7000002
+      ],
+      "sortKeys": [
+        [
+          100,
+          7012200
+        ],
+        [
+          100,
+          7012300
+        ],
+        [
+          1000,
+          7000002
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        7012200,
+        7012300,
+        7000000
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3190
+    },
+    {
+      "effectIds": [
+        7005600,
+        7000001,
+        7001001
+      ],
+      "sortKeys": [
+        [
+          100,
+          7005600
+        ],
+        [
+          1000,
+          7000001
+        ],
+        [
+          1000,
+          7001001
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        7005600,
+        7000000,
+        7001000
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3170
+    },
+    {
+      "effectIds": [
+        7032900,
+        7000101,
+        7000501
+      ],
+      "sortKeys": [
+        [
+          1,
+          7032900
+        ],
+        [
+          1000,
+          7000101
+        ],
+        [
+          1000,
+          7000501
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000100,
+        7000500
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3127
+    },
+    {
+      "effectIds": [
+        7006100,
+        7100100,
+        7000202
+      ],
+      "sortKeys": [
+        [
+          100,
+          7006100
+        ],
+        [
+          100,
+          7100100
+        ],
+        [
+          1000,
+          7000202
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        100,
+        7100100,
+        7000200
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3122
+    },
+    {
+      "effectIds": [
+        7033400,
+        7030600,
+        7000202
+      ],
+      "sortKeys": [
+        [
+          1,
+          7033400
+        ],
+        [
+          100,
+          7030600
+        ],
+        [
+          1000,
+          7000202
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7030600,
+        7000200
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3038
+    },
+    {
+      "effectIds": [
+        7011200,
+        7000601,
+        7000701
+      ],
+      "sortKeys": [
+        [
+          1,
+          7011200
+        ],
+        [
+          1000,
+          7000601
+        ],
+        [
+          1000,
+          7000701
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000600,
+        7000700
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3037
+    },
+    {
+      "effectIds": [
+        7033400,
+        7000001,
+        7000201
+      ],
+      "sortKeys": [
+        [
+          1,
+          7033400
+        ],
+        [
+          1000,
+          7000001
+        ],
+        [
+          1000,
+          7000201
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000000,
+        7000200
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 3023
+    },
+    {
+      "effectIds": [
+        7310000,
+        7332300,
+        7000202
+      ],
+      "sortKeys": [
+        [
+          1,
+          7310000
+        ],
+        [
+          10,
+          7332300
+        ],
+        [
+          1000,
+          7000202
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        100,
+        7000200
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 2964
+    },
+    {
+      "effectIds": [
+        7030000,
+        7000001,
+        7000301
+      ],
+      "sortKeys": [
+        [
+          1,
+          7030000
+        ],
+        [
+          1000,
+          7000001
+        ],
+        [
+          1000,
+          7000301
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7000000,
+        7000300
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 2944
+    },
+    {
+      "effectIds": [
+        6090000,
+        7043600,
+        6001501
+      ],
+      "sortKeys": [
+        [
+          100,
+          6090000
+        ],
+        [
+          100,
+          7043600
+        ],
+        [
+          1000,
+          6001501
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        7090000,
+        800,
+        100
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 2887
+    },
+    {
+      "effectIds": [
+        7010500,
+        7122900,
+        7001602
+      ],
+      "sortKeys": [
+        [
+          1,
+          7010500
+        ],
+        [
+          100,
+          7122900
+        ],
+        [
+          1000,
+          7001602
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        300,
+        100
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 2830
+    },
+    {
+      "effectIds": [
+        7034400,
+        7036100,
+        7030600
+      ],
+      "sortKeys": [
+        [
+          1,
+          7034400
+        ],
+        [
+          1,
+          7036100
+        ],
+        [
+          100,
+          7030600
+        ]
+      ],
+      "orderMatches": true,
+      "compatibilityIds": [
+        900,
+        7036100,
+        7030600
+      ],
+      "compatibilityDistinct": true,
+      "frequency": 2816
+    }
+  ],
+  "archivedHotCompoundUnresolved": [
+    {
+      "names": [
+        "【铁之眼】蓄力发动绝招时，附加异常状态中毒",
+        "对陷入中毒的敌人，能强化攻击",
+        "加快累积绝招量表＋３"
+      ],
+      "frequency": 4234
+    }
+  ]
+}

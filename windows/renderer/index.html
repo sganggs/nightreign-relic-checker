@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>夜幕验物</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell" data-testid="app-shell">
+    <header class="topbar" data-testid="topbar">
+      <div class="brand" aria-label="夜幕验物">
+        <div class="logo-mark logo-mark--small" aria-hidden="true">
+          <i></i><i></i><i></i><span>✓</span>
+        </div>
+        <div class="brand-copy">
+          <strong>夜幕验物</strong>
+          <span>黑夜君临 · 离线遗物检查器</span>
+        </div>
+      </div>
+      <div class="topbar-divider" aria-hidden="true"></div>
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-button is-active" type="button" data-page-target="checker" data-testid="nav-checker" aria-current="page">
+          <span aria-hidden="true">◉</span>词条检查
+        </button>
+        <button class="nav-button" type="button" data-page-target="library" data-testid="nav-library">
+          <span aria-hidden="true">☷</span>词条库
+        </button>
+        <button class="nav-button" type="button" data-page-target="data" data-testid="nav-data">
+          <span aria-hidden="true">▣</span>数据设置
+        </button>
+      </nav>
+      <div class="topbar-spacer"></div>
+      <div class="topbar-badges" aria-label="应用状态">
+        <span class="pill pill--green" data-testid="topbar-version"><b>●</b><span>载入中</span></span>
+        <span class="pill pill--purple"><b>◌</b><span>完全离线</span></span>
+      </div>
+    </header>
+
+    <main class="page-stage">
+      <section class="page page--scroll is-active" id="page-checker" data-page="checker" data-testid="page-checker">
+        <div class="checker-content">
+          <header class="page-hero checker-hero">
+            <div class="hero-title-row">
+              <div class="logo-mark" aria-hidden="true"><i></i><i></i><i></i><span>✓</span></div>
+              <h1>黑夜君临遗物词条合法性检查</h1>
+            </div>
+            <p>基于游戏参数的非零出货权重、互斥池与保存顺序，所有判断均在本机完成</p>
+            <div class="hero-badges">
+              <span class="pill pill--purple" data-testid="catalog-summary-badge">正在载入词条库</span>
+              <span class="pill pill--green"><b>◆</b>颜色不影响随机词条池</span>
+            </div>
+          </header>
+
+          <div class="checker-grid">
+            <article class="card selection-card" data-testid="selection-card">
+              <div class="section-heading">
+                <div class="section-icon">⌕</div>
+                <div><h2>词条选择</h2><p>按遗物画面从上到下依次填入三条效果</p></div>
+              </div>
+
+              <div class="mode-control">
+                <div class="field-caption">校验口径</div>
+                <div class="segmented-control" role="radiogroup" aria-label="校验口径" data-testid="checker-mode-control"></div>
+                <p class="mode-detail" data-testid="mode-detail"></p>
+              </div>
+
+              <div class="affix-slots" data-testid="affix-slots">
+                <button class="affix-slot" type="button" data-slot="0" data-testid="slot-1"></button>
+                <button class="affix-slot" type="button" data-slot="1" data-testid="slot-2"></button>
+                <button class="affix-slot" type="button" data-slot="2" data-testid="slot-3"></button>
+              </div>
+
+              <div class="primary-actions">
+                <button class="button button--primary button--wide" type="button" data-action="check" data-testid="check-button"><span>✓</span>检查合法性</button>
+                <button class="button button--secondary" type="button" data-action="random" data-testid="random-button"><span>⇄</span>随机获取</button>
+              </div>
+              <button class="text-button text-button--danger" type="button" data-action="clear" data-testid="clear-button">清空三个词条</button>
+            </article>
+
+            <article class="card result-card" data-testid="result-card">
+              <div class="section-heading" data-testid="result-heading">
+                <div class="section-icon result-heading-icon">✓</div>
+                <div><h2>检查结果</h2><p>错误组合会标明原因；顺序错误可一键纠正</p></div>
+              </div>
+              <div class="result-content" data-testid="result-content"></div>
+            </article>
+
+            <article class="card popular-card" data-testid="popular-card">
+              <div class="section-heading">
+                <div class="section-icon section-icon--red">↗</div>
+                <div><h2>热门词条</h2><p>点击即可填入第一个空卡槽</p></div>
+              </div>
+              <div class="popular-list" data-testid="popular-list"></div>
+            </article>
+          </div>
+
+          <article class="card rules-card" data-testid="rules-card">
+            <div class="section-heading">
+              <div class="section-icon">i</div>
+              <div><h2>判定口径</h2><p>当前版本按游戏真实参数重建，不依赖已失效的在线 API。</p></div>
+            </div>
+            <ul>
+              <li><span>✓</span>三条效果必须来自所选版本的非零权重池</li>
+              <li><span>✓</span>effectId 不能重复，compatibilityId（-1 除外）不能重复</li>
+              <li><span>✓</span>最终顺序按 (overrideEffectId, effectId) 升序</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="page library-page" id="page-library" data-page="library" data-testid="page-library" hidden>
+        <header class="library-header">
+          <div class="library-title-row">
+            <div class="title-block">
+              <div class="logo-mark logo-mark--medium" aria-hidden="true"><i></i><i></i><i></i><span>✓</span></div>
+              <div><h1>词条库</h1><p>查看官方简中名称、说明、互斥池与真实保存排序键</p></div>
+            </div>
+            <span class="pill pill--green" data-testid="library-summary">正在载入词条库</span>
+          </div>
+          <div class="library-filters">
+            <label class="search-field">
+              <span aria-hidden="true">⌕</span>
+              <input type="search" placeholder="搜索名称、别名、分类或 effectId" autocomplete="off" data-testid="library-search">
+            </label>
+            <label class="select-field"><span class="sr-only">分类</span><select data-testid="library-category"></select></label>
+            <label class="select-field select-field--mode"><span class="sr-only">校验口径</span><select data-testid="library-mode"></select></label>
+            <label class="switch-control"><input type="checkbox" checked data-testid="library-eligible-toggle"><span class="switch-track"></span><span>仅当前口径</span></label>
+          </div>
+        </header>
+
+        <div class="table-wrap" data-testid="library-table">
+          <table class="library-table">
+            <colgroup><col class="col-id"><col><col class="col-category"><col class="col-conflict"><col class="col-modes"></colgroup>
+            <thead><tr><th>排序 / ID</th><th>词条</th><th>分类</th><th class="align-right">互斥池</th><th class="align-right">可用模式</th></tr></thead>
+            <tbody data-testid="library-table-body"></tbody>
+          </table>
+          <div class="empty-state table-empty" data-testid="library-empty" hidden><div class="empty-icon">☷</div><h3>没有匹配词条</h3><p>请调整搜索或筛选条件</p></div>
+        </div>
+        <footer class="library-footer"><span data-testid="library-count">当前显示 0 条</span><span>顺序键：overrideEffectId → effectId（升序）</span></footer>
+      </section>
+
+      <section class="page page--scroll" id="page-data" data-page="data" data-testid="page-data" hidden>
+        <div class="data-content">
+          <header class="title-block data-title">
+            <div class="logo-mark logo-mark--medium" aria-hidden="true"><i></i><i></i><i></i><span>✓</span></div>
+            <div><h1>数据设置</h1><p>词条库随应用离线保存，也可导入更新后的 JSON 数据</p></div>
+          </header>
+
+          <div class="data-grid">
+            <article class="card data-card" data-testid="catalog-card">
+              <div class="section-heading">
+                <div class="section-icon section-icon--green">▰</div>
+                <div><h2>当前词条库</h2><p>以 effectId 为主键，名称差异会保留为别名</p></div>
+              </div>
+              <dl class="data-lines">
+                <div><dt>来源</dt><dd data-testid="catalog-origin">—</dd></div>
+                <div><dt>游戏数据</dt><dd data-testid="catalog-game-version">—</dd></div>
+                <div><dt>数据修订</dt><dd data-testid="catalog-data-version">—</dd></div>
+                <div><dt>内容</dt><dd data-testid="catalog-summary">—</dd></div>
+                <div><dt>生成时间</dt><dd data-testid="catalog-generated-at">—</dd></div>
+              </dl>
+              <div class="catalog-tags"><span class="pill pill--purple" data-testid="catalog-schema">Schema v—</span><span class="pill pill--green">本地 JSON</span></div>
+            </article>
+
+            <article class="card data-card" data-testid="catalog-actions-card">
+              <div class="section-heading">
+                <div class="section-icon">↻</div>
+                <div><h2>更新与备份</h2><p>导入前会验证 schema、重复 ID 与基本完整性</p></div>
+              </div>
+              <div class="stacked-actions">
+                <button class="button button--primary button--wide" type="button" data-action="import" data-testid="import-button"><span>⇩</span>导入词条库 JSON</button>
+                <button class="button button--secondary button--wide" type="button" data-action="export" data-testid="export-button"><span>⇧</span>导出当前词条库</button>
+                <button class="button button--secondary button--wide" type="button" data-action="reset" data-testid="reset-button"><span>↶</span>恢复内置数据</button>
+              </div>
+              <p class="data-message" role="status" aria-live="polite" data-testid="data-message"></p>
+              <p class="data-hint">后续拿到旧版顺序表时，可先按当前 JSON schema 合并 ID、互斥池和排序键，再从这里直接替换。</p>
+            </article>
+          </div>
+
+          <article class="card mode-card" data-testid="data-mode-card">
+            <div class="section-heading">
+              <div class="section-icon">≡</div>
+              <div><h2>四种校验口径</h2><p>普通遗物按版本严格校验；深夜模式会额外标注诅咒配对风险</p></div>
+            </div>
+            <div class="mode-options" data-testid="data-mode-options"></div>
+          </article>
+
+          <article class="card sources-card" data-testid="sources-card">
+            <div class="section-heading">
+              <div class="section-icon">↗</div>
+              <div><h2>数据来源与许可</h2><p>发行包内保留第三方许可与具体修订号</p></div>
+            </div>
+            <div class="source-list" data-testid="sources-list"></div>
+          </article>
+
+          <article class="card disclaimer-card">
+            <div class="disclaimer-icon">!</div>
+            <div><h2>非官方社区工具</h2><p>本软件不修改存档，不连接游戏服务器，也不构成官方判定。词条名称与游戏文本权利归其权利方所有；数据可能随更新变化。GPL-3.0 发行许可及第三方许可均已随发行包保留。</p></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="picker-dialog" data-testid="picker-dialog">
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <div class="title-block">
+          <div class="logo-mark logo-mark--small" aria-hidden="true"><i></i><i></i><i></i><span>✓</span></div>
+          <div><h2 data-testid="picker-title">选择词条</h2><p data-testid="picker-mode-label">当前口径</p></div>
+        </div>
+        <button class="button button--ghost" type="button" data-action="close-picker" data-testid="close-picker">完成</button>
+      </header>
+      <div class="dialog-filters">
+        <div class="dialog-filter-row">
+          <label class="search-field"><span aria-hidden="true">⌕</span><input type="search" placeholder="搜索词条名称、分类或 ID" autocomplete="off" data-testid="picker-search"></label>
+          <label class="select-field"><span class="sr-only">分类</span><select data-testid="picker-category"></select></label>
+        </div>
+        <div class="dialog-filter-footer">
+          <label class="switch-control"><input type="checkbox" data-testid="picker-show-unavailable"><span class="switch-track"></span><span>显示当前口径不可用的词条</span></label>
+          <span data-testid="picker-count">0 条</span>
+        </div>
+      </div>
+      <div class="picker-list" data-testid="picker-list"></div>
+    </div>
+  </dialog>
+
+  <dialog class="confirm-dialog" data-testid="confirm-dialog">
+    <form method="dialog" class="confirm-shell">
+      <div class="confirm-icon">↶</div>
+      <h2>恢复内置词条库？</h2>
+      <p>当前自定义数据会被移除。已导出的 JSON 文件不会受影响。</p>
+      <div class="confirm-actions">
+        <button class="button button--secondary" value="cancel" data-testid="reset-cancel">取消</button>
+        <button class="button button--danger" value="confirm" data-testid="reset-confirm">恢复内置数据</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" role="status" aria-live="polite" data-testid="toast" hidden></div>
+  <div class="loading-overlay" data-testid="loading-overlay">
+    <div class="loading-spinner"></div><span>正在载入词条库…</span>
+  </div>
+
+  <script src="core.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# Swift
+macos/.build*/
+macos/build/
+
+# 构建产物
+*.exe
