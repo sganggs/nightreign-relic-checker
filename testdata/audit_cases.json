@@ -4,188 +4,711 @@
   "cases": [
     {
       "name": "validNormal: 商店遗物 202（槽池 310/210/110），三词条顺序正确",
-      "relic": { "itemId": 202, "effects": [6630000, 7000000, 7000100], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          6630000,
+          7000000,
+          7000100
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "valid",
       "expectIssueKinds": [],
       "expectWarningKinds": []
     },
     {
       "name": "validDeep: 深夜遗物 2000002（A/B/B + 诅咒槽），A 池需诅咒词条配对负面词条",
-      "relic": { "itemId": 2000002, "effects": [6005601, 7040300, 7040400], "curses": [6820000, -1, -1] },
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          6005601,
+          7040300,
+          7040400
+        ],
+        "curses": [
+          6820000,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "valid",
       "expectIssueKinds": [],
       "expectWarningKinds": []
     },
     {
       "name": "validUniqueExtra: 唯一遗物 10000（老旧怀表），固定槽含 extraAffixes 词条 10000",
-      "relic": { "itemId": 10000, "effects": [10000, 7000402, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 10000,
+        "effects": [
+          10000,
+          7000402,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "valid",
       "expectIssueKinds": [],
       "expectWarningKinds": []
     },
     {
       "name": "wrongOrder: 商店遗物 202，组合合法但保存顺序错误",
-      "relic": { "itemId": 202, "effects": [7000000, 6630000, 7000100], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          6630000,
+          7000100
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["wrongOrder"],
+      "expectIssueKinds": [
+        "wrongOrder"
+      ],
       "expectWarningKinds": [],
-      "expectOrderedEffects": [6630000, 7000000, 7000100]
+      "expectOrderedEffects": [
+        6630000,
+        7000000,
+        7000100
+      ]
     },
     {
       "name": "wrongOrderPlaceholder: 唯一遗物 1040（两槽），顺序错误且含 -1 占位",
-      "relic": { "itemId": 1040, "effects": [7040400, 7040300, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 1040,
+        "effects": [
+          7040400,
+          7040300,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["wrongOrder"],
+      "expectIssueKinds": [
+        "wrongOrder"
+      ],
       "expectWarningKinds": [],
-      "expectOrderedEffects": [7040300, 7040400, -1]
+      "expectOrderedEffects": [
+        7040300,
+        7040400,
+        -1
+      ]
     },
     {
       "name": "unknownItem: itemId 424242 不在遗物表，跳过后续检查",
-      "relic": { "itemId": 424242, "effects": [7000000, -1, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 424242,
+        "effects": [
+          7000000,
+          -1,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["unknownItem"],
+      "expectIssueKinds": [
+        "unknownItem"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "illegalRange: itemId 20000 处于作弊器区段（模板槽池 1 为空池，空词条再报 effectMissing）",
-      "relic": { "itemId": 20000, "effects": [-1, -1, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 20000,
+        "effects": [
+          -1,
+          -1,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["illegalRange", "effectMissing"],
+      "expectIssueKinds": [
+        "illegalRange",
+        "effectMissing"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "outOfRange: itemId 6001400 超出 100-2013322，槽池匹配本身通过",
-      "relic": { "itemId": 6001400, "effects": [6001400, -1, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 6001400,
+        "effects": [
+          6001400,
+          -1,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["outOfRange"],
+      "expectIssueKinds": [
+        "outOfRange"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "unknownEffect: 正面词条 99999999 不在词条索引，跳过 5-8",
-      "relic": { "itemId": 202, "effects": [7000000, 99999999, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          99999999,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["unknownEffect"],
+      "expectIssueKinds": [
+        "unknownEffect"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "unknownEffectCurse: 负面词条 99999998 不在词条索引",
-      "relic": { "itemId": 2000002, "effects": [6005601, 7040300, 7040400], "curses": [99999998, -1, -1] },
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          6005601,
+          7040300,
+          7040400
+        ],
+        "curses": [
+          99999998,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["unknownEffect"],
+      "expectIssueKinds": [
+        "unknownEffect"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "duplicate: 词条 7000000 重复（同 id 亦同互斥池，conflict 一并命中）",
-      "relic": { "itemId": 202, "effects": [7000000, 7000000, 7000100], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          7000000,
+          7000100
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["duplicate", "conflict"],
+      "expectIssueKinds": [
+        "duplicate",
+        "conflict"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "conflict: 7001400 与 7001500 同属互斥池 100",
-      "relic": { "itemId": 202, "effects": [7001400, 7001500, 6630000], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7001400,
+          7001500,
+          6630000
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["conflict"],
+      "expectIssueKinds": [
+        "conflict"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "effectUnexpected: 单槽旧版商店遗物 100 带了两条正面词条",
-      "relic": { "itemId": 100, "effects": [7000000, 7000100, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 100,
+        "effects": [
+          7000000,
+          7000100,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["effectUnexpected"],
+      "expectIssueKinds": [
+        "effectUnexpected"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "effectMissing: 三槽商店遗物 202 只带一条正面词条",
-      "relic": { "itemId": 202, "effects": [7000000, -1, -1], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          -1,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["effectMissing", "effectMissing"],
+      "expectIssueKinds": [
+        "effectMissing",
+        "effectMissing"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "slotMismatch: 负面池词条 6820000 出现在商店遗物正面槽",
-      "relic": { "itemId": 202, "effects": [7000000, 7000100, 6820000], "curses": [-1, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          7000100,
+          6820000
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["slotMismatch"],
+      "expectIssueKinds": [
+        "slotMismatch"
+      ],
       "expectWarningKinds": []
     },
     {
       "name": "curseUnexpected: 商店遗物 202 无诅咒槽却携带负面词条",
-      "relic": { "itemId": 202, "effects": [6630000, 7000000, 7000100], "curses": [6820000, -1, -1] },
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          6630000,
+          7000000,
+          7000100
+        ],
+        "curses": [
+          6820000,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["curseUnexpected"],
+      "expectIssueKinds": [
+        "curseUnexpected"
+      ],
       "expectWarningKinds": []
     },
     {
-      "name": "curseMissing: 深夜遗物 2000002 的需诅咒词条 6005601 未配对负面词条（并列排列取列表序靠前者）",
-      "relic": { "itemId": 2000002, "effects": [6005601, 7040300, 7040400], "curses": [-1, -1, -1] },
+      "name": "curseMissing: 深夜遗物 2000002 第 1 行需诅咒词条 6005601 未配对负面词条（按行配对）",
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          6005601,
+          7040300,
+          7040400
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["curseMissing", "curseCount"],
+      "expectIssueKinds": [
+        "curseMissing"
+      ],
       "expectWarningKinds": []
     },
     {
-      "name": "curseSlotEmpty: 深夜遗物 2000002 全部正面词条不需诅咒，诅咒槽为空",
-      "relic": { "itemId": 2000002, "effects": [7040300, 7040400, 7031900], "curses": [-1, -1, -1] },
-      "expectStatus": "invalid",
-      "expectIssueKinds": ["curseSlotEmpty"],
+      "name": "deepNoCurse: 深夜遗物 2000002 全部正面词条不需诅咒且无负面词条，合法",
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          7040300,
+          7040400,
+          7031900
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
+      "expectStatus": "valid",
+      "expectIssueKinds": [],
       "expectWarningKinds": []
     },
     {
       "name": "curseMismatch: 深夜遗物 2000002 的负面槽填入非诅咒池词条 7000000",
-      "relic": { "itemId": 2000002, "effects": [6005601, 7040300, 7040400], "curses": [7000000, -1, -1] },
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          6005601,
+          7040300,
+          7040400
+        ],
+        "curses": [
+          7000000,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["curseMismatch"],
+      "expectIssueKinds": [
+        "curseMismatch"
+      ],
       "expectWarningKinds": []
     },
     {
-      "name": "curseCount: A 池需诅咒词条 6610400 出现在商店遗物（slotMismatch 后补报数量不足）",
-      "relic": { "itemId": 202, "effects": [7000000, 7000100, 6610400], "curses": [-1, -1, -1] },
+      "name": "slotMismatch: A 池需诅咒词条 6610400 出现在商店遗物 202",
+      "relic": {
+        "itemId": 202,
+        "effects": [
+          7000000,
+          7000100,
+          6610400
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "invalid",
-      "expectIssueKinds": ["slotMismatch", "curseCount"],
+      "expectIssueKinds": [
+        "slotMismatch"
+      ],
       "expectWarningKinds": []
     },
     {
-      "name": "strictPool: 深夜遗物 2000002 全为 B 池词条，宽松并集通过但严格逐槽全排列失败",
-      "relic": { "itemId": 2000002, "effects": [7040300, 7040400, 7031900], "curses": [6820000, -1, -1] },
+      "name": "deepCurseUnexpected: 深夜遗物 2000002 不需诅咒的第 1 行携带负面词条",
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          7040300,
+          7040400,
+          7031900
+        ],
+        "curses": [
+          6820000,
+          -1,
+          -1
+        ]
+      },
+      "expectStatus": "invalid",
+      "expectIssueKinds": [
+        "curseUnexpected"
+      ],
+      "expectWarningKinds": []
+    },
+    {
+      "name": "fixedPool: 唯一遗物 1660 的固定词条与参数表不符，降级为警告放行（真实存档实证）",
+      "relic": {
+        "itemId": 1660,
+        "effects": [
+          7031300,
+          7060200,
+          7000802
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
       "expectStatus": "valid",
       "expectIssueKinds": [],
-      "expectWarningKinds": ["strictPool"]
+      "expectWarningKinds": [
+        "fixedPool"
+      ]
+    },
+    {
+      "name": "deepCount: 深夜遗物 2000002 应有 3 条正面词条实有 1 条",
+      "relic": {
+        "itemId": 2000002,
+        "effects": [
+          7040300,
+          -1,
+          -1
+        ],
+        "curses": [
+          -1,
+          -1,
+          -1
+        ]
+      },
+      "expectStatus": "invalid",
+      "expectIssueKinds": [
+        "effectMissing"
+      ],
+      "expectWarningKinds": []
+    },
+    {
+      "name": "realIllegal: 真实存档中的 2010212，同一负面词条 6850900 出现两次（重复+互斥）",
+      "relic": {
+        "itemId": 2010212,
+        "effects": [
+          6260401,
+          7090000,
+          6610802
+        ],
+        "curses": [
+          6850900,
+          -1,
+          6850900
+        ]
+      },
+      "expectStatus": "invalid",
+      "expectIssueKinds": [
+        "duplicate",
+        "conflict"
+      ],
+      "expectWarningKinds": []
+    },
+    {
+      "name": "realLegit: 真实存档中的 2013212（参数行为 CCC 无诅咒槽，但按行配对合法）",
+      "relic": {
+        "itemId": 2013212,
+        "effects": [
+          6005601,
+          6610400,
+          6611002
+        ],
+        "curses": [
+          6850900,
+          6830200,
+          6820000
+        ]
+      },
+      "expectStatus": "valid",
+      "expectIssueKinds": [],
+      "expectWarningKinds": []
     }
   ],
   "uniqueCases": [
     {
       "name": "uniqueDuplicate: 两件合法的唯一遗物 1000，第 2 件追加 uniqueDuplicate",
       "relics": [
-        { "itemId": 1000, "effects": [7121100, -1, -1], "curses": [-1, -1, -1] },
-        { "itemId": 1000, "effects": [7121100, -1, -1], "curses": [-1, -1, -1] }
+        {
+          "itemId": 1000,
+          "effects": [
+            7121100,
+            -1,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 1000,
+          "effects": [
+            7121100,
+            -1,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        }
       ],
-      "expectKindsPerRelic": [[], ["uniqueDuplicate"]]
+      "expectKindsPerRelic": [
+        [],
+        [
+          "uniqueDuplicate"
+        ]
+      ]
     },
     {
       "name": "uniqueDuplicate: 三件唯一遗物 1040，第 1 件本身非法，豁免第一件 valid 者（第 2 件）",
       "relics": [
-        { "itemId": 1040, "effects": [7040400, 7040300, -1], "curses": [-1, -1, -1] },
-        { "itemId": 1040, "effects": [7040300, 7040400, -1], "curses": [-1, -1, -1] },
-        { "itemId": 1040, "effects": [7040300, 7040400, -1], "curses": [-1, -1, -1] }
+        {
+          "itemId": 1040,
+          "effects": [
+            7040400,
+            7040300,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 1040,
+          "effects": [
+            7040300,
+            7040400,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 1040,
+          "effects": [
+            7040300,
+            7040400,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        }
       ],
-      "expectKindsPerRelic": [["wrongOrder", "uniqueDuplicate"], [], ["uniqueDuplicate"]]
+      "expectKindsPerRelic": [
+        [
+          "wrongOrder",
+          "uniqueDuplicate"
+        ],
+        [],
+        [
+          "uniqueDuplicate"
+        ]
+      ]
     },
     {
       "name": "uniqueDuplicate: 非唯一区段的商店遗物 202 重复持有不受影响",
       "relics": [
-        { "itemId": 202, "effects": [6630000, 7000000, 7000100], "curses": [-1, -1, -1] },
-        { "itemId": 202, "effects": [6630000, 7000000, 7000100], "curses": [-1, -1, -1] },
-        { "itemId": 1000, "effects": [7121100, -1, -1], "curses": [-1, -1, -1] }
+        {
+          "itemId": 202,
+          "effects": [
+            6630000,
+            7000000,
+            7000100
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 202,
+          "effects": [
+            6630000,
+            7000000,
+            7000100
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 1000,
+          "effects": [
+            7121100,
+            -1,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        }
       ],
-      "expectKindsPerRelic": [[], [], []]
+      "expectKindsPerRelic": [
+        [],
+        [],
+        []
+      ]
     },
     {
-      "name": "uniqueDuplicate: 两件唯一遗物 1000 均非法（无 valid 可豁免），全部追加",
+      "name": "uniqueDuplicate: 两件唯一遗物 1000 模板不符降级为警告，第 1 件豁免、第 2 件追加",
       "relics": [
-        { "itemId": 1000, "effects": [-1, -1, -1], "curses": [-1, -1, -1] },
-        { "itemId": 1000, "effects": [-1, -1, -1], "curses": [-1, -1, -1] }
+        {
+          "itemId": 1000,
+          "effects": [
+            -1,
+            -1,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        },
+        {
+          "itemId": 1000,
+          "effects": [
+            -1,
+            -1,
+            -1
+          ],
+          "curses": [
+            -1,
+            -1,
+            -1
+          ]
+        }
       ],
-      "expectKindsPerRelic": [["effectMissing", "uniqueDuplicate"], ["effectMissing", "uniqueDuplicate"]]
+      "expectKindsPerRelic": [
+        [],
+        [
+          "uniqueDuplicate"
+        ]
+      ]
     }
   ]
 }

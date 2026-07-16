@@ -388,7 +388,7 @@ let relicData = try RelicDataLoader.load(from: relicDataURL)
 try expect(relicData.relicsSchemaVersion == 1, "relics.json schema 应为 1")
 try expect(relicData.relics.count == 1397, "遗物表应为 1397 件")
 try expect(relicData.pools.count == 598, "槽池应为 598 个")
-try expect(relicData.extraAffixes.count == 99, "extraAffixes 应为 99 条")
+try expect(relicData.extraAffixes.count == 1552, "extraAffixes 应为 1552 条（全量 AttachEffectParam 补充）")
 
 let auditContext = RelicAuditContext(catalog: catalog, relicData: relicData)
 let auditor = RelicAuditor()
@@ -451,7 +451,7 @@ try expectAudit(
 )
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_005_601, -1, -1], curses: [6_820_000, -1, -1]),
-    status: .invalid, kinds: ["effectMissing", "effectMissing"], "正面词条缺失"
+    status: .invalid, kinds: ["effectMissing"], "正面词条数量不足（按行配对模型合并为一条）"
 )
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_005_601, 7_000_000, 6_003_000], curses: [6_820_000, -1, -1]),
@@ -463,21 +463,31 @@ try expectAudit(
 )
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_005_601, 6_003_000, 6_003_100]),
-    status: .invalid, kinds: ["curseMissing", "curseCount"], "需诅咒词条缺少负面词条（附带数量不足）"
+    status: .invalid, kinds: ["curseMissing"], "需诅咒词条缺少负面词条（按行配对）"
 )
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_003_000, 6_003_100, 6_003_200]),
-    status: .invalid, kinds: ["curseSlotEmpty"], "诅咒槽为空"
+    status: .valid, kinds: [], "全部正面词条不需诅咒且无负面词条即合法"
 )
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_005_601, 6_003_000, 6_003_100], curses: [7_000_000, -1, -1]),
     status: .invalid, kinds: ["curseMismatch"], "负面词条不在诅咒池"
 )
 
-// §4.9 严格口径警告：两条 A-only 词条只有一个 A 槽，宽松并集可解释
+// 按行配对：第 3 行需诅咒词条缺少负面词条（参数行槽池排列不再作为依据）
 try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_005_601, 6_003_000, 6_610_400], curses: [6_820_000, -1, -1]),
-    status: .valid, kinds: [], warningKinds: ["strictPool"], "严格槽池口径未通过"
+    status: .invalid, kinds: ["curseMissing"], "第 3 行需诅咒词条缺少负面词条"
+)
+// 深夜词条数量与槽数不符
+try expectAudit(
+    saveRelic(id: 2_000_002, effects: [6_003_000, -1, -1]),
+    status: .invalid, kinds: ["effectMissing"], "深夜正面词条数量不足"
+)
+// 唯一遗物固定词条与参数表不符 → 降级为警告放行（真实存档实证 1660）
+try expectAudit(
+    saveRelic(id: 1_660, effects: [7_031_300, 7_060_200, 7_000_802]),
+    status: .valid, kinds: [], warningKinds: ["fixedPool"], "唯一遗物参数表不符降级为警告"
 )
 
 // §4.10 保存顺序
@@ -594,26 +604,18 @@ if FileManager.default.fileExists(atPath: auditCasesURL.path) {
 
 // ===== 跨端 payload 一致性（与 windows/renderer/core.js 探针输出逐字对拍） =====
 
-// conflict 按出现顺序去重；curseCount 的 title 含数量、effectIds 列「需诅咒」词条
+// conflict 按出现顺序去重；深夜按行配对下 P2 的 kind 序列与 JS 端逐字一致
 let p2 = auditor.audit(
     SaveRelic(index: 0, itemID: 2000002, effects: [6001400, 7120000, 6001401], curses: [7120100, -1, -1]),
     context: auditContext
 )
 try expect(
-    p2.issues.map(\.kind.rawValue) == ["conflict", "slotMismatch", "curseMismatch", "curseCount"],
+    p2.issues.map(\.kind.rawValue) == ["conflict", "slotMismatch", "curseMissing", "curseMismatch"],
     "P2 kinds 应与 JS 端一致，实际 \(p2.issues.map(\.kind.rawValue))"
 )
 try expect(
     p2.issues.first(where: { $0.kind == .conflict })?.effectIDs == [6001400, 7120000, 6001401, 7120100],
     "P2 conflict effectIds 应按出现顺序去重"
-)
-try expect(
-    p2.issues.first(where: { $0.kind == .curseCount })?.title == "负面词条数量不足（需 2 条，实有 1 条）",
-    "P2 curseCount title 应含数量，实际 \(p2.issues.first(where: { $0.kind == .curseCount })?.title ?? "nil")"
-)
-try expect(
-    p2.issues.first(where: { $0.kind == .curseCount })?.effectIDs == [6001400, 6001401],
-    "P2 curseCount effectIds 应列出需诅咒词条"
 )
 try expect(p2.orderedEffects == nil, "P2 orderedEffects 应为 nil（未评估 §4.10）")
 
@@ -630,8 +632,29 @@ let p4 = auditor.audit(
     context: auditContext
 )
 try expect(
-    p4.issues.map(\.kind.rawValue) == ["effectMissing", "effectMissing", "curseSlotEmpty"],
+    p4.issues.map(\.kind.rawValue) == ["effectMissing"],
     "P4 未归一化输入 kinds 应与 JS 端一致，实际 \(p4.issues.map(\.kind.rawValue))"
 )
 
 print("RelicCoreChecks: \(passed) checks passed")
+
+// ===== 可选：传入存档路径做真实存档端到端验证（swift run RelicCoreChecks <path.sl2>） =====
+if CommandLine.arguments.count > 1 {
+    let path = CommandLine.arguments[1]
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    let parsed = try SaveFileParser.parse(data: data, fileName: (path as NSString).lastPathComponent)
+    print("存档: checksumOk=\(parsed.checksumOk) 角色=\(parsed.characters.count)")
+    for character in parsed.characters {
+        var results = character.relics.map { auditor.audit($0, context: auditContext) }
+        auditor.applyUniqueDuplicates(&results, relics: character.relics)
+        let invalid = zip(character.relics, results).filter { $0.1.status == .invalid }
+        let warned = zip(character.relics, results).filter { $0.1.status == .valid && !$0.1.warnings.isEmpty }
+        print("槽 \(character.slot) \(character.name)：遗物 \(character.relics.count) 件，非法 \(invalid.count)，警告 \(warned.count)")
+        for (relic, result) in invalid {
+            print("  非法 #\(relic.itemID) kinds=\(result.issues.map(\.kind.rawValue)) effects=\(relic.effects) curses=\(relic.curses)")
+        }
+        for (relic, result) in warned {
+            print("  警告 #\(relic.itemID) kinds=\(result.warnings.map(\.kind.rawValue))")
+        }
+    }
+}

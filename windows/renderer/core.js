@@ -431,8 +431,9 @@
   ]);
   var PAIR_ISSUE_ORDER = Object.freeze([
     "effectUnexpected", "effectMissing", "slotMismatch",
-    "curseUnexpected", "curseMissing", "curseSlotEmpty", "curseMismatch",
+    "curseUnexpected", "curseMissing", "curseMismatch",
   ]);
+  var DEEP_CURSE_POOL_ID = 3000000;
   var EMPTY_POOL = new Set();
 
   function normalizeEffectId(value) {
@@ -521,16 +522,13 @@
     return affix && affix.name ? affix.name : "词条 #" + effectId;
   }
 
-  // 宽松口径下，深夜三槽池（A/B/C）取并集；严格口径逐槽取原池（仅用于 strictPool 警告）
-  function rollablePool(ctx, poolId, strictPools) {
-    if (!strictPools && DEEP_SLOT_POOL_IDS.indexOf(poolId) !== -1) {
-      return ctx.deepPoolUnion;
-    }
+  function rollablePool(ctx, poolId) {
     return ctx.poolSets.get(poolId) || EMPTY_POOL;
   }
 
-  // 契约 §4.7：对 (effect, curse) 三对做 6 种排列，返回问题最少的排列（并列取列表序靠前者）
-  function evaluatePairing(ctx, meta, effects, curses, strictPools) {
+  // 非深夜遗物：对 (effect, curse) 三对做 6 种排列，返回问题最少的排列
+  // （并列取列表序靠前者）。深夜遗物不走此路径（见 auditDeepRelic）。
+  function evaluatePairing(ctx, meta, effects, curses) {
     var best = null;
     SLOT_PERMUTATIONS.forEach(function (permutation) {
       var problems = [];
@@ -546,21 +544,16 @@
         if (slotPool !== -1 && effect === -1) {
           problems.push({ kind: "effectMissing", pair: pair, effectId: -1 });
         }
-        if (slotPool !== -1 && effect !== -1 && !rollablePool(ctx, slotPool, strictPools).has(effect)) {
+        if (slotPool !== -1 && effect !== -1 && !rollablePool(ctx, slotPool).has(effect)) {
           problems.push({ kind: "slotMismatch", pair: pair, effectId: effect });
         }
         if (cursePool === -1 && curse !== -1) {
           problems.push({ kind: "curseUnexpected", pair: pair, effectId: curse });
         }
         if (cursePool !== -1 && curse === -1) {
-          var pairedAffix = effect === -1 ? null : ctx.affixIndex.get(effect);
-          if (pairedAffix && pairedAffix.requiresCurse) {
-            problems.push({ kind: "curseMissing", pair: pair, effectId: effect });
-          } else {
-            problems.push({ kind: "curseSlotEmpty", pair: pair, effectId: -1 });
-          }
+          problems.push({ kind: "curseMissing", pair: pair, effectId: effect });
         }
-        if (cursePool !== -1 && curse !== -1 && !rollablePool(ctx, cursePool, strictPools).has(curse)) {
+        if (cursePool !== -1 && curse !== -1 && !rollablePool(ctx, cursePool).has(curse)) {
           problems.push({ kind: "curseMismatch", pair: pair, effectId: curse });
         }
       }
@@ -569,6 +562,51 @@
       }
     });
     return { passed: best.length === 0, problems: best };
+  }
+
+  // 深夜遗物：按行配对模型。真实存档实证（759 件深夜遗物零违反）：
+  // 第 i 行正面词条为「需诅咒」词条 ⇔ 第 i 行携带负面词条；正面词条属于
+  // 深夜 A/B/C 池并集；词条数等于该遗物的槽数。参数表中深夜遗物行的
+  // 槽池排列（如 1.03 深夜遗物普遍记录为 CCC 且无诅咒槽）与游戏实际
+  // 生成不符，不能作为校验依据。
+  function auditDeepRelic(ctx, meta, effects, curses, issues) {
+    var slotCount = meta.slots.filter(function (pool) { return pool !== -1; }).length;
+    var effectCount = effects.filter(function (effectId) { return effectId !== -1; }).length;
+    if (effectCount < slotCount) {
+      issues.push(auditIssue("effectMissing", "正面词条数量不足",
+        "该遗物应有 " + slotCount + " 条正面词条，实有 " + effectCount + " 条", []));
+    } else if (effectCount > slotCount) {
+      issues.push(auditIssue("effectUnexpected", "正面词条数量超出",
+        "该遗物应有 " + slotCount + " 条正面词条，实有 " + effectCount + " 条", []));
+    }
+    var row;
+    for (row = 0; row < 3; row += 1) {
+      var effectId = effects[row];
+      if (effectId !== -1 && !ctx.deepPoolUnion.has(effectId)) {
+        issues.push(auditIssue("slotMismatch", "正面词条不在深夜词条池",
+          "第 " + (row + 1) + " 行的正面词条不在深夜词条池中：" + describeAffix(ctx, effectId), [effectId]));
+      }
+    }
+    for (row = 0; row < 3; row += 1) {
+      var effect = effects[row];
+      var curse = curses[row];
+      var affix = effect === -1 ? null : ctx.affixIndex.get(effect);
+      var needsCurse = Boolean(affix && affix.requiresCurse);
+      if (needsCurse && curse === -1) {
+        issues.push(auditIssue("curseMissing", "需诅咒的词条缺少负面词条",
+          "第 " + (row + 1) + " 行的正面词条需要配对负面词条：" + describeAffix(ctx, effect), [effect]));
+      } else if (!needsCurse && curse !== -1) {
+        issues.push(auditIssue("curseUnexpected", "多余的负面词条",
+          "第 " + (row + 1) + " 行的正面词条不需要负面词条，却携带负面词条：" + describeAffix(ctx, curse), [curse]));
+      }
+    }
+    for (row = 0; row < 3; row += 1) {
+      var curseId = curses[row];
+      if (curseId !== -1 && !rollablePool(ctx, DEEP_CURSE_POOL_ID).has(curseId)) {
+        issues.push(auditIssue("curseMismatch", "负面词条不在诅咒池",
+          "第 " + (row + 1) + " 行的负面词条不在诅咒池：" + describeAffix(ctx, curseId), [curseId]));
+      }
+    }
   }
 
   function pairIssue(ctx, problem) {
@@ -589,10 +627,8 @@
           "第 " + line + " 行不应携带负面词条：" + describeAffix(ctx, problem.effectId), ids);
       case "curseMissing":
         return auditIssue("curseMissing", "需诅咒的词条缺少负面词条",
-          "第 " + line + " 行的正面词条需要配对负面词条：" + describeAffix(ctx, problem.effectId), ids);
-      case "curseSlotEmpty":
-        return auditIssue("curseSlotEmpty", "诅咒槽为空",
-          "第 " + line + " 行对应的诅咒槽为空", ids);
+          "第 " + line + " 行的诅咒槽不允许为空" +
+          (problem.effectId === -1 ? "" : "：" + describeAffix(ctx, problem.effectId)), ids);
       default:
         return auditIssue("curseMismatch", "负面词条不在诅咒池",
           "第 " + line + " 行的负面词条不在诅咒池：" + describeAffix(ctx, problem.effectId), ids);
@@ -693,33 +729,29 @@
         }).join("、"), conflicting));
     }
 
-    // §4.7 槽池与诅咒配对（宽松口径决定 issues）
-    var lenient = evaluatePairing(ctx, meta, effects, curses, false);
-    if (!lenient.passed) {
-      lenient.problems.slice().sort(function (left, right) {
-        var kindDelta = PAIR_ISSUE_ORDER.indexOf(left.kind) - PAIR_ISSUE_ORDER.indexOf(right.kind);
-        return kindDelta !== 0 ? kindDelta : left.pair - right.pair;
-      }).forEach(function (problem) {
-        issues.push(pairIssue(ctx, problem));
-      });
-
-      // §4.8 负面词条数量（仅当 §4.7 未通过时评估）；title/effectIds 与 Swift 端一致
-      var curseRequiringIds = [];
-      effects.forEach(function (effectId) {
-        if (effectId !== -1 && ctx.affixIndex.get(effectId).requiresCurse) curseRequiringIds.push(effectId);
-      });
-      var actualCurses = curses.filter(function (effectId) { return effectId !== -1; }).length;
-      if (curseRequiringIds.length > actualCurses) {
-        issues.push(auditIssue("curseCount",
-          "负面词条数量不足（需 " + curseRequiringIds.length + " 条，实有 " + actualCurses + " 条）",
-          "「需诅咒」词条：" + curseRequiringIds.map(function (effectId) {
-            return describeAffix(ctx, effectId);
-          }).join("、"), curseRequiringIds));
+    // 槽池与诅咒配对：深夜遗物按行配对；非深夜遗物按参数行模板做排列匹配。
+    // 唯一遗物（BOSS/事件遗物）的固定词条在本版参数表中记录不准确（场景
+    // 遗物尤甚），模板不符时降级为警告放行。
+    if (meta.deep) {
+      auditDeepRelic(ctx, meta, effects, curses, issues);
+    } else {
+      var pairing = evaluatePairing(ctx, meta, effects, curses);
+      if (!pairing.passed) {
+        var pairIssues = pairing.problems.slice().sort(function (left, right) {
+          var kindDelta = PAIR_ISSUE_ORDER.indexOf(left.kind) - PAIR_ISSUE_ORDER.indexOf(right.kind);
+          return kindDelta !== 0 ? kindDelta : left.pair - right.pair;
+        }).map(function (problem) {
+          return pairIssue(ctx, problem);
+        });
+        if (isUniqueRelicId(itemId)) {
+          warnings.push(auditIssue("fixedPool", "固定词条与参数表不符（不视为非法）",
+            "唯一遗物的词条由游戏固定发放；本版参数表对部分唯一遗物（如场景遗物）的记录不准确，已放行。不符项：" +
+            pairIssues.map(function (issue) { return issue.detail; }).join("；"),
+            effects.filter(function (effectId) { return effectId !== -1; })));
+        } else {
+          pairIssues.forEach(function (issue) { issues.push(issue); });
+        }
       }
-    } else if (!evaluatePairing(ctx, meta, effects, curses, true).passed) {
-      // §4.9 严格口径警告（不影响 status）
-      warnings.push(auditIssue("strictPool", "严格槽池口径未通过（宽松口径合法）",
-        "深夜三池并集口径下合法，但逐槽严格口径下所有排列均无法成立", []));
     }
 
     // §4.10 保存顺序（仅当 issues 为空时评估）

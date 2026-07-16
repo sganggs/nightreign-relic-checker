@@ -17,12 +17,10 @@ public enum RelicIssueKind: String, Codable, Sendable {
     case slotMismatch
     case curseUnexpected
     case curseMissing
-    case curseSlotEmpty
     case curseMismatch
-    case curseCount
-    case strictPool
     case wrongOrder
     case uniqueDuplicate
+    case fixedPool
 }
 
 public struct RelicAuditIssue: Codable, Hashable, Sendable, Identifiable {
@@ -93,6 +91,7 @@ public struct RelicAuditContext: Sendable {
     public let affixIndex: [Int: AuditAffix]
 
     static let deepPositivePoolIDs: Set<Int> = [2_000_000, 2_100_000, 2_200_000]
+    static let deepCursePoolID = 3_000_000
 
     public init(catalog: AffixCatalog, relicData: RelicCatalog) {
         var index: [Int: AuditAffix] = [:]
@@ -259,53 +258,40 @@ public struct RelicAuditor: Sendable {
             ))
         }
 
-        // 7. 槽池与诅咒配对（6 种排列，取问题数最少者）
-        var section7Passed = false
-        var bestProblems: [SlotProblem]? = nil
-        for permutation in Self.pairPermutations {
-            let problems = slotProblems(effects: effects, curses: curses, info: info, permutation: permutation, strict: false, context: context)
-            if problems.isEmpty {
-                section7Passed = true
-                bestProblems = nil
-                break
+        // 7. 槽池与诅咒配对：深夜遗物按行配对（真实存档实证，参数表中深夜
+        // 遗物行的槽池排列与游戏实际生成不符）；非深夜遗物按参数行模板做
+        // 6 种排列匹配，唯一遗物模板不符时降级为警告放行（本版参数表对
+        // 部分唯一遗物记录不准确）。
+        if info.deep {
+            auditDeepRelic(effects: effects, curses: curses, info: info, context: context, issues: &issues)
+        } else {
+            var bestProblems: [SlotProblem]? = nil
+            for permutation in Self.pairPermutations {
+                let problems = slotProblems(effects: effects, curses: curses, info: info, permutation: permutation, context: context)
+                if problems.isEmpty {
+                    bestProblems = nil
+                    break
+                }
+                if bestProblems == nil || problems.count < bestProblems!.count {
+                    bestProblems = problems
+                }
             }
-            if bestProblems == nil || problems.count < bestProblems!.count {
-                bestProblems = problems
-            }
-        }
-        if let bestProblems {
-            let sorted = bestProblems.sorted {
-                $0.rank == $1.rank ? $0.pairIndex < $1.pairIndex : $0.rank < $1.rank
-            }
-            issues.append(contentsOf: sorted.map { issue(for: $0, context: context) })
-        }
-
-        // 8. 负面词条数量（仅在槽池配对未通过时补充）
-        if !section7Passed {
-            let requiring = effects.filter { $0 != -1 && context.affixIndex[$0]?.requiresCurse == true }
-            let curseTotal = curses.filter { $0 != -1 }.count
-            if requiring.count > curseTotal {
-                issues.append(RelicAuditIssue(
-                    kind: .curseCount,
-                    title: "负面词条数量不足（需 \(requiring.count) 条，实有 \(curseTotal) 条）",
-                    detail: "有 \(requiring.count) 条正面词条要求配对负面词条，实际只有 \(curseTotal) 条负面词条。",
-                    effectIDs: requiring
-                ))
-            }
-        }
-
-        // 9. 严格槽池口径（警告，不影响 status）
-        if section7Passed {
-            let strictPassed = Self.pairPermutations.contains { permutation in
-                slotProblems(effects: effects, curses: curses, info: info, permutation: permutation, strict: true, context: context).isEmpty
-            }
-            if !strictPassed {
-                warnings.append(RelicAuditIssue(
-                    kind: .strictPool,
-                    title: "严格槽池口径未通过（宽松口径合法）",
-                    detail: "按深夜三池并集（宽松口径）可解释这件遗物，但按各槽位实际槽池（严格口径）任何排列都无法成立。",
-                    effectIDs: []
-                ))
+            if let bestProblems {
+                let sorted = bestProblems.sorted {
+                    $0.rank == $1.rank ? $0.pairIndex < $1.pairIndex : $0.rank < $1.rank
+                }
+                let pairIssues = sorted.map { issue(for: $0, context: context) }
+                if isUniqueRelicID(itemID) {
+                    warnings.append(RelicAuditIssue(
+                        kind: .fixedPool,
+                        title: "固定词条与参数表不符（不视为非法）",
+                        detail: "唯一遗物的词条由游戏固定发放；本版参数表对部分唯一遗物（如场景遗物）的记录不准确，已放行。不符项：" +
+                            pairIssues.map(\.detail).joined(separator: "；"),
+                        effectIDs: effects.filter { $0 != -1 }
+                    ))
+                } else {
+                    issues.append(contentsOf: pairIssues)
+                }
             }
         }
 
@@ -370,7 +356,6 @@ public struct RelicAuditor: Sendable {
         curses: [Int],
         info: RelicInfo,
         permutation: [Int],
-        strict: Bool,
         context: RelicAuditContext
     ) -> [SlotProblem] {
         var problems: [SlotProblem] = []
@@ -387,7 +372,7 @@ public struct RelicAuditor: Sendable {
                 }
             } else if effect == -1 {
                 problems.append(SlotProblem(kind: .effectMissing, rank: 1, pairIndex: pairIndex, effectID: nil))
-            } else if !rollable(slotPool, strict: strict, context: context).contains(effect) {
+            } else if !rollable(slotPool, context: context).contains(effect) {
                 problems.append(SlotProblem(kind: .slotMismatch, rank: 2, pairIndex: pairIndex, effectID: effect))
             }
 
@@ -396,23 +381,87 @@ public struct RelicAuditor: Sendable {
                     problems.append(SlotProblem(kind: .curseUnexpected, rank: 3, pairIndex: pairIndex, effectID: curse))
                 }
             } else if curse == -1 {
-                if effect != -1, context.affixIndex[effect]?.requiresCurse == true {
-                    problems.append(SlotProblem(kind: .curseMissing, rank: 4, pairIndex: pairIndex, effectID: effect))
-                } else {
-                    problems.append(SlotProblem(kind: .curseSlotEmpty, rank: 5, pairIndex: pairIndex, effectID: nil))
-                }
-            } else if !rollable(cursePool, strict: strict, context: context).contains(curse) {
-                problems.append(SlotProblem(kind: .curseMismatch, rank: 6, pairIndex: pairIndex, effectID: curse))
+                problems.append(SlotProblem(kind: .curseMissing, rank: 4, pairIndex: pairIndex, effectID: effect == -1 ? nil : effect))
+            } else if !rollable(cursePool, context: context).contains(curse) {
+                problems.append(SlotProblem(kind: .curseMismatch, rank: 5, pairIndex: pairIndex, effectID: curse))
             }
         }
         return problems
     }
 
-    private func rollable(_ poolID: Int, strict: Bool, context: RelicAuditContext) -> Set<Int> {
-        if !strict, RelicAuditContext.deepPositivePoolIDs.contains(poolID) {
-            return context.deepUnionPool
+    private func rollable(_ poolID: Int, context: RelicAuditContext) -> Set<Int> {
+        context.pools[poolID] ?? []
+    }
+
+    /// 深夜遗物按行配对模型（与 windows/renderer/core.js 的 auditDeepRelic 一致）：
+    /// 词条数 = 槽数；正面词条 ∈ A/B/C 池并集；第 i 行「需诅咒」⇔ 第 i 行有
+    /// 负面词条；负面词条 ∈ 诅咒池。
+    private func auditDeepRelic(
+        effects: [Int],
+        curses: [Int],
+        info: RelicInfo,
+        context: RelicAuditContext,
+        issues: inout [RelicAuditIssue]
+    ) {
+        let slotCount = info.slots.filter { $0 != -1 }.count
+        let effectCount = effects.filter { $0 != -1 }.count
+        if effectCount < slotCount {
+            issues.append(RelicAuditIssue(
+                kind: .effectMissing,
+                title: "正面词条数量不足",
+                detail: "该遗物应有 \(slotCount) 条正面词条，实有 \(effectCount) 条",
+                effectIDs: []
+            ))
+        } else if effectCount > slotCount {
+            issues.append(RelicAuditIssue(
+                kind: .effectUnexpected,
+                title: "正面词条数量超出",
+                detail: "该遗物应有 \(slotCount) 条正面词条，实有 \(effectCount) 条",
+                effectIDs: []
+            ))
         }
-        return context.pools[poolID] ?? []
+        for row in 0..<3 {
+            let effect = effects[row]
+            if effect != -1, !context.deepUnionPool.contains(effect) {
+                issues.append(RelicAuditIssue(
+                    kind: .slotMismatch,
+                    title: "正面词条不在深夜词条池",
+                    detail: "第 \(row + 1) 行的正面词条不在深夜词条池中：\(affixLabel(effect, context))",
+                    effectIDs: [effect]
+                ))
+            }
+        }
+        for row in 0..<3 {
+            let effect = effects[row]
+            let curse = curses[row]
+            let needsCurse = effect != -1 && context.affixIndex[effect]?.requiresCurse == true
+            if needsCurse, curse == -1 {
+                issues.append(RelicAuditIssue(
+                    kind: .curseMissing,
+                    title: "需诅咒的词条缺少负面词条",
+                    detail: "第 \(row + 1) 行的正面词条需要配对负面词条：\(affixLabel(effect, context))",
+                    effectIDs: [effect]
+                ))
+            } else if !needsCurse, curse != -1 {
+                issues.append(RelicAuditIssue(
+                    kind: .curseUnexpected,
+                    title: "多余的负面词条",
+                    detail: "第 \(row + 1) 行的正面词条不需要负面词条，却携带负面词条：\(affixLabel(curse, context))",
+                    effectIDs: [curse]
+                ))
+            }
+        }
+        for row in 0..<3 {
+            let curse = curses[row]
+            if curse != -1, !rollable(RelicAuditContext.deepCursePoolID, context: context).contains(curse) {
+                issues.append(RelicAuditIssue(
+                    kind: .curseMismatch,
+                    title: "负面词条不在诅咒池",
+                    detail: "第 \(row + 1) 行的负面词条不在诅咒池：\(affixLabel(curse, context))",
+                    effectIDs: [curse]
+                ))
+            }
+        }
     }
 
     private func issue(for problem: SlotProblem, context: RelicAuditContext) -> RelicAuditIssue {
@@ -452,14 +501,7 @@ public struct RelicAuditor: Sendable {
             return RelicAuditIssue(
                 kind: .curseMissing,
                 title: "需诅咒的词条缺少负面词条",
-                detail: "第 \(row) 行的正面词条 \(label) 需要配对负面词条，但该行的诅咒槽为空。",
-                effectIDs: effectIDs
-            )
-        case .curseSlotEmpty:
-            return RelicAuditIssue(
-                kind: .curseSlotEmpty,
-                title: "诅咒槽为空",
-                detail: "第 \(row) 行对应的诅咒槽存在，但没有负面词条。",
+                detail: "第 \(row) 行的诅咒槽不允许为空" + (label.isEmpty ? "。" : "：\(label)。"),
                 effectIDs: effectIDs
             )
         case .curseMismatch:

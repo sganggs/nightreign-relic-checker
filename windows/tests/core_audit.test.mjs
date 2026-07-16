@@ -112,8 +112,8 @@ test("用例覆盖契约 §4 全部 kind", () => {
     "unknownItem", "illegalRange", "outOfRange", "unknownEffect",
     "duplicate", "conflict",
     "effectUnexpected", "effectMissing", "slotMismatch",
-    "curseUnexpected", "curseMissing", "curseSlotEmpty", "curseMismatch",
-    "curseCount", "strictPool", "wrongOrder", "uniqueDuplicate",
+    "curseUnexpected", "curseMissing", "curseMismatch",
+    "wrongOrder", "uniqueDuplicate", "fixedPool",
   ];
   for (const kind of required) {
     assert.ok(covered.has(kind), `用例未覆盖 kind：${kind}`);

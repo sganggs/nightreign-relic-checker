@@ -101,13 +101,16 @@ def main() -> None:
     if empty:
         print(f"警告：{len(empty)} 个被引用池无可掉落词条（样例 {sorted(empty)[:5]}）", file=sys.stderr)
 
+    # 词条库之外的全部词条都进 extraAffixes：固定词条遗物（如场景遗物）
+    # 的实际词条可能不属于任何被引用池（参数表对这类遗物的槽池行不可靠），
+    # 全量收录才能正确显示名称并避免误报「未知词条」。
     catalog = json.loads(CATALOG.read_text())
     known = {a["effectId"] for a in catalog["affixes"]}
     extra = []
     with open(param / "AttachEffectParam.csv", newline="") as f:
         for row in csv.DictReader(f):
             eid = int(row["ID"])
-            if eid in known or eid not in referenced_effects:
+            if eid in known:
                 continue
             extra.append(
                 {

@@ -103,6 +103,42 @@ func characterPlain(name string, records [][]byte) []byte {
 	return sealPlain(body.Bytes())
 }
 
+// characterPlainWithEntries is characterPlain plus an item entry area that
+// references only the given gaHandles — used to exercise ghost-state
+// filtering (stale relic states not referenced by any entry).
+func characterPlainWithEntries(name string, records [][]byte, owned []uint32) []byte {
+	var body bytes.Buffer
+	body.Write(make([]byte, stateStart))
+	count := 0
+	for _, r := range records {
+		body.Write(r)
+		count++
+	}
+	for ; count < stateSlotCount; count++ {
+		body.Write(emptyState())
+	}
+	body.Write(make([]byte, nameGap))
+	nameBuf := make([]byte, nameMaxUnits*2)
+	for i, u := range utf16.Encode([]rune(name)) {
+		if i >= nameMaxUnits {
+			break
+		}
+		binary.LittleEndian.PutUint16(nameBuf[2*i:], u)
+	}
+	body.Write(nameBuf)
+	body.Write(make([]byte, entryCountGap-nameMaxUnits*2))
+	var cnt [4]byte
+	binary.LittleEndian.PutUint32(cnt[:], uint32(len(owned)))
+	body.Write(cnt[:])
+	for _, ga := range owned {
+		rec := make([]byte, entryRecordLen)
+		binary.LittleEndian.PutUint32(rec, ga)
+		binary.LittleEndian.PutUint32(rec[4:], ga&0x00FFFFFF)
+		body.Write(rec)
+	}
+	return sealPlain(body.Bytes())
+}
+
 // sharedPlain builds USERDATA_10: when withMagic is set, the 10 occupancy
 // flags sit 61 bytes before the FACE magic.
 func sharedPlain(flags [10]byte, withMagic bool) []byte {
@@ -456,5 +492,32 @@ func TestFewerEntriesThanSlots(t *testing.T) {
 	}
 	if payload.Characters[1].ParseError == nil {
 		t.Errorf("slot1 placeholder should yield parseError")
+	}
+}
+
+// TestGhostRelicsFilteredByEntryArea: state 区中的遗物只有被物品条目区
+// 引用才算真正持有；已删除遗物的残留 state 必须被过滤（真实存档实证：
+// 残留会造成「唯一遗物重复持有」误报）。
+func TestGhostRelicsFilteredByEntryArea(t *testing.T) {
+	empty := [3]uint32{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF}
+	records := [][]byte{
+		relicState(1, 2071, [3]uint32{7006600, 7006700, 7037800}, empty),
+		relicState(2, 2071, [3]uint32{7006600, 7006700, 7037800}, empty), // 幽灵残留
+		relicState(3, 150, [3]uint32{6630000, 0xFFFFFFFF, 0xFFFFFFFF}, empty),
+	}
+	plain := characterPlainWithEntries("甲", records, []uint32{0xC0000001, 0xC0000003})
+	payload, err := Parse(buildSave([][]byte{encryptEntry(t, plain, 7)}), "s.sl2")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	relics := payload.Characters[0].Relics
+	if len(relics) != 2 {
+		t.Fatalf("relics = %d, want 2 (ghost filtered)", len(relics))
+	}
+	if relics[0].ItemID != 2071 || relics[1].ItemID != 150 {
+		t.Errorf("itemIds = %d,%d want 2071,150", relics[0].ItemID, relics[1].ItemID)
+	}
+	if relics[0].Index != 0 || relics[1].Index != 1 {
+		t.Errorf("indexes not resequenced: %d,%d", relics[0].Index, relics[1].Index)
 	}
 }

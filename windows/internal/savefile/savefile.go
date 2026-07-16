@@ -57,6 +57,14 @@ const (
 	stateStart     = 0x14 // item state records begin at this plaintext offset
 	nameGap        = 0x94 // gap between the end of the state area and the name
 	nameMaxUnits   = 16   // player name: UTF-16LE, at most 16 code units, NUL-terminated
+
+	// Item entry area: 3065 fixed 14-byte records, preceded by a u32 count,
+	// located 0x5B8 past the player name. Only states referenced here are in
+	// the character's actual inventory — stale (deleted) relic states remain
+	// in the state area and must be filtered out.
+	entrySlotCount = 3065
+	entryRecordLen = 14
+	entryCountGap  = 0x5B8
 )
 
 var (
@@ -258,6 +266,7 @@ func parseCharacter(slot int, plain []byte) Character {
 	}
 
 	off := stateStart
+	gaHandles := []uint32{}
 	for rec := 0; rec < stateSlotCount; rec++ {
 		if off+8 > len(plain) {
 			return fail("存档数据截断：第 %d 条物品记录越界", rec)
@@ -280,6 +289,7 @@ func parseCharacter(slot int, plain []byte) Character {
 			return fail("存档数据截断：第 %d 条物品记录不完整", rec)
 		}
 		if gaHandle&0xF0000000 == 0xC0000000 {
+			gaHandles = append(gaHandles, gaHandle)
 			c.Relics = append(c.Relics, Relic{
 				Index:  len(c.Relics),
 				ItemID: int(itemID & 0x00FFFFFF),
@@ -298,10 +308,46 @@ func parseCharacter(slot int, plain []byte) Character {
 		off += size
 	}
 
-	if name, ok := readName(plain, off+nameGap); ok {
+	nameOff := off + nameGap
+	if name, ok := readName(plain, nameOff); ok {
 		c.Name = name
 	}
+	c.Relics = filterOwnedRelics(plain, nameOff, c.Relics, gaHandles)
 	return c
+}
+
+// filterOwnedRelics keeps only relics whose gaHandle is referenced by the
+// item entry area — deleted relics leave stale records in the state area.
+// When the entry area is unreadable the list is returned unfiltered.
+func filterOwnedRelics(plain []byte, nameOff int, relics []Relic, gaHandles []uint32) []Relic {
+	countOff := nameOff + entryCountGap
+	if countOff < 0 || countOff+4 > len(plain) {
+		return relics
+	}
+	owned := make(map[uint32]bool)
+	readable := false
+	for slot := 0; slot < entrySlotCount; slot++ {
+		pos := countOff + 4 + slot*entryRecordLen
+		if pos+entryRecordLen > len(plain) {
+			break
+		}
+		readable = true
+		ga := binary.LittleEndian.Uint32(plain[pos:])
+		if ga&0xF0000000 == 0xC0000000 {
+			owned[ga] = true
+		}
+	}
+	if !readable {
+		return relics
+	}
+	kept := make([]Relic, 0, len(relics))
+	for i, relic := range relics {
+		if owned[gaHandles[i]] {
+			relic.Index = len(kept)
+			kept = append(kept, relic)
+		}
+	}
+	return kept
 }
 
 // fallbackName is the display name used when a slot's real name cannot be

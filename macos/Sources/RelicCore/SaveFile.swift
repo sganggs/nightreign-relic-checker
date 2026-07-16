@@ -74,6 +74,11 @@ public enum SaveFileParser {
     private static let faceMagic: [UInt8] = [0x27, 0x00, 0x00, 0x46, 0x41, 0x43, 0x45]
     private static let stateSlotCount = 5120
     private static let characterSlotCount = 10
+    // 物品条目区：名字后 0x5B8 处的 u32 计数 + 3065 条 14 字节记录；
+    // state 区中未被条目区引用的遗物是已删除残留（幽灵条目），必须过滤。
+    private static let entrySlotCount = 3065
+    private static let entryRecordLen = 14
+    private static let entryCountGap = 0x5B8
 
     private struct SlotError: Error {
         let message: String
@@ -151,6 +156,7 @@ public enum SaveFileParser {
     private static func parseCharacter(slot: Int, plain: [UInt8]) -> SaveCharacter {
         var offset = 0x14
         var relics: [SaveRelic] = []
+        var gaHandles: [UInt32] = []
 
         for record in 0..<stateSlotCount {
             guard offset + 8 <= plain.count else {
@@ -182,13 +188,42 @@ public enum SaveFileParser {
                 let itemID = Int(readUInt32(plain, offset + 4) & 0x00FF_FFFF)
                 let effects = [16, 20, 24].map { normalizeEffect(readUInt32(plain, offset + $0)) }
                 let curses = [56, 60, 64].map { normalizeEffect(readUInt32(plain, offset + $0)) }
+                gaHandles.append(gaHandle)
                 relics.append(SaveRelic(index: relics.count, itemID: itemID, effects: effects, curses: curses))
             }
             offset += length
         }
 
-        let name = characterName(plain, at: offset + 0x94) ?? "槽位 \(slot + 1)"
-        return SaveCharacter(slot: slot, name: name, parseError: nil, relics: relics)
+        let nameOffset = offset + 0x94
+        let name = characterName(plain, at: nameOffset) ?? "槽位 \(slot + 1)"
+        let owned = filterOwnedRelics(plain, nameOffset: nameOffset, relics: relics, gaHandles: gaHandles)
+        return SaveCharacter(slot: slot, name: name, parseError: nil, relics: owned)
+    }
+
+    // 只保留被物品条目区引用的遗物（与 Windows 端一致）；条目区不可读时
+    // 原样返回（合成夹具/降级路径）。
+    private static func filterOwnedRelics(
+        _ plain: [UInt8], nameOffset: Int, relics: [SaveRelic], gaHandles: [UInt32]
+    ) -> [SaveRelic] {
+        let countOffset = nameOffset + entryCountGap
+        guard countOffset >= 0, countOffset + 4 <= plain.count else { return relics }
+        var owned = Set<UInt32>()
+        var readable = false
+        for slot in 0..<entrySlotCount {
+            let pos = countOffset + 4 + slot * entryRecordLen
+            guard pos + entryRecordLen <= plain.count else { break }
+            readable = true
+            let ga = readUInt32(plain, pos)
+            if ga & 0xF000_0000 == 0xC000_0000 {
+                owned.insert(ga)
+            }
+        }
+        guard readable else { return relics }
+        var kept: [SaveRelic] = []
+        for (index, relic) in relics.enumerated() where owned.contains(gaHandles[index]) {
+            kept.append(SaveRelic(index: kept.count, itemID: relic.itemID, effects: relic.effects, curses: relic.curses))
+        }
+        return kept
     }
 
     // 名字区允许截断：只读到边界内完整的 UTF-16 单元（与 Windows 端一致）。
