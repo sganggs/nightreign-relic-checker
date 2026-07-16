@@ -35,7 +35,6 @@ final class AppModel: ObservableObject {
     enum SaveFilter: String, CaseIterable, Identifiable {
         case all
         case invalidOnly
-        case warnedOnly
         case deepOnly
 
         var id: String { rawValue }
@@ -44,7 +43,6 @@ final class AppModel: ObservableObject {
             switch self {
             case .all: return "全部"
             case .invalidOnly: return "仅非法"
-            case .warnedOnly: return "仅警告"
             case .deepOnly: return "深夜遗物"
             }
         }

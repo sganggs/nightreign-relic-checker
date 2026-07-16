@@ -98,7 +98,6 @@ struct SaveScanView: View {
     private func controlCard(report: SaveScanReport, character: SaveScanReport.Character) -> some View {
         let total = character.relics.count
         let invalid = character.relics.filter { $0.result.status == .invalid }.count
-        let warned = character.relics.filter { !$0.result.warnings.isEmpty }.count
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 14) {
@@ -126,7 +125,6 @@ struct SaveScanView: View {
                 Pill(text: "遗物总数 \(total)", color: AppTheme.purpleSoft, symbol: "shippingbox")
                 Pill(text: "合法 \(total - invalid)", color: AppTheme.green, symbol: "checkmark.circle")
                 Pill(text: "非法 \(invalid)", color: AppTheme.red, symbol: "xmark.octagon")
-                Pill(text: "警告 \(warned)", color: AppTheme.amber, symbol: "exclamationmark.triangle")
                 Spacer(minLength: 0)
             }
         }
@@ -161,9 +159,7 @@ struct SaveScanView: View {
 
             if filtered.isEmpty {
                 EmptyStateView(
-                    title: model.saveFilter == .invalidOnly ? "🎉 未发现不合法遗物"
-                        : model.saveFilter == .warnedOnly ? "没有带警告的遗物"
-                        : "没有符合条件的遗物",
+                    title: model.saveFilter == .invalidOnly ? "🎉 未发现不合法遗物" : "没有符合条件的遗物",
                     symbol: model.saveFilter == .invalidOnly ? "checkmark.seal" : "shippingbox",
                     detail: model.saveFilter == .deepOnly
                         ? "该角色没有持有深夜遗物。"
@@ -193,7 +189,6 @@ struct SaveScanView: View {
         switch model.saveFilter {
         case .all: return relics
         case .invalidOnly: return relics.filter { $0.result.status == .invalid }
-        case .warnedOnly: return relics.filter { !$0.result.warnings.isEmpty }
         case .deepOnly: return relics.filter(\.isDeep)
         }
     }

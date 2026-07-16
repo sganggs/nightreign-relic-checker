@@ -729,28 +729,20 @@
         }).join("、"), conflicting));
     }
 
-    // 槽池与诅咒配对：深夜遗物按行配对；非深夜遗物按参数行模板做排列匹配。
-    // 唯一遗物（BOSS/事件遗物）的固定词条在本版参数表中记录不准确（场景
-    // 遗物尤甚），模板不符时降级为警告放行。
+    // 槽池与诅咒配对：深夜遗物按行配对；非深夜遗物（含唯一遗物——其槽池
+    // 为单词条固定池，参数表经真实存档交叉验证是准确的）按参数行模板做
+    // 排列匹配，不符即非法。
     if (meta.deep) {
       auditDeepRelic(ctx, meta, effects, curses, issues);
     } else {
       var pairing = evaluatePairing(ctx, meta, effects, curses);
       if (!pairing.passed) {
-        var pairIssues = pairing.problems.slice().sort(function (left, right) {
+        pairing.problems.slice().sort(function (left, right) {
           var kindDelta = PAIR_ISSUE_ORDER.indexOf(left.kind) - PAIR_ISSUE_ORDER.indexOf(right.kind);
           return kindDelta !== 0 ? kindDelta : left.pair - right.pair;
-        }).map(function (problem) {
-          return pairIssue(ctx, problem);
+        }).forEach(function (problem) {
+          issues.push(pairIssue(ctx, problem));
         });
-        if (isUniqueRelicId(itemId)) {
-          warnings.push(auditIssue("fixedPool", "固定词条与参数表不符（不视为非法）",
-            "唯一遗物的词条由游戏固定发放；本版参数表对部分唯一遗物（如场景遗物）的记录不准确，已放行。不符项：" +
-            pairIssues.map(function (issue) { return issue.detail; }).join("；"),
-            effects.filter(function (effectId) { return effectId !== -1; })));
-        } else {
-          pairIssues.forEach(function (issue) { issues.push(issue); });
-        }
       }
     }
 

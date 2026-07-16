@@ -484,10 +484,15 @@ try expectAudit(
     saveRelic(id: 2_000_002, effects: [6_003_000, -1, -1]),
     status: .invalid, kinds: ["effectMissing"], "深夜正面词条数量不足"
 )
-// 唯一遗物固定词条与参数表不符 → 降级为警告放行（真实存档实证 1660）
+// 唯一遗物的固定词条被修改 → 非法（参数表的单词条固定池经真实存档交叉验证准确）
 try expectAudit(
     saveRelic(id: 1_660, effects: [7_031_300, 7_060_200, 7_000_802]),
-    status: .valid, kinds: [], warningKinds: ["fixedPool"], "唯一遗物参数表不符降级为警告"
+    status: .invalid, kinds: ["slotMismatch", "slotMismatch", "slotMismatch"], "唯一遗物固定词条被修改判非法"
+)
+// 官方原始词条则核验通过
+try expectAudit(
+    saveRelic(id: 1_660, effects: [6_641_000, 7_000_302, 7_000_402]),
+    status: .valid, kinds: [], "唯一遗物官方固定词条核验通过"
 )
 
 // §4.10 保存顺序

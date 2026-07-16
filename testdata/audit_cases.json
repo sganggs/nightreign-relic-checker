@@ -449,7 +449,7 @@
       "expectWarningKinds": []
     },
     {
-      "name": "fixedPool: 唯一遗物 1660 的固定词条与参数表不符，降级为警告放行（真实存档实证）",
+      "name": "uniqueModified: 唯一遗物 1660 的固定词条被修改（真实存档实证，官方应为 6641000/7000302/7000402）",
       "relic": {
         "itemId": 1660,
         "effects": [
@@ -463,11 +463,13 @@
           -1
         ]
       },
-      "expectStatus": "valid",
-      "expectIssueKinds": [],
-      "expectWarningKinds": [
-        "fixedPool"
-      ]
+      "expectStatus": "invalid",
+      "expectIssueKinds": [
+        "slotMismatch",
+        "slotMismatch",
+        "slotMismatch"
+      ],
+      "expectWarningKinds": []
     },
     {
       "name": "deepCount: 深夜遗物 2000002 应有 3 条正面词条实有 1 条",
@@ -674,7 +676,7 @@
       ]
     },
     {
-      "name": "uniqueDuplicate: 两件唯一遗物 1000 模板不符降级为警告，第 1 件豁免、第 2 件追加",
+      "name": "uniqueDuplicate: 两件唯一遗物 1000 均非法（词条缺失，无 valid 可豁免），全部追加",
       "relics": [
         {
           "itemId": 1000,
@@ -704,8 +706,12 @@
         }
       ],
       "expectKindsPerRelic": [
-        [],
         [
+          "effectMissing",
+          "uniqueDuplicate"
+        ],
+        [
+          "effectMissing",
           "uniqueDuplicate"
         ]
       ]

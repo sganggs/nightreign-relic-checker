@@ -20,7 +20,6 @@ public enum RelicIssueKind: String, Codable, Sendable {
     case curseMismatch
     case wrongOrder
     case uniqueDuplicate
-    case fixedPool
 }
 
 public struct RelicAuditIssue: Codable, Hashable, Sendable, Identifiable {
@@ -259,9 +258,9 @@ public struct RelicAuditor: Sendable {
         }
 
         // 7. 槽池与诅咒配对：深夜遗物按行配对（真实存档实证，参数表中深夜
-        // 遗物行的槽池排列与游戏实际生成不符）；非深夜遗物按参数行模板做
-        // 6 种排列匹配，唯一遗物模板不符时降级为警告放行（本版参数表对
-        // 部分唯一遗物记录不准确）。
+        // 遗物行的槽池排列与游戏实际生成不符）；非深夜遗物（含唯一遗物——
+        // 其槽池为单词条固定池，经真实存档交叉验证是准确的）按参数行模板
+        // 做 6 种排列匹配，不符即非法。
         if info.deep {
             auditDeepRelic(effects: effects, curses: curses, info: info, context: context, issues: &issues)
         } else {
@@ -280,18 +279,7 @@ public struct RelicAuditor: Sendable {
                 let sorted = bestProblems.sorted {
                     $0.rank == $1.rank ? $0.pairIndex < $1.pairIndex : $0.rank < $1.rank
                 }
-                let pairIssues = sorted.map { issue(for: $0, context: context) }
-                if isUniqueRelicID(itemID) {
-                    warnings.append(RelicAuditIssue(
-                        kind: .fixedPool,
-                        title: "固定词条与参数表不符（不视为非法）",
-                        detail: "唯一遗物的词条由游戏固定发放；本版参数表对部分唯一遗物（如场景遗物）的记录不准确，已放行。不符项：" +
-                            pairIssues.map(\.detail).joined(separator: "；"),
-                        effectIDs: effects.filter { $0 != -1 }
-                    ))
-                } else {
-                    issues.append(contentsOf: pairIssues)
-                }
+                issues.append(contentsOf: sorted.map { issue(for: $0, context: context) })
             }
         }
 
