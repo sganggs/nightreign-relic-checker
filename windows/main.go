@@ -21,13 +21,16 @@ import (
 	"nightreign/relicchecker/internal/w32"
 )
 
-const appVersion = "0.1.2"
+const appVersion = "0.2.0"
 
 //go:embed renderer
 var rendererFS embed.FS
 
 //go:embed resources/affixes.json
 var builtInCatalog []byte
+
+//go:embed resources/relics.json
+var builtInRelicData []byte
 
 func init() {
 	// The Win32 message loop and WebView2's STA COM must stay on one thread.
@@ -62,7 +65,7 @@ func main() {
 		fatal(err.Error())
 	}
 
-	if err := registerBindings(w, builtInCatalog); err != nil {
+	if err := registerBindings(w, builtInCatalog, builtInRelicData); err != nil {
 		fatal("无法注册应用接口：" + err.Error())
 	}
 	w.Init(bridgeJS)

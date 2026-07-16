@@ -38,7 +38,14 @@ go install github.com/tc-hib/go-winres@latest
 go generate ./...
 ```
 
-运行测试（依赖 `golang.org/x/sys/windows`，需在 Windows 环境运行）：
+运行审计核心（JS）与存档解析器（Go 子包）测试，任意平台可跑：
+
+```
+node --test tests/core_audit.test.mjs
+go test ./internal/savefile/
+```
+
+运行主包全部测试（依赖 `golang.org/x/sys/windows`，需在 Windows 环境运行）：
 
 ```
 go test ./...
@@ -51,12 +58,15 @@ go test ./...
   加载完成前隐藏窗口、深色背景、绑定函数在后台 goroutine 运行、
   禁用右键菜单 / DevTools / 浏览器快捷键 / 缩放 / 自动填充、拒绝权限请求）。
 - `bindings.go` — `window.nightreign` 桥：loadCatalog / importCatalog /
-  saveCustomCatalog / resetCatalog / exportCatalog（含取消返回值与统一的
-  错误文案）。
+  saveCustomCatalog / resetCatalog / exportCatalog / openSaveFile /
+  loadRelicData（含取消返回值与统一的错误文案）。
+- `internal/savefile` — 存档只读解析器（BND4 容器、AES-128-CBC 解密、
+  遗物记录提取；无平台约束，任意平台可测）；`savefile.go` 为主包薄封装。
 - `catalog.go` — 词条库读写：原子写入（临时文件 + 重命名）与统一的校验、
   错误消息。
 - `internal/w32` — 所需的少量 Win32 绑定（自 jchv/go-webview2 内部包 fork）。
-- `renderer/`、`resources/affixes.json`、`build/icon.ico` — 界面、内置词条库与图标。
+- `renderer/`、`resources/affixes.json`、`resources/relics.json`、`build/icon.ico`
+  — 界面、内置词条库、遗物物品表（存档检查用）与图标。
 - `winres/winres.json` — 图标、版本信息与 per-monitor v2 DPI 清单。
 
 ## 调试

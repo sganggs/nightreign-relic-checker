@@ -46,3 +46,19 @@
 - 未匹配热门项：加快累积绝招量表＋３。
 - 旧站 20 个热门组合中，19 个能唯一还原为 effect ID；其中按 `(sortId, effectId)` 排序正确 19 个，`compatibilityId` 两两不同 19 个。其余 1 个因旧站名称无法唯一映射而未用于结论。
 - 对深夜遗物，本数据保留 A/B/C 池和诅咒标记，但第一版普通检查器不应显示 `isCurse == true` 或 `eligibleNormalCurrent == false` 的记录。
+
+## 遗物物品表（relics.json，v0.2.0 存档检查功能）
+
+`generate_relics.py` 从 Save Editor 同一修订（0d2ad1494c372098e689c23159656df70ff2d76d）生成
+`data/nightreign-relics-v1.03.4.json`（同步内嵌至 Windows / macOS 资源目录）：
+
+- `EquipParamAntique.csv`：1397 件遗物的槽池模板（`attachEffectTableId_1..3` 与
+  `attachEffectTableId_curse1..3`）、颜色（`relicColor`）、深夜标记（`isDeepRelic`）。
+  实测不变量：全部 240 件可随机深夜遗物满足「A 池（2000000）槽数 = 诅咒槽（3000000）数」，
+  即「需诅咒」词条与负面词条按槽位一一配对。
+- `AttachEffectTableParam.csv`：598 个被引用池的可掉落集合（权重过滤规则与
+  `generate_affixes.py` 一致）；与 affixes.json 的 `poolIds` 交叉验证一致。
+- `AntiqueName(.dlc01).fmg.xml`、`AttachEffectName(.dlc01).fmg.xml`：遗物与词条简中名；
+  词条库未收录但被固定池引用的 99 条词条以 `extraAffixes` 形式补充最小元数据。
+- 存档二进制格式（BND4 / AES-128-CBC / 80 字节遗物记录，正面词条偏移 16/20/24、
+  负面词条偏移 56/60/64）依据同修订的 `src/packer/_pc.py` 与 `src/inventory_handler.py`。

@@ -11,6 +11,7 @@ struct RootView: View {
                 case .checker: CheckerView()
                 case .library: AffixLibraryView()
                 case .data: DataSettingsView()
+                case .saveScan: SaveScanView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

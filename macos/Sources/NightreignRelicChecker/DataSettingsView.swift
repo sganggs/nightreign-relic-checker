@@ -175,7 +175,7 @@ struct DataSettingsView: View {
                 .foregroundStyle(AppTheme.amber)
             VStack(alignment: .leading, spacing: 5) {
                 Text("非官方社区工具").font(.subheadline.weight(.semibold))
-                Text("本软件不修改存档，不连接游戏服务器，也不构成官方判定。词条名称与游戏文本权利归其权利方所有；数据可能随更新变化。GPL-3.0 数据增强内容及 MIT 规则实现均已在发行包中保留来源。")
+                Text("本软件不修改存档，不连接游戏服务器，也不构成官方判定。存档检查为只读解析，不会修改存档文件。词条名称与游戏文本权利归其权利方所有；数据可能随更新变化。GPL-3.0 数据增强内容及 MIT 规则实现均已在发行包中保留来源。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

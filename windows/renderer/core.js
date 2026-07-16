@@ -422,6 +422,372 @@
     return catalog;
   }
 
+  // ---- 存档检查：遗物审计（契约 §3/§4，与 macOS 端 RelicAudit 严格同步） ----
+
+  var RELIC_COLOR_LABELS = Object.freeze(["红", "蓝", "黄", "绿", "白"]);
+  var DEEP_SLOT_POOL_IDS = Object.freeze([2000000, 2100000, 2200000]);
+  var SLOT_PERMUTATIONS = Object.freeze([
+    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ]);
+  var PAIR_ISSUE_ORDER = Object.freeze([
+    "effectUnexpected", "effectMissing", "slotMismatch",
+    "curseUnexpected", "curseMissing", "curseSlotEmpty", "curseMismatch",
+  ]);
+  var EMPTY_POOL = new Set();
+
+  function normalizeEffectId(value) {
+    return value == null || value === 0 || value === -1 || value === 0xFFFFFFFF ? -1 : value;
+  }
+
+  function normalizeTriple(values) {
+    var result = [-1, -1, -1];
+    for (var index = 0; index < 3; index += 1) {
+      result[index] = normalizeEffectId(Array.isArray(values) ? values[index] : -1);
+    }
+    return result;
+  }
+
+  function buildRelicIndex(catalog, relicData) {
+    if (!relicData || typeof relicData !== "object" || !Array.isArray(relicData.relics)) {
+      throw new Error("无法读取遗物数据文件");
+    }
+    if (relicData.relicsSchemaVersion !== 1) {
+      throw new Error("不支持的遗物数据版本：" + relicData.relicsSchemaVersion);
+    }
+
+    var affixIndex = new Map();
+    var affixes = catalog && Array.isArray(catalog.affixes) ? catalog.affixes : [];
+    affixes.forEach(function (affix) { affixIndex.set(affix.effectId, affix); });
+    (Array.isArray(relicData.extraAffixes) ? relicData.extraAffixes : []).forEach(function (extra) {
+      if (affixIndex.has(extra.effectId)) return;
+      affixIndex.set(extra.effectId, {
+        effectId: extra.effectId,
+        name: extra.name,
+        sortId: extra.sortId,
+        compatibilityId: extra.compatibilityId,
+        isCurse: false,
+        requiresCurse: false,
+        poolIds: [],
+      });
+    });
+
+    // 防御：槽池模板缺失/畸形时归一为无槽（-1），避免坏数据让整次扫描抛异常
+    function normalizeSlotTriple(values) {
+      var result = [-1, -1, -1];
+      for (var index = 0; index < 3; index += 1) {
+        var value = Array.isArray(values) ? values[index] : -1;
+        result[index] = typeof value === "number" && isFinite(value) ? value : -1;
+      }
+      return result;
+    }
+    var relicsById = new Map();
+    relicData.relics.forEach(function (relic) {
+      if (!relic || typeof relic.id !== "number") return;
+      relicsById.set(relic.id, {
+        id: relic.id,
+        name: typeof relic.name === "string" ? relic.name : "",
+        color: relic.color,
+        deep: relic.deep === true,
+        slots: normalizeSlotTriple(relic.slots),
+        curseSlots: normalizeSlotTriple(relic.curseSlots),
+      });
+    });
+
+    var poolSets = new Map();
+    Object.keys(relicData.pools || {}).forEach(function (key) {
+      poolSets.set(Number(key), new Set(relicData.pools[key]));
+    });
+
+    var deepPoolUnion = new Set();
+    DEEP_SLOT_POOL_IDS.forEach(function (poolId) {
+      (poolSets.get(poolId) || EMPTY_POOL).forEach(function (effectId) { deepPoolUnion.add(effectId); });
+    });
+
+    return Object.freeze({
+      relicsById: relicsById,
+      poolSets: poolSets,
+      deepPoolUnion: deepPoolUnion,
+      affixIndex: affixIndex,
+      relicData: relicData,
+    });
+  }
+
+  function auditIssue(kind, title, detail, effectIds) {
+    return { kind: kind, title: title, detail: detail, effectIds: effectIds.slice() };
+  }
+
+  function describeAffix(ctx, effectId) {
+    var affix = ctx.affixIndex.get(effectId);
+    return affix && affix.name ? affix.name : "词条 #" + effectId;
+  }
+
+  // 宽松口径下，深夜三槽池（A/B/C）取并集；严格口径逐槽取原池（仅用于 strictPool 警告）
+  function rollablePool(ctx, poolId, strictPools) {
+    if (!strictPools && DEEP_SLOT_POOL_IDS.indexOf(poolId) !== -1) {
+      return ctx.deepPoolUnion;
+    }
+    return ctx.poolSets.get(poolId) || EMPTY_POOL;
+  }
+
+  // 契约 §4.7：对 (effect, curse) 三对做 6 种排列，返回问题最少的排列（并列取列表序靠前者）
+  function evaluatePairing(ctx, meta, effects, curses, strictPools) {
+    var best = null;
+    SLOT_PERMUTATIONS.forEach(function (permutation) {
+      var problems = [];
+      for (var pair = 0; pair < 3; pair += 1) {
+        var slot = permutation[pair];
+        var slotPool = meta.slots[slot];
+        var cursePool = meta.curseSlots[slot];
+        var effect = effects[pair];
+        var curse = curses[pair];
+        if (slotPool === -1 && effect !== -1) {
+          problems.push({ kind: "effectUnexpected", pair: pair, effectId: effect });
+        }
+        if (slotPool !== -1 && effect === -1) {
+          problems.push({ kind: "effectMissing", pair: pair, effectId: -1 });
+        }
+        if (slotPool !== -1 && effect !== -1 && !rollablePool(ctx, slotPool, strictPools).has(effect)) {
+          problems.push({ kind: "slotMismatch", pair: pair, effectId: effect });
+        }
+        if (cursePool === -1 && curse !== -1) {
+          problems.push({ kind: "curseUnexpected", pair: pair, effectId: curse });
+        }
+        if (cursePool !== -1 && curse === -1) {
+          var pairedAffix = effect === -1 ? null : ctx.affixIndex.get(effect);
+          if (pairedAffix && pairedAffix.requiresCurse) {
+            problems.push({ kind: "curseMissing", pair: pair, effectId: effect });
+          } else {
+            problems.push({ kind: "curseSlotEmpty", pair: pair, effectId: -1 });
+          }
+        }
+        if (cursePool !== -1 && curse !== -1 && !rollablePool(ctx, cursePool, strictPools).has(curse)) {
+          problems.push({ kind: "curseMismatch", pair: pair, effectId: curse });
+        }
+      }
+      if (best === null || problems.length < best.length) {
+        best = problems;
+      }
+    });
+    return { passed: best.length === 0, problems: best };
+  }
+
+  function pairIssue(ctx, problem) {
+    var line = problem.pair + 1;
+    var ids = problem.effectId === -1 ? [] : [problem.effectId];
+    switch (problem.kind) {
+      case "effectUnexpected":
+        return auditIssue("effectUnexpected", "多余的正面词条",
+          "第 " + line + " 行的正面词条超出该遗物的词条槽：" + describeAffix(ctx, problem.effectId), ids);
+      case "effectMissing":
+        return auditIssue("effectMissing", "正面词条缺失",
+          "第 " + line + " 行缺少正面词条，该遗物的词条槽不允许为空", ids);
+      case "slotMismatch":
+        return auditIssue("slotMismatch", "正面词条不在对应槽池",
+          "第 " + line + " 行的正面词条不在对应槽的可掉落池：" + describeAffix(ctx, problem.effectId), ids);
+      case "curseUnexpected":
+        return auditIssue("curseUnexpected", "多余的负面词条",
+          "第 " + line + " 行不应携带负面词条：" + describeAffix(ctx, problem.effectId), ids);
+      case "curseMissing":
+        return auditIssue("curseMissing", "需诅咒的词条缺少负面词条",
+          "第 " + line + " 行的正面词条需要配对负面词条：" + describeAffix(ctx, problem.effectId), ids);
+      case "curseSlotEmpty":
+        return auditIssue("curseSlotEmpty", "诅咒槽为空",
+          "第 " + line + " 行对应的诅咒槽为空", ids);
+      default:
+        return auditIssue("curseMismatch", "负面词条不在诅咒池",
+          "第 " + line + " 行的负面词条不在诅咒池：" + describeAffix(ctx, problem.effectId), ids);
+    }
+  }
+
+  // 契约 §4：单件遗物审计。输入 {itemId, effects[3], curses[3]}（-1 为空），输出 status/issues/warnings/orderedEffects
+  function auditRelic(relic, ctx) {
+    var issues = [];
+    var warnings = [];
+    var orderedEffects = null;
+    var itemId = relic && Number.isSafeInteger(relic.itemId) ? relic.itemId : -1;
+    var effects = normalizeTriple(relic && relic.effects);
+    var curses = normalizeTriple(relic && relic.curses);
+
+    function finish() {
+      return {
+        status: issues.length > 0 ? "invalid" : "valid",
+        issues: issues,
+        warnings: warnings,
+        orderedEffects: orderedEffects,
+      };
+    }
+
+    // §4.1 未知遗物 ID：无法继续，跳过 2-8
+    var meta = ctx.relicsById.get(itemId);
+    if (!meta) {
+      issues.push(auditIssue("unknownItem", "未知遗物 ID",
+        "遗物 ID " + itemId + " 不在内置遗物表中，无法核对词条槽", []));
+      return finish();
+    }
+
+    // §4.2 / §4.3 ID 区段检查（命中后继续评估）
+    if (itemId >= 20000 && itemId <= 30035) {
+      issues.push(auditIssue("illegalRange", "处于作弊器常用 ID 区段",
+        "遗物 ID " + itemId + " 落在 20000-30035 区段，正常游戏不会产出", []));
+    }
+    if (itemId < 100 || itemId > 2013322) {
+      issues.push(auditIssue("outOfRange", "超出合法遗物 ID 范围",
+        "遗物 ID " + itemId + " 超出 100-2013322 的合法区间", []));
+    }
+
+    // §4.4 未知词条 ID：加入后跳过 5-8
+    var unknownIds = [];
+    effects.concat(curses).forEach(function (effectId) {
+      if (effectId !== -1 && !ctx.affixIndex.has(effectId) && unknownIds.indexOf(effectId) === -1) {
+        unknownIds.push(effectId);
+      }
+    });
+    if (unknownIds.length > 0) {
+      issues.push(auditIssue("unknownEffect", "存在未知词条 ID",
+        "以下词条 ID 不在词条索引中：" + unknownIds.join("、"), unknownIds));
+      return finish();
+    }
+
+    var presentIds = effects.concat(curses).filter(function (effectId) { return effectId !== -1; });
+
+    // §4.5 词条重复
+    var idCounts = new Map();
+    presentIds.forEach(function (effectId) { idCounts.set(effectId, (idCounts.get(effectId) || 0) + 1); });
+    var duplicated = [];
+    idCounts.forEach(function (count, effectId) { if (count > 1) duplicated.push(effectId); });
+    if (duplicated.length > 0) {
+      issues.push(auditIssue("duplicate", "词条重复",
+        "同一词条在一件遗物上重复出现：" + duplicated.map(function (effectId) {
+          return describeAffix(ctx, effectId);
+        }).join("、"), duplicated));
+    }
+
+    // §4.6 互斥词条（compatibilityId == -1 豁免）
+    var compatibilityGroups = new Map();
+    presentIds.forEach(function (effectId) {
+      var affix = ctx.affixIndex.get(effectId);
+      if (affix.compatibilityId === -1) return;
+      if (!compatibilityGroups.has(affix.compatibilityId)) {
+        compatibilityGroups.set(affix.compatibilityId, []);
+      }
+      compatibilityGroups.get(affix.compatibilityId).push(effectId);
+    });
+    // 与 Swift 端一致：按出现顺序去重列出冲突词条
+    var conflictGroupIds = new Set();
+    compatibilityGroups.forEach(function (effectIds, groupId) {
+      if (effectIds.length > 1) conflictGroupIds.add(groupId);
+    });
+    var conflicting = [];
+    var seenConflicting = new Set();
+    presentIds.forEach(function (effectId) {
+      var affix = ctx.affixIndex.get(effectId);
+      if (affix.compatibilityId === -1 || !conflictGroupIds.has(affix.compatibilityId)) return;
+      if (seenConflicting.has(effectId)) return;
+      seenConflicting.add(effectId);
+      conflicting.push(effectId);
+    });
+    if (conflicting.length > 0) {
+      issues.push(auditIssue("conflict", "互斥词条同时出现",
+        "同一互斥池的词条不能同时出现：" + conflicting.map(function (effectId) {
+          return describeAffix(ctx, effectId);
+        }).join("、"), conflicting));
+    }
+
+    // §4.7 槽池与诅咒配对（宽松口径决定 issues）
+    var lenient = evaluatePairing(ctx, meta, effects, curses, false);
+    if (!lenient.passed) {
+      lenient.problems.slice().sort(function (left, right) {
+        var kindDelta = PAIR_ISSUE_ORDER.indexOf(left.kind) - PAIR_ISSUE_ORDER.indexOf(right.kind);
+        return kindDelta !== 0 ? kindDelta : left.pair - right.pair;
+      }).forEach(function (problem) {
+        issues.push(pairIssue(ctx, problem));
+      });
+
+      // §4.8 负面词条数量（仅当 §4.7 未通过时评估）；title/effectIds 与 Swift 端一致
+      var curseRequiringIds = [];
+      effects.forEach(function (effectId) {
+        if (effectId !== -1 && ctx.affixIndex.get(effectId).requiresCurse) curseRequiringIds.push(effectId);
+      });
+      var actualCurses = curses.filter(function (effectId) { return effectId !== -1; }).length;
+      if (curseRequiringIds.length > actualCurses) {
+        issues.push(auditIssue("curseCount",
+          "负面词条数量不足（需 " + curseRequiringIds.length + " 条，实有 " + actualCurses + " 条）",
+          "「需诅咒」词条：" + curseRequiringIds.map(function (effectId) {
+            return describeAffix(ctx, effectId);
+          }).join("、"), curseRequiringIds));
+      }
+    } else if (!evaluatePairing(ctx, meta, effects, curses, true).passed) {
+      // §4.9 严格口径警告（不影响 status）
+      warnings.push(auditIssue("strictPool", "严格槽池口径未通过（宽松口径合法）",
+        "深夜三池并集口径下合法，但逐槽严格口径下所有排列均无法成立", []));
+    }
+
+    // §4.10 保存顺序（仅当 issues 为空时评估）
+    if (issues.length === 0) {
+      var canonical = canonicalOrder(effects.filter(function (effectId) { return effectId !== -1; })
+        .map(function (effectId) { return ctx.affixIndex.get(effectId); }))
+        .map(function (affix) { return affix.effectId; });
+      while (canonical.length < 3) canonical.push(-1);
+      var misordered = effects.some(function (effectId, index) { return effectId !== canonical[index]; });
+      if (misordered) {
+        orderedEffects = canonical;
+        issues.push(auditIssue("wrongOrder", "保存顺序错误",
+          "词条应按 (sortId, effectId) 升序保存、空槽排最后",
+          effects.filter(function (effectId) { return effectId !== -1; })));
+      }
+    }
+
+    return finish();
+  }
+
+  function isUniqueRelicId(itemId) {
+    return (itemId >= 1000 && itemId <= 2100) || (itemId >= 10000 && itemId <= 19999);
+  }
+
+  // 契约 §4 整体检查：同角色内唯一遗物重复持有；除第 1 件 status 为 valid 者外逐件追加 issue（原地修改）
+  function applyUniqueDuplicates(audits, relics) {
+    var groups = new Map();
+    relics.forEach(function (relic, index) {
+      var itemId = relic && relic.itemId;
+      if (!Number.isSafeInteger(itemId) || !isUniqueRelicId(itemId)) return;
+      if (!groups.has(itemId)) groups.set(itemId, []);
+      groups.get(itemId).push(index);
+    });
+    groups.forEach(function (indexes, itemId) {
+      if (indexes.length < 2) return;
+      var kept = -1;
+      indexes.some(function (index) {
+        if (audits[index].status === "valid") {
+          kept = index;
+          return true;
+        }
+        return false;
+      });
+      indexes.forEach(function (index) {
+        if (index === kept) return;
+        audits[index].issues.push(auditIssue("uniqueDuplicate", "唯一遗物重复持有",
+          "同一角色持有多件唯一遗物 #" + itemId + "，正常游戏至多一件", []));
+        audits[index].status = "invalid";
+      });
+    });
+    return audits;
+  }
+
+  // 契约 §3：遗物种类标签（按优先级）
+  function relicKindLabel(itemId, meta) {
+    if (meta && meta.deep === true) return "深夜遗物";
+    if (isUniqueRelicId(itemId)) return "唯一遗物";
+    if (itemId >= 100 && itemId <= 199) return "商店遗物（旧版）";
+    if (itemId >= 200 && itemId <= 299) return "商店遗物";
+    if (itemId >= 1000000 && itemId <= 1009999) return "对局奖励";
+    return "遗物";
+  }
+
+  // 契约 §3：颜色标签（0红 1蓝 2黄 3绿 4白）
+  function relicColorLabel(color) {
+    return RELIC_COLOR_LABELS[color] || "未知";
+  }
+
   return Object.freeze({
     MODES: MODES,
     foldForSearch: foldForSearch,
@@ -433,5 +799,10 @@
     check: check,
     randomCombination: randomCombination,
     validateCatalog: validateCatalog,
+    buildRelicIndex: buildRelicIndex,
+    auditRelic: auditRelic,
+    applyUniqueDuplicates: applyUniqueDuplicates,
+    relicKindLabel: relicKindLabel,
+    relicColorLabel: relicColorLabel,
   });
 });

@@ -9,6 +9,7 @@ final class AppModel: ObservableObject {
         case checker
         case library
         case data
+        case saveScan
 
         var id: String { rawValue }
 
@@ -17,6 +18,7 @@ final class AppModel: ObservableObject {
             case .checker: return "词条检查"
             case .library: return "词条库"
             case .data: return "数据设置"
+            case .saveScan: return "存档检查"
             }
         }
 
@@ -25,6 +27,23 @@ final class AppModel: ObservableObject {
             case .checker: return "checkmark.seal"
             case .library: return "list.bullet.rectangle"
             case .data: return "externaldrive"
+            case .saveScan: return "externaldrive.badge.checkmark"
+            }
+        }
+    }
+
+    enum SaveFilter: String, CaseIterable, Identifiable {
+        case all
+        case invalidOnly
+        case deepOnly
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return "全部"
+            case .invalidOnly: return "仅非法"
+            case .deepOnly: return "深夜遗物"
             }
         }
     }
@@ -46,8 +65,14 @@ final class AppModel: ObservableObject {
     @Published var catalogOrigin = "内置数据"
     @Published var dataMessage = ""
     @Published var loadError: String?
+    @Published var saveReport: SaveScanReport?
+    @Published var saveMessage = ""
+    @Published var saveFilter: SaveFilter = .all
+    @Published var saveSelectedSlot: Int?
 
     let checker = LegalityChecker()
+    private(set) var relicData: RelicCatalog?
+    private(set) var relicDataError: String?
 
     private var byID: [Int: Affix] {
         Dictionary(uniqueKeysWithValues: catalog.affixes.map { ($0.effectID, $0) })
@@ -72,6 +97,12 @@ final class AppModel: ObservableObject {
             }
         } catch {
             loadError = error.localizedDescription
+        }
+
+        do {
+            relicData = try RelicDataLoader.load(from: Self.bundledRelicDataURL())
+        } catch {
+            relicDataError = error.localizedDescription
         }
     }
 
@@ -202,15 +233,96 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func importSave(from url: URL) {
+        guard let relicData else {
+            saveMessage = "遗物数据不可用：" + (relicDataError ?? "未找到 relics.json")
+            return
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let parsed = try SaveFileParser.parse(data: data, fileName: url.lastPathComponent)
+            let context = RelicAuditContext(catalog: catalog, relicData: relicData)
+            let auditor = RelicAuditor()
+            let characters = parsed.characters.map { character in
+                var results = character.relics.map { auditor.audit($0, context: context) }
+                auditor.applyUniqueDuplicates(&results, relics: character.relics)
+                let relics = zip(character.relics, results).map { relic, result in
+                    SaveScanReport.AuditedRelic(
+                        relic: relic,
+                        info: context.relicsByID[relic.itemID],
+                        result: result
+                    )
+                }
+                return SaveScanReport.Character(
+                    slot: character.slot,
+                    name: character.name,
+                    parseError: character.parseError,
+                    relics: relics
+                )
+            }
+            saveReport = SaveScanReport(
+                fileName: parsed.fileName,
+                checksumOk: parsed.checksumOk,
+                affixNames: context.affixIndex.mapValues(\.name),
+                characters: characters
+            )
+            saveSelectedSlot = characters.first?.slot
+            saveFilter = .all
+            saveMessage = ""
+        } catch {
+            saveReport = nil
+            saveSelectedSlot = nil
+            saveMessage = "解析失败：\(error.localizedDescription)"
+        }
+    }
+
     static func bundledCatalogURL() throws -> URL {
         if let url = Bundle.main.url(forResource: "affixes", withExtension: "json") { return url }
         if let url = Bundle.module.url(forResource: "affixes", withExtension: "json") { return url }
         throw CatalogError.unreadable
     }
 
+    static func bundledRelicDataURL() throws -> URL {
+        if let url = Bundle.main.url(forResource: "relics", withExtension: "json") { return url }
+        if let url = Bundle.module.url(forResource: "relics", withExtension: "json") { return url }
+        throw RelicDataError.unreadable
+    }
+
     private static var customCatalogURL: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("NightreignRelicChecker", isDirectory: true)
             .appendingPathComponent("affixes.json")
+    }
+}
+
+struct SaveScanReport {
+    struct AuditedRelic: Identifiable {
+        let relic: SaveRelic
+        let info: RelicInfo?
+        let result: RelicAuditResult
+
+        var id: Int { relic.index }
+        var isDeep: Bool { info?.deep == true }
+        var displayName: String { relicDisplayName(id: relic.itemID, info: info) }
+        var kindLabel: String { relicKindLabel(id: relic.itemID, info: info) }
+    }
+
+    struct Character: Identifiable {
+        let slot: Int
+        let name: String
+        let parseError: String?
+        let relics: [AuditedRelic]
+
+        var id: Int { slot }
+    }
+
+    let fileName: String
+    let checksumOk: Bool
+    let affixNames: [Int: String]
+    let characters: [Character]
+
+    func affixName(_ id: Int) -> String {
+        if let name = affixNames[id], !name.isEmpty { return name }
+        return "未知词条 #\(id)"
     }
 }

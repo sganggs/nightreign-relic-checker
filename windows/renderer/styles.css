@@ -77,6 +77,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .pill--green { color: var(--green); background: var(--green-faint); border-color: rgba(85, 214, 165, .22); }
 .pill--amber { color: var(--amber); background: rgba(238, 193, 109, .09); border-color: rgba(238, 193, 109, .24); }
 .pill--red { color: var(--red); background: var(--red-faint); border-color: rgba(237, 108, 125, .22); }
+.pill--blue { color: #7ab8f5; background: rgba(122, 184, 245, .09); border-color: rgba(122, 184, 245, .24); }
+.pill--gray { color: #cfcedd; background: rgba(207, 206, 221, .08); border-color: rgba(207, 206, 221, .22); }
 
 .checker-grid { display: grid; grid-template-columns: minmax(300px, 1.08fr) minmax(300px, 1.08fr) minmax(235px, .84fr); gap: 16px; align-items: stretch; }
 .card { border: 1px solid var(--border); border-radius: 14px; background: linear-gradient(145deg, rgba(23, 20, 34, .98), rgba(18, 15, 27, .98)); box-shadow: var(--shadow); }
@@ -252,6 +254,41 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .disclaimer-icon { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid rgba(238, 193, 109, .3); border-radius: 50%; color: var(--amber); font-weight: 800; }
 .disclaimer-card h2 { margin: 0 0 4px; font-size: 12px; }
 .disclaimer-card p { margin: 0; color: var(--text-secondary); font-size: 9.5px; line-height: 1.5; }
+
+.save-content { width: min(1180px, 100%); min-width: 850px; margin: 0 auto; padding: 24px 26px 30px; }
+.save-title { margin-bottom: 18px; }
+.save-open-card { padding: 20px; }
+.save-open-row { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+.save-file-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font: 10.5px Consolas, "Microsoft YaHei UI", monospace; user-select: text; }
+.save-checksum { margin-top: 14px; }
+.save-results { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+.save-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; }
+.save-character-field select { min-width: 230px; }
+.save-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.save-filter { margin-left: auto; grid-template-columns: repeat(3, minmax(72px, auto)); }
+.save-notice:empty { display: none; }
+.save-congrats { padding: 10px 13px; border: 1px solid rgba(85, 214, 165, .24); border-radius: 10px; color: var(--green); background: var(--green-faint); font-size: 12px; font-weight: 650; }
+.save-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-items: start; }
+.save-relic { display: flex; flex-direction: column; gap: 9px; padding: 14px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--field); }
+.save-relic--c0 { border-color: rgba(237, 108, 125, .38); }
+.save-relic--c1 { border-color: rgba(122, 184, 245, .38); }
+.save-relic--c2 { border-color: rgba(238, 193, 109, .38); }
+.save-relic--c3 { border-color: rgba(85, 214, 165, .38); }
+.save-relic--c4 { border-color: rgba(207, 206, 221, .32); }
+.save-relic-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.save-relic-head .pill { flex: 0 0 auto; }
+.save-relic-name { min-width: 0; font-size: 12.5px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.save-relic-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.save-relic-slot { margin-left: auto; color: var(--text-tertiary); font: 9.5px Consolas, monospace; }
+.save-affix-list { display: flex; flex-direction: column; gap: 4px; }
+.save-affix-row { display: grid; grid-template-columns: 18px 1fr; align-items: baseline; gap: 7px; font-size: 11px; line-height: 1.5; }
+.save-affix-index { color: var(--purple-soft); text-align: center; font: 650 9.5px Consolas, monospace; }
+.save-affix-text { min-width: 0; overflow-wrap: anywhere; }
+.save-affix-curse { color: #8ea6c8; }
+.save-affix-empty { color: var(--text-tertiary); }
+.save-affix-row--none { grid-template-columns: 1fr; color: var(--text-tertiary); }
+.save-relic-issues { margin-bottom: 0; }
+.save-empty { grid-column: 1 / -1; padding: 44px 0; }
 
 dialog { padding: 0; border: 1px solid var(--border); color: var(--text); background: transparent; box-shadow: 0 26px 80px rgba(0, 0, 0, .65); }
 dialog::backdrop { background: rgba(4, 3, 8, .76); backdrop-filter: blur(3px); }

@@ -31,6 +31,9 @@
         <button class="nav-button" type="button" data-page-target="data" data-testid="nav-data">
           <span aria-hidden="true">▣</span>数据设置
         </button>
+        <button class="nav-button" type="button" data-page-target="save" data-testid="nav-save">
+          <span aria-hidden="true">▤</span>存档检查
+        </button>
       </nav>
       <div class="topbar-spacer"></div>
       <div class="topbar-badges" aria-label="应用状态">
@@ -200,6 +203,43 @@
             <div class="disclaimer-icon">!</div>
             <div><h2>非官方社区工具</h2><p>本软件不修改存档，不连接游戏服务器，也不构成官方判定。词条名称与游戏文本权利归其权利方所有；数据可能随更新变化。GPL-3.0 发行许可及第三方许可均已随发行包保留。</p></div>
           </article>
+        </div>
+      </section>
+
+      <section class="page page--scroll" id="page-save" data-page="save" data-testid="page-save" hidden>
+        <div class="save-content">
+          <header class="title-block save-title">
+            <div class="logo-mark logo-mark--medium" aria-hidden="true"><i></i><i></i><i></i><span>✓</span></div>
+            <div><h1>存档检查</h1><p>读取《黑夜君临》存档，逐件核对全部角色遗物的合法性（含深夜遗物正负词条配对）</p></div>
+          </header>
+
+          <article class="card save-open-card" data-testid="save-open-card">
+            <div class="section-heading">
+              <div class="section-icon">▤</div>
+              <div><h2>选择存档文件</h2><p>支持 .sl2 / .co2；只读解析，不会修改或写入存档文件</p></div>
+            </div>
+            <div class="save-open-row">
+              <button class="button button--primary" type="button" data-action="open-save" data-testid="open-save-button"><span>▤</span>选择存档文件</button>
+              <span class="save-file-meta" data-testid="save-file-meta"></span>
+            </div>
+            <p class="data-message" role="status" aria-live="polite" data-testid="save-message"></p>
+            <p class="data-hint">完全离线本地解析，不上传任何数据。默认打开 %APPDATA%\Nightreign 下的 NR0000.sl2。</p>
+          </article>
+
+          <div class="issue-row issue-row--warning save-checksum" data-testid="save-checksum" hidden>
+            <span class="issue-symbol">△</span>
+            <div><strong>存档校验和异常，结果仅供参考</strong><p>部分条目的完整性校验未通过，可能是存档损坏或版本差异。</p></div>
+          </div>
+
+          <div class="save-results" data-testid="save-results" hidden>
+            <article class="card save-toolbar" data-testid="save-toolbar">
+              <label class="select-field save-character-field"><span class="sr-only">选择角色</span><select data-testid="save-character"></select></label>
+              <div class="save-stats" data-testid="save-stats" aria-label="遗物统计"></div>
+              <div class="segmented-control save-filter" role="radiogroup" aria-label="遗物过滤" data-testid="save-filter"></div>
+            </article>
+            <div class="save-notice" data-testid="save-notice"></div>
+            <div class="save-grid" data-testid="save-relic-grid"></div>
+          </div>
         </div>
       </section>
     </main>

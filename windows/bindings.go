@@ -1,14 +1,19 @@
 // window.nightreign bridge. Replaces the Electron preload + ipcMain pair
-// with the same five methods and identical result shapes.
+// with the same five catalog methods and identical result shapes, plus the
+// two save-check methods (openSaveFile/loadRelicData) added in 0.2.0.
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/ncruces/zenity"
 	"golang.org/x/sys/windows"
+
+	"nightreign/relicchecker/internal/savefile"
 )
 
 // Electron IPC channel names, preserved so rejected-promise messages match
@@ -93,6 +98,12 @@ const bridgeJS = `(function () {
           typeof suggestedName === 'string' ? suggestedName : ''
         );
       });
+    },
+    openSaveFile: function () {
+      return call(function () { return window.__nightreignOpenSaveFile(); });
+    },
+    loadRelicData: function () {
+      return call(function () { return window.__nightreignLoadRelicData(); });
     }
   });
   // Parity with the hardened Electron shell: no popups, and dropping a
@@ -102,7 +113,7 @@ const bridgeJS = `(function () {
   window.addEventListener('drop', function (event) { event.preventDefault(); }, false);
 })();`
 
-func registerBindings(w *shell, builtIn []byte) error {
+func registerBindings(w *shell, builtIn, relicData []byte) error {
 	owner := zenity.Attach(w.Window())
 
 	bind := func(name string, fn interface{}) error { return w.Bind(name, fn) }
@@ -184,6 +195,45 @@ func registerBindings(w *shell, builtIn []byte) error {
 			return exportResult{}, wrapErr(chExport, err)
 		}
 		return exportResult{Canceled: false, FilePath: path}, nil
+	}); err != nil {
+		return err
+	}
+
+	// The two save-check bindings are new in 0.2.0 and have no Electron
+	// history, so their errors are not wrapped in the IPC-channel format.
+
+	if err := bind("__nightreignOpenSaveFile", func() (*savefile.Payload, error) {
+		opts := []zenity.Option{
+			zenity.Title("选择存档文件"),
+			zenity.FileFilters{
+				{Name: "黑夜君临存档", Patterns: []string{"*.sl2", "*.co2"}, CaseFold: true},
+				{Name: "所有文件", Patterns: []string{"*.*"}},
+			},
+			owner,
+		}
+		// Point the dialog at the game's save directory; the trailing
+		// separator marks the path as a directory, not a file name.
+		if dir := saveFileDialogDir(); dir != "" {
+			opts = append(opts, zenity.Filename(dir+string(filepath.Separator)))
+		}
+		path, err := zenity.SelectFile(opts...)
+		if errors.Is(err, zenity.ErrCanceled) {
+			return nil, nil // 取消 → JSON null
+		}
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		return parseSaveFile(data, filepath.Base(path))
+	}); err != nil {
+		return err
+	}
+
+	if err := bind("__nightreignLoadRelicData", func() (json.RawMessage, error) {
+		return json.RawMessage(relicData), nil
 	}); err != nil {
 		return err
 	}

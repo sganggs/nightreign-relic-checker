@@ -4,7 +4,7 @@
 
 > 本工具为非官方社区工具，与 FromSoftware、Bandai Namco Entertainment 及原参考网站无关；游戏名称与游戏内文本的权利归其各自权利方所有。
 
-当前版本：**v0.1.2**。
+当前版本：**v0.2.0**（新增「存档检查」：读取游戏存档一键检查全部遗物，见下文）。
 
 ## 下载
 
@@ -12,8 +12,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `NightreignRelicChecker-Windows-x64-v0.1.2.exe` | **Windows 版**。约 3.8 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
-| `NightreignRelicChecker-macOS-Universal-v0.1.2.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行）。 |
+| `NightreignRelicChecker-Windows-x64-v0.2.0.exe` | **Windows 版**。约 4 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
+| `NightreignRelicChecker-macOS-Universal-v0.2.0.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行）。 |
 
 （GitHub Release 附件名不支持中文，故采用英文文件名。）
 
@@ -29,7 +29,8 @@
 | --- | --- |
 | [`windows/`](windows/) | Windows 版：Go + WebView2 壳，对应 Windows EXE |
 | [`macos/`](macos/) | macOS 版：Swift / SwiftUI |
-| [`data/`](data/) | 各端共用的内置词条库 `nightreign-affixes-v1.03.4.json`，可从应用内“数据设置”重新导入 |
+| [`data/`](data/) | 各端共用的内置词条库 `nightreign-affixes-v1.03.4.json`（可从应用内“数据设置”重新导入）与遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用） |
+| [`testdata/`](testdata/) | 两端校验器共用的对拍用例 |
 
 两个客户端共享同一套判定规则与内置词条库，仅界面容器不同。各目录内有独立的 README 与构建说明：
 
@@ -47,7 +48,21 @@
 
 “普通旧池”对应 1.02 及更早 / 无 DLC 的 290 条可抽词条。随机普通遗物的红、蓝、黄、绿颜色不改变候选集合，因此无需选择颜色。
 
-“深夜正面”会按游戏参数中的七种真实满三槽模板（AAA、AAB、ABB、BBB、AAC、ACC、CCC）预检；完整深夜遗物仍需结合具体遗物 ID、实际槽池模板与全部负面词条验证，软件会明确提示这一限制。
+“深夜正面”会按游戏参数中的七种真实满三槽模板（AAA、AAB、ABB、BBB、AAC、ACC、CCC）预检；完整深夜遗物的逐件校验请使用「存档检查」。
+
+## 存档检查（v0.2.0 新增）
+
+在「存档检查」页选择游戏存档（`NR0000.sl2` / 无缝联机 `.co2`，PC 默认位于 `C:\Users\<用户名>\AppData\Roaming\Nightreign\<SteamID>\`），软件在本地解密并解析全部角色槽的全部遗物，逐件给出合法性报告——**完全离线、只读**，不上传任何数据，也不会修改存档。
+
+对每件遗物按其游戏参数中的真实槽池模板校验：
+
+- 遗物 ID 合法范围与作弊器常用 ID 区段；
+- 正面词条是否属于该遗物对应槽池、`effectId` 查重、互斥词条（`compatibilityId`）查重；
+- 正面词条保存顺序（按 `(overrideEffectId, effectId)` 升序）；
+- **深夜遗物正负词条配对**：「需诅咒」的正面词条（A 池）必须带负面词条、不需诅咒的正面词条不得带负面词条、负面词条须在诅咒池内（游戏参数不变量：每件深夜遗物的诅咒槽数恰等于 A 池槽数）；
+- 唯一遗物（BOSS/事件遗物）重复持有检查。
+
+非法遗物会标出名称、种类（深夜/唯一/商店/对局奖励）、颜色与全部正负词条，并说明具体原因。Windows 与 macOS 两端校验器由同一份用例对拍，行为一致。
 
 ## 数据来源
 

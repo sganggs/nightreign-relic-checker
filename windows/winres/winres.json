@@ -19,15 +19,15 @@
     "#1": {
       "0000": {
         "fixed": {
-          "file_version": "0.1.2.0",
-          "product_version": "0.1.2.0"
+          "file_version": "0.2.0.0",
+          "product_version": "0.2.0.0"
         },
         "info": {
           "0409": {
             "FileDescription": "夜幕验物 - 黑夜君临遗物词条合法性检查工具",
-            "FileVersion": "0.1.2",
+            "FileVersion": "0.2.0",
             "ProductName": "夜幕验物",
-            "ProductVersion": "0.1.2",
+            "ProductVersion": "0.2.0",
             "CompanyName": "Nightreign Relic Checker contributors",
             "LegalCopyright": "GPL-3.0-only · Nightreign Relic Checker contributors",
             "OriginalFilename": "nightreign-relic-checker.exe",
@@ -35,9 +35,9 @@
           },
           "0804": {
             "FileDescription": "夜幕验物 - 黑夜君临遗物词条合法性检查工具",
-            "FileVersion": "0.1.2",
+            "FileVersion": "0.2.0",
             "ProductName": "夜幕验物",
-            "ProductVersion": "0.1.2",
+            "ProductVersion": "0.2.0",
             "CompanyName": "Nightreign Relic Checker contributors",
             "LegalCopyright": "GPL-3.0-only · Nightreign Relic Checker contributors",
             "OriginalFilename": "nightreign-relic-checker.exe",

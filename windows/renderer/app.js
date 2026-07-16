@@ -19,7 +19,14 @@
     importCatalog: function () { return Promise.resolve(null); },
     saveCustomCatalog: function () { return Promise.resolve({ ok: false }); },
     resetCatalog: function () { return Promise.resolve(null); },
-    exportCatalog: function () { return Promise.resolve({ canceled: true }); }
+    exportCatalog: function () { return Promise.resolve({ canceled: true }); },
+    openSaveFile: function () { return Promise.resolve(null); },
+    loadRelicData: function () {
+      return fetch("../resources/relics.json").then(function (response) {
+        if (!response.ok) throw new Error("无法载入内置遗物数据");
+        return response.json();
+      });
+    }
   };
 
   var modeKeys = ["currentNormal", "legacyNormal", "deepPositive", "compatibilityOnly"];
@@ -37,7 +44,17 @@
     libraryQuery: "",
     libraryCategory: "全部",
     libraryOnlyEligible: true,
-    busy: false
+    busy: false,
+    save: {
+      relicData: null,
+      index: null,
+      indexPromise: null,
+      payload: null,
+      audits: [],
+      character: 0,
+      filter: "all",
+      busy: false
+    }
   };
 
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
@@ -310,6 +327,10 @@
     state.result = null;
     state.libraryCategory = "全部";
     state.pickerCategory = "全部";
+    if (state.save.relicData) {
+      state.save.index = Core.buildRelicIndex(state.catalog, state.save.relicData);
+      if (state.save.payload) { state.save.audits = auditCharacters(state.save.payload); renderSave(); }
+    }
     renderAll();
   }
 
@@ -351,11 +372,211 @@
     finally { setBusy(false); }
   }
 
+  // ---- 存档检查 ----
+
+  var SAVE_FILTERS = [
+    { key: "all", label: "全部" },
+    { key: "invalid", label: "仅非法" },
+    { key: "deep", label: "深夜遗物" }
+  ];
+  var RELIC_COLOR_PILLS = ["red", "blue", "amber", "green", "gray"];
+  var normId = function (value) { return value == null || value === 0 || value === -1 || value === 4294967295 ? -1 : value; };
+
+  function setSaveMessage(message, isError) {
+    var element = test("save-message");
+    element.textContent = message || "";
+    element.classList.toggle("is-error", Boolean(isError));
+  }
+
+  function setSaveBusy(value) {
+    state.save.busy = value;
+    test("open-save-button").disabled = value;
+  }
+
+  function ensureRelicIndex() {
+    if (state.save.index) return Promise.resolve(state.save.index);
+    if (!state.save.indexPromise) {
+      state.save.indexPromise = api.loadRelicData().then(function (relicData) {
+        state.save.relicData = relicData;
+        state.save.index = Core.buildRelicIndex(state.catalog, relicData);
+        return state.save.index;
+      }).catch(function (error) {
+        state.save.indexPromise = null;
+        throw error;
+      });
+    }
+    return state.save.indexPromise;
+  }
+
+  function auditCharacters(payload) {
+    return payload.characters.map(function (character) {
+      var relics = character.relics || [];
+      var audits = relics.map(function (relic) { return Core.auditRelic(relic, state.save.index); });
+      Core.applyUniqueDuplicates(audits, relics);
+      return audits;
+    });
+  }
+
+  function saveAffixName(effectId) {
+    var affix = state.save.index.affixIndex.get(effectId);
+    return affix && affix.name ? affix.name : "未知词条 #" + effectId;
+  }
+
+  function relicDisplayName(itemId, meta) {
+    if (!meta) return "未知遗物 #" + itemId;
+    return meta.name || "未命名遗物 #" + itemId;
+  }
+
+  function relicStatusMeta(audit) {
+    if (audit.status === "invalid") return { key: "invalid", label: "非法", pill: "red" };
+    if ((audit.warnings || []).length > 0) return { key: "warning", label: "警告", pill: "amber" };
+    return { key: "valid", label: "合法", pill: "green" };
+  }
+
+  function saveRelicCard(relic, audit, meta) {
+    var status = relicStatusMeta(audit);
+    var pills = pill(Core.relicKindLabel(relic.itemId, meta), "purple");
+    if (meta) {
+      pills += pill(Core.relicColorLabel(meta.color) + "色", RELIC_COLOR_PILLS[meta.color] || "purple");
+      if (meta.deep) pills += pill("深夜", "purple");
+    }
+
+    var lines = [];
+    for (var line = 0; line < 3; line += 1) {
+      var effectId = normId((relic.effects || [])[line]);
+      var curseId = normId((relic.curses || [])[line]);
+      if (effectId === -1 && curseId === -1) continue;
+      var content = effectId === -1
+        ? "<span class='save-affix-empty'>（空）</span>"
+        : esc(saveAffixName(effectId));
+      if (curseId !== -1) content += "<span class='save-affix-curse'>｜" + esc(saveAffixName(curseId)) + "</span>";
+      lines.push("<div class='save-affix-row'><span class='save-affix-index'>" + (line + 1) + "</span><span class='save-affix-text'>" + content + "</span></div>");
+    }
+    if (!lines.length) lines.push("<div class='save-affix-row save-affix-row--none'>（没有词条）</div>");
+
+    var issues = (audit.issues || []).map(function (issue) {
+      return "<div class='issue-row'><span class='issue-symbol'>!</span><div><strong>" + esc(issue.title) + "</strong><p>" + esc(issue.detail) + "</p></div></div>";
+    }).join("");
+    var warnings = (audit.warnings || []).map(function (issue) {
+      return "<div class='issue-row issue-row--warning'><span class='issue-symbol'>△</span><div><strong>" + esc(issue.title) + "</strong><p>" + esc(issue.detail) + "</p></div></div>";
+    }).join("");
+
+    var orderBlock = "";
+    var hasWrongOrder = (audit.issues || []).some(function (issue) { return issue.kind === "wrongOrder"; });
+    if (hasWrongOrder && audit.orderedEffects) {
+      var orderedRows = audit.orderedEffects.map(function (effectId, index) {
+        return "<div class='ordered-row'><span class='order-index'>" + (index + 1) + "</span><span class='order-name'>" +
+          (effectId === -1 ? "（空）" : esc(saveAffixName(effectId))) + "</span></div>";
+      }).join("");
+      orderBlock = "<div class='order-block'><div class='order-heading'><strong>正确的词条顺序</strong><span>sortId → effectId</span></div><div class='order-list'>" + orderedRows + "</div></div>";
+    }
+
+    return "<article class='save-relic save-relic--" + status.key + (meta ? " save-relic--c" + meta.color : "") + "' data-testid='save-relic'>" +
+      "<div class='save-relic-head'><strong class='save-relic-name'>" + esc(relicDisplayName(relic.itemId, meta)) + "</strong>" + pill(status.label, status.pill) + "</div>" +
+      "<div class='save-relic-pills'>" + pills + "<span class='save-relic-slot'>#" + (Number(relic.index) + 1 || "—") + "</span></div>" +
+      "<div class='save-affix-list'>" + lines.join("") + "</div>" +
+      ((issues || warnings) ? "<div class='issues save-relic-issues'>" + issues + warnings + "</div>" : "") +
+      orderBlock +
+      "</article>";
+  }
+
+  function renderSaveRelics() {
+    var payload = state.save.payload;
+    if (!payload) return;
+    var character = payload.characters[state.save.character];
+    var audits = state.save.audits[state.save.character] || [];
+    var relics = (character && character.relics) || [];
+
+    var counts = { total: relics.length, valid: 0, invalid: 0, warning: 0 };
+    audits.forEach(function (audit) { counts[relicStatusMeta(audit).key] += 1; });
+    test("save-stats").innerHTML =
+      pill("遗物 " + counts.total, "purple") +
+      pill("合法 " + counts.valid, "green") +
+      pill("非法 " + counts.invalid, "red") +
+      pill("警告 " + counts.warning, "amber");
+
+    test("save-filter").innerHTML = SAVE_FILTERS.map(function (filter) {
+      var active = filter.key === state.save.filter;
+      return "<button type='button' class='segment-button" + (active ? " is-active" : "") + "' data-save-filter='" + filter.key + "' data-testid='save-filter-" + filter.key + "' role='radio' aria-checked='" + active + "'>" + filter.label + "</button>";
+    }).join("");
+
+    var notice = test("save-notice");
+    var grid = test("save-relic-grid");
+    if (character && character.parseError) {
+      notice.innerHTML = "<div class='issue-row'><span class='issue-symbol'>!</span><div><strong>该槽位解析失败</strong><p>" + esc(character.parseError) + "</p></div></div>";
+      grid.innerHTML = "";
+      return;
+    }
+    notice.innerHTML = counts.total > 0 && counts.invalid === 0
+      ? "<div class='save-congrats' data-testid='save-congrats'>🎉 未发现不合法遗物</div>"
+      : "";
+
+    var cards = [];
+    relics.forEach(function (relic, index) {
+      var audit = audits[index];
+      if (!audit) return;
+      var meta = state.save.index.relicsById.get(relic.itemId);
+      if (state.save.filter === "invalid" && audit.status !== "invalid") return;
+      if (state.save.filter === "deep" && !(meta && meta.deep)) return;
+      cards.push(saveRelicCard(relic, audit, meta));
+    });
+    grid.innerHTML = cards.length ? cards.join("") : (
+      "<div class='empty-state save-empty' data-testid='save-empty'><div class='empty-icon'>" +
+      (state.save.filter === "invalid" ? "🎉" : "⌕") + "</div><h3>" +
+      (state.save.filter === "invalid" ? "未发现不合法遗物" : (counts.total === 0 ? "该角色没有遗物" : "没有符合条件的遗物")) +
+      "</h3></div>");
+  }
+
+  function renderSave() {
+    var payload = state.save.payload;
+    test("save-results").hidden = !payload;
+    test("save-checksum").hidden = !payload || payload.checksumOk !== false;
+    test("save-file-meta").textContent = payload ? payload.fileName || "" : "";
+    if (!payload) return;
+    test("save-character").innerHTML = payload.characters.map(function (character, index) {
+      var label = "槽位 " + (character.slot + 1) + "：" + (character.name || "未命名");
+      if (character.parseError) label += "（解析失败）";
+      return "<option value='" + index + "'" + (index === state.save.character ? " selected" : "") + ">" + esc(label) + "</option>";
+    }).join("");
+    renderSaveRelics();
+  }
+
+  async function openSave() {
+    if (browserPreview) { setSaveMessage("存档检查仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
+    setSaveBusy(true);
+    setSaveMessage("");
+    try {
+      await ensureRelicIndex();
+      var payload = await api.openSaveFile();
+      if (!payload) return;
+      state.save.payload = payload;
+      state.save.audits = auditCharacters(payload);
+      state.save.character = 0;
+      state.save.filter = "all";
+      setSaveMessage("已解析 " + (payload.fileName || "存档") + " · " + payload.characters.length + " 个角色");
+      renderSave();
+    } catch (error) {
+      setSaveMessage("解析失败：" + error.message, true);
+      showToast("解析失败：" + error.message, true);
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
   document.addEventListener("click", function (event) {
     var nav = event.target.closest("[data-page-target]");
-    if (nav) { state.page = nav.dataset.pageTarget; renderNav(); return; }
+    if (nav) {
+      state.page = nav.dataset.pageTarget;
+      renderNav();
+      if (state.page === "save") {
+        ensureRelicIndex().catch(function (error) { setSaveMessage("遗物数据载入失败：" + error.message, true); });
+      }
+      return;
+    }
     var mode = event.target.closest("[data-mode]");
     if (mode) { setMode(mode.dataset.mode); return; }
+    var saveFilter = event.target.closest("[data-save-filter]");
+    if (saveFilter) { state.save.filter = saveFilter.dataset.saveFilter; renderSaveRelics(); return; }
     var clearSlot = event.target.closest("[data-clear-slot]");
     if (clearSlot) { event.stopPropagation(); state.selected[Number(clearSlot.dataset.clearSlot)] = null; state.result = null; renderSlots(); renderResult(); return; }
     var slot = event.target.closest("[data-slot]");
@@ -375,7 +596,13 @@
       case "import": importCatalog(); break;
       case "export": exportCatalog(); break;
       case "reset": browserPreview ? resetCatalog() : test("confirm-dialog").showModal(); break;
+      case "open-save": openSave(); break;
     }
+  });
+
+  test("save-character").addEventListener("change", function (event) {
+    state.save.character = Number(event.target.value);
+    renderSaveRelics();
   });
 
   test("library-search").addEventListener("input", function (event) { state.libraryQuery = event.target.value; renderLibrary(); });

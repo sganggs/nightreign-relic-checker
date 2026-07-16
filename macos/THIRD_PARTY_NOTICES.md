@@ -6,7 +6,12 @@
 
 - 项目：https://github.com/alfizari/Elden-Ring-Nightreign-Save-Editor
 - 数据修订：`0d2ad1494c372098e689c23159656df70ff2d76d`
-- 用途：游戏参数导出、官方简体中文 FMG、合法性实现交叉验证
+- 用途：游戏参数导出、官方简体中文 FMG、合法性实现交叉验证；
+  「存档检查」的存档格式（BND4 容器 / AES-CBC / 遗物记录布局）解析
+  按其实现移植（`RelicCore/SaveFile.swift`），遗物物品表数据（`Resources/relics.json`，
+  由 `EquipParamAntique`、`AttachEffectTableParam`、`AntiqueName` FMG 经
+  `DataSources/generate_relics.py` 生成）与深夜遗物正负词条配对规则
+  亦以其校验器实现为参考
 - 许可：MIT License
 
 MIT License

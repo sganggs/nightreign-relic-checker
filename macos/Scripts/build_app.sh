@@ -24,6 +24,7 @@ lipo -create \
   -output "$CONTENTS/MacOS/NightreignRelicChecker"
 cp "$ROOT/Packaging/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/affixes.json" "$CONTENTS/Resources/affixes.json"
+cp "$ROOT/Sources/NightreignRelicChecker/Resources/relics.json" "$CONTENTS/Resources/relics.json"
 cp "$ROOT/LICENSE" "$CONTENTS/Resources/LICENSE.txt"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$CONTENTS/Resources/THIRD_PARTY_NOTICES.md"
 

@@ -10,7 +10,8 @@
 - 按 `(overrideEffectId, effectId)` 给出正确保存顺序
 - 搜索完整词条库、热门词条快捷填入、合法随机组合
 - 导入 / 导出离线 JSON 词条库
-- 按游戏参数中的七种真实三正面槽位模板预检深夜词条；完整遗物仍需结合具体遗物 ID 与负面词条验证
+- 按游戏参数中的七种真实三正面槽位模板预检深夜词条
+- **存档检查**（v0.2.0）：只读解析 `.sl2` / `.co2` 存档，逐件校验全部角色的全部遗物（含深夜遗物正负词条配对、唯一遗物重复、保存顺序），指出非法遗物的种类与词条
 
 ## 运行
 
@@ -29,7 +30,7 @@ zsh Scripts/build_app.sh
 
 ## 数据更新
 
-应用词条库位于 `Sources/NightreignRelicChecker/Resources/affixes.json`，schema 版本为 1。应用内“数据设置”可以导入相同格式的 JSON。
+应用词条库位于 `Sources/NightreignRelicChecker/Resources/affixes.json`，schema 版本为 1。应用内“数据设置”可以导入相同格式的 JSON。存档检查所用的遗物物品表位于同目录 `relics.json`（由 `DataSources/generate_relics.py` 生成，见 `DataSources/PROVENANCE.md`）。
 
 ## 许可
 
