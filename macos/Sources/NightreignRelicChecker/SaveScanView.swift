@@ -281,6 +281,24 @@ private struct RelicCard: View {
                 SaveIssueRow(issue: issue, warning: true)
             }
 
+            if let official = relic.result.officialEffects {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("该遗物的官方固定词条（可据此改回）")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(AppTheme.purpleSoft)
+                    ForEach(Array(official.filter { $0 != -1 }.enumerated()), id: \.offset) { index, effectID in
+                        Text("\(index + 1). \(report.affixName(effectID)) (\(effectID))")
+                            .font(.system(size: 12))
+                            .foregroundStyle(AppTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppTheme.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.purple.opacity(0.18), lineWidth: 1))
+            }
+
             if let ordered = relic.result.orderedEffects {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("正确的保存顺序")
@@ -306,11 +324,11 @@ private struct RelicCard: View {
         let curse = relic.relic.curses[row]
         return HStack(alignment: .top, spacing: 0) {
             Text(effect == -1 ? "（空）" : report.affixName(effect))
-                .font(.caption)
+                .font(.system(size: 12))
                 .fixedSize(horizontal: false, vertical: true)
             if curse != -1 {
                 Text("｜" + report.affixName(curse))
-                    .font(.caption)
+                    .font(.system(size: 12))
                     .foregroundStyle(Self.curseText)
                     .fixedSize(horizontal: false, vertical: true)
             }

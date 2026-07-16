@@ -470,6 +470,14 @@
       }).join("");
       orderBlock = "<div class='order-block'><div class='order-heading'><strong>正确的词条顺序</strong><span>sortId → effectId</span></div><div class='order-list'>" + orderedRows + "</div></div>";
     }
+    if (audit.officialEffects) {
+      var officialRows = audit.officialEffects.filter(function (effectId) { return effectId !== -1; })
+        .map(function (effectId, index) {
+          return "<div class='ordered-row'><span class='order-index'>" + (index + 1) + "</span><span class='order-name'>" +
+            esc(saveAffixName(effectId)) + " <span class='order-id'>(" + effectId + ")</span></span></div>";
+        }).join("");
+      orderBlock += "<div class='order-block'><div class='order-heading'><strong>该遗物的官方固定词条</strong><span>可据此改回</span></div><div class='order-list'>" + officialRows + "</div></div>";
+    }
 
     return "<article class='save-relic save-relic--" + status.key + (meta ? " save-relic--c" + meta.color : "") + "' data-testid='save-relic'>" +
       "<div class='save-relic-head'><strong class='save-relic-name'>" + esc(relicDisplayName(relic.itemId, meta)) + "</strong>" + pill(status.label, status.pill) + "</div>" +

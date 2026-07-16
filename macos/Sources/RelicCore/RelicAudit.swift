@@ -50,17 +50,21 @@ public struct RelicAuditResult: Codable, Sendable {
     public var issues: [RelicAuditIssue]
     public var warnings: [RelicAuditIssue]
     public var orderedEffects: [Int]?
+    /// 唯一遗物被改动时给出的官方固定词条（按保存顺序，补 -1 到 3 位）。
+    public var officialEffects: [Int]?
 
     public init(
         status: RelicAuditStatus,
         issues: [RelicAuditIssue] = [],
         warnings: [RelicAuditIssue] = [],
-        orderedEffects: [Int]? = nil
+        orderedEffects: [Int]? = nil,
+        officialEffects: [Int]? = nil
     ) {
         self.status = status
         self.issues = issues
         self.warnings = warnings
         self.orderedEffects = orderedEffects
+        self.officialEffects = officialEffects
     }
 }
 
@@ -179,6 +183,7 @@ public struct RelicAuditor: Sendable {
         var issues: [RelicAuditIssue] = []
         var warnings: [RelicAuditIssue] = []
         var orderedEffects: [Int]? = nil
+        var officialEffects: [Int]? = nil
 
         let effects = padded(relic.effects)
         let curses = padded(relic.curses)
@@ -280,6 +285,10 @@ public struct RelicAuditor: Sendable {
                     $0.rank == $1.rank ? $0.pairIndex < $1.pairIndex : $0.rank < $1.rank
                 }
                 issues.append(contentsOf: sorted.map { issue(for: $0, context: context) })
+                // 唯一遗物被改动时给出官方固定词条，便于改回
+                if isUniqueRelicID(itemID) {
+                    officialEffects = officialFixedEffects(info: info, context: context)
+                }
             }
         }
 
@@ -301,8 +310,23 @@ public struct RelicAuditor: Sendable {
             status: issues.isEmpty ? .valid : .invalid,
             issues: issues,
             warnings: warnings,
-            orderedEffects: orderedEffects
+            orderedEffects: orderedEffects,
+            officialEffects: officialEffects
         )
+    }
+
+    /// 唯一遗物的官方固定词条：各槽池均为单词条固定池时可完全确定
+    /// （与 windows/renderer/core.js 的 officialFixedEffects 一致）。
+    private func officialFixedEffects(info: RelicInfo, context: RelicAuditContext) -> [Int]? {
+        var ids: [Int] = []
+        for pool in info.slots where pool != -1 {
+            guard let members = context.pools[pool], members.count == 1, let only = members.first else { return nil }
+            ids.append(only)
+        }
+        guard !ids.isEmpty, ids.allSatisfy({ context.affixIndex[$0] != nil }) else { return nil }
+        var ordered = canonicalEffectOrder(ids + Array(repeating: -1, count: 3 - ids.count), context: context)
+        while ordered.count < 3 { ordered.append(-1) }
+        return ordered
     }
 
     /// 按角色的整体检查：唯一遗物重复持有。对该角色全部遗物的审计结果原地追加。

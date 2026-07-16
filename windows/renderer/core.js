@@ -635,11 +635,32 @@
     }
   }
 
-  // 契约 §4：单件遗物审计。输入 {itemId, effects[3], curses[3]}（-1 为空），输出 status/issues/warnings/orderedEffects
+  // 唯一遗物的官方固定词条：各槽池均为单词条固定池时可完全确定，
+  // 按 (sortId, effectId) 升序补 -1 到 3 位；无法确定返回 null。
+  function officialFixedEffects(ctx, meta) {
+    var ids = [];
+    for (var slot = 0; slot < 3; slot += 1) {
+      var pool = meta.slots[slot];
+      if (pool === -1) continue;
+      var members = ctx.poolSets.get(pool);
+      if (!members || members.size !== 1) return null;
+      ids.push(members.values().next().value);
+    }
+    if (ids.length === 0) return null;
+    var affixes = ids.map(function (effectId) { return ctx.affixIndex.get(effectId); });
+    if (affixes.some(function (affix) { return !affix; })) return null;
+    var ordered = canonicalOrder(affixes).map(function (affix) { return affix.effectId; });
+    while (ordered.length < 3) ordered.push(-1);
+    return ordered;
+  }
+
+  // 契约 §4：单件遗物审计。输入 {itemId, effects[3], curses[3]}（-1 为空），
+  // 输出 status/issues/warnings/orderedEffects/officialEffects
   function auditRelic(relic, ctx) {
     var issues = [];
     var warnings = [];
     var orderedEffects = null;
+    var officialEffects = null;
     var itemId = relic && Number.isSafeInteger(relic.itemId) ? relic.itemId : -1;
     var effects = normalizeTriple(relic && relic.effects);
     var curses = normalizeTriple(relic && relic.curses);
@@ -650,6 +671,7 @@
         issues: issues,
         warnings: warnings,
         orderedEffects: orderedEffects,
+        officialEffects: officialEffects,
       };
     }
 
@@ -743,6 +765,10 @@
         }).forEach(function (problem) {
           issues.push(pairIssue(ctx, problem));
         });
+        // 唯一遗物被改动时给出官方固定词条，便于改回
+        if (isUniqueRelicId(itemId)) {
+          officialEffects = officialFixedEffects(ctx, meta);
+        }
       }
     }
 

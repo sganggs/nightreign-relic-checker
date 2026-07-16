@@ -494,6 +494,20 @@ try expectAudit(
     saveRelic(id: 1_660, effects: [6_641_000, 7_000_302, 7_000_402]),
     status: .valid, kinds: [], "唯一遗物官方固定词条核验通过"
 )
+// 被改动的唯一遗物应给出官方固定词条（便于改回）；合法时不给出
+let modified1660 = auditor.audit(
+    saveRelic(id: 1_660, effects: [7_031_300, 7_060_200, 7_000_802]),
+    context: auditContext
+)
+try expect(
+    modified1660.officialEffects == [6_641_000, 7_000_302, 7_000_402],
+    "被改动的 1660 应给出官方固定词条，实际 \(String(describing: modified1660.officialEffects))"
+)
+let intact1660 = auditor.audit(
+    saveRelic(id: 1_660, effects: [6_641_000, 7_000_302, 7_000_402]),
+    context: auditContext
+)
+try expect(intact1660.officialEffects == nil, "未被改动的唯一遗物不应给出官方词条块")
 
 // §4.10 保存顺序
 let wrongOrderResult = auditor.audit(

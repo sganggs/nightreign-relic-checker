@@ -12,8 +12,8 @@ enum AppTheme {
     static let green = Color(red: 0.22, green: 0.78, blue: 0.49)
     static let amber = Color(red: 0.95, green: 0.67, blue: 0.22)
     static let red = Color(red: 0.95, green: 0.35, blue: 0.39)
-    static let secondaryText = Color.white.opacity(0.58)
-    static let tertiaryText = Color.white.opacity(0.38)
+    static let secondaryText = Color.white.opacity(0.68)
+    static let tertiaryText = Color.white.opacity(0.48)
 }
 
 struct CardModifier: ViewModifier {

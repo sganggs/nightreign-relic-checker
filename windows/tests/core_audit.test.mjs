@@ -120,3 +120,12 @@ test("用例覆盖契约 §4 全部 kind", () => {
   }
   assert.ok(casesDoc.cases.length >= 14, "对拍用例应不少于 14 例");
 });
+
+test("被改动的唯一遗物给出官方固定词条，合法时不给出", () => {
+  const modified = Core.auditRelic(
+    { itemId: 1660, effects: [7031300, 7060200, 7000802], curses: [-1, -1, -1] }, ctx);
+  assert.deepStrictEqual(modified.officialEffects, [6641000, 7000302, 7000402]);
+  const intact = Core.auditRelic(
+    { itemId: 1660, effects: [6641000, 7000302, 7000402], curses: [-1, -1, -1] }, ctx);
+  assert.strictEqual(intact.officialEffects, null);
+});

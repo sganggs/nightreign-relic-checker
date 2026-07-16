@@ -8,8 +8,8 @@ final class AppModel: ObservableObject {
     enum Page: String, CaseIterable, Identifiable {
         case checker
         case library
-        case data
         case saveScan
+        case data
 
         var id: String { rawValue }
 
