@@ -377,6 +377,7 @@
   var SAVE_FILTERS = [
     { key: "all", label: "全部" },
     { key: "invalid", label: "仅非法" },
+    { key: "warned", label: "仅警告" },
     { key: "deep", label: "深夜遗物" }
   ];
   var RELIC_COLOR_PILLS = ["red", "blue", "amber", "green", "gray"];
@@ -517,13 +518,16 @@
       if (!audit) return;
       var meta = state.save.index.relicsById.get(relic.itemId);
       if (state.save.filter === "invalid" && audit.status !== "invalid") return;
+      if (state.save.filter === "warned" && audit.warnings.length === 0) return;
       if (state.save.filter === "deep" && !(meta && meta.deep)) return;
       cards.push(saveRelicCard(relic, audit, meta));
     });
     grid.innerHTML = cards.length ? cards.join("") : (
       "<div class='empty-state save-empty' data-testid='save-empty'><div class='empty-icon'>" +
       (state.save.filter === "invalid" ? "🎉" : "⌕") + "</div><h3>" +
-      (state.save.filter === "invalid" ? "未发现不合法遗物" : (counts.total === 0 ? "该角色没有遗物" : "没有符合条件的遗物")) +
+      (state.save.filter === "invalid" ? "未发现不合法遗物"
+        : state.save.filter === "warned" ? "没有带警告的遗物"
+        : (counts.total === 0 ? "该角色没有遗物" : "没有符合条件的遗物")) +
       "</h3></div>");
   }
 

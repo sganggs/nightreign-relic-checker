@@ -161,7 +161,9 @@ struct SaveScanView: View {
 
             if filtered.isEmpty {
                 EmptyStateView(
-                    title: model.saveFilter == .invalidOnly ? "🎉 未发现不合法遗物" : "没有符合条件的遗物",
+                    title: model.saveFilter == .invalidOnly ? "🎉 未发现不合法遗物"
+                        : model.saveFilter == .warnedOnly ? "没有带警告的遗物"
+                        : "没有符合条件的遗物",
                     symbol: model.saveFilter == .invalidOnly ? "checkmark.seal" : "shippingbox",
                     detail: model.saveFilter == .deepOnly
                         ? "该角色没有持有深夜遗物。"
@@ -191,6 +193,7 @@ struct SaveScanView: View {
         switch model.saveFilter {
         case .all: return relics
         case .invalidOnly: return relics.filter { $0.result.status == .invalid }
+        case .warnedOnly: return relics.filter { !$0.result.warnings.isEmpty }
         case .deepOnly: return relics.filter(\.isDeep)
         }
     }
