@@ -21,7 +21,7 @@ import (
 	"nightreign/relicchecker/internal/w32"
 )
 
-const appVersion = "0.2.0"
+const appVersion = "0.2.1"
 
 //go:embed renderer
 var rendererFS embed.FS

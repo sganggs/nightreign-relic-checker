@@ -53,6 +53,7 @@
       audits: [],
       character: 0,
       filter: "all",
+      query: "",
       busy: false
     }
   };
@@ -427,6 +428,16 @@
     return meta.name || "未命名遗物 #" + itemId;
   }
 
+  // 遗物卡搜索文本：名称、种类、ID、全部正负词条名与 ID
+  function relicSearchText(relic, meta) {
+    var parts = [relicDisplayName(relic.itemId, meta), String(relic.itemId), Core.relicKindLabel(relic.itemId, meta)];
+    relic.effects.concat(relic.curses).forEach(function (effectId) {
+      if (effectId === -1) return;
+      parts.push(saveAffixName(effectId), String(effectId));
+    });
+    return Core.foldForSearch(parts.join(" "));
+  }
+
   function relicStatusMeta(audit) {
     if (audit.status === "invalid") return { key: "invalid", label: "非法", pill: "red" };
     if ((audit.warnings || []).length > 0) return { key: "warning", label: "警告", pill: "amber" };
@@ -518,6 +529,7 @@
       ? "<div class='save-congrats' data-testid='save-congrats'>🎉 未发现不合法遗物</div>"
       : "";
 
+    var needle = Core.foldForSearch(state.save.query || "");
     var cards = [];
     relics.forEach(function (relic, index) {
       var audit = audits[index];
@@ -525,6 +537,7 @@
       var meta = state.save.index.relicsById.get(relic.itemId);
       if (state.save.filter === "invalid" && audit.status !== "invalid") return;
       if (state.save.filter === "deep" && !(meta && meta.deep)) return;
+      if (needle && relicSearchText(relic, meta).indexOf(needle) === -1) return;
       cards.push(saveRelicCard(relic, audit, meta));
     });
     grid.innerHTML = cards.length ? cards.join("") : (
@@ -560,6 +573,8 @@
       state.save.audits = auditCharacters(payload);
       state.save.character = 0;
       state.save.filter = "all";
+      state.save.query = "";
+      test("save-search").value = "";
       setSaveMessage("已解析 " + (payload.fileName || "存档") + " · " + payload.characters.length + " 个角色");
       renderSave();
     } catch (error) {
@@ -617,6 +632,7 @@
   test("library-mode").addEventListener("change", function (event) { setMode(event.target.value); });
   test("library-eligible-toggle").addEventListener("change", function (event) { state.libraryOnlyEligible = event.target.checked; renderLibrary(); });
   test("picker-search").addEventListener("input", function (event) { state.pickerQuery = event.target.value; renderPicker(); });
+  test("save-search").addEventListener("input", function (event) { state.save.query = event.target.value; renderSaveRelics(); });
   test("picker-category").addEventListener("change", function (event) { state.pickerCategory = event.target.value; renderPicker(); });
   test("picker-show-unavailable").addEventListener("change", function (event) { state.pickerShowUnavailable = event.target.checked; renderPicker(); });
   test("confirm-dialog").addEventListener("close", function (event) { if (event.target.returnValue === "confirm") resetCatalog(); });

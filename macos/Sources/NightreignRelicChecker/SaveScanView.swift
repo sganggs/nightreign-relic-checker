@@ -122,6 +122,17 @@ struct SaveScanView: View {
             }
 
             HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(AppTheme.secondaryText)
+                TextField("搜索遗物名、词条名或 ID", text: $model.saveQuery)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.border, lineWidth: 1))
+
+            HStack(spacing: 8) {
                 Pill(text: "遗物总数 \(total)", color: AppTheme.purpleSoft, symbol: "shippingbox")
                 Pill(text: "合法 \(total - invalid)", color: AppTheme.green, symbol: "checkmark.circle")
                 Pill(text: "非法 \(invalid)", color: AppTheme.red, symbol: "xmark.octagon")
@@ -186,11 +197,25 @@ struct SaveScanView: View {
     }
 
     private func filteredRelics(_ relics: [SaveScanReport.AuditedRelic]) -> [SaveScanReport.AuditedRelic] {
+        var result: [SaveScanReport.AuditedRelic]
         switch model.saveFilter {
-        case .all: return relics
-        case .invalidOnly: return relics.filter { $0.result.status == .invalid }
-        case .deepOnly: return relics.filter(\.isDeep)
+        case .all: result = relics
+        case .invalidOnly: result = relics.filter { $0.result.status == .invalid }
+        case .deepOnly: result = relics.filter(\.isDeep)
         }
+        let needle = model.saveQuery.foldedForSearch
+        guard !needle.isEmpty, let report = model.saveReport else { return result }
+        return result.filter { searchText(for: $0, report: report).contains(needle) }
+    }
+
+    /// 遗物卡搜索文本：名称、种类、ID、全部正负词条名与 ID（与 Windows 端一致）
+    private func searchText(for relic: SaveScanReport.AuditedRelic, report: SaveScanReport) -> String {
+        var parts = [relic.displayName, String(relic.relic.itemID), relic.kindLabel]
+        for effectID in relic.relic.effects + relic.relic.curses where effectID != -1 {
+            parts.append(report.affixName(effectID))
+            parts.append(String(effectID))
+        }
+        return parts.joined(separator: " ").foldedForSearch
     }
 
     private func chooseSaveFile() {

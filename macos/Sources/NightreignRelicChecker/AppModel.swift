@@ -68,6 +68,7 @@ final class AppModel: ObservableObject {
     @Published var saveReport: SaveScanReport?
     @Published var saveMessage = ""
     @Published var saveFilter: SaveFilter = .all
+    @Published var saveQuery = ""
     @Published var saveSelectedSlot: Int?
 
     let checker = LegalityChecker()
@@ -268,6 +269,7 @@ final class AppModel: ObservableObject {
             )
             saveSelectedSlot = characters.first?.slot
             saveFilter = .all
+            saveQuery = ""
             saveMessage = ""
         } catch {
             saveReport = nil

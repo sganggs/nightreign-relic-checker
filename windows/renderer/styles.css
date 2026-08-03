@@ -263,6 +263,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .save-checksum { margin-top: 14px; }
 .save-results { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
 .save-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; }
+.save-search-field { flex: 1 1 230px; min-width: 200px; }
 .save-character-field select { min-width: 230px; }
 .save-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .save-filter { margin-left: auto; grid-template-columns: repeat(3, minmax(72px, auto)); }
