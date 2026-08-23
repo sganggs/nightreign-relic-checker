@@ -10,3 +10,12 @@ macos/build/
 
 # 构建产物
 *.exe
+
+# Android / Gradle
+android/.gradle/
+android/.kotlin/
+android/.idea/
+android/local.properties
+android/**/build/
+android/*.iml
+android/**/*.iml

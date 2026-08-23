@@ -4,7 +4,7 @@
 
 > 本工具为非官方社区工具，与 FromSoftware、Bandai Namco Entertainment 及原参考网站无关；游戏名称与游戏内文本的权利归其各自权利方所有。
 
-当前版本：**v0.2.0**（新增「存档检查」：读取游戏存档一键检查全部遗物，见下文）。
+当前版本：**v0.2.1**（存档检查新增搜索；新增 Android 手机版首版）。
 
 ## 下载
 
@@ -12,8 +12,9 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `NightreignRelicChecker-Windows-x64-v0.2.0.exe` | **Windows 版**。约 4 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
-| `NightreignRelicChecker-macOS-Universal-v0.2.0.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行）。 |
+| `NightreignRelicChecker-Windows-x64-v0.2.1.exe` | **Windows 版**。约 4 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
+| `NightreignRelicChecker-macOS-Universal-v0.2.1.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行）。 |
+| `NightreignRelicChecker-Android-v0.2.1.apk` | Android 8.0+ 手机版：三词条手动检查与词条库（暂无存档检查），自签名安装包。 |
 
 （GitHub Release 附件名不支持中文，故采用英文文件名。）
 
@@ -29,13 +30,17 @@
 | --- | --- |
 | [`windows/`](windows/) | Windows 版：Go + WebView2 壳，对应 Windows EXE |
 | [`macos/`](macos/) | macOS 版：Swift / SwiftUI |
+| [`android/`](android/) | Android 手机版：Kotlin / Jetpack Compose / Material 3；首版提供手动验物、词条库与离线说明 |
 | [`data/`](data/) | 各端共用的内置词条库 `nightreign-affixes-v1.03.4.json`（可从应用内“数据设置”重新导入）与遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用） |
 | [`testdata/`](testdata/) | 两端校验器共用的对拍用例 |
 
-两个客户端共享同一套判定规则与内置词条库，仅界面容器不同。各目录内有独立的 README 与构建说明：
+三个客户端共享同一套判定规则与内置词条库，仅界面容器不同。各目录内有独立的 README 与构建说明：
 
 - **Windows 版**（Go 1.25+，纯 Go 构建）：`go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe`
 - **macOS 版**（macOS 13+，Swift）：`swift run RelicCoreChecks && zsh Scripts/build_app.sh`
+- **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`
+
+Android 首版专注手机化的三词条检查与词条库，尚未移植桌面端 `.sl2/.co2` 存档解析；详细边界见 [`android/README.md`](android/README.md)。
 
 ## 判定规则
 

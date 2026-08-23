@@ -54,11 +54,11 @@
 
 - `EquipParamAntique.csv`：1397 件遗物的槽池模板（`attachEffectTableId_1..3` 与
   `attachEffectTableId_curse1..3`）、颜色（`relicColor`）、深夜标记（`isDeepRelic`）。
-  实测不变量：全部 240 件可随机深夜遗物满足「A 池（2000000）槽数 = 诅咒槽（3000000）数」，
+  当前数据共标记 222 件深夜遗物；真实存档验证支持「A 池（2000000）槽数 = 诅咒槽（3000000）数」，
   即「需诅咒」词条与负面词条按槽位一一配对。
 - `AttachEffectTableParam.csv`：598 个被引用池的可掉落集合（权重过滤规则与
   `generate_affixes.py` 一致）；与 affixes.json 的 `poolIds` 交叉验证一致。
 - `AntiqueName(.dlc01).fmg.xml`、`AttachEffectName(.dlc01).fmg.xml`：遗物与词条简中名；
-  词条库未收录但被固定池引用的 99 条词条以 `extraAffixes` 形式补充最小元数据。
+  词条库未收录但被遗物池引用的 1552 条词条以 `extraAffixes` 形式补充最小元数据。
 - 存档二进制格式（BND4 / AES-128-CBC / 80 字节遗物记录，正面词条偏移 16/20/24、
   负面词条偏移 56/60/64）依据同修订的 `src/packer/_pc.py` 与 `src/inventory_handler.py`。
