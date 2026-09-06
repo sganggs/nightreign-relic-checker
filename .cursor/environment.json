@@ -1,0 +1,21 @@
+{
+  "name": "Nightreign Relic Checker",
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "renderer-preview",
+      "command": "cd windows && python3 -m http.server 8123",
+      "description": "Static server for the Windows client's web renderer. Open http://localhost:8123/renderer/index.html to run the affix checker / affix library UI in a browser (built-in browser-preview mode; save-file features need the Windows WebView2 shell)."
+    }
+  ],
+  "ports": [
+    {
+      "name": "renderer-preview",
+      "port": 8123
+    }
+  ]
+}
