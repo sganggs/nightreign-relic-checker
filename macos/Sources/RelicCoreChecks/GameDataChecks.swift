@@ -14,7 +14,7 @@ private let gameDataChecks: [(name: String, run: () throws -> Int)] = [
     ("首领数据字段完整性", checkBossData),
     ("词条反查", runAffixLookupChecks),
     ("存档页：自动定位 / 报告导出 / 存档对比", checkSaveScanFeatures),
-    // ("技能 / 增益数据字段完整性", checkSkillAndBuffData),
+    ("增伤排名：选段 / 伤害构成 / 倍率排名 / 叠加组合", runBuffRankerChecks),
 ]
 
 /// 由 main.swift 在全部既有检查之后调用；返回新增的校验条数。
