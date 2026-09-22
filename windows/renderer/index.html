@@ -231,11 +231,13 @@
               <div><h2>选择存档文件</h2><p>支持 .sl2 / .co2；只读解析，不会修改或写入存档文件</p></div>
             </div>
             <div class="save-open-row">
-              <button class="button button--primary" type="button" data-action="open-save" data-testid="open-save-button"><span>▤</span>选择存档文件</button>
+              <button class="button button--primary" type="button" data-action="open-save" data-save-busy data-testid="open-save-button"><span>▤</span>选择存档文件</button>
+              <button class="button button--secondary" type="button" data-action="locate-save" data-save-busy data-testid="locate-save-button"><span>⌖</span>自动查找</button>
               <span class="save-file-meta" data-testid="save-file-meta"></span>
             </div>
             <p class="data-message" role="status" aria-live="polite" data-testid="save-message"></p>
-            <p class="data-hint">完全离线本地解析，不上传任何数据。默认打开 %APPDATA%\Nightreign 下的 NR0000.sl2。</p>
+            <div class="save-locate" data-testid="save-locate" hidden></div>
+            <p class="data-hint">完全离线本地解析，不上传任何数据。默认打开 %APPDATA%\Nightreign 下的 NR0000.sl2；也可以把 .sl2 / .co2 文件直接拖到本页任意位置。</p>
           </article>
 
           <div class="issue-row issue-row--warning save-checksum" data-testid="save-checksum" hidden>
@@ -244,6 +246,18 @@
           </div>
 
           <div class="save-results" data-testid="save-results" hidden>
+            <article class="card save-actions" data-testid="save-actions">
+              <div class="save-actions-copy">
+                <strong>检查结果</strong>
+                <span>导出报告留档，或和另一份存档逐件对比</span>
+              </div>
+              <div class="save-actions-buttons">
+                <button class="button button--secondary" type="button" data-action="export-save-report" data-save-busy data-testid="export-report-button"><span>↧</span>导出报告</button>
+                <button class="button button--secondary" type="button" data-action="export-save-csv" data-save-busy data-testid="export-csv-button"><span>▦</span>导出 CSV</button>
+                <button class="button button--secondary" type="button" data-action="compare-save" data-save-busy data-testid="compare-save-button"><span>⇄</span>对比另一份存档</button>
+              </div>
+            </article>
+            <div class="save-compare" data-testid="save-compare" hidden></div>
             <article class="card save-toolbar" data-testid="save-toolbar">
               <label class="select-field save-character-field"><span class="sr-only">选择角色</span><select data-testid="save-character"></select></label>
               <div class="save-stats" data-testid="save-stats" aria-label="遗物统计"></div>
@@ -253,6 +267,9 @@
             <div class="save-notice" data-testid="save-notice"></div>
             <div class="save-grid" data-testid="save-relic-grid"></div>
           </div>
+        </div>
+        <div class="save-drop-overlay" data-testid="save-drop-overlay" hidden aria-hidden="true">
+          <div class="save-drop-card"><strong>松开即可解析存档</strong><span>支持 .sl2 / .co2，只读解析</span></div>
         </div>
       </section>
 
@@ -313,6 +330,7 @@
   </div>
 
   <script src="core.js" defer></script>
+  <script src="savediff.js" defer></script>
   <script src="pages/bosses.js" defer></script>
   <script src="pages/lookup.js" defer></script>
   <script src="pages/ranker.js" defer></script>

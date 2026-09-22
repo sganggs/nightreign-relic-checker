@@ -368,3 +368,65 @@ dialog::backdrop { background: rgba(4, 3, 8, .76); backdrop-filter: blur(3px); }
 .page-placeholder-card { padding: 20px; }
 .page-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 0; color: var(--text-secondary); font-size: 12px; }
 .page-error { margin: 0; padding: 24px 26px; color: var(--red); font-size: 12px; }
+
+/* ---- 存档页增强：自动查找 / 拖拽打开 / 导出报告 / 存档对比 / 词条说明 ---- */
+.save-content { position: relative; }
+.save-content.is-dragover { outline: 2px dashed var(--purple-soft); outline-offset: -10px; border-radius: 14px; }
+
+.save-locate { margin-top: 14px; }
+.save-locate-empty { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); }
+.save-locate-empty strong { display: block; font-size: 12.5px; }
+.save-locate-empty p { margin: 5px 0 0; color: var(--text-secondary); font-size: 11.5px; line-height: 1.6; }
+.save-locate-list { display: flex; flex-direction: column; gap: 8px; }
+.save-locate-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); }
+.save-locate-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.save-locate-copy strong { font-size: 12.5px; }
+.save-locate-copy span { color: var(--text-secondary); font-size: 11px; }
+.save-locate-copy code { overflow: hidden; color: var(--text-tertiary); font: 10px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
+.save-locate-row .button { flex: 0 0 auto; }
+
+.save-drop-overlay { position: fixed; inset: 66px 0 0; z-index: 20; display: grid; place-items: center; background: rgba(9, 8, 15, .74); pointer-events: none; }
+.save-drop-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 26px 40px; border: 2px dashed var(--purple-soft); border-radius: 16px; background: var(--card); box-shadow: var(--shadow); }
+.save-drop-card strong { font-size: 15px; }
+.save-drop-card span { color: var(--text-secondary); font-size: 12px; }
+
+.save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 14px; }
+.save-actions-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.save-actions-copy strong { font-size: 13px; }
+.save-actions-copy span { color: var(--text-secondary); font-size: 11.5px; }
+.save-actions-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+
+.save-diff-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+.save-diff-card .section-heading { margin-bottom: 0; }
+.save-diff-card .section-heading > .button { flex: 0 0 auto; margin-left: auto; }
+.save-diff-totals { display: flex; flex-wrap: wrap; gap: 7px; }
+.save-diff-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.save-diff-tools .segmented-control { grid-template-columns: repeat(3, minmax(72px, auto)); }
+.save-diff-search-field { flex: 1 1 220px; min-width: 180px; height: 34px; }
+.save-diff-list { display: flex; flex-direction: column; gap: 12px; }
+.save-diff-character { padding: 12px 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--field); }
+.save-diff-character-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 9px; font-size: 12.5px; }
+.save-diff-note { color: var(--text-secondary); font-size: 11px; }
+.save-diff-counts { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.save-diff-group { margin-top: 8px; }
+.save-diff-group h4 { margin: 0 0 6px; color: var(--text-secondary); font-size: 11.5px; font-weight: 700; }
+.save-diff-row { display: grid; grid-template-columns: 18px 1fr; align-items: start; gap: 8px; padding: 7px 9px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--field-soft); }
+.save-diff-row + .save-diff-row { margin-top: 6px; }
+.save-diff-row--added { border-color: rgba(85, 214, 165, .3); }
+.save-diff-row--removed { border-color: rgba(237, 108, 125, .28); }
+.save-diff-row--added .save-diff-sign { color: var(--green); }
+.save-diff-row--removed .save-diff-sign { color: var(--red); }
+.save-diff-sign { text-align: center; font: 700 12px Consolas, monospace; }
+.save-diff-copy { min-width: 0; }
+.save-diff-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; }
+.save-diff-count { color: var(--amber); font: 650 11px Consolas, monospace; }
+.save-diff-id { margin-left: auto; color: var(--text-tertiary); font: 10px Consolas, monospace; }
+.save-diff-affixes { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 11.5px; line-height: 1.55; }
+.save-diff-more { margin: 6px 0 0; color: var(--text-tertiary); font-size: 11px; }
+.save-diff-same { margin: 0; color: var(--text-secondary); font-size: 12px; }
+
+.save-affix-name--explain { padding: 0; border: 0; border-bottom: 1px dotted var(--text-tertiary); background: none; color: inherit; font: inherit; text-align: left; cursor: help; }
+.save-affix-name--explain:hover, .save-affix-name--explain.is-open { border-bottom-color: var(--purple-soft); color: var(--purple-soft); }
+.save-affix-mark { margin-left: 3px; color: var(--text-tertiary); font: 650 9px Consolas, monospace; vertical-align: super; }
+.save-affix-name--explain.is-open .save-affix-mark { color: var(--purple-soft); }
+.save-affix-note { display: block; margin: 3px 0 4px; padding: 5px 8px; border-left: 2px solid var(--purple); border-radius: 0 7px 7px 0; background: var(--purple-faint); color: var(--text-secondary); font-size: 11px; line-height: 1.55; }

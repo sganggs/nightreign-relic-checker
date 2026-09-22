@@ -1,6 +1,8 @@
 // window.nightreign bridge. Replaces the Electron preload + ipcMain pair
 // with the same five catalog methods and identical result shapes, plus the
-// two save-check methods (openSaveFile/loadRelicData) added in 0.2.0.
+// two save-check methods (openSaveFile/loadRelicData) added in 0.2.0 and the
+// save-page additions (locateSaveFiles/openLocatedSave/parseSaveData/
+// exportText) that have no Electron history.
 package main
 
 import (
@@ -9,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ncruces/zenity"
 	"golang.org/x/sys/windows"
@@ -101,6 +104,32 @@ const bridgeJS = `(function () {
     },
     openSaveFile: function () {
       return call(function () { return window.__nightreignOpenSaveFile(); });
+    },
+    // 自动查找：列出 %APPDATA%\Nightreign\<Steam ID>\ 下的 .sl2/.co2；
+    // openLocatedSave 只接受列表里出现过的路径。
+    locateSaveFiles: function () {
+      return call(function () { return window.__nightreignLocateSaveFiles(); });
+    },
+    openLocatedSave: function (path) {
+      return call(function () { return window.__nightreignOpenLocatedSave(String(path == null ? '' : path)); });
+    },
+    // 拖拽打开：WebView2 里拿不到 File.path，渲染层把文件读成 base64 送过来。
+    parseSaveData: function (base64, fileName) {
+      return call(function () {
+        return window.__nightreignParseSaveData(
+          String(base64 == null ? '' : base64),
+          typeof fileName === 'string' ? fileName : ''
+        );
+      });
+    },
+    // 导出报告：把纯文本 / CSV 通过保存对话框写到用户选的位置。
+    exportText: function (defaultName, content) {
+      return call(function () {
+        return window.__nightreignExportText(
+          typeof defaultName === 'string' ? defaultName : '',
+          String(content == null ? '' : content)
+        );
+      });
     },
     loadRelicData: function () {
       return call(function () { return window.__nightreignLoadRelicData(); });
@@ -233,6 +262,77 @@ func registerBindings(w *shell, builtIn, relicData []byte, gameData map[string][
 			return nil, err
 		}
 		return parseSaveFile(data, filepath.Base(path))
+	}); err != nil {
+		return err
+	}
+
+	// 自动查找：返回 JSON 数组（可能为空），扫描失败才返回错误。
+	if err := bind("__nightreignLocateSaveFiles", func() ([]savefile.Location, error) {
+		list, err := locateSaveFiles()
+		if err != nil {
+			return nil, err
+		}
+		if list == nil {
+			list = []savefile.Location{}
+		}
+		return list, nil
+	}); err != nil {
+		return err
+	}
+
+	// 一键打开自动查找到的存档；路径不在查找结果里会被拒绝（见 readLocatedSave）。
+	if err := bind("__nightreignOpenLocatedSave", func(path string) (*savefile.Payload, error) {
+		return readLocatedSave(path)
+	}); err != nil {
+		return err
+	}
+
+	// 拖拽打开：解码 base64 后复用同一套解析逻辑。
+	if err := bind("__nightreignParseSaveData", func(encoded, fileName string) (*savefile.Payload, error) {
+		return parseSaveData(encoded, fileName)
+	}); err != nil {
+		return err
+	}
+
+	// 导出报告（文本 / CSV）。写法与 __nightreignExportCatalog 一致：
+	// Documents 作为默认目录，取消返回 canceled，落盘走原子替换。
+	if err := bind("__nightreignExportText", func(defaultName, content string) (exportResult, error) {
+		name := savefile.SafeExportName(defaultName, "nightreign-report.txt")
+		// 大小先挡一道，免得走完对话框才失败。
+		if err := savefile.CheckExportSize(content); err != nil {
+			return exportResult{}, err
+		}
+		filter := zenity.FileFilters{{Name: "文本文件", Patterns: []string{"*.txt"}, CaseFold: true}}
+		if strings.EqualFold(filepath.Ext(name), ".csv") {
+			filter = zenity.FileFilters{{Name: "CSV 表格", Patterns: []string{"*.csv"}, CaseFold: true}}
+		}
+		defaultPath := name
+		if docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, 0); err == nil {
+			defaultPath = filepath.Join(docs, name)
+		}
+		path, err := zenity.SelectFileSave(
+			zenity.Title("导出存档检查报告"),
+			zenity.Filename(defaultPath),
+			zenity.ConfirmOverwrite(),
+			filter,
+			owner,
+		)
+		if errors.Is(err, zenity.ErrCanceled) {
+			return exportResult{Canceled: true}, nil
+		}
+		if err != nil {
+			return exportResult{}, err
+		}
+		// UTF-8 BOM 要按用户最终选定的扩展名决定，不是按建议名：对话框里把
+		// .txt 改存成 .csv 时，落盘的 CSV 也要带 BOM（Excel 才不乱码）。
+		data, err := savefile.TextFileBytes(filepath.Base(path), content)
+		if err != nil {
+			return exportResult{}, err
+		}
+		if err := writeFileAtomic(path, data, 0o600); err != nil {
+			return exportResult{}, err
+		}
+		return exportResult{Canceled: false, FilePath: path}, nil
 	}); err != nil {
 		return err
 	}

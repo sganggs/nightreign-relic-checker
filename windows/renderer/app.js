@@ -7,6 +7,9 @@
     return;
   }
 
+  // 存档对比模块（renderer/savediff.js）。缺失时只影响「对比另一份存档」。
+  var Diff = window.NightreignSaveDiff || null;
+
   // 新页面（首领数据 / 词条反查 / 增伤排名）可用的游戏数据文件。
   var GAME_DATA_NAMES = ["bosses", "skills", "buffs"];
 
@@ -33,6 +36,11 @@
     resetCatalog: function () { return Promise.resolve(null); },
     exportCatalog: function () { return Promise.resolve({ canceled: true }); },
     openSaveFile: function () { return Promise.resolve(null); },
+    // 以下四个存档页能力都要读写本机文件，浏览器预览模式下只能给出提示。
+    locateSaveFiles: function () { return Promise.resolve([]); },
+    openLocatedSave: function () { return Promise.resolve(null); },
+    parseSaveData: function () { return Promise.reject(new Error("浏览器预览模式无法解析存档")); },
+    exportText: function () { return Promise.resolve({ canceled: true }); },
     loadRelicData: function () {
       return fetch("../resources/relics.json").then(function (response) {
         if (!response.ok) throw new Error("无法载入内置遗物数据");
@@ -67,7 +75,12 @@
       character: 0,
       filter: "all",
       query: "",
-      busy: false
+      busy: false,
+      locations: null,       // 自动查找结果；null = 还没查过
+      compare: null,         // { payload, audits, diff }，见 renderer/savediff.js
+      compareQuery: "",      // 对比列表的搜索词
+      compareDirection: "all", // all | added | removed
+      explained: []          // 展开了说明的词条，键是「角色:遗物序号:effectId」
     }
   };
 
@@ -486,7 +499,7 @@
 
   function setSaveBusy(value) {
     state.save.busy = value;
-    test("open-save-button").disabled = value;
+    $$("[data-save-busy]").forEach(function (button) { button.disabled = value; });
   }
 
   function ensureRelicIndex() {
@@ -519,6 +532,37 @@
     return affix && affix.name ? affix.name : "未知词条 #" + effectId;
   }
 
+  // 词条库里的说明文字；没有说明的词条返回空串（界面就不显示展开入口）。
+  function saveAffixExplanation(effectId) {
+    var affix = state.save.index.affixIndex.get(effectId);
+    var explanation = affix && typeof affix.explanation === "string" ? affix.explanation.trim() : "";
+    return explanation;
+  }
+
+  // 展开状态按「哪张卡的哪一条」记，不按 effectId 全局记：同一条词条出现在同一
+  // 角色的多张卡上时，点开一处不应该把别的卡一起撑开。
+  function explainKey(cardKey, effectId) {
+    return cardKey + ":" + effectId;
+  }
+
+  function isExplained(key) {
+    return state.save.explained.indexOf(key) !== -1;
+  }
+
+  // 词条名（带说明的可点开/悬停查看 explanation，与词条库页的口径一致）
+  function saveAffixNameHtml(effectId, isCurse, cardKey) {
+    var name = saveAffixName(effectId);
+    var explanation = saveAffixExplanation(effectId);
+    var className = "save-affix-name" + (isCurse ? " save-affix-name--curse" : "");
+    if (!explanation) return "<span class='" + className + "'>" + esc(name) + "</span>";
+    var key = explainKey(cardKey, effectId);
+    var open = isExplained(key);
+    return "<button type='button' class='" + className + " save-affix-name--explain" + (open ? " is-open" : "") +
+      "' data-explain-key='" + esc(key) + "' aria-expanded='" + open + "' title='" + esc(explanation) + "'>" +
+      esc(name) + "<span class='save-affix-mark' aria-hidden='true'>?</span></button>" +
+      (open ? "<span class='save-affix-note' data-testid='save-affix-note'>" + esc(explanation) + "</span>" : "");
+  }
+
   function relicDisplayName(itemId, meta) {
     if (!meta) return "未知遗物 #" + itemId;
     return meta.name || "未命名遗物 #" + itemId;
@@ -540,7 +584,7 @@
     return { key: "valid", label: "合法", pill: "green" };
   }
 
-  function saveRelicCard(relic, audit, meta) {
+  function saveRelicCard(relic, audit, meta, cardKey) {
     var status = relicStatusMeta(audit);
     var pills = pill(Core.relicKindLabel(relic.itemId, meta), "purple");
     if (meta) {
@@ -555,8 +599,8 @@
       if (effectId === -1 && curseId === -1) continue;
       var content = effectId === -1
         ? "<span class='save-affix-empty'>（空）</span>"
-        : esc(saveAffixName(effectId));
-      if (curseId !== -1) content += "<span class='save-affix-curse'>｜" + esc(saveAffixName(curseId)) + "</span>";
+        : saveAffixNameHtml(effectId, false, cardKey);
+      if (curseId !== -1) content += "<span class='save-affix-curse'>｜" + saveAffixNameHtml(curseId, true, cardKey) + "</span>";
       lines.push("<div class='save-affix-row'><span class='save-affix-index'>" + (line + 1) + "</span><span class='save-affix-text'>" + content + "</span></div>");
     }
     if (!lines.length) lines.push("<div class='save-affix-row save-affix-row--none'>（没有词条）</div>");
@@ -634,7 +678,7 @@
       if (state.save.filter === "invalid" && audit.status !== "invalid") return;
       if (state.save.filter === "deep" && !(meta && meta.deep)) return;
       if (needle && relicSearchText(relic, meta).indexOf(needle) === -1) return;
-      cards.push(saveRelicCard(relic, audit, meta));
+      cards.push(saveRelicCard(relic, audit, meta, state.save.character + ":" + index));
     });
     grid.innerHTML = cards.length ? cards.join("") : (
       "<div class='empty-state save-empty' data-testid='save-empty'><div class='empty-icon'>" +
@@ -648,6 +692,7 @@
     test("save-results").hidden = !payload;
     test("save-checksum").hidden = !payload || payload.checksumOk !== false;
     test("save-file-meta").textContent = payload ? payload.fileName || "" : "";
+    renderSaveCompare();
     if (!payload) return;
     test("save-character").innerHTML = payload.characters.map(function (character, index) {
       var label = "槽位 " + (character.slot + 1) + "：" + (character.name || "未命名");
@@ -657,29 +702,635 @@
     renderSaveRelics();
   }
 
-  async function openSave() {
+  // 解析成功后统一入口：重置筛选/对比状态并重绘。
+  function applySavePayload(payload) {
+    state.save.payload = payload;
+    state.save.audits = auditCharacters(payload);
+    state.save.character = 0;
+    state.save.filter = "all";
+    state.save.query = "";
+    state.save.compare = null;
+    state.save.compareQuery = "";
+    state.save.compareDirection = "all";
+    state.save.explained = []; // 换存档后旧卡片的展开状态没有意义
+    test("save-search").value = "";
+    setSaveMessage("已解析 " + (payload.fileName || "存档") + " · " + payload.characters.length + " 个角色");
+    renderSave();
+    refreshPages();
+  }
+
+  // 存档来源统一走这里：拿到 payload 前先确保遗物索引就绪，异常统一提示。
+  async function loadSaveWith(loader, failPrefix, pendingMessage) {
     if (browserPreview) { setSaveMessage("存档检查仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
     setSaveBusy(true);
+    setSaveMessage(pendingMessage || "");
+    try {
+      await ensureRelicIndex();
+      var payload = await loader();
+      if (!payload) return; // 用户取消
+      applySavePayload(payload);
+    } catch (error) {
+      setSaveMessage(failPrefix + "：" + error.message, true);
+      showToast(failPrefix + "：" + error.message, true);
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  function openSave() {
+    return loadSaveWith(function () { return api.openSaveFile(); }, "解析失败");
+  }
+
+  // ---- 自动查找存档 ----
+
+  function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function formatDateTime(value) {
+    var date = value ? new Date(value) : null;
+    if (!date || isNaN(date.getTime())) return "";
+    var pad = function (part) { return String(part).padStart(2, "0"); };
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+      " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
+  }
+
+  function renderSaveLocations() {
+    var container = test("save-locate");
+    var locations = state.save.locations;
+    if (!locations) { container.hidden = true; container.innerHTML = ""; return; }
+    container.hidden = false;
+    if (!locations.length) {
+      container.innerHTML = "<div class='save-locate-empty' data-testid='save-locate-empty'>" +
+        "<strong>没有找到存档文件</strong>" +
+        "<p>存档一般在 %APPDATA%\\Nightreign\\&lt;Steam ID&gt;\\NR0000.sl2（备份为 NR0000.co2）。" +
+        "如果游戏装在别的账号下，或存档放在其它位置，请用「选择存档文件」手动打开，也可以直接把文件拖进来。</p></div>";
+      return;
+    }
+    var rows = locations.map(function (location, index) {
+      var meta = [location.steamId ? "Steam ID " + location.steamId : "Nightreign 根目录"];
+      if (formatFileSize(location.size)) meta.push(formatFileSize(location.size));
+      if (formatDateTime(location.modifiedAt)) meta.push("修改于 " + formatDateTime(location.modifiedAt));
+      return "<div class='save-locate-row' data-testid='save-locate-row'>" +
+        "<div class='save-locate-copy'><strong>" + esc(location.fileName) + "</strong>" +
+        "<span>" + esc(meta.join(" · ")) + "</span>" +
+        "<code>" + esc(location.path) + "</code></div>" +
+        "<button class='button button--secondary' type='button' data-locate-index='" + index +
+        "' data-save-busy data-testid='save-locate-open'>打开</button></div>";
+    }).join("");
+    container.innerHTML = "<div class='save-locate-list'>" + rows + "</div>";
+    if (state.save.busy) setSaveBusy(true); // 新渲染出来的按钮同步当前忙碌状态
+  }
+
+  async function locateSaves() {
+    if (browserPreview) { setSaveMessage("自动查找仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
+    setSaveBusy(true);
     setSaveMessage("");
+    try {
+      var list = await api.locateSaveFiles();
+      state.save.locations = Array.isArray(list) ? list : [];
+      renderSaveLocations();
+      setSaveMessage(state.save.locations.length
+        ? "找到 " + state.save.locations.length + " 个存档文件"
+        : "没有在 %APPDATA%\\Nightreign 下找到存档文件");
+    } catch (error) {
+      state.save.locations = null;
+      renderSaveLocations();
+      setSaveMessage("自动查找失败：" + error.message, true);
+      showToast("自动查找失败：" + error.message, true);
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  function openLocatedSave(index) {
+    var location = (state.save.locations || [])[index];
+    if (!location) return;
+    return loadSaveWith(function () { return api.openLocatedSave(location.path); }, "打开失败");
+  }
+
+  // ---- 拖拽打开 ----
+
+  var DROP_EXTENSIONS = [".sl2", ".co2"];
+  var MAX_DROP_BYTES = 96 * 1024 * 1024;
+  var dragDepth = 0;
+
+  function isSaveFileName(name) {
+    var lower = String(name || "").toLowerCase();
+    return DROP_EXTENSIONS.some(function (ext) { return lower.endsWith(ext); });
+  }
+
+  // WebView2 里拿不到 File.path，只能把内容读成 ArrayBuffer 再转 base64 交给 Go。
+  function fileToBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("无法读取该文件")); };
+      reader.onload = function () {
+        try {
+          var bytes = new Uint8Array(reader.result);
+          var chunk = 0x8000;
+          var parts = [];
+          for (var offset = 0; offset < bytes.length; offset += chunk) {
+            parts.push(String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk)));
+          }
+          resolve(btoa(parts.join("")));
+        } catch (error) {
+          reject(new Error("无法读取该文件：" + error.message));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function openDroppedFile(file) {
+    if (!file) return;
+    if (!isSaveFileName(file.name)) {
+      setSaveMessage("只支持 .sl2 / .co2 存档文件：" + file.name, true);
+      showToast("只支持 .sl2 / .co2 存档文件", true);
+      return;
+    }
+    if (file.size > MAX_DROP_BYTES) {
+      setSaveMessage("文件过大，无法解析：" + file.name, true);
+      showToast("文件过大，无法解析", true);
+      return;
+    }
+    return loadSaveWith(function () {
+      return fileToBase64(file).then(function (encoded) { return api.parseSaveData(encoded, file.name); });
+    }, "解析失败", "正在读取 " + file.name + " …");
+  }
+
+  function setDragActive(active) {
+    test("save-drop-overlay").hidden = !active;
+    $(".save-content").classList.toggle("is-dragover", active);
+  }
+
+  function dragHasFiles(event) {
+    var transfer = event.dataTransfer;
+    return Boolean(transfer && Array.prototype.indexOf.call(transfer.types || [], "Files") !== -1);
+  }
+
+  // 落点是否在存档页内（顶栏、别的页都不算）。
+  function inSaveDropZone(target) {
+    var zone = test("page-save");
+    return Boolean(zone && target && zone.contains(target.nodeType === 1 ? target : target.parentNode));
+  }
+
+  // 全局兜底：Chromium / WebView2 对没被处理的文件 drop 的默认动作是导航到该
+  // 文件，界面上没有返回入口，只能杀进程。桌面壳的 bridgeJS 已经在文档创建时
+  // 挂了一层 window 级 preventDefault（bindings.go），这里再挂一层：既覆盖浏览器
+  // 预览，也能在落点不在存档页时给出提示，而不是悄无声息地吞掉。
+  function bindGlobalDropGuard() {
+    document.addEventListener("dragover", function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+    });
+    document.addEventListener("drop", function (event) {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      if (inSaveDropZone(event.target)) return; // 存档页自己的处理器已经接手
+      dragDepth = 0;
+      setDragActive(false);
+      showToast("请切到「存档检查」页，再把存档文件松开", true);
+    });
+  }
+
+  function bindSaveDropZone() {
+    var zone = test("page-save");
+    var hasFiles = dragHasFiles;
+    zone.addEventListener("dragenter", function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      dragDepth += 1;
+      setDragActive(true);
+    });
+    zone.addEventListener("dragover", function (event) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    zone.addEventListener("dragleave", function () {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setDragActive(false);
+    });
+    zone.addEventListener("drop", function (event) {
+      event.preventDefault();
+      dragDepth = 0;
+      setDragActive(false);
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (!files || !files.length) return;
+      if (state.save.busy) { showToast("正在处理上一个存档，请稍候", true); return; }
+      openDroppedFile(files[0]);
+    });
+  }
+
+  // ---- 导出报告 ----
+
+  function reportTimestamp() {
+    var now = new Date();
+    var pad = function (part) { return String(part).padStart(2, "0"); };
+    return now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes());
+  }
+
+  function characterLabel(character, index) {
+    return "槽位 " + ((character && Number.isSafeInteger(character.slot) ? character.slot : index) + 1) +
+      " · " + ((character && character.name) || "未命名");
+  }
+
+  function relicAffixLine(relic, line) {
+    var effectId = normId((relic.effects || [])[line]);
+    var curseId = normId((relic.curses || [])[line]);
+    var text = effectId === -1 ? "（空）" : saveAffixName(effectId) + "（" + effectId + "）";
+    if (curseId !== -1) text += "｜诅咒：" + saveAffixName(curseId) + "（" + curseId + "）";
+    return text;
+  }
+
+  // 颜色文案统一口径：遗物卡、TXT 报告、CSV 都写「红色」/「颜色未知」，
+  // 不再一处写「红色」一处写「红」。
+  function relicColorText(meta) {
+    return meta ? Core.relicColorLabel(meta.color) + "色" : "颜色未知";
+  }
+
+  function issueSummary(audit) {
+    return (audit.issues || []).concat(audit.warnings || []).map(function (issue) {
+      return issue.title + "：" + issue.detail;
+    });
+  }
+
+  function saveReportText() {
+    var payload = state.save.payload;
+    var lines = [];
+    var totals = { total: 0, invalid: 0, warning: 0 };
+    payload.characters.forEach(function (character, index) {
+      (state.save.audits[index] || []).forEach(function (audit) {
+        totals.total += 1;
+        var key = relicStatusMeta(audit).key;
+        if (key === "invalid") totals.invalid += 1;
+        if (key === "warning") totals.warning += 1;
+      });
+    });
+
+    lines.push("夜幕验物 · 存档检查报告");
+    lines.push("存档文件：" + (payload.fileName || "未知"));
+    lines.push("生成时间：" + formatDateTime(new Date()));
+    lines.push("角色数：" + payload.characters.length + " · 遗物合计 " + totals.total +
+      " · 非法 " + totals.invalid + " · 警告 " + totals.warning);
+    lines.push("存档校验和：" + (payload.checksumOk === false ? "异常（结果仅供参考）" : "通过"));
+    var catalog = state.catalog || {};
+    lines.push("词条库：" + originLabel(state.origin) + " · " + (catalog.gameVersion || "未知版本") +
+      (catalog.dataVersion ? "（数据 " + catalog.dataVersion + "）" : ""));
+    // 顶部的「校验口径」只作用于词条组合检查页；存档页的判定走 Core.auditRelic
+    // （不接受 mode），所以报告里不写口径，免得让人以为换个口径重跑会有别的结论。
+    lines.push("说明：本报告由离线社区工具生成，不构成官方判定。");
+    lines.push("");
+
+    payload.characters.forEach(function (character, index) {
+      var audits = state.save.audits[index] || [];
+      var relics = character.relics || [];
+      lines.push("────────────────────────────");
+      lines.push(characterLabel(character, index));
+      if (character.parseError) {
+        lines.push("  该槽位解析失败：" + character.parseError);
+        lines.push("");
+        return;
+      }
+      var invalid = [];
+      var warned = [];
+      relics.forEach(function (relic, relicIndex) {
+        var audit = audits[relicIndex];
+        if (!audit) return;
+        var key = relicStatusMeta(audit).key;
+        if (key === "invalid") invalid.push({ relic: relic, audit: audit });
+        else if (key === "warning") warned.push({ relic: relic, audit: audit });
+      });
+      lines.push("  遗物 " + relics.length + " · 非法 " + invalid.length + " · 警告 " + warned.length);
+
+      var writeGroup = function (title, items) {
+        if (!items.length) return;
+        lines.push("  " + title + "：");
+        items.forEach(function (item, position) {
+          var meta = state.save.index.relicsById.get(item.relic.itemId);
+          lines.push("   " + (position + 1) + ". " + relicDisplayName(item.relic.itemId, meta) +
+            "（ID " + item.relic.itemId + "）· " + Core.relicKindLabel(item.relic.itemId, meta) +
+            " · " + relicColorText(meta) +
+            " · 存档内第 " + (Number(item.relic.index) + 1) + " 件");
+          for (var line = 0; line < 3; line += 1) {
+            lines.push("      词条" + (line + 1) + "：" + relicAffixLine(item.relic, line));
+          }
+          issueSummary(item.audit).forEach(function (text) { lines.push("      问题：" + text); });
+        });
+      };
+      writeGroup("非法遗物", invalid);
+      writeGroup("需要留意（警告）", warned);
+      if (!invalid.length && !warned.length) lines.push("  未发现不合法遗物。");
+      lines.push("");
+    });
+
+    return lines.join("\n");
+  }
+
+  // 角色名、遗物名都来自别人的存档，完全可控；导出的 CSV 又特意带了 UTF-8 BOM
+  // 好让 Excel 双击直接打开，所以以 = + - @ 开头的值要先转义成文本，
+  // 否则一个叫 =HYPERLINK(...) 的角色名会在对方的 Excel 里变成活公式。
+  function csvCell(value) {
+    var text = String(value == null ? "" : value);
+    if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = "'" + text;
+    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function saveReportCsv() {
+    var payload = state.save.payload;
+    var rows = [[
+      "角色", "槽位", "遗物名", "遗物ID", "种类", "颜色", "状态",
+      "词条1", "词条2", "词条3", "诅咒1", "诅咒2", "诅咒3", "问题摘要"
+    ]];
+    payload.characters.forEach(function (character, index) {
+      var audits = state.save.audits[index] || [];
+      (character.relics || []).forEach(function (relic, relicIndex) {
+        var audit = audits[relicIndex];
+        if (!audit) return;
+        var meta = state.save.index.relicsById.get(relic.itemId);
+        var status = relicStatusMeta(audit);
+        var affixText = function (values, line) {
+          var effectId = normId((values || [])[line]);
+          return effectId === -1 ? "" : saveAffixName(effectId) + "(" + effectId + ")";
+        };
+        rows.push([
+          character.name || "未命名",
+          (Number.isSafeInteger(character.slot) ? character.slot : index) + 1,
+          relicDisplayName(relic.itemId, meta),
+          relic.itemId,
+          Core.relicKindLabel(relic.itemId, meta),
+          relicColorText(meta),
+          status.label,
+          affixText(relic.effects, 0), affixText(relic.effects, 1), affixText(relic.effects, 2),
+          affixText(relic.curses, 0), affixText(relic.curses, 1), affixText(relic.curses, 2),
+          issueSummary(audit).join("；")
+        ]);
+      });
+    });
+    return rows.map(function (row) { return row.map(csvCell).join(","); }).join("\n") + "\n";
+  }
+
+  async function exportSaveReport(kind) {
+    if (!state.save.payload) return;
+    if (browserPreview) { setSaveMessage("导出报告仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
+    var isCsv = kind === "csv";
+    var name = "nightreign-save-report-" + reportTimestamp() + (isCsv ? ".csv" : ".txt");
+    setSaveBusy(true);
+    try {
+      var content = isCsv ? saveReportCsv() : saveReportText();
+      var output = await api.exportText(name, content);
+      if (output && !output.canceled) {
+        setSaveMessage("已导出：" + (output.filePath || name));
+        showToast("报告已导出");
+      }
+    } catch (error) {
+      setSaveMessage("导出失败：" + error.message, true);
+      showToast("导出失败：" + error.message, true);
+    } finally {
+      setSaveBusy(false);
+    }
+  }
+
+  // ---- 存档对比 ----
+
+  // 整张对比卡的渲染预算（跨角色累计，不是「每角色每方向」）：存档最多 10 个
+  // 槽位，按方向分别封顶的话，改过档的存档一次要拼几千行。
+  var COMPARE_ROW_BUDGET = 400;
+  var COMPARE_DIRECTIONS = [
+    { key: "all", label: "全部" },
+    { key: "added", label: "只看新增" },
+    { key: "removed", label: "只看减少" }
+  ];
+  var STATUS_SEVERITY = { valid: 0, warning: 1, invalid: 2 };
+
+  // 对比行的状态取自那一份存档「整体」算过的审查结果（与遗物网格同一套，
+  // 含 Core.applyUniqueDuplicates 的唯一遗物重复检查），同款多件时取最严重的
+  // 一件；拿不到整体结果时才退回单件判定。
+  function compareEntryStatus(entry, audits) {
+    var worst = null;
+    (entry.positions || []).forEach(function (position) {
+      var audit = audits && audits[position];
+      if (!audit) return;
+      var meta = relicStatusMeta(audit);
+      if (!worst || STATUS_SEVERITY[meta.key] > STATUS_SEVERITY[worst.key]) worst = meta;
+    });
+    return worst || relicStatusMeta(Core.auditRelic(entry.relic, state.save.index));
+  }
+
+  function compareRelicRow(entry, direction, audits) {
+    var relic = entry.relic;
+    var meta = state.save.index.relicsById.get(relic.itemId);
+    var status = compareEntryStatus(entry, audits);
+    var affixes = [];
+    for (var line = 0; line < 3; line += 1) {
+      var effectId = normId((relic.effects || [])[line]);
+      var curseId = normId((relic.curses || [])[line]);
+      if (effectId === -1 && curseId === -1) continue;
+      var text = effectId === -1 ? "（空）" : saveAffixName(effectId);
+      if (curseId !== -1) text += "｜" + saveAffixName(curseId);
+      affixes.push(esc(text));
+    }
+    return "<div class='save-diff-row save-diff-row--" + direction + "' data-testid='save-diff-row'>" +
+      "<span class='save-diff-sign' aria-hidden='true'>" + (direction === "added" ? "＋" : "－") + "</span>" +
+      "<div class='save-diff-copy'><div class='save-diff-head'><strong>" +
+      esc(relicDisplayName(relic.itemId, meta)) + "</strong>" + pill(status.label, status.pill) +
+      pill(Core.relicKindLabel(relic.itemId, meta), "purple") +
+      (entry.count > 1 ? "<span class='save-diff-count'>×" + entry.count + "</span>" : "") +
+      "<span class='save-diff-id'>ID " + relic.itemId + "</span></div>" +
+      (affixes.length ? "<p class='save-diff-affixes'>" + affixes.join(" · ") + "</p>" : "") +
+      "</div></div>";
+  }
+
+  function compareEntryMatches(entry, needle) {
+    if (!needle) return true;
+    var meta = state.save.index.relicsById.get(entry.relic.itemId);
+    return relicSearchText(entry.relic, meta).indexOf(needle) !== -1;
+  }
+
+  function compareCharacterHead(entry) {
+    var name = entry.baseName || entry.otherName || "未命名";
+    var note = "";
+    if (!entry.inBase) note = "（仅存在于对比存档）";
+    else if (!entry.inOther) note = "（仅存在于当前存档）";
+    else if (entry.baseName && entry.otherName && entry.baseName !== entry.otherName) {
+      note = "（对比存档中名为 " + entry.otherName + "）";
+    }
+    var counts = pill("当前 " + entry.base, "purple") + pill("对比 " + entry.other, "blue");
+    counts += entry.unreadable
+      ? pill("无法对比", "amber")
+      : pill("新增 " + entry.addedCount, entry.addedCount ? "green" : "gray") +
+        pill("减少 " + entry.removedCount, entry.removedCount ? "red" : "gray");
+    return "<header class='save-diff-character-head'><strong>槽位 " + (entry.slot + 1) + " · " + esc(name) + "</strong>" +
+      (note ? "<span class='save-diff-note'>" + esc(note) + "</span>" : "") +
+      "<span class='save-diff-counts'>" + counts + "</span></header>";
+  }
+
+  // 返回该角色的差异区块；没有可显示的行时返回空串。ctx 带着跨角色累计的渲染
+  // 预算与筛选条件。
+  function compareCharacterBlock(entry, ctx) {
+    var section = function (body) {
+      return "<section class='save-diff-character' data-testid='save-diff-character'>" +
+        compareCharacterHead(entry) + body + "</section>";
+    };
+
+    // 解析失败的槽位 relics 是空数组，拿去比会把「读不出来」报成「被删光」。
+    if (entry.unreadable) {
+      var reasons = [];
+      if (entry.baseParseError) reasons.push("当前存档：" + entry.baseParseError);
+      if (entry.otherParseError) reasons.push("对比存档：" + entry.otherParseError);
+      return section("<div class='issue-row issue-row--warning' data-testid='save-diff-unreadable'>" +
+        "<span class='issue-symbol'>△</span><div><strong>该槽位解析失败，无法对比</strong><p>" +
+        esc(reasons.join("；")) + "</p></div></div>");
+    }
+    if (!entry.changed) return "";
+
+    var added = ctx.direction === "removed" ? [] : entry.added.filter(function (item) {
+      return compareEntryMatches(item, ctx.needle);
+    });
+    var removed = ctx.direction === "added" ? [] : entry.removed.filter(function (item) {
+      return compareEntryMatches(item, ctx.needle);
+    });
+    if (!added.length && !removed.length) return "";
+
+    var renderList = function (entries, direction, title, audits) {
+      if (!entries.length) return "";
+      var shown = entries.slice(0, Math.max(0, ctx.left));
+      ctx.left -= shown.length;
+      ctx.skipped += entries.length - shown.length;
+      if (!shown.length) return "";
+      return "<div class='save-diff-group'><h4>" + title + "（" + entries.length + "）</h4>" +
+        shown.map(function (item) { return compareRelicRow(item, direction, audits); }).join("") + "</div>";
+    };
+
+    var baseAudits = state.save.audits[entry.baseIndex] || [];
+    var otherAudits = (state.save.compare.audits || [])[entry.otherIndex] || [];
+    var body = renderList(added, "added", "对比存档中新增", otherAudits) +
+      renderList(removed, "removed", "对比存档中减少", baseAudits);
+    return body ? section(body) : "";
+  }
+
+  function compareToolsHtml() {
+    var buttons = COMPARE_DIRECTIONS.map(function (item) {
+      var active = item.key === state.save.compareDirection;
+      return "<button type='button' class='segment-button" + (active ? " is-active" : "") +
+        "' data-diff-direction='" + item.key + "' data-testid='save-diff-direction-" + item.key +
+        "' role='radio' aria-checked='" + active + "'>" + item.label + "</button>";
+    }).join("");
+    return "<div class='save-diff-tools'>" +
+      "<div class='segmented-control' role='radiogroup' aria-label='差异方向'>" + buttons + "</div>" +
+      "<label class='search-field save-diff-search-field'><span aria-hidden='true'>⌕</span>" +
+      "<input type='search' placeholder='搜索遗物名、词条名或 ID' autocomplete='off' value='" +
+      esc(state.save.compareQuery) + "' data-testid='save-diff-search'></label></div>";
+  }
+
+  // 只重绘差异列表；工具条（搜索框）保持原样，输入时不会掉焦点。
+  function renderSaveCompareList() {
+    var body = test("save-diff-body");
+    var compare = state.save.compare;
+    if (!body || !compare) return;
+    var totals = compare.diff.totals;
+    var ctx = {
+      needle: Core.foldForSearch(state.save.compareQuery || ""),
+      direction: state.save.compareDirection,
+      left: COMPARE_ROW_BUDGET,
+      skipped: 0
+    };
+    var blocks = compare.diff.characters.map(function (entry) {
+      return compareCharacterBlock(entry, ctx);
+    }).filter(Boolean).join("");
+
+    if (!blocks) {
+      body.innerHTML = "<p class='save-diff-same' data-testid='save-diff-empty'>" +
+        (totals.added || totals.removed ? "没有符合筛选条件的差异" : "两份存档的遗物完全一致") + "</p>";
+      return;
+    }
+    body.innerHTML = "<div class='save-diff-list'>" + blocks + "</div>" +
+      (ctx.skipped > 0
+        ? "<p class='save-diff-more' data-testid='save-diff-more'>另有 " + ctx.skipped +
+          " 条差异未显示（单次最多渲染 " + COMPARE_ROW_BUDGET + " 行），请用搜索或方向筛选缩小范围。</p>"
+        : "");
+  }
+
+  function renderSaveCompare() {
+    var container = test("save-compare");
+    var compare = state.save.compare;
+    if (!compare || !state.save.payload) { container.hidden = true; container.innerHTML = ""; return; }
+    container.hidden = false;
+    var totals = compare.diff.totals;
+    container.innerHTML = "<article class='card save-diff-card'>" +
+      "<div class='section-heading'><div class='section-icon'>⇄</div>" +
+      "<div><h2>存档对比</h2><p>当前：" + esc(state.save.payload.fileName || "存档") +
+      "　对比：" + esc(compare.payload.fileName || "存档") + "</p></div>" +
+      "<button class='button button--ghost' type='button' data-action='clear-compare' data-testid='clear-compare-button'>退出对比</button></div>" +
+      "<div class='save-diff-totals'>" +
+      pill("当前共 " + totals.base + " 件", "purple") +
+      pill("对比共 " + totals.other + " 件", "blue") +
+      pill("新增 " + totals.added + " 件", totals.added ? "green" : "gray") +
+      pill("减少 " + totals.removed + " 件", totals.removed ? "red" : "gray") +
+      pill("有差异角色 " + totals.changedCharacters, totals.changedCharacters ? "amber" : "gray") +
+      (totals.unreadableCharacters
+        ? pill("无法对比槽位 " + totals.unreadableCharacters, "amber")
+        : "") +
+      "</div>" +
+      compareToolsHtml() +
+      "<div class='save-diff-body' data-testid='save-diff-body'></div>" +
+      "<p class='data-hint'>对比以「遗物 ID + 三条正面词条 + 三条诅咒」为一件遗物的身份，按角色槽位分别统计；" +
+      "任一边解析失败的槽位只提示、不计入增减。新增/减少遗物的合法性状态由当前词条库判定，" +
+      "取自该遗物所在存档的整体检查结果（同款多件时显示最严重的一件）。</p>" +
+      "</article>";
+    renderSaveCompareList();
+  }
+
+  function setCompareDirection(key) {
+    if (!state.save.compare || state.save.compareDirection === key) return;
+    state.save.compareDirection = key;
+    // 只改按钮状态，不重建工具条，免得搜索框掉焦点。
+    $$("[data-diff-direction]").forEach(function (button) {
+      var active = button.dataset.diffDirection === key;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-checked", String(active));
+    });
+    renderSaveCompareList();
+  }
+
+  async function compareSave() {
+    if (!state.save.payload) return;
+    if (browserPreview) { setSaveMessage("存档对比仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
+    if (!Diff) { showToast("对比模块未载入", true); return; }
+    setSaveBusy(true);
     try {
       await ensureRelicIndex();
       var payload = await api.openSaveFile();
       if (!payload) return;
-      state.save.payload = payload;
-      state.save.audits = auditCharacters(payload);
-      state.save.character = 0;
-      state.save.filter = "all";
-      state.save.query = "";
-      test("save-search").value = "";
-      setSaveMessage("已解析 " + (payload.fileName || "存档") + " · " + payload.characters.length + " 个角色");
-      renderSave();
-      refreshPages();
+      state.save.compareQuery = "";
+      state.save.compareDirection = "all";
+      state.save.compare = {
+        payload: payload,
+        audits: auditCharacters(payload),
+        diff: Diff.diffPayloads(state.save.payload, payload)
+      };
+      renderSaveCompare();
+      var totals = state.save.compare.diff.totals;
+      setSaveMessage("已对比 " + (payload.fileName || "存档") + "：新增 " + totals.added +
+        " 件 · 减少 " + totals.removed + " 件" +
+        (totals.unreadableCharacters ? " · " + totals.unreadableCharacters + " 个槽位解析失败无法对比" : ""));
     } catch (error) {
-      setSaveMessage("解析失败：" + error.message, true);
-      showToast("解析失败：" + error.message, true);
+      setSaveMessage("对比失败：" + error.message, true);
+      showToast("对比失败：" + error.message, true);
     } finally {
       setSaveBusy(false);
     }
+  }
+
+  function clearCompare() {
+    state.save.compare = null;
+    state.save.compareQuery = "";
+    state.save.compareDirection = "all";
+    renderSaveCompare();
   }
 
   document.addEventListener("click", function (event) {
@@ -697,6 +1348,19 @@
     if (mode) { setMode(mode.dataset.mode); return; }
     var saveFilter = event.target.closest("[data-save-filter]");
     if (saveFilter) { state.save.filter = saveFilter.dataset.saveFilter; renderSaveRelics(); return; }
+    var locateRow = event.target.closest("[data-locate-index]");
+    if (locateRow) { openLocatedSave(Number(locateRow.dataset.locateIndex)); return; }
+    var explain = event.target.closest("[data-explain-key]");
+    if (explain) {
+      var explainedKey = explain.dataset.explainKey;
+      var position = state.save.explained.indexOf(explainedKey);
+      if (position === -1) state.save.explained.push(explainedKey);
+      else state.save.explained.splice(position, 1);
+      renderSaveRelics();
+      return;
+    }
+    var diffDirection = event.target.closest("[data-diff-direction]");
+    if (diffDirection) { setCompareDirection(diffDirection.dataset.diffDirection); return; }
     var clearSlot = event.target.closest("[data-clear-slot]");
     if (clearSlot) { event.stopPropagation(); state.selected[Number(clearSlot.dataset.clearSlot)] = null; state.result = null; renderSlots(); renderResult(); return; }
     var slot = event.target.closest("[data-slot]");
@@ -717,8 +1381,16 @@
       case "export": exportCatalog(); break;
       case "reset": browserPreview ? resetCatalog() : test("confirm-dialog").showModal(); break;
       case "open-save": openSave(); break;
+      case "locate-save": locateSaves(); break;
+      case "export-save-report": exportSaveReport("text"); break;
+      case "export-save-csv": exportSaveReport("csv"); break;
+      case "compare-save": compareSave(); break;
+      case "clear-compare": clearCompare(); break;
     }
   });
+
+  bindGlobalDropGuard();
+  bindSaveDropZone();
 
   test("save-character").addEventListener("change", function (event) {
     state.save.character = Number(event.target.value);
@@ -731,6 +1403,13 @@
   test("library-eligible-toggle").addEventListener("change", function (event) { state.libraryOnlyEligible = event.target.checked; renderLibrary(); });
   test("picker-search").addEventListener("input", function (event) { state.pickerQuery = event.target.value; renderPicker(); });
   test("save-search").addEventListener("input", function (event) { state.save.query = event.target.value; renderSaveRelics(); });
+  // 对比卡是动态渲染的，搜索框只能用委托监听；只重绘列表，输入时不掉焦点。
+  document.addEventListener("input", function (event) {
+    var target = event.target;
+    if (!target || target.nodeType !== 1 || !target.matches("[data-testid='save-diff-search']")) return;
+    state.save.compareQuery = target.value;
+    renderSaveCompareList();
+  });
   test("picker-category").addEventListener("change", function (event) { state.pickerCategory = event.target.value; renderPicker(); });
   test("picker-show-unavailable").addEventListener("change", function (event) { state.pickerShowUnavailable = event.target.checked; renderPicker(); });
   test("confirm-dialog").addEventListener("close", function (event) { if (event.target.returnValue === "confirm") resetCatalog(); });
