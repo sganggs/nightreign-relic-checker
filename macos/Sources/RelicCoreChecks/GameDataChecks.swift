@@ -13,6 +13,7 @@ private let gameDataChecks: [(name: String, run: () throws -> Int)] = [
     ("GameDataLoader 能定位已构建的资源包", checkGameDataLoaderResolvesBundledResources),
     ("首领数据字段完整性", checkBossData),
     ("词条反查", runAffixLookupChecks),
+    ("存档页：自动定位 / 报告导出 / 存档对比", checkSaveScanFeatures),
     // ("技能 / 增益数据字段完整性", checkSkillAndBuffData),
 ]
 

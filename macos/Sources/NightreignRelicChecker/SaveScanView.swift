@@ -3,28 +3,44 @@ import SwiftUI
 import UniformTypeIdentifiers
 import RelicCore
 
+/// 存档检查页。
+///
+/// 页面自己持有的状态（自动查找结果、拖拽高亮、对比结果、导出提示）全部放在
+/// 本视图的 `@State` 里；跨页面需要保留的存档报告仍在 `AppModel`。
+/// 纯逻辑（自动定位 / 报告文本 / 存档对比）都在 RelicCore：
+/// `SaveLocator`、`SaveReportBuilder`、`SaveComparator`。
 struct SaveScanView: View {
     @EnvironmentObject private var model: AppModel
+
+    @State private var candidates: [SaveFileCandidate] = []
+    @State private var didScan = false
+    @State private var isScanning = false
+    @State private var isDropTargeted = false
+    @State private var dropMessage = ""
+    @State private var exportMessage = ""
+    @State private var compareMessage = ""
+    @State private var compare: SaveCompareResult?
+    /// 本页这次载入的存档路径（存档文件名大多都叫 NR0000.sl2，只能按路径标「已载入」）。
+    @State private var loadedURL: URL?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 14) {
-                    LogoMark(size: 40)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("存档检查")
-                            .font(.system(size: 26, weight: .bold, design: .rounded))
-                        Text("读取《黑夜君临》存档（.sl2 / .co2），逐件校验全部角色的遗物合法性")
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                }
-
+                header
                 pickCard
+
+                if didScan {
+                    locatorCard
+                }
 
                 if let report = model.saveReport {
                     if !report.checksumOk {
                         checksumBanner
+                    }
+                    if let compare {
+                        SaveCompareSection(result: compare, report: report) {
+                            self.compare = nil
+                        }
                     }
                     if let character = selectedCharacter(in: report) {
                         controlCard(report: report, character: character)
@@ -44,13 +60,34 @@ struct SaveScanView: View {
             .frame(maxWidth: 1180)
             .frame(maxWidth: .infinity)
         }
+        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted, perform: handleDrop)
+        .overlay {
+            if isDropTargeted { dropOverlay }
+        }
     }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            LogoMark(size: 40)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("存档检查")
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                Text("读取《黑夜君临》存档（.sl2 / .co2），逐件校验全部角色的遗物合法性")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+            }
+        }
+    }
+
+    // MARK: - 选择存档
 
     private var pickCard: some View {
         VStack(alignment: .leading, spacing: 15) {
             SectionHeading(
                 title: "选择存档文件",
-                subtitle: "支持 .sl2 与 .co2（无缝联机）存档；Windows 默认位于 %APPDATA%\\Nightreign\\<SteamID>\\NR0000.sl2",
+                subtitle: "支持 .sl2 与 .co2（无缝联机）存档；可以自动查找 CrossOver 的 bottle，"
+                    + "也可以把存档文件直接拖到本页任意位置；"
+                    + "Windows 默认位于 %APPDATA%\\Nightreign\\<SteamID>\\NR0000.sl2",
                 symbol: "externaldrive.badge.checkmark"
             )
 
@@ -60,16 +97,48 @@ struct SaveScanView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
 
-                if let report = model.saveReport {
-                    Pill(text: report.fileName, color: AppTheme.purpleSoft, symbol: "doc")
+                Button(action: runAutoScan) {
+                    Label(isScanning ? "查找中…" : "自动查找", systemImage: "sparkle.magnifyingglass")
                 }
+                .buttonStyle(SecondaryButtonStyle())
+                .disabled(isScanning)
+
+                if model.saveReport != nil {
+                    Menu {
+                        ForEach(SaveReportFormat.allCases) { format in
+                            Button(format.title) { exportReport(format) }
+                        }
+                    } label: {
+                        Label("导出报告", systemImage: "square.and.arrow.up")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 120)
+
+                    Button(action: chooseCompareFile) {
+                        Label("对比另一份存档", systemImage: "arrow.left.arrow.right")
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+
                 Spacer(minLength: 0)
             }
 
-            if !model.saveMessage.isEmpty {
-                Text(model.saveMessage)
+            if let report = model.saveReport {
+                HStack(spacing: 8) {
+                    Pill(text: report.fileName, color: AppTheme.purpleSoft, symbol: "doc")
+                    Pill(
+                        text: "角色 \(report.characters.count) · 遗物 \(report.relicCount)",
+                        color: AppTheme.purpleSoft,
+                        symbol: "person.2"
+                    )
+                    Spacer(minLength: 0)
+                }
+            }
+
+            ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                Text(message.text)
                     .font(.caption)
-                    .foregroundStyle(AppTheme.red)
+                    .foregroundStyle(message.isError ? AppTheme.red : AppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -79,6 +148,72 @@ struct SaveScanView: View {
             }
         }
         .appCard()
+    }
+
+    private var messages: [(text: String, isError: Bool)] {
+        var items: [(text: String, isError: Bool)] = []
+        if !model.saveMessage.isEmpty { items.append((model.saveMessage, true)) }
+        if !dropMessage.isEmpty { items.append((dropMessage, true)) }
+        if !compareMessage.isEmpty { items.append((compareMessage, true)) }
+        if !exportMessage.isEmpty { items.append((exportMessage, exportMessage.hasPrefix("导出失败"))) }
+        return items
+    }
+
+    // MARK: - 自动查找结果
+
+    private var locatorCard: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            SectionHeading(
+                title: "自动查找到的存档",
+                subtitle: "扫描范围：\(SaveLocator.displayBottlesPath)/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/",
+                symbol: "folder.badge.questionmark"
+            )
+
+            if candidates.isEmpty {
+                Text(SaveLocator.pathHint)
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.field.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(candidates) { candidate in
+                        SaveCandidateRow(
+                            candidate: candidate,
+                            isCurrent: model.saveReport != nil && candidate.url == loadedURL
+                        ) {
+                            loadSave(from: candidate.url)
+                        }
+                    }
+                }
+            }
+        }
+        .appCard()
+    }
+
+    private var dropOverlay: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .stroke(AppTheme.purpleSoft, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(AppTheme.purple.opacity(0.10))
+            )
+            .overlay {
+                VStack(spacing: 10) {
+                    Image(systemName: "arrow.down.doc")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(AppTheme.purpleSoft)
+                    Text("松手即可解析存档")
+                        .font(.headline)
+                    Text("支持 .sl2 / .co2")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.secondaryText)
+                }
+            }
+            .padding(10)
+            .allowsHitTesting(false)
     }
 
     private var checksumBanner: some View {
@@ -185,7 +320,7 @@ struct SaveScanView: View {
                     spacing: 16
                 ) {
                     ForEach(filtered) { relic in
-                        RelicCard(relic: relic, report: report)
+                        SaveRelicCard(relic: relic, report: report)
                     }
                 }
             }
@@ -218,170 +353,184 @@ struct SaveScanView: View {
         return parts.joined(separator: " ").foldedForSearch
     }
 
+    // MARK: - 载入存档
+
     private func chooseSaveFile() {
+        guard let url = runOpenPanel(title: "选择存档文件") else { return }
+        loadSave(from: url)
+    }
+
+    /// 全部载入路径（按钮 / 自动查找列表 / 拖拽）都走这里，顺便清掉上一次的对比与提示。
+    private func loadSave(from url: URL) {
+        dropMessage = ""
+        exportMessage = ""
+        compareMessage = ""
+        compare = nil
+        model.importSave(from: url)
+        loadedURL = model.saveReport == nil ? nil : url
+    }
+
+    private func runOpenPanel(title: String) -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "选择存档文件"
+        panel.title = title
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        let saveTypes = ["sl2", "co2"].compactMap { UTType(filenameExtension: $0) }
+        let saveTypes = SaveLocator.supportedExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
         panel.allowedContentTypes = saveTypes.isEmpty ? [.data] : saveTypes
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    // MARK: - 自动查找
+
+    private func runAutoScan() {
+        isScanning = true
+        dropMessage = ""
+        let root = SaveLocator.defaultBottlesRoot()
+        Task {
+            let found = await Task.detached(priority: .userInitiated) {
+                SaveLocator.scan(bottlesRoot: root)
+            }.value
+            await MainActor.run {
+                candidates = found
+                didScan = true
+                isScanning = false
+            }
+        }
+    }
+
+    // MARK: - 拖拽
+
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        let identifier = UTType.fileURL.identifier
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(identifier) }) else {
+            dropMessage = "拖入的内容不是文件"
+            return false
+        }
+        provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in
+            guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else {
+                Task { @MainActor in dropMessage = "无法读取拖入的文件路径" }
+                return
+            }
+            Task { @MainActor in acceptDropped(url) }
+        }
+        return true
+    }
+
+    @MainActor
+    private func acceptDropped(_ url: URL) {
+        guard SaveLocator.isSaveFile(url) else {
+            dropMessage = "只支持 .sl2 / .co2 存档文件：\(url.lastPathComponent)"
+            return
+        }
+        loadSave(from: url)
+    }
+
+    // MARK: - 导出报告
+
+    private func exportReport(_ format: SaveReportFormat) {
+        guard let report = model.saveReport else { return }
+        let now = Date()
+        let panel = NSSavePanel()
+        panel.title = "导出存档检查报告"
+        panel.nameFieldStringValue = SaveReportBuilder.suggestedFileName(for: report, format: format, date: now)
+        panel.allowedContentTypes = [format == .csv ? .commaSeparatedText : .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        model.importSave(from: url)
-    }
-}
 
-private struct RelicCard: View {
-    let relic: SaveScanReport.AuditedRelic
-    let report: SaveScanReport
-
-    private static let curseText = Color(red: 0.55, green: 0.64, blue: 0.82)
-
-    private var statusText: String {
-        if relic.result.status == .invalid { return "非法" }
-        return relic.result.warnings.isEmpty ? "合法" : "警告"
-    }
-
-    private var statusColor: Color {
-        if relic.result.status == .invalid { return AppTheme.red }
-        return relic.result.warnings.isEmpty ? AppTheme.green : AppTheme.amber
-    }
-
-    private var statusSymbol: String {
-        if relic.result.status == .invalid { return "xmark.octagon.fill" }
-        return relic.result.warnings.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-    }
-
-    private var colorPill: (text: String, color: Color)? {
-        guard let info = relic.info else { return nil }
-        let label = relicColorLabel(info.color)
-        switch info.color {
-        case 0: return (label, AppTheme.red)
-        case 1: return (label, Color(red: 0.38, green: 0.60, blue: 0.98))
-        case 2: return (label, AppTheme.amber)
-        case 3: return (label, AppTheme.green)
-        case 4: return (label, Color.white.opacity(0.72))
-        default: return (label, AppTheme.secondaryText)
+        let body = SaveReportBuilder.content(for: report, format: format, generatedAt: now)
+        // CSV 前置 BOM，表格软件才会按 UTF-8 打开中文。
+        let content = format == .csv ? "\u{FEFF}" + body : body
+        do {
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            exportMessage = "已导出：\(url.lastPathComponent)"
+        } catch {
+            exportMessage = "导出失败：\(error.localizedDescription)"
         }
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 8) {
-                Text(relic.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                Pill(text: statusText, color: statusColor, symbol: statusSymbol)
-            }
+    // MARK: - 对比另一份存档
 
-            HStack(spacing: 6) {
-                Pill(text: relic.kindLabel, color: AppTheme.purpleSoft)
-                if let colorPill {
-                    Pill(text: colorPill.text, color: colorPill.color)
-                }
-                if relic.isDeep {
-                    Pill(text: "深夜", color: AppTheme.purple, symbol: "moon.stars")
-                }
-                Text("ID \(relic.relic.itemID)")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(AppTheme.tertiaryText)
-                Spacer(minLength: 0)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(0..<3, id: \.self) { row in
-                    if relic.relic.effects[row] != -1 || relic.relic.curses[row] != -1 {
-                        affixLine(row: row)
-                    }
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppTheme.field.opacity(0.6), in: RoundedRectangle(cornerRadius: 9))
-
-            ForEach(relic.result.issues) { issue in
-                SaveIssueRow(issue: issue, warning: false)
-            }
-            ForEach(relic.result.warnings) { issue in
-                SaveIssueRow(issue: issue, warning: true)
-            }
-
-            if let official = relic.result.officialEffects {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("该遗物的官方固定词条（可据此改回）")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppTheme.purpleSoft)
-                    ForEach(Array(official.filter { $0 != -1 }.enumerated()), id: \.offset) { index, effectID in
-                        Text("\(index + 1). \(report.affixName(effectID)) (\(effectID))")
-                            .font(.system(size: 12))
-                            .foregroundStyle(AppTheme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AppTheme.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.purple.opacity(0.18), lineWidth: 1))
-            }
-
-            if let ordered = relic.result.orderedEffects {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("正确的保存顺序")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(AppTheme.purpleSoft)
-                    ForEach(Array(ordered.enumerated()), id: \.offset) { index, effectID in
-                        Text("\(index + 1). " + (effectID == -1 ? "（空）" : report.affixName(effectID)))
-                            .font(.caption)
-                            .foregroundStyle(AppTheme.secondaryText)
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AppTheme.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.purple.opacity(0.18), lineWidth: 1))
-            }
-        }
-        .appCard(padding: 14)
-    }
-
-    private func affixLine(row: Int) -> some View {
-        let effect = relic.relic.effects[row]
-        let curse = relic.relic.curses[row]
-        return HStack(alignment: .top, spacing: 0) {
-            Text(effect == -1 ? "（空）" : report.affixName(effect))
-                .font(.system(size: 12))
-                .fixedSize(horizontal: false, vertical: true)
-            if curse != -1 {
-                Text("｜" + report.affixName(curse))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Self.curseText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
+    private func chooseCompareFile() {
+        guard let base = model.saveReport else { return }
+        guard let url = runOpenPanel(title: "选择要对比的存档") else { return }
+        do {
+            let other = try model.auditedSave(from: url)
+            compare = SaveComparator.compare(base: base, other: other)
+            compareMessage = ""
+        } catch {
+            compare = nil
+            compareMessage = "对比失败：\(error.localizedDescription)"
         }
     }
 }
 
-private struct SaveIssueRow: View {
-    let issue: RelicAuditIssue
-    let warning: Bool
+/// 自动查找结果里的一行。
+private struct SaveCandidateRow: View {
+    let candidate: SaveFileCandidate
+    let isCurrent: Bool
+    let open: () -> Void
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB]
+        formatter.countStyle = .file
+        return formatter
+    }()
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Image(systemName: warning ? "exclamationmark.triangle.fill" : "xmark.circle.fill")
-                .foregroundStyle(warning ? AppTheme.amber : AppTheme.red)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(issue.title).font(.caption.weight(.bold))
-                Text(issue.detail)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: candidate.isCoop ? "person.2.badge.gearshape" : "doc")
+                .foregroundStyle(AppTheme.purpleSoft)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(candidate.fileName)
+                        .font(.subheadline.weight(.semibold))
+                    if candidate.isCoop {
+                        Pill(text: "无缝联机", color: AppTheme.amber)
+                    }
+                    if isCurrent {
+                        Pill(text: "已载入", color: AppTheme.green, symbol: "checkmark")
+                    }
+                }
+                Text(candidate.locationLabel)
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(candidate.url.path)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                HStack(spacing: 10) {
+                    Text(Self.byteFormatter.string(fromByteCount: candidate.byteSize))
+                    if let modified = candidate.modifiedAt {
+                        Text("修改于 " + Self.dateFormatter.string(from: modified))
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(AppTheme.tertiaryText)
             }
-            Spacer(minLength: 0)
+
+            Spacer(minLength: 8)
+
+            Button("打开", action: open)
+                .buttonStyle(SecondaryButtonStyle())
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.field.opacity(0.75), in: RoundedRectangle(cornerRadius: 9))
+        .background(AppTheme.field.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isCurrent ? AppTheme.green.opacity(0.35) : AppTheme.border, lineWidth: 1)
+        )
     }
 }

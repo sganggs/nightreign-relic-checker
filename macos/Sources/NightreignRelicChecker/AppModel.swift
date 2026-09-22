@@ -245,47 +245,31 @@ final class AppModel: ObservableObject {
     }
 
     func importSave(from url: URL) {
-        guard let relicData else {
-            saveMessage = "遗物数据不可用：" + (relicDataError ?? "未找到 relics.json")
-            return
-        }
         do {
-            let data = try Data(contentsOf: url)
-            let parsed = try SaveFileParser.parse(data: data, fileName: url.lastPathComponent)
-            let context = RelicAuditContext(catalog: catalog, relicData: relicData)
-            let auditor = RelicAuditor()
-            let characters = parsed.characters.map { character in
-                var results = character.relics.map { auditor.audit($0, context: context) }
-                auditor.applyUniqueDuplicates(&results, relics: character.relics)
-                let relics = zip(character.relics, results).map { relic, result in
-                    SaveScanReport.AuditedRelic(
-                        relic: relic,
-                        info: context.relicsByID[relic.itemID],
-                        result: result
-                    )
-                }
-                return SaveScanReport.Character(
-                    slot: character.slot,
-                    name: character.name,
-                    parseError: character.parseError,
-                    relics: relics
-                )
-            }
-            saveReport = SaveScanReport(
-                fileName: parsed.fileName,
-                checksumOk: parsed.checksumOk,
-                affixNames: context.affixIndex.mapValues(\.name),
-                characters: characters
-            )
-            saveSelectedSlot = characters.first?.slot
+            let report = try auditedSave(from: url)
+            saveReport = report
+            saveSelectedSlot = report.characters.first?.slot
             saveFilter = .all
             saveQuery = ""
             saveMessage = ""
         } catch {
             saveReport = nil
             saveSelectedSlot = nil
-            saveMessage = "解析失败：\(error.localizedDescription)"
+            // 遗物数据缺失本身就是完整的说明，不再套「解析失败」的壳。
+            saveMessage = error is SaveLoadError
+                ? error.localizedDescription
+                : "解析失败：\(error.localizedDescription)"
         }
+    }
+
+    /// 解析并审计一份存档（载入与「对比另一份存档」共用同一套口径）。
+    func auditedSave(from url: URL) throws -> AuditedSave {
+        guard let relicData else {
+            throw SaveLoadError.relicDataUnavailable(relicDataError)
+        }
+        let data = try Data(contentsOf: url)
+        let parsed = try SaveFileParser.parse(data: data, fileName: url.lastPathComponent)
+        return SaveAuditPipeline.audit(parsed, catalog: catalog, relicData: relicData)
     }
 
     static func bundledCatalogURL() throws -> URL {
@@ -307,34 +291,17 @@ final class AppModel: ObservableObject {
     }
 }
 
-struct SaveScanReport {
-    struct AuditedRelic: Identifiable {
-        let relic: SaveRelic
-        let info: RelicInfo?
-        let result: RelicAuditResult
+/// 存档页使用的报告类型；模型与装配流程都在 RelicCore（`SaveAudit.swift`），
+/// 报告导出与存档对比共用同一份结构。
+typealias SaveScanReport = AuditedSave
 
-        var id: Int { relic.index }
-        var isDeep: Bool { info?.deep == true }
-        var displayName: String { relicDisplayName(id: relic.itemID, info: info) }
-        var kindLabel: String { relicKindLabel(id: relic.itemID, info: info) }
-    }
+enum SaveLoadError: LocalizedError {
+    case relicDataUnavailable(String?)
 
-    struct Character: Identifiable {
-        let slot: Int
-        let name: String
-        let parseError: String?
-        let relics: [AuditedRelic]
-
-        var id: Int { slot }
-    }
-
-    let fileName: String
-    let checksumOk: Bool
-    let affixNames: [Int: String]
-    let characters: [Character]
-
-    func affixName(_ id: Int) -> String {
-        if let name = affixNames[id], !name.isEmpty { return name }
-        return "未知词条 #\(id)"
+    var errorDescription: String? {
+        switch self {
+        case .relicDataUnavailable(let detail):
+            return "遗物数据不可用：" + (detail ?? "未找到 relics.json")
+        }
     }
 }
