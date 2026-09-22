@@ -1,6 +1,642 @@
 /* 角色属性页样式。由「角色属性」功能开发者独占。
    共用外壳（.page-content / .page-title / .page-placeholder-card 等）在 styles.css；
    主题变量一律用 styles.css :root 里的 --bg / --card / --border / --text / --purple… */
+
 .heroes-content {
-  /* 先沿用共用外壳的宽度与留白，需要时在此覆盖 */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.heroes-loading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- 顶部工具条 */
+
+.heroes-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.heroes-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.heroes-toolbar-row--libra {
+  align-items: center;
+}
+
+.heroes-control {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.heroes-control--grow {
+  flex: 1 1 420px;
+}
+
+.heroes-control--libra {
+  flex: 0 0 300px;
+}
+
+.heroes-control-label {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.heroes-view {
+  grid-template-columns: repeat(2, minmax(78px, 1fr));
+}
+
+.heroes-levels {
+  grid-template-columns: repeat(15, minmax(0, 1fr));
+}
+
+.heroes-levels .segment-button {
+  padding: 0 2px;
+  font: 650 11.5px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.heroes-all-switch.is-disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.heroes-libra-hint {
+  flex: 1 1 260px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* ------------------------------------------------------------------ 角色选择 */
+
+.heroes-picker {
+  padding: 12px 14px;
+}
+
+.heroes-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 8px;
+}
+
+.heroes-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--field);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+
+.heroes-hero:hover {
+  border-color: var(--purple-soft);
+  background: var(--field-soft);
+}
+
+.heroes-hero.is-active {
+  border-color: var(--purple);
+  background: var(--purple-faint);
+}
+
+.heroes-hero-zh {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroes-hero.is-active .heroes-hero-zh {
+  color: var(--purple-soft);
+}
+
+.heroes-hero-en {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font: 9px Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------- 主卡片 */
+
+.heroes-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.heroes-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.heroes-status {
+  margin: 0;
+}
+
+.heroes-cross-note {
+  flex: 1 1 100%;
+  color: var(--amber);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.heroes-subhead {
+  margin: 2px 0 -4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------- 单等级卡片 */
+
+.heroes-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.heroes-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.heroes-stat.is-changed {
+  border-color: rgba(183, 154, 255, .3);
+  background: var(--purple-faint);
+}
+
+.heroes-stat-label {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heroes-stat-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.heroes-stat-value {
+  color: var(--text);
+  font: 700 19px Consolas, "Microsoft YaHei UI", monospace;
+  line-height: 1.15;
+}
+
+.heroes-stat-base {
+  color: var(--text-tertiary);
+  font: 650 12px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.heroes-stat-arrow {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.heroes-stat-delta {
+  margin-left: auto;
+  font: 700 11px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.heroes-delta--up { color: var(--green); }
+.heroes-delta--down { color: var(--red); }
+.heroes-delta--flat { color: var(--text-tertiary); }
+
+.heroes-stat-note {
+  color: var(--text-secondary);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.heroes-stat-note--clamp {
+  color: var(--red);
+}
+
+/* ---------------------------------------------------------------- 表格（两处） */
+
+.heroes-table-wrap {
+  max-height: 560px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+}
+
+.heroes-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.heroes-table th,
+.heroes-table td {
+  padding: 5px 6px;
+  border: 1px solid var(--border-soft);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.heroes-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0;
+  color: var(--text-secondary);
+  background: var(--elevated);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.heroes-table tbody th {
+  color: var(--text-secondary);
+  background: var(--field-soft);
+  font: 650 11px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.heroes-table tbody tr:hover td {
+  background: rgba(183, 154, 255, .035);
+}
+
+.heroes-table tbody tr.is-anchor th,
+.heroes-table tbody tr.is-anchor td {
+  background: rgba(183, 154, 255, .07);
+}
+
+.heroes-table tbody tr.is-current th,
+.heroes-table tbody tr.is-current td {
+  box-shadow: inset 0 0 0 1px rgba(183, 154, 255, .35);
+}
+
+.heroes-cell {
+  font: 650 11.5px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.heroes-cell.is-clamped {
+  background: var(--red-faint);
+}
+
+.heroes-cell-delta {
+  margin-left: 3px;
+  font-size: 9px;
+  vertical-align: super;
+}
+
+.heroes-cell-clamp {
+  margin-left: 3px;
+  color: var(--red);
+  font-size: 8.5px;
+}
+
+/* 15 列的全部等级表：等级列窄、数值来源列留得下两个徽标，其余列均分。 */
+.heroes-level-table th:first-child,
+.heroes-level-table td:first-child {
+  width: 46px;
+}
+
+.heroes-level-table th:last-child,
+.heroes-level-table td:last-child {
+  width: 128px;
+}
+
+.heroes-cell--notes {
+  white-space: normal;
+}
+
+.heroes-cell--notes .pill {
+  margin: 1px;
+}
+
+.heroes-table-caption {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+/* 表头里的排序按钮：整格可点。 */
+.heroes-sort {
+  width: 100%;
+  height: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px 3px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.heroes-sort:hover {
+  color: var(--text);
+}
+
+.heroes-sort.is-active {
+  color: var(--purple-soft);
+}
+
+.heroes-sort-arrow {
+  font-size: 9px;
+}
+
+.heroes-compare-table {
+  table-layout: auto;
+}
+
+.heroes-compare-name {
+  display: table-cell;
+  min-width: 96px;
+  text-align: left !important;
+}
+
+.heroes-compare-name .heroes-hero-zh {
+  display: block;
+  font-size: 11.5px;
+}
+
+.heroes-compare-table tbody tr.is-current th,
+.heroes-compare-table tbody tr.is-current td {
+  background: var(--purple-faint);
+}
+
+/* ------------------------------------------------------------------ 转职遗物 */
+
+.heroes-mod-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 9px;
+}
+
+.heroes-mod {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--field);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.heroes-mod:hover {
+  border-color: var(--purple-soft);
+}
+
+.heroes-mod.is-checked {
+  border-color: var(--purple);
+  background: var(--purple-faint);
+}
+
+.heroes-mod input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.heroes-mod-box {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  border: 1.5px solid var(--text-tertiary);
+  border-radius: 5px;
+  color: transparent;
+  font-size: 11px;
+  font-weight: 800;
+  transition: border-color .15s, background .15s, color .15s;
+}
+
+.heroes-mod input:checked + .heroes-mod-box {
+  border-color: var(--purple);
+  color: #fff;
+  background: var(--purple);
+}
+
+.heroes-mod input:focus-visible + .heroes-mod-box {
+  outline: 2px solid var(--purple-soft);
+  outline-offset: 2px;
+}
+
+.heroes-mod-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.heroes-mod-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.heroes-mod-meta,
+.heroes-mod-delta,
+.heroes-mod-alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.heroes-mod-relic {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.heroes-mod-alt {
+  color: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.heroes-clamp-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--red);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* -------------------------------------------------------------------- 底部折叠 */
+
+.heroes-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.heroes-details {
+  padding: 0;
+  overflow: hidden;
+}
+
+.heroes-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 16px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.heroes-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.heroes-details > summary::before {
+  content: "▸";
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.heroes-details[open] > summary::before {
+  content: "▾";
+  color: var(--purple-soft);
+}
+
+.heroes-summary-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.heroes-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.heroes-caveat-list,
+.heroes-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 17px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.heroes-source-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.heroes-source-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field);
+}
+
+.heroes-source-list strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.heroes-source-list span {
+  color: var(--text-tertiary);
+  font: 9.5px Consolas, monospace;
+  word-break: break-all;
+}
+
+.heroes-source-list p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.heroes-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+}
+
+.heroes-meta-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.heroes-meta dt {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.heroes-meta dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 10.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
