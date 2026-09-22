@@ -1,6 +1,550 @@
 /* 首领数据页样式。由「首领数据」功能开发者独占。
    共用外壳（.page-content / .page-title / .page-placeholder-card 等）在 styles.css；
    主题变量一律用 styles.css :root 里的 --bg / --card / --border / --text / --purple… */
+
 .bosses-content {
-  /* 先沿用共用外壳的宽度与留白，需要时在此覆盖 */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.bosses-loading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- 顶部工具条 */
+
+.bosses-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.bosses-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.bosses-toolbar-row--tabs {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bosses-control {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.bosses-control--grow {
+  flex: 1 1 260px;
+}
+
+.bosses-control-label {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.bosses-party {
+  grid-template-columns: repeat(3, minmax(52px, 1fr));
+}
+
+.bosses-group {
+  grid-template-columns: repeat(3, minmax(88px, 1fr));
+  flex: 0 1 340px;
+}
+
+.bosses-deep {
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--field);
+  font-size: 11px;
+}
+
+.bosses-deep.is-disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.bosses-count {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ 卡片网格 */
+
+.bosses-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.bosses-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px 15px 15px;
+}
+
+.bosses-card.is-expanded {
+  grid-column: 1 / -1;
+  /* 颜色一律取 :root 变量；老 WebView2 不支持 color-mix 时回落到实心紫。 */
+  border-color: var(--purple);
+  border-color: color-mix(in srgb, var(--purple-soft) 30%, transparent);
+}
+
+.bosses-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bosses-card-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bosses-card-title strong {
+  overflow: hidden;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bosses-card-sub {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bosses-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 54%;
+}
+
+.bosses-chevron {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.bosses-card-head:hover .bosses-chevron {
+  color: var(--purple-soft);
+}
+
+.bosses-weakness {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+}
+
+.bosses-weak-label,
+.bosses-entry-count {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+
+.bosses-entry-count {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.bosses-none {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+/* ------------------------------------------------------------------ 数值格子 */
+
+.bosses-stat-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: -3px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.bosses-stat-caption span {
+  margin-left: auto;
+  color: var(--text-tertiary);
+}
+
+.bosses-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.bosses-stat-row--compact {
+  background: var(--field-soft);
+}
+
+.bosses-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bosses-stat-label {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bosses-stat-value {
+  color: var(--text);
+  font: 700 14px Consolas, "Microsoft YaHei UI", monospace;
+  line-height: 1.2;
+}
+
+.bosses-stat-hint {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- 展开后的明细 */
+
+.bosses-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 2px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.bosses-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.bosses-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 11px;
+  background: var(--field);
+  background: color-mix(in srgb, var(--field) 50%, transparent);
+}
+
+.bosses-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.bosses-entry-head strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bosses-entry-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bosses-entry-id {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font: 9.5px Consolas, monospace;
+}
+
+.bosses-sub {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.bosses-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+/* ------------------------------------------------------------------- 小表格 */
+
+.bosses-mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.bosses-mini-table th,
+.bosses-mini-table td {
+  padding: 5px 4px;
+  border: 1px solid var(--border-soft);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.bosses-mini-table thead th {
+  color: var(--text-secondary);
+  background: var(--field-soft);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.bosses-mini-table td strong {
+  font: 650 11px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.bosses-rate span {
+  display: block;
+  margin-top: 1px;
+  font-size: 8.5px;
+}
+
+.bosses-rate--up { color: var(--green); background: var(--green-faint); }
+.bosses-rate--down { color: var(--red); background: var(--red-faint); }
+.bosses-rate--flat { color: var(--text-tertiary); }
+
+.bosses-resist strong { color: var(--text-secondary); }
+.bosses-resist--immune strong { color: var(--purple-soft); }
+.bosses-resist--immune { background: var(--purple-faint); }
+
+.bosses-scaling-table th[scope="row"],
+.bosses-tier-table th[scope="row"] {
+  color: var(--text-secondary);
+  background: var(--field-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bosses-tier-table th[scope="row"] span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.bosses-scaling-table td,
+.bosses-tier-table td {
+  color: var(--text);
+  font: 10.5px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.bosses-scaling-table tr.is-active td,
+.bosses-scaling-table tr.is-active th {
+  color: var(--purple-soft);
+  background: var(--purple-faint);
+}
+
+.bosses-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.bosses-chip {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--field);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------- 底部折叠区 */
+
+.bosses-empty {
+  padding: 40px 0;
+}
+
+.bosses-details {
+  padding: 0;
+  overflow: hidden;
+}
+
+.bosses-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 16px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.bosses-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.bosses-details > summary::before {
+  content: "▸";
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.bosses-details[open] > summary::before {
+  content: "▾";
+  color: var(--purple-soft);
+}
+
+.bosses-summary-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.bosses-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 12px;
+}
+
+.bosses-caveat-list,
+.bosses-legend,
+.bosses-source-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 17px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.bosses-legend b {
+  color: var(--text);
+}
+
+.bosses-source-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.bosses-source-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field);
+}
+
+.bosses-source-list span {
+  color: var(--text-tertiary);
+  font: 9.5px Consolas, monospace;
+  word-break: break-all;
+}
+
+.bosses-table-wrap {
+  max-height: 420px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+}
+
+.bosses-tier-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--elevated);
+}
+
+.bosses-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.bosses-meta > div {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bosses-meta dt {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.bosses-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 10px Consolas, "Microsoft YaHei UI", monospace;
+  user-select: text;
+}
+
+/* --------------------------------------------------------------- 窄窗口适配 */
+
+@media (max-width: 1120px) {
+  .bosses-content { padding-left: 18px; padding-right: 18px; }
+  .bosses-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .bosses-card-badges { max-width: 62%; }
+  .bosses-group { flex: 0 1 300px; grid-template-columns: repeat(3, minmax(76px, 1fr)); }
+  .bosses-entry { padding: 10px; }
+  .bosses-mini-table th, .bosses-mini-table td { padding: 5px 2px; }
 }
