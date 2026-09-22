@@ -273,69 +273,113 @@ test("异常抗性 999 判为免疫，并与 immune 列表一致", () => {
   }
 });
 
-test("名字四级回退：nameZh → nameEn（+ 参考译名副标题）→ 参考译名 → 未知敌人", () => {
+test("名字四级回退：nameZh → nameZhFallback → displayFallbackZh → nameEn", () => {
+  // 与 macOS 端 BossCard.displayName 同一套顺序（两端唯一正式版本）。
+  // 副标题恒为英文名，主标题已经是英文名时不重复。
+
   // 1. 有游戏内简中名：主标题中文、副标题英文
   const zhNamed = data.nightBosses.find((boss) => boss.nameZh && boss.nameSource === "npcname");
   const zhInfo = B.displayName(zhNamed);
   assert.equal(zhInfo.primary, zhNamed.nameZh);
   assert.equal(zhInfo.secondary, zhNamed.nameEn);
   assert.equal(zhInfo.usesFallback, false);
+  assert.equal(zhInfo.usesPlaceholder, false);
   assert.deepEqual(B.nameBadges(zhInfo, zhNamed), [], "游戏文本名不挂任何名称徽标");
 
-  // 2. nameZh 为空但有 nameZhFallback：主标题英文、副标题旧译名 + 「参考译名」徽标
+  // 2. nameZh 为空但有 nameZhFallback：参考译名当主标题 + 「参考译名」徽标，英文名当副标题
   const hippo = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
   assert.equal(hippo.nameZh, "");
   assert.equal(hippo.nameZhFallback, "大型黄金河马");
   const hippoInfo = B.displayName(hippo);
-  assert.equal(hippoInfo.primary, "Large Golden Hippopotamus");
-  assert.equal(hippoInfo.secondary, "大型黄金河马");
+  assert.equal(hippoInfo.primary, "大型黄金河马");
+  assert.equal(hippoInfo.secondary, "Large Golden Hippopotamus");
   assert.equal(hippoInfo.usesFallback, true);
   assert.deepEqual(B.nameBadges(hippoInfo, hippo), [
     { text: "仅英文名", kind: "gray" },
     { text: "参考译名 · 非本作游戏文本", kind: "gray" },
   ]);
 
-  // 3. 只剩参考译名（数据里没有这种，构造一条守住这一支）
-  const onlyFallback = B.displayName({ nameZh: "", nameEn: "", nameZhFallback: "山妖", chrIds: [4600] });
-  assert.equal(onlyFallback.primary, "山妖");
-  assert.equal(onlyFallback.usesFallback, true);
-  assert.equal(onlyFallback.unknown, false);
+  // 3. 占位名 displayFallbackZh：这是本轮修掉的回归——数据集第二版把「未知敌人 cXXXX」
+  //    从 nameZh 挪进了新字段，页面没跟着读，卡头就变成了「Unknown Enemy (c7931)」。
+  const placeholderCards = data.nightBosses.filter((boss) => boss.displayFallbackZh);
+  assert.deepEqual(
+    placeholderCards.map((boss) => boss.id).sort(),
+    ["Unknown Enemy (c7931)@7931", "Unknown Enemy (c7932)@7932"],
+    "只有 c7931 / c7932 两组带占位名"
+  );
+  const unknown = placeholderCards.find((boss) => boss.id === "Unknown Enemy (c7931)@7931");
+  assert.equal(unknown.nameZh, "", "占位名不进 nameZh（它不是游戏文本）");
+  assert.equal(unknown.displayFallbackZh, "未知敌人 c7931");
+  const unknownInfo = B.displayName(unknown);
+  assert.equal(unknownInfo.primary, "未知敌人 c7931");
+  assert.equal(unknownInfo.secondary, "Unknown Enemy (c7931)");
+  assert.equal(unknownInfo.usesPlaceholder, true);
+  assert.equal(unknownInfo.usesFallback, false);
+  assert.deepEqual(B.nameBadges(unknownInfo, unknown), [{ text: "无游戏内名称", kind: "gray" }]);
 
-  // 4. 三者都没有才轮到「未知敌人 cXXXX」，而且用 chrId 而不是光秃秃的「未知敌人」
+  // 4. 三级都空才显示英文名，且不再重复一行副标题
+  const greyoll = data.nightBosses.find((boss) => boss.id === "Elder Dragon Greyoll@4504");
+  assert.equal(greyoll.nameZh, "");
+  assert.equal(greyoll.nameZhFallback, "");
+  assert.equal(greyoll.displayFallbackZh, "");
+  const greyollInfo = B.displayName(greyoll);
+  assert.equal(greyollInfo.primary, "Elder Dragon Greyoll");
+  assert.equal(greyollInfo.secondary, "");
+  assert.equal(greyollInfo.unknown, false);
+
+  // 5. 四级全空才自己拼 chrId（数据里不存在，构造一条守住这一支）
   const blank = B.displayName({ nameZh: "", nameEn: "", nameZhFallback: "", chrIds: [7931] });
   assert.equal(blank.primary, "未知敌人 c7931");
   assert.equal(blank.unknown, true);
   assert.equal(B.displayName({ chrIds: [] }).primary, "未知敌人");
 
-  // 英文名不再被「未知敌人」顶掉：Elder Dragon Greyoll 的 nameZh 是空的，但它有英文名
-  const greyoll = data.nightBosses.find((boss) => boss.id === "Elder Dragon Greyoll@4504");
-  assert.equal(greyoll.nameZh, "");
-  assert.equal(B.displayName(greyoll).primary, "Elder Dragon Greyoll");
-  assert.equal(B.displayName(greyoll).unknown, false);
-
-  // 数据里 chrid-fallback 的两组本来就把「未知敌人 c7931」写进 nameZh，走第一支
-  const fallbackNamed = data.nightBosses.find((boss) => boss.nameSource === "chrid-fallback");
-  assert.match(B.displayName(fallbackNamed).primary, /^未知敌人 c\d+$/);
-  assert.deepEqual(B.nameBadges(B.displayName(fallbackNamed), fallbackNamed), [
-    { text: "无游戏内名称", kind: "gray" },
-  ]);
+  // 逐组核对：全 116 组的主标题都只能来自这四级之一
+  for (const boss of data.nightBosses) {
+    const info = B.displayName(boss);
+    const expected = boss.nameZh || boss.nameZhFallback || boss.displayFallbackZh || boss.nameEn;
+    assert.equal(info.primary, expected, boss.id);
+    assert.equal(info.secondary, boss.nameEn === expected ? "" : boss.nameEn, boss.id);
+  }
+  const fallbackNamed = data.nightBosses.filter((boss) => !boss.nameZh && boss.nameZhFallback);
+  assert.equal(fallbackNamed.length, 14, "14 组走参考译名那一级");
+  const englishTitled = data.nightBosses.filter(
+    (boss) => !boss.nameZh && !boss.nameZhFallback && !boss.displayFallbackZh
+  );
+  assert.equal(englishTitled.length, 5, "5 组只剩英文名");
 });
 
-test("名称徽标：四档旧文案照旧，community 新增「社区资料」，近似匹配单独一枚", () => {
+test("名称徽标：两层判定（名字缺不缺 / 身份谁认的）+ 近似匹配 + 参考译名", () => {
   assert.equal(B.NAME_SOURCE_BADGES["english-only"], "仅英文名");
   assert.equal(B.NAME_SOURCE_BADGES["chrid-fallback"], "无游戏内名称");
   assert.equal(B.NAME_SOURCE_BADGES["manual"], "名称手工补录");
   assert.equal(B.NAME_SOURCE_BADGES["community"], "社区资料");
   assert.equal(B.NAME_SOURCE_BADGES["community-npcname"], "社区资料");
 
+  // nameSource = community 且 nameZh 为空：两件事都要说清楚。
+  // 上一版只挂了「社区资料」，把用户最关心的「本作游戏文本里没有它的简中名」
+  // 从页面上抹掉了，与 macOS 端 BossCard.nameBadges 的两层判定对不上。
   const community = data.nightBosses.find((boss) => boss.id === "Storm King@7910");
   assert.equal(community.nameSource, "community");
-  assert.deepEqual(B.nameBadges(B.displayName(community), community), [{ text: "社区资料", kind: "gray" }]);
+  assert.equal(community.nameZh, "");
+  assert.deepEqual(B.nameBadges(B.displayName(community), community), [
+    { text: "无游戏内名称", kind: "gray" },
+    { text: "社区资料", kind: "gray" },
+  ]);
+  for (const id of ["Elder Dragon Greyoll@4504", "Centipede Grub@7711"]) {
+    const boss = data.nightBosses.find((item) => item.id === id);
+    assert.deepEqual(
+      B.nameBadges(B.displayName(boss), boss).map((badge) => badge.text),
+      ["无游戏内名称", "社区资料"],
+      id
+    );
+  }
 
-  // community-npcname：身份来自社区 roster，名字本身是游戏文本
+  // community-npcname 且拿到了游戏文本依据：只说名字，不再挂「社区资料」，
+  // 否则会和展开区同时显示的「游戏文本依据」自相矛盾（macOS 的同一条守卫）。
   const troll = data.nightBosses.find((boss) => boss.id === "Stonedigger Troll@4603");
   assert.equal(troll.nameZh, "挖石山妖");
-  assert.deepEqual(B.nameBadges(B.displayName(troll), troll), [{ text: "社区资料", kind: "gray" }]);
+  assert.ok(troll.nameEvidence && troll.nameEvidence.id);
+  assert.deepEqual(B.nameBadges(B.displayName(troll), troll), []);
 
   // nameApprox（非逐字命中）另挂「近似匹配」，依据写在 nameNote / nameEvidence 里
   const approx = data.nightBosses.filter((boss) => boss.nameApprox);
@@ -345,18 +389,37 @@ test("名称徽标：四档旧文案照旧，community 新增「社区资料」�
   assert.deepEqual(B.nameBadges(B.displayName(dragon), dragon), [{ text: "近似匹配", kind: "gray" }]);
   assert.ok(dragon.nameEvidence && dragon.nameEvidence.id, "近似匹配的行要能给出游戏文本依据");
 
-  // nameInferred 仍走旧文案（nameSource 已有徽标时不重复挂）
+  // nameInferred 仍走旧文案（前三支都不命中时才轮到它）
+  const inferred = { nameZh: "某某", nameEn: "Whoever", nameSource: "npcname", nameInferred: true };
   assert.deepEqual(
-    B.nameBadges(B.displayName({ nameZh: "某某", nameInferred: true }), { nameSource: "npcname", nameInferred: true }),
+    B.nameBadges(B.displayName(inferred), inferred),
     [{ text: "名称按 ID 推断", kind: "gray" }]
   );
+  // nameZh 为空优先于 nameInferred：墓地幽魂两者都成立，写的是「仅英文名」
+  const shade = data.nightBosses.find((boss) => boss.id === "Cemetery Shade@3664");
+  assert.equal(shade.nameSource, "english-only");
+  assert.equal(shade.nameInferred, true);
+  assert.deepEqual(
+    B.nameBadges(B.displayName(shade), shade).map((badge) => badge.text),
+    ["仅英文名", "参考译名 · 非本作游戏文本"]
+  );
+
+  // 凡是用参考译名当主标题的卡片都必须挂「参考译名 · 非本作游戏文本」
+  const items = B.buildItems(data, Core.foldForSearch);
+  for (const boss of data.nightBosses) {
+    const info = B.displayName(boss);
+    const texts = B.nameBadges(info, boss).map((badge) => badge.text);
+    assert.equal(
+      texts.includes("参考译名 · 非本作游戏文本"), info.usesFallback,
+      `${boss.id}：参考译名徽标应与主标题来源一致`
+    );
+  }
 
   // 卡片上的徽标就是这一组
-  const items = B.buildItems(data, Core.foldForSearch);
   const hippoCard = items.find((item) => item.uid === "nb:Large Golden Hippopotamus@5010");
   assert.deepEqual(hippoCard.nameBadges.map((badge) => badge.text), ["仅英文名", "参考译名 · 非本作游戏文本"]);
-  assert.equal(hippoCard.name, "Large Golden Hippopotamus");
-  assert.equal(hippoCard.nameEn, "大型黄金河马");
+  assert.equal(hippoCard.name, "大型黄金河马");
+  assert.equal(hippoCard.nameEn, "Large Golden Hippopotamus");
   assert.ok(hippoCard.nameNote.length > 0, "让出 nameZh 的原因要能显示在展开区");
 });
 
@@ -495,26 +558,29 @@ test("承伤偏高：代表行 damageRates > 1 的属性按倍率降序取前几
 });
 
 test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡没有", () => {
+  // 两套口径的名字与 macOS 端 BossCard 的两个同名属性一一对应（上一版**正好反着**）：
+  //   deepCoverage        数 depthStats ——「深度模式下这张卡的数值变不变」；
+  //   deepOfNightCoverage 数 deepOfNight ——「有没有额外那组深夜专属常驻修正」。
   const items = B.buildItems(data, Core.foldForSearch);
   const byUid = new Map(items.map((item) => [item.uid, item]));
 
   // menuId 12 = 格诺斯塔·永夜之王：6 条 fights 里 3 条有 deepOfNight。
   const gnoster = byUid.get("nl:12");
   assert.ok(gnoster);
-  assert.equal(B.deepCoverage(gnoster), "some", "整张卡应判为「部分行有深夜数值」");
+  assert.equal(B.deepOfNightCoverage(gnoster), "some", "整张卡应判为「部分行有深夜专属修正」");
 
   const allDeep = items.find((item) => item.entries.length && item.entries.every((e) => e.deepOfNight));
-  assert.equal(B.deepCoverage(allDeep), "all");
+  assert.equal(B.deepOfNightCoverage(allDeep), "all");
 
   const noDeep = items.find((item) => item.entries.length && item.entries.every((e) => !e.deepOfNight));
-  assert.equal(B.deepCoverage(noDeep), "none");
-  assert.equal(B.deepCoverage({ entries: [] }), "none");
+  assert.equal(B.deepOfNightCoverage(noDeep), "none");
+  assert.equal(B.deepOfNightCoverage({ entries: [] }), "none");
 
   // 代表行没有深夜值、卡里其余行却有的卡片，一张都不能漏判成 none。
   // 与 macOS 端 BossDataChecks 的同名断言对着同一组卡片。
   const misjudged = items.filter((item) => {
     const main = B.representativeEntry(item.entries, item.group);
-    return B.deepCoverage(item) !== "none" && !(main && main.deepOfNight);
+    return B.deepOfNightCoverage(item) !== "none" && !(main && main.deepOfNight);
   }).map((item) => item.uid);
   assert.deepEqual(
     misjudged.sort(),
@@ -522,10 +588,18 @@ test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡�
     "这四张卡靠扫描全部行才判得对（咒剑士与死骑士的深夜行是被 noReward 排除掉的模板行）"
   );
   assert.equal(
-    items.filter((item) => B.deepCoverage(item) !== "none").length, 22,
+    items.filter((item) => B.deepOfNightCoverage(item) !== "none").length, 22,
     "带深夜专属数值的卡片共 22 张（与 macOS 自检同一个数）"
   );
-  assert.equal(items.filter((item) => B.deepCoverage(item) === "all").length, 4);
+  assert.equal(items.filter((item) => B.deepOfNightCoverage(item) === "all").length, 4);
+
+  // 卡头徽标文案（macOS 端 BossDeepCoverage.badgeText / exclusiveBadgeText）
+  assert.equal(B.deepCoverageBadge("all"), "深夜数值");
+  assert.equal(B.deepCoverageBadge("some"), "部分行有深夜数值");
+  assert.equal(B.deepCoverageBadge("none"), "");
+  assert.equal(B.deepOfNightCoverageBadge("all"), "深夜专属修正");
+  assert.equal(B.deepOfNightCoverageBadge("some"), "部分行有深夜专属修正");
+  assert.equal(B.deepOfNightCoverageBadge("none"), "");
 });
 
 test("深夜数值并非夜王独有：守夜 / 野外里也有带 deepOfNight 的条目", () => {
@@ -534,7 +608,7 @@ test("深夜数值并非夜王独有：守夜 / 野外里也有带 deepOfNight �
   assert.ok(bossDeepRows.length > 0, "nightBosses 确实存在深夜行，徽标不能只画给夜王");
 
   const items = B.buildItems(data, Core.foldForSearch);
-  const deepBossCards = items.filter((item) => item.kind === "boss" && B.deepCoverage(item) !== "none");
+  const deepBossCards = items.filter((item) => item.kind === "boss" && B.deepOfNightCoverage(item) !== "none");
   assert.equal(deepBossCards.length, 12);
   assert.ok(deepBossCards.some((item) => item.groups.includes("field")));
 });
@@ -670,9 +744,99 @@ test("守夜 / 野外卡片的代表行随分组切换，不再恒取 variants[0
   assert.equal(B.candidateEntries(data.nightlords.find((l) => l.menuId === 13).fights, "nightlords").length, 2);
 });
 
+test("代表行第三步：排掉登场演出 / 血条实体 / 教程行（isStagingRow）", () => {
+  // 演出行**不一定** noReward —— 这正是 noReward 那一层拦不住它们的原因：
+  // 「鲜血君王 · 登场演出」35500020 与巨鸦群的「血条实体」45601020 都是 noReward = false。
+  // 判据与 macOS 端 BossFight.isStagingRow 同一张关键词表，扫的是页面上写着的那个标签。
+  assert.deepEqual(B.STAGING_LABEL_KEYWORDS, ["登场演出", "血条实体", "教程"]);
+
+  const staging = allEntries.filter((entry) => B.isStagingRow(entry));
+  assert.deepEqual(
+    staging.map((entry) => entry.npcId).sort((a, b) => a - b),
+    [21300520, 35500020, 36000010, 36001010, 42600110, 44600015, 45050020, 45601020, 46300030, 71000115],
+    "数据里共 10 条演出行"
+  );
+  assert.equal(
+    staging.filter((entry) => !entry.noReward).length, 7,
+    "其中 7 条照样掉奖励，noReward 那一层拦不住"
+  );
+
+  // 这两张卡就是少了这一步会选错的：上一版 Windows 取的是血量更高的演出行。
+  const crow = data.nightBosses.find((boss) => boss.id === "Giant Crow@4560");
+  const crowStaging = crow.variants.find((v) => v.npcId === 45601020);
+  assert.equal(crowStaging.labelZh, "血条实体");
+  assert.equal(crowStaging.noReward, false, "血条实体也掉奖励，只能靠标签认");
+  assert.equal(crowStaging.hp, 2117);
+  assert.equal(B.representativeEntry(crow.variants, "field").npcId, 45600000);
+  assert.equal(B.representativeEntry(crow.variants, "field").hp, 1779, "宁可取血量更低的实战行");
+
+  const sanguine = data.nightBosses.find((boss) => boss.id === "Sanguine Noble@3550");
+  assert.equal(sanguine.variants.find((v) => v.npcId === 35500020).labelZh, "鲜血君王 · 登场演出");
+  assert.equal(B.representativeEntry(sanguine.variants, "field").npcId, 35500030);
+
+  // 演出行只在评选代表行时被排除，展开区仍然逐行列出来
+  const items = B.buildItems(data, Core.foldForSearch);
+  const crowCard = items.find((item) => item.uid === "nb:Giant Crow@4560");
+  assert.ok(crowCard.entries.some((entry) => entry.npcId === 45601020), "展开区不隐藏演出行");
+
+  // 整池都是演出行时不排除（否则候选池会空）
+  const allStaging = [
+    { hp: 100, npcId: 2, labelZh: "教程" },
+    { hp: 300, npcId: 1, labelZh: "血条实体" },
+  ];
+  assert.equal(B.candidateEntries(allStaging, null).length, 2);
+  assert.equal(B.representativeEntry(allStaging, null).npcId, 1);
+
+  // 全量核对：代表行只有在整池都是演出行时才允许是演出行（macOS 的同一条断言）
+  for (const item of items) {
+    for (const group of item.groups) {
+      const pool = B.candidateEntries(item.entries, group);
+      const primary = B.representativeEntry(item.entries, group);
+      assert.ok(
+        !B.isStagingRow(primary) || pool.every((entry) => B.isStagingRow(entry)),
+        `${item.uid} / ${group} 的代表行不该是演出行`
+      );
+    }
+  }
+});
+
+test("代表行对照表：卡片 + 分组 → npcId，与 macOS 的 representativeCases 同一张", () => {
+  // 同一张表也写在 macos/Sources/RelicCoreChecks/BossDataChecks.swift（12e 节）。
+  // ParityCase 那张表按 npcId 直接取行，断言的是换算公式，钉不住「折叠态会选中哪一行」；
+  // 任一端改了过滤顺序，这里必须立刻红。
+  const items = B.buildItems(data, Core.foldForSearch);
+  const byUid = new Map(items.map((item) => [item.uid, item]));
+  const cases = [
+    // 夜王：整池都 noReward，先排 noReward 会退化成 75000000 参数标签行
+    ["格拉狄乌斯 · 夜王", "nl:0", "nightlords", 75000020],
+    ["玛利斯 · 夜王", "nl:3", "nightlords", 75400020],
+    ["卡莉果 · 夜王", "nl:6", "nightlords", 49000010],
+    // 同一张卡的两个分组给两条不同的代表行
+    ["大型黄金河马 · 守夜", "nb:Large Golden Hippopotamus@5010", "night", 50100010],
+    ["大型黄金河马 · 野外", "nb:Large Golden Hippopotamus@5010", "field", 50100000],
+    // noReward 那一层：血量最高的 35600900 是 Paramdex 模板行
+    ["神皮使徒 · 守夜", "nb:Godskin Apostle@3560", "night", 35600110],
+    ["神皮使徒 · 野外", "nb:Godskin Apostle@3560", "field", 35600020],
+    // isStagingRow 那一层：这两行都 noReward = false，只能靠标签认出来
+    ["鲜血贵族 · 野外", "nb:Sanguine Noble@3550", "field", 35500030],
+    ["巨鸦群 · 野外", "nb:Giant Crow@4560", "field", 45600000],
+    // 两层都会排掉的行
+    ["恶兆妖鬼 · 守夜", "nb:Morgott@2130", "night", 21300030],
+    ["火焰战车 · 野外", "nb:Flame Chariot@4460", "field", 44600010],
+    // 分组过滤那一层：野外档位只有一行
+    ["死亡仪式鸟 · 野外", "nb:Death Rite Bird@4980", "field", 49800030],
+  ];
+  for (const [title, uid, group, npcId] of cases) {
+    const item = byUid.get(uid);
+    assert.ok(item, `对照表找不到卡片 ${uid}（${title}）`);
+    assert.equal(B.representativeEntry(item.entries, group).npcId, npcId, title);
+  }
+});
+
 test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一顺序）", () => {
-  // 约定的顺序：分组过滤（threat）→ isMain 收敛 → 排除 noReward（池内全是 noReward
-  // 就不排除）→ 血量最高（同血量取 npcId 小者），每一步没有候选就原样放行。
+  // 约定的顺序：分组过滤（threat）→ isMain 收敛 → 排除演出行（isStagingRow）→
+  // 排除 noReward（池内全是 noReward 就不排除）→ 血量最高（同血量取 npcId 小者），
+  // 每一步没有候选就原样放行。
   //
   // 为什么 noReward 必须在 isMain 之后：夜王的主战行几乎都是 noReward = true
   //（奖励挂在远征结算上，不在 NpcParam 的 getSoul / 掉落表里）。提到 isMain 之前
@@ -759,13 +923,19 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
     ["史柴格斯 · 远征首领 / 3 人 · 深度 3", 76100010, 3, 3, null, 54423, 581.58132, "value", 0.0174, 0.25, 0.7, 6.4512],
     ["神皮使徒 · 守夜代表行 / 2 人", 35600110, 2, 0, null, 7687, 145.454545, "value", 0.1595, 0.41, 0.889, 3.3],
     ["神皮使徒 · 野外代表行 / 2 人", 35600020, 2, 0, null, 6535, 106.666667, "value", 0.2175, 0.82, 0.889, 2.97],
-    // 双端对照输入 ②：死亡仪式鸟（野外代表行）2 人深度 3 变异档位 113340
+    // 双端对照输入 ②：神皮使徒封印监牢 2 人深度 3，以及同一行叠变异档位 113140
+    ["神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3", 35600020, 2, 3, null, 9723, 124.031008, "value", 0.2175, 0.82, 0.889, 5.46777],
+    ["神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3 · 变异 113140", 35600020, 2, 3, 113140, 11182, 124.031008, "value", 0.2175, 0.82, 0.889, 6.2879355],
+    // 双端对照输入 ③：死亡仪式鸟（野外代表行）2 人深度 3 变异档位 113340
     ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3", 49800030, 2, 3, null, 5017, 186.046512, "value", 0.2175, 0.98, 0.985, 2.7615],
     ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3 · 变异 113340", 49800030, 2, 3, 113340, 5770, 186.046512, "value", 0.2175, 0.98, 0.985, 3.175725],
     ["大型黄金河马 · 守夜代表行 / 3 人", 50100010, 3, 0, null, 17747, 266.666667, "value", 0.087, 0.315, 0.778, 3.672],
     ["大型黄金河马 · 野外代表行 / 3 人", 50100000, 3, 0, null, 5606, 160, "value", 0.145, 0.95, 0.97, 1.5],
     ["未知敌人 c7931（poise = 0）/ 2 人", 79310000, 2, 0, null, 6851, null, "zero", 0.1595, 0.46, 0.955, 1.75],
     ["鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", 48010010, 2, 0, null, 674, null, "none", 0.0319, 0.375, 0.85, 3.64],
+    // 双端对照输入 ④：第二版核验里取整口径统一后 +1 的两条
+    ["贪食魔龙（大口龙）/ 1 人", 77000000, 1, 0, null, 5399, 120, "value", 0.29, 0.5, 1, 1.75],
+    ["神皮贵族 · 守夜双人组 / 1 人", 35700010, 1, 0, null, 5549, 80, "value", 0.058, 0.5, 1, 2.8],
   ];
 
   for (const [title, npcId, party, depth, mutationId, hp, poise, kind, recover, ailment, buildup, attack] of cases) {
@@ -796,7 +966,7 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
   const bird = data.nightBosses.find((boss) => boss.id === "Death Rite Bird@4980");
   assert.equal(B.representativeEntry(bird.variants, "field").npcId, 49800030);
 
-  // 双端对照输入 ③：隐藏开关前后的条数
+  // 双端对照输入 ⑤：隐藏开关前后的条数
   const items = B.buildItems(data, Core.foldForSearch);
   assert.deepEqual(
     ["nightlords", "night", "field"].map((group) => [
@@ -900,9 +1070,18 @@ test("行内徽标 / 卡头计数文案与 macOS 逐字一致", () => {
   assert.ok(badges.includes("标签为社区推测"), `实际徽标：${badges.join(" / ")}`);
   assert.ok(!badges.includes("标签存疑"), "旧文案「标签存疑」不该再出现");
 
+  // 行内深夜徽标：macOS 写「深夜数值」（depthStats 口径，不带深度数字），
+  // 上一版 Windows 写的是「深夜 4」——两边注释都声称「逐字一致」，实际两套说法。
   const deepEntry = allEntries.find((entry) => entry.deepOfNight);
   const deepBadges = B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, 4, null));
-  assert.ok(deepBadges.includes("深夜 4"), `实际徽标：${deepBadges.join(" / ")}`);
+  assert.ok(deepBadges.includes("深夜数值"), `实际徽标：${deepBadges.join(" / ")}`);
+  assert.ok(deepBadges.includes("深夜专属修正"), "带 deepOfNight 的行另挂一枚");
+  assert.equal(deepBadges.some((text) => /深夜 \d/.test(text)), false, "徽标里不写深度数字");
+  // 只有 depthStats、没有 deepOfNight 的行只挂前一枚
+  const plainDepth = allEntries.find((entry) => entry.depthStats && !entry.deepOfNight);
+  const plainBadges = B.entryBadgeTexts({ kind: "boss" }, plainDepth, B.computeStats(plainDepth, 1, 4, null));
+  assert.ok(plainBadges.includes("深夜数值"));
+  assert.equal(plainBadges.includes("深夜专属修正"), false);
   assert.equal(
     B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, 0, null))
       .some((text) => text.startsWith("深夜")),
@@ -923,9 +1102,14 @@ test("行内徽标 / 卡头计数文案与 macOS 逐字一致", () => {
 
   // 守夜 / 野外的威胁短名仍是「守夜 / 野外」（macOS 的 threatTitle）
   assert.ok(allEntries.some((entry) => entry.threat === "night"), "数据集里应存在 threat = night 的行");
+  // 顺序也与 macOS 的 Pill 顺序一致：威胁档位在前、主战在后
   assert.deepEqual(
     B.entryBadgeTexts({ kind: "boss" }, { threat: "night", isMain: true }, { isDeep: false }),
-    ["主战", "守夜"]
+    ["守夜", "主战"]
+  );
+  assert.deepEqual(
+    B.entryBadgeTexts({ kind: "boss" }, { threat: "field", isMain: false, labelUncertain: true }, { isDeep: false }),
+    ["野外", "标签为社区推测"]
   );
 
   assert.equal(B.rowCountText(5), "5 条数值行");
@@ -1205,10 +1389,166 @@ test("buildItems 带齐 schemaVersion 3 的展示字段", () => {
   assert.equal(lord.hidden, false);
 });
 
+test("双端文案表：TEXT 的每一串都与 macOS 的 BossRowText 逐字相同", () => {
+  // macOS 端由 checkBossDataParityText() 断言 BossRowText 的同名常量，
+  // 两边各自钉死同一批字面量；任一端改文案，另一端立刻红。
+  assert.deepEqual(B.TEXT, {
+    labelUncertainBadge: "标签为社区推测",
+    deepRowBadge: "深夜数值",
+    deepRowBadgePartial: "部分行有深夜数值",
+    deepExclusiveBadge: "深夜专属修正",
+    deepExclusiveBadgePartial: "部分行有深夜专属修正",
+    nameFallbackBadge: "参考译名 · 非本作游戏文本",
+    nameApproxBadge: "近似匹配",
+    nameEnglishOnlyBadge: "仅英文名",
+    nameNoGameNameBadge: "无游戏内名称",
+    nameManualBadge: "名称手工补录",
+    nameInferredBadge: "名称按 ID 推断",
+    nameCommunityBadge: "社区资料",
+    hiddenToggleTitle: "显示隐藏实体",
+    hiddenToggleHelp: "召唤物 / 投射物等非首领实体",
+    noRewardGroupNote: "该组不掉任何奖励（getSoul / 掉落表全为 0 或 -1）",
+    noRewardRowNote: "该行不掉任何奖励",
+    noDepthStatsText: "该行无深夜数值",
+    mutationTitle: "变异个体",
+    mutationPickerTitle: "按变异个体计算",
+    mutationPickerNone: "无",
+    mutationStackNote: "变异倍率在其它缩放之上再乘一层，按参数结构推断",
+    mutationCountNote: "表里是「有几只被变异」的只数，不是百分比概率",
+    attackRateUnchanged: "不变",
+    depthWeightZero: "该深度不会出现",
+    multiplayerAuditSummary:
+      "多人不是简单乘倍：血量按档位从 ×1 到 ×3 不等（最终 Boss 档才是 ×2 / ×3，" +
+      "野外常见档 7740 只有 ×1.1 / ×1.2，突袭档 98810 / 98815 完全不加血）；" +
+      "7744 / 7753 / 7754 / 7758 四档的敌人攻击力还会上浮 10% / 20%；" +
+      "防御、卢恩与掉落、异常触发阈值三项人数缩放一概不碰，" +
+      "变的只是异常累积量与发动伤害倍率（都往下走，人越多越难上异常）。",
+  });
+
+  // 这几串是靠函数拼出来的，单独钉住（macOS 的同名函数）
+  assert.equal(B.multiplayerAttackBadge(1.1), "多人攻击 ×1.1");
+  assert.equal(B.multiplayerAttackBadge(1.2), "多人攻击 ×1.2");
+  assert.equal(B.depthWeightText(0), "该深度不会出现");
+  assert.equal(B.depthWeightText(500), "权重 500");
+  assert.equal(B.depthWeightText(1600), "权重 1600", "不加千位分隔符，与 macOS 同串");
+  assert.equal(B.fmtAttackRate(1), "不变");
+
+  // 文案表里的串必须真的用在页面上，别留成只给测试看的摆设
+  const source = readFileSync(
+    path.join(repoRoot, "windows", "renderer", "pages", "bosses.js"), "utf8"
+  );
+  for (const key of Object.keys(B.TEXT)) {
+    assert.ok(source.includes("TEXT." + key), `TEXT.${key} 定义了却没有被用到`);
+  }
+});
+
+test("数值行标签的四级回退与 macOS 的 displayLabel 一致", () => {
+  // isStagingRow 照着这个标签判，两端判据一旦不同代表行就会分叉。
+  assert.equal(B.entryLabel({ npcId: 1, labelZh: "甲", labelEn: "A", paramdexName: "P" }), "甲");
+  assert.equal(B.entryLabel({ npcId: 1, labelZh: "", labelEn: "A", paramdexName: "P" }), "A");
+  assert.equal(B.entryLabel({ npcId: 1, labelZh: "", labelEn: "", paramdexName: "P" }), "P");
+  assert.equal(B.entryLabel({ npcId: 12345 }), "行 12345");
+  // 数据里 394 行的 labelZh 都非空，走第一支
+  assert.equal(allEntries.every((entry) => entry.labelZh), true);
+});
+
+test("最新数据集的两个取整事实：hp +1 的 4 行、unmatchedNames 12 条", () => {
+  // 第二版核验把整数血量统一成「倍率量化到 6 位小数后 ROUND_HALF_UP」，4 条记录各 +1
+  //（大口龙三个变体 5398→5399、神皮贵族 5548→5549）。这 4 行的 hpBase × hpMultiplier
+  // 正好落在 .5 上，取整方向一变数字就变，所以逐条钉住。
+  const bumped = [
+    ["Gaping Dragon@7700", 77000000, 5399],
+    ["Gaping Dragon@7700", 77000010, 5399],
+    ["Gaping Dragon@7700", 77009010, 5399],
+    ["Godskin Noble@3570", 35700010, 5549],
+  ];
+  for (const [id, npcId, hp] of bumped) {
+    const boss = data.nightBosses.find((item) => item.id === id);
+    const row = boss.variants.find((item) => item.npcId === npcId);
+    assert.equal(row.hp, hp, `${id} / ${npcId}`);
+    assert.equal(row.hpBase * row.hpMultiplier, hp - 0.5, "乘积正好落在 .5 上");
+    assert.equal(B.computeStats(row, 1, 0, null).hp, hp, "1 人常规血量直接取 hp，不重算");
+  }
+  // 这 4 行正是全表里唯一落在 .5 上的
+  const halves = allEntries.filter((entry) => Math.abs(entry.hpBase * entry.hpMultiplier % 1) === 0.5);
+  assert.equal(halves.length, 4);
+  // JS 的 Math.round 与 Swift 的 .rounded() 都是「.5 向上」，两端与生成器同向；
+  // 页面仍然一律直接读 hp，不给取整口径留第二个实现。
+  assert.equal(allEntries.every((entry) => Math.round(entry.hpBase * entry.hpMultiplier) === entry.hp), true);
+
+  // notes.unmatchedNames 只留「游戏文本里查无此名」的 12 条；
+  // 4 条「匹配到但因重名让出」的只记在 nameCollisions 里。
+  assert.equal(data.notes.unmatchedNames.length, 12);
+  assert.equal(data.notes.nameCollisions.length, 4);
+  for (const item of data.notes.unmatchedNames) {
+    assert.equal(typeof item.nameEn, "string");
+    assert.equal(typeof item.chrId, "number");
+  }
+});
+
+test("深度缺失退常规 + 异常发动伤害基准缺字段回落 1（与 macOS 的解码默认值一致）", () => {
+  // macOS 的 BossFight.baseline(mode:)：请求了深度但没有 depthStats 时**整组**退回常规，
+  // 不是退回 deepOfNight。上一版 Windows 会退到 deepOfNight，同一条假想行两端给不同的数。
+  const noDepth = {
+    npcId: 1, hp: 1000, hpBase: 1000, hpMultiplier: 1, poise: 100,
+    poiseTakenBase: 1, poiseRecover: 1, poiseRecoverMultiplier: 1,
+    ailmentDamageRateBase: 0.5, attackRateBase: 2,
+    deepOfNight: {
+      hp: 700, hpMultiplier: 0.7, poiseTakenBase: 0.8, attackRateBase: 1.4,
+      poiseRecoverMultiplier: 0.2, ailmentDamageRateBase: 0.25, permScalingIds: [999],
+    },
+  };
+  const stats = B.computeStats(noDepth, 1, 3, null);
+  assert.equal(stats.hasDepth, false);
+  assert.equal(stats.hp, 1000, "退回常规血量，不是 deepOfNight 的 700");
+  assert.equal(stats.attackRate, 2);
+  assert.equal(stats.poiseTakenTotal, 1);
+  assert.equal(stats.poiseRecover, 1, "削韧恢复倍率也退回常规");
+  assert.equal(stats.ailmentDamageRate, 0.5);
+  assert.deepEqual(stats.permScalingIds, []);
+
+  // 有 depthStats 时才轮到 deepOfNight 供那三项
+  const withDepth = Object.assign({}, noDepth, {
+    depthStats: { 3: { hp: 2000, hpMultiplier: 2, poiseTakenBase: 0.86, attackRateBase: 5, depthSpEffectId: 7 } },
+  });
+  const deep = B.computeStats(withDepth, 1, 3, null);
+  assert.equal(deep.hasDepth, true);
+  assert.equal(deep.hp, 2000);
+  assert.equal(deep.poiseTakenTotal, 0.86);
+  assert.equal(deep.poiseRecover, 0.2, "削韧恢复倍率取 deepOfNight");
+  assert.equal(deep.ailmentDamageRate, 0.25);
+  assert.deepEqual(deep.permScalingIds, [999]);
+  assert.equal(deep.depthSpEffectId, 7);
+
+  // ailmentDamageRateBase 缺字段时回落到 1（中性倍率），不是 0。
+  // macOS 走 `bossDouble(.ailmentDamageRateBase, default: 1)`；上一版 Windows 回落到 0，
+  // 会把「数据里没写」显示成「异常发动完全不造成伤害」。
+  const bare = { npcId: 2, hp: 100, hpBase: 100, hpMultiplier: 1, poise: 10, poiseTakenBase: 1 };
+  assert.equal(B.computeStats(bare, 1, 0, null).ailmentDamageRate, 1);
+  // 数据里 394 行都写了这个字段，走不到回落支
+  assert.equal(allEntries.every((entry) => typeof entry.ailmentDamageRateBase === "number"), true);
+});
+
+test("搜索索引收进 displayFallbackZh：卡头上写着的占位名必须搜得到", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  const hits = B.filterItems(items, "night", "未知敌人", Core.foldForSearch, true);
+  assert.deepEqual(
+    hits.map((item) => item.uid).sort(),
+    ["nb:Unknown Enemy (c7931)@7931", "nb:Unknown Enemy (c7932)@7932"]
+  );
+  // 它们是隐藏实体，开关关着时照旧搜不到
+  assert.equal(B.filterItems(items, "night", "未知敌人", Core.foldForSearch).length, 0);
+  // 卡片模型里保留原串给展开区说明
+  const card = items.find((item) => item.uid === "nb:Unknown Enemy (c7931)@7931");
+  assert.equal(card.namePlaceholder, "未知敌人 c7931");
+  assert.equal(card.name, "未知敌人 c7931");
+  assert.equal(card.nameEn, "Unknown Enemy (c7931)");
+});
+
 test("深度覆盖：394 条数值行全有 depthStats，卡片一律判 all", () => {
   const items = B.buildItems(data, Core.foldForSearch);
-  assert.equal(items.every((item) => B.depthCoverage(item) === "all"), true);
-  assert.equal(B.depthCoverage({ entries: [] }), "none");
-  assert.equal(B.depthCoverage({ entries: [{ depthStats: {} }, {}] }), "some");
-  assert.equal(B.depthCoverage({ entries: [{}, {}] }), "none");
+  assert.equal(items.every((item) => B.deepCoverage(item) === "all"), true);
+  assert.equal(B.deepCoverage({ entries: [] }), "none");
+  assert.equal(B.deepCoverage({ entries: [{ depthStats: {} }, {}] }), "some");
+  assert.equal(B.deepCoverage({ entries: [{}, {}] }), "none");
 });

@@ -400,12 +400,22 @@ func checkBossData() throws -> Int {
     // schemaVersion 3 第二轮核验：「未知敌人 cXXXX」是生成器用 chrId 拼出来的占位串，
     // 不是游戏文本，留在 nameZh 里与数据集自己的「简中名只来自游戏文本」相矛盾，
     // 已挪到新字段 displayFallbackZh（与 nameZhFallback 的「旧译名」是两回事，见 caveats）。
-    // 因此 nameZh 为空、displayName 落到英文名那一支；徽标看的是 nameSource，没变。
-    // 页面侧把 displayFallbackZh 接进显示名之后，这里的期望值再改回「未知敌人 c7931」。
+    // 页面侧已把它接进四级回退的第 3 级，所以显示名又回到「未知敌人 c7931」，
+    // 而徽标（看的是 nameSource）仍然写明「无游戏内名称」。
     try bossExpect(chrFallback.nameZh.isEmpty, "chrid-fallback 的 nameZh 应为空（占位名不进 nameZh）", counter: &count)
     try bossExpect(
-        chrFallback.displayName == "Unknown Enemy (c7931)",
-        "nameZh 为空时显示名回退到英文名",
+        chrFallback.displayFallbackZh == "未知敌人 c7931",
+        "占位名应落在 displayFallbackZh 里，实际 \(chrFallback.displayFallbackZh)",
+        counter: &count
+    )
+    try bossExpect(
+        chrFallback.displayName == "未知敌人 c7931",
+        "占位名要接进显示名（第 3 级），实际 \(chrFallback.displayName)",
+        counter: &count
+    )
+    try bossExpect(
+        chrFallback.subtitleName == "Unknown Enemy (c7931)",
+        "英文名退居副标题",
         counter: &count
     )
     // schemaVersion 3：nameSource = manual 不再产出。Cemetery Shade 的手工译名「墓地幽魂」
@@ -815,6 +825,26 @@ func checkBossData() throws -> Int {
               hp: 11182, effectivePoise: 124.031008, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.82, buildupRate: 0.889,
               mutationId: 113140, attackRate: 6.2879355, runeRate: 1.35),
+        // 野外常见档 7740（只加 10% 血）下的同一组输入，与上面的最终 Boss 档互为对照。
+        .init(title: "死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3", npcId: 49800030, players: .duo, mode: .depth3,
+              hp: 5017, effectivePoise: 186.046512, poiseKind: .value,
+              poiseRecover: 0.2175, ailmentDamageRate: 0.98, buildupRate: 0.985,
+              attackRate: 2.7615, runeRate: 1),
+        .init(title: "死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3 · 变异 #113340",
+              npcId: 49800030, players: .duo, mode: .depth3,
+              hp: 5770, effectivePoise: 186.046512, poiseKind: .value,
+              poiseRecover: 0.2175, ailmentDamageRate: 0.98, buildupRate: 0.985,
+              mutationId: 113340, attackRate: 3.175725, runeRate: 1.35),
+        // 第二版核验里取整口径统一后 +1 的两条（大口龙 5398→5399、神皮贵族 5548→5549）。
+        // 这两个数只能来自数据集的 hp 字段，页面不得自己用 hpBase × hpMultiplier 重算。
+        .init(title: "贪食魔龙（大口龙）/ 1 人", npcId: 77000000, players: .solo, mode: .normal,
+              hp: 5399, effectivePoise: 120, poiseKind: .value,
+              poiseRecover: 0.29, ailmentDamageRate: 0.5, buildupRate: 1,
+              attackRate: 1.75, runeRate: 1),
+        .init(title: "神皮贵族 · 守夜双人组 / 1 人", npcId: 35700010, players: .solo, mode: .normal,
+              hp: 5549, effectivePoise: 80, poiseKind: .value,
+              poiseRecover: 0.058, ailmentDamageRate: 0.5, buildupRate: 1,
+              attackRate: 2.8, runeRate: 1),
     ]
     let rowsByNpcId = Dictionary(bossAllRows(dataset).map { ($0.npcId, $0) }, uniquingKeysWith: { first, _ in first })
     for item in parityCases {
@@ -881,15 +911,27 @@ func checkBossData() throws -> Int {
         counter: &count
     )
 
-    // 12c. 名字：主标题 / 参考译名副标题 / 徽标 / 搜索索引
+    // 12c. 名字：主标题四级回退 / 徽标 / 搜索索引
     //      用户的第一条抱怨是「有的首领只有英文名、有的翻译不对、还有未知敌人」。
-    //      数据层已经把 14 条手工译名移出 nameZh，页面这边必须做到三件事：
-    //      主标题只用游戏文本、参考译名带「非本作游戏文本」的说明、旧译名仍然搜得到。
+    //      数据层已经把 14 条手工译名移出 nameZh、把占位名移进 displayFallbackZh，
+    //      页面这边必须做到三件事：主标题按 nameZh → nameZhFallback →
+    //      displayFallbackZh → nameEn 四级回退、非游戏文本的那两级各自带徽标说明、
+    //      旧译名与占位名仍然搜得到。两端同一套口径（Windows 端 displayName()）。
     let troll = try cardForBoss("Troll@4600")
     try bossExpect(troll.nameZh.isEmpty, "Troll 的 nameZh 应已清空（游戏文本里查无此名）", counter: &count)
-    try bossExpect(troll.displayName == "Troll", "nameZh 为空时主标题用英文名，不能用参考译名", counter: &count)
-    try bossExpect(troll.fallbackSubtitle == "山妖", "参考译名应作副标题给出，实际 \(troll.fallbackSubtitle ?? "nil")", counter: &count)
-    try bossExpect(troll.nameBadge == .englishOnly, "Troll 应挂「仅英文名」徽标", counter: &count)
+    try bossExpect(
+        troll.displayName == "山妖",
+        "nameZh 为空时主标题用参考译名，实际 \(troll.displayName)",
+        counter: &count
+    )
+    try bossExpect(troll.subtitleName == "Troll", "副标题恒为英文名", counter: &count)
+    try bossExpect(troll.usesNameFallback, "Troll 的主标题来自 nameZhFallback", counter: &count)
+    try bossExpect(
+        troll.nameBadges == [.englishOnly, .fallback],
+        "Troll 应同时挂「仅英文名」与「参考译名 · 非本作游戏文本」，实际 \(troll.nameBadges)",
+        counter: &count
+    )
+    try bossExpect(troll.nameBadge == .englishOnly, "Troll 的首枚徽标仍是「仅英文名」", counter: &count)
     try bossExpect(
         index.cards(in: .field, query: "山妖").contains { $0.id == troll.id },
         "按旧译名「山妖」仍应能搜到 Troll（nameZhFallback 要进搜索索引）",
@@ -897,8 +939,8 @@ func checkBossData() throws -> Int {
     )
     let hippoGroup = try cardForBoss("Large Golden Hippopotamus@5010")
     try bossExpect(
-        hippoGroup.fallbackSubtitle == "大型黄金河马",
-        "大型黄金河马的参考译名应作副标题",
+        hippoGroup.displayName == "大型黄金河马" && hippoGroup.subtitleName == "Large Golden Hippopotamus",
+        "大型黄金河马的参考译名应当主标题、英文名当副标题",
         counter: &count
     )
     try bossExpect(
@@ -911,13 +953,18 @@ func checkBossData() throws -> Int {
         "拿到游戏文本的那一组仍叫「黄金河马」",
         counter: &count
     )
-    // nameZh 非空的组不给副标题：主标题已经是游戏文本，再挂参考译名只会让人以为有两个名字。
+    // nameZh 非空的组不走参考译名那一级：主标题已经是游戏文本。
     try bossExpect(
-        index.cards.allSatisfy { $0.nameZh.isEmpty || $0.fallbackSubtitle == nil },
-        "有简中名的组不应再显示参考译名副标题",
+        index.cards.allSatisfy { $0.nameZh.isEmpty || !$0.usesNameFallback },
+        "有简中名的组不应再用参考译名当主标题",
         counter: &count
     )
-    let fallbackCards = index.cards.filter { $0.fallbackSubtitle != nil }
+    try bossExpect(
+        index.cards.allSatisfy { !$0.usesNameFallback || $0.nameBadges.contains(.fallback) },
+        "凡是用参考译名当主标题的卡片都必须挂「参考译名 · 非本作游戏文本」",
+        counter: &count
+    )
+    let fallbackCards = index.cards.filter(\.usesNameFallback)
     try bossExpect(
         fallbackCards.count == 14,
         "当前数据里应有 14 组带参考译名，实际 \(fallbackCards.count)",
@@ -926,6 +973,44 @@ func checkBossData() throws -> Int {
     try bossExpect(
         fallbackCards.allSatisfy { !$0.nameZhFallbackNote.isEmpty },
         "每条参考译名都应带来源说明（不是本作游戏内文本）",
+        counter: &count
+    )
+    try bossExpect(
+        fallbackCards.allSatisfy { $0.displayName == $0.nameZhFallback },
+        "这 14 组的主标题就是参考译名本身",
+        counter: &count
+    )
+    // 第 3 级：占位名 displayFallbackZh（只有 c7931 / c7932），徽标是「无游戏内名称」。
+    let displayFallbackCards = index.cards.filter(\.usesDisplayFallback)
+    try bossExpect(
+        displayFallbackCards.map(\.id).sorted()
+            == ["boss-Unknown Enemy (c7931)@7931", "boss-Unknown Enemy (c7932)@7932"],
+        "只有 c7931 / c7932 两组走占位名那一级，实际 \(displayFallbackCards.map(\.id).sorted())",
+        counter: &count
+    )
+    try bossExpect(
+        displayFallbackCards.allSatisfy { $0.nameBadges == [.noGameName] },
+        "占位名那一级必须挂「无游戏内名称」",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards(in: .night, query: "未知敌人", includeHidden: true).count == 2,
+        "占位名也要进搜索索引（页面上看得见的名字必须搜得到）",
+        counter: &count
+    )
+    // 第 4 级：三级都空才显示英文名。
+    let englishTitled = index.cards.filter {
+        $0.group != .nightlord && $0.nameZh.isEmpty && $0.nameZhFallback.isEmpty
+            && $0.displayFallbackZh.isEmpty
+    }
+    try bossExpect(
+        englishTitled.allSatisfy { $0.displayName == $0.nameEn && $0.subtitleName == nil },
+        "三级都空的组主标题用英文名，且不再重复一行副标题",
+        counter: &count
+    )
+    try bossExpect(
+        englishTitled.count == 5,
+        "当前数据里应有 5 组只剩英文名（Greyoll / Storm King / Centipede Grub / Putrid Flesh / Giant Skeleton Torso），实际 \(englishTitled.count)",
         counter: &count
     )
     // 近似匹配：游戏文本不是逐字命中，页面要挂「近似匹配」并给出 nameNote / 证据。
@@ -991,7 +1076,7 @@ func checkBossData() throws -> Int {
         "名字徽标沿用原有四档并新增 community",
         counter: &count
     )
-    // 「未知敌人 cXXXX」只在三个名字都没有时兜底
+    // 「未知敌人 cXXXX」只在四级回退全空时兜底
     let noNameJSON = """
     {"nightBosses": [{"nameEn": "", "chrIds": [4242], "tier": "field",
       "variants": [{"npcId": 1, "labelZh": "甲"}]}]}
@@ -999,7 +1084,7 @@ func checkBossData() throws -> Int {
     let noName = try BossDataIndex(data: Data(noNameJSON.utf8))
     try bossExpect(
         noName.cards.first?.displayName == "未知敌人 c4242",
-        "三个名字都没有时才兜底成「未知敌人 cXXXX」，实际 \(noName.cards.first?.displayName ?? "nil")",
+        "四级回退全空时才兜底成「未知敌人 cXXXX」，实际 \(noName.cards.first?.displayName ?? "nil")",
         counter: &count
     )
 
@@ -1022,6 +1107,14 @@ func checkBossData() throws -> Int {
     try bossExpect(
         index.cards(in: .field).count == 72 && index.cards(in: .field, includeHidden: true).count == 72,
         "4 组隐藏实体都在守夜档，野外分组不受开关影响",
+        counter: &count
+    )
+    // 双端对照输入 ⑤：隐藏开关前后三个分组的条数（windows/tests/bosses.test.mjs 同一组数）
+    try bossExpect(
+        [BossCard.Group.nightlord, .night, .field].map {
+            [index.cards(in: $0).count, index.cards(in: $0, includeHidden: true).count]
+        } == [[18, 18], [46, 50], [72, 72]],
+        "隐藏开关前后应是 夜王 18/18、守夜 46/50、野外 72/72",
         counter: &count
     )
     try bossExpect(
@@ -1085,11 +1178,12 @@ func checkBossData() throws -> Int {
         counter: &count
     )
 
-    // 12e. 代表行：分组过滤 → isMain → 排掉无奖励行 → 排掉演出行 → 血量最高
+    // 12e. 代表行：分组过滤 → isMain → 排掉演出行 → 排掉无奖励行 → 血量最高
     //      顺序很要紧。18 张夜王卡片的候选池（收敛到 isMain 之后）**整池都是 noReward**，
     //      要是把「排掉无奖励行」放在 isMain 前面，11 张夜王卡的代表行都会被换成
     //      「格拉狄乌斯（常驻缩放 ×3.54）」75000000 这种参数标签行。所以 isMain 先、
-    //      noReward 后，且整池都无奖励时不排。这一版顺序就是两端的正式规则，
+    //      noReward 后，且整池都无奖励时不排。演出行（isStagingRow）排在 noReward 之前：
+    //      先把玩家根本打不到的行剔掉，再谈掉不掉奖励。这一版顺序就是两端的正式规则，
     //      规则正文写在 BossCard.rows(in:) 的文档注释里。
     //
     //      下面的 representativeCases 是**两端共享的对照表**（同一张也要写进
@@ -1116,6 +1210,11 @@ func checkBossData() throws -> Int {
         // isStagingRow 那一层：这两行都 noReward = false，只能靠标签认出来
         .init(title: "鲜血贵族 · 野外", cardId: "boss-Sanguine Noble@3550", group: .field, npcId: 35500030),
         .init(title: "巨鸦群 · 野外", cardId: "boss-Giant Crow@4560", group: .field, npcId: 45600000),
+        // 教程 / 血条实体那两行：既是演出行又 noReward，两层都会排掉
+        .init(title: "恶兆妖鬼 · 守夜", cardId: "boss-Morgott@2130", group: .night, npcId: 21300030),
+        .init(title: "火焰战车 · 野外", cardId: "boss-Flame Chariot@4460", group: .field, npcId: 44600010),
+        // 死亡仪式鸟：野外档位只有一行，分组过滤那一层就定了
+        .init(title: "死亡仪式鸟 · 野外", cardId: "boss-Death Rite Bird@4980", group: .field, npcId: 49800030),
     ]
     for item in representativeCases {
         guard let card = index.cards.first(where: { $0.id == item.cardId }) else {
@@ -1145,6 +1244,27 @@ func checkBossData() throws -> Int {
             card.representativeRow(in: .nightlord)?.isMain == true
         },
         "每张夜王卡片的代表行都应是 isMain 行",
+        counter: &count
+    )
+    // 顺序本身也钉住：两层互换在 v3 数据上结果一样，但规则文本只有一份。
+    try bossExpect(
+        index.cards.allSatisfy { card in
+            card.groups.allSatisfy { group in
+                var pool = card.rows
+                if let threat = group.threat {
+                    let byThreat = pool.filter { $0.threat == threat }
+                    if !byThreat.isEmpty { pool = byThreat }
+                }
+                let mains = pool.filter(\.isMain)
+                if !mains.isEmpty { pool = mains }
+                let playable = pool.filter { !$0.isStagingRow }
+                if !playable.isEmpty { pool = playable }
+                let rewarding = pool.filter { !$0.noReward }
+                if !rewarding.isEmpty { pool = rewarding }
+                return pool.map(\.npcId).sorted() == card.rows(in: group).map(\.npcId).sorted()
+            }
+        },
+        "rows(in:) 必须是「分组 → isMain → isStagingRow → noReward」这个顺序",
         counter: &count
     )
     // 守夜 / 野外没有 isMain，这一层就由 noReward 兜底：模板行 / 登场演出 / 血条实体不再抢代表位
@@ -1702,6 +1822,53 @@ func checkBossDataParityText() throws -> Int {
     try bossExpect(
         bossAllRows(dataset).contains { $0.labelUncertain },
         "数据集里应存在 labelUncertain 的行（徽标文案才有意义）",
+        counter: &count
+    )
+
+    // ②b 整张文案表逐条钉死。Windows 端 `pages/bosses.js` 的 `TEXT` 是同一张表，
+    //     由 windows/tests/bosses.test.mjs 的「双端文案表」用一个 deepEqual 钉住；
+    //     两边各自写死字面量，任一端改文案另一端立刻红。
+    let parityStrings: [(String, String, String)] = [
+        ("labelUncertainBadge", BossRowText.labelUncertainBadge, "标签为社区推测"),
+        ("deepRowBadge", BossRowText.deepRowBadge, "深夜数值"),
+        ("deepRowBadgePartial", BossDeepCoverage.some.badgeText ?? "", "部分行有深夜数值"),
+        ("deepExclusiveBadge", BossRowText.deepExclusiveBadge, "深夜专属修正"),
+        ("deepExclusiveBadgePartial", BossDeepCoverage.some.exclusiveBadgeText ?? "", "部分行有深夜专属修正"),
+        ("nameFallbackBadge", BossRowText.nameFallbackBadge, "参考译名 · 非本作游戏文本"),
+        ("nameApproxBadge", BossRowText.nameApproxBadge, "近似匹配"),
+        ("nameEnglishOnlyBadge", BossNameBadge.englishOnly.text, "仅英文名"),
+        ("nameNoGameNameBadge", BossNameBadge.noGameName.text, "无游戏内名称"),
+        ("nameManualBadge", BossNameBadge.manual.text, "名称手工补录"),
+        ("nameInferredBadge", BossNameBadge.inferred.text, "名称按 ID 推断"),
+        ("nameCommunityBadge", BossNameBadge.community.text, "社区资料"),
+        ("hiddenToggleTitle", BossRowText.hiddenToggleTitle, "显示隐藏实体"),
+        ("hiddenToggleHelp", BossRowText.hiddenToggleHelp, "召唤物 / 投射物等非首领实体"),
+        ("noRewardGroupNote", BossRowText.noRewardGroupNote, "该组不掉任何奖励（getSoul / 掉落表全为 0 或 -1）"),
+        ("noRewardRowNote", BossRowText.noRewardRowNote, "该行不掉任何奖励"),
+        ("noDepthStatsText", BossRowText.noDepthStatsText, "该行无深夜数值"),
+        ("mutationTitle", dataset.deepOfNightText.mutationTitle, "变异个体"),
+        ("mutationPickerTitle", BossRowText.mutationPickerTitle, "按变异个体计算"),
+        ("mutationPickerNone", BossRowText.mutationPickerNone, "无"),
+        ("mutationStackNote", BossRowText.mutationStackNote, "变异倍率在其它缩放之上再乘一层，按参数结构推断"),
+        ("mutationCountNote", BossRowText.mutationCountNote, "表里是「有几只被变异」的只数，不是百分比概率"),
+        ("attackRateUnchanged", BossRowText.attackRateUnchanged, "不变"),
+        ("depthWeightZero", BossRowText.depthWeightZero, "该深度不会出现"),
+        (
+            "multiplayerAuditSummary", BossRowText.multiplayerAuditSummary,
+            "多人不是简单乘倍：血量按档位从 ×1 到 ×3 不等（最终 Boss 档才是 ×2 / ×3，"
+                + "野外常见档 7740 只有 ×1.1 / ×1.2，突袭档 98810 / 98815 完全不加血）；"
+                + "7744 / 7753 / 7754 / 7758 四档的敌人攻击力还会上浮 10% / 20%；"
+                + "防御、卢恩与掉落、异常触发阈值三项人数缩放一概不碰，"
+                + "变的只是异常累积量与发动伤害倍率（都往下走，人越多越难上异常）。"
+        ),
+    ]
+    for (key, actual, expected) in parityStrings {
+        try bossExpect(actual == expected, "双端文案 \(key)：应为「\(expected)」，实际「\(actual)」", counter: &count)
+    }
+    try bossExpect(
+        BossRowText.multiplayerAttackBadge(1.1) == "多人攻击 ×1.1"
+            && BossRowText.depthWeightText(1600) == "权重 1600",
+        "靠函数拼出来的两串也必须两端一致",
         counter: &count
     )
 

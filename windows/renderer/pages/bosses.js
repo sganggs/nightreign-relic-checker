@@ -14,6 +14,15 @@
 //     人数(140) 分类都不同 → 不互相覆盖，是在其它缩放**之上再乘一层**（按参数结构推断）
 //   · buildupRate 是 Boss 承受的异常累积量倍率（越小越难打出异常），resist 是累积阈值
 //   · nightBosses 的主键是 id；永夜之王等变体用 variantKey / variantNameZh
+//
+// 双端对齐（macOS：macos/Sources/RelicCore/BossData.swift）——三条规则只有一份正文，
+// 改这边必须同时改那边，两端各有断言守着：
+//   · 名字四级回退：nameZh → nameZhFallback（标「参考译名 · 非本作游戏文本」）
+//     → displayFallbackZh（标「无游戏内名称」）→ nameEn；副标题恒为英文名。
+//     搜索索引把 nameZhFallback 与 displayFallbackZh 都收进去。见 displayName()。
+//   · 代表行：分组过滤 → isMain 收敛 → 排除演出行（isStagingRow）→ 排除 noReward
+//     → 血量最高（同血量取 npcId 小者），每一步没有候选就原样放行。见 candidateEntries()。
+//   · 两端逐字相同的文案集中在 TEXT 里，对应 macOS 的 BossRowText。
 (function (root) {
   "use strict";
 
@@ -60,11 +69,64 @@
   // 整段说明直接不出现，两端一个有话一个空白。
   var TIER_NO_SCALING = "无缩放档位";
 
-  // 行内徽标 / 卡头计数的统一文案，两端逐字相同（macOS 端 BossFightRowView
-  // 与 BossCardView 用同样的几串）。
-  var BADGE_LABEL_UNCERTAIN = "标签为社区推测";
-  var BADGE_MUTATION = "变异个体";
-  var BADGE_HIDDEN = "隐藏实体";
+  // 两端必须逐字相同的文案，一一对应 macOS 端 RelicCore 的 `BossRowText`
+  // （见 macos/Sources/RelicCore/BossData.swift）。这里集中成一张表而不是散在
+  // 模板字符串里，是因为上一轮就是散着写才跑偏的：同一枚徽标 macOS 写「深夜数值」、
+  // Windows 写「深夜 4」，两边的注释却都声称「逐字一致」。
+  // windows/tests/bosses.test.mjs 逐条断言本表，macOS 端 checkBossDataParityText()
+  // 断言 BossRowText 的同名常量。
+  var TEXT = {
+    // 行内徽标：Paramdex 名带 "?"，阶段 / 用途属社区推测。
+    labelUncertainBadge: "标签为社区推测",
+    // 行内 / 卡头徽标：这一行当前显示的是深夜数值（depthStats 口径，与深度几无关）。
+    deepRowBadge: "深夜数值",
+    deepRowBadgePartial: "部分行有深夜数值",
+    // 行内 / 卡头徽标：额外吃一组「深夜专属」的常驻修正（deepOfNight，只有 31 行）。
+    deepExclusiveBadge: "深夜专属修正",
+    deepExclusiveBadgePartial: "部分行有深夜专属修正",
+    // 名字徽标（与 macOS 的 BossNameBadge.text 一一对应）。
+    nameFallbackBadge: "参考译名 · 非本作游戏文本",
+    nameApproxBadge: "近似匹配",
+    nameEnglishOnlyBadge: "仅英文名",
+    nameNoGameNameBadge: "无游戏内名称",
+    nameManualBadge: "名称手工补录",
+    nameInferredBadge: "名称按 ID 推断",
+    nameCommunityBadge: "社区资料",
+    // 工具条开关。
+    hiddenToggleTitle: "显示隐藏实体",
+    hiddenToggleHelp: "召唤物 / 投射物等非首领实体",
+    // 展开区小字：整组 / 该行不掉任何奖励。
+    noRewardGroupNote: "该组不掉任何奖励（getSoul / 掉落表全为 0 或 -1）",
+    noRewardRowNote: "该行不掉任何奖励",
+    // 该行没有 depthStats 时的深夜小表占位文案。
+    noDepthStatsText: "该行无深夜数值",
+    // 变异个体块的标题与说明。
+    mutationTitle: "变异个体",
+    mutationPickerTitle: "按变异个体计算",
+    mutationPickerNone: "无",
+    mutationStackNote: "变异倍率在其它缩放之上再乘一层，按参数结构推断",
+    mutationCountNote: "表里是「有几只被变异」的只数，不是百分比概率",
+    // 人数缩放明细里攻击力列的「1 倍」写法。
+    attackRateUnchanged: "不变",
+    // 夜王各深度出现权重为 0 时的说明。
+    depthWeightZero: "该深度不会出现",
+    // 底部「人数缩放档位说明」的结论段。
+    multiplayerAuditSummary:
+      "多人不是简单乘倍：血量按档位从 ×1 到 ×3 不等（最终 Boss 档才是 ×2 / ×3，" +
+      "野外常见档 7740 只有 ×1.1 / ×1.2，突袭档 98810 / 98815 完全不加血）；" +
+      "7744 / 7753 / 7754 / 7758 四档的敌人攻击力还会上浮 10% / 20%；" +
+      "防御、卢恩与掉落、异常触发阈值三项人数缩放一概不碰，" +
+      "变的只是异常累积量与发动伤害倍率（都往下走，人越多越难上异常）。"
+  };
+
+  var BADGE_LABEL_UNCERTAIN = TEXT.labelUncertainBadge;
+  var BADGE_MUTATION = TEXT.mutationTitle;
+  var BADGE_HIDDEN = TEXT.hiddenToggleHelp;
+
+  // 「演出行」：登场动画 / 血条实体 / 教程这类玩家打不到、或者只是挂血条的行。
+  // 判据照抄 macOS 端 BossFight.stagingLabelKeywords，扫的是页面上真正写着的那个标签
+  //（entryLabel），只用于代表行评选，不影响展开区里的逐行展示。
+  var STAGING_LABEL_KEYWORDS = ["登场演出", "血条实体", "教程"];
 
   // 深夜 / 深度 / 变异个体的中文一律用游戏内文本（CL_MenuText 131150 / 131011 /
   // 338806），数据集里放在 deepOfNightText。取不到时才用这里的兜底串。
@@ -107,17 +169,23 @@
   // community-npcname 合并成「社区资料」（名字或身份来自社区 roster，不是游戏文本）。
   // 表里没有的取值（npcname / npcname-alias / npcparam-nameid…）说明名字直接来自
   // 游戏文本，不挂徽标。
+  //
+  // **这张表只负责「取值 → 文案」的翻译，不是判定逻辑**（判定见 nameBadges）：
+  // 上一版直接拿它当判定用，于是 nameSource = community 且 nameZh 为空的三组
+  //（古龙桂奥尔 / Storm King / 百足幼虫）只挂了「社区资料」，把用户最关心的
+  // 「本作游戏文本里根本没有它的简中名」这条结论从页面上抹掉了；macOS 端
+  // BossCard.nameBadges 一直是两层判定，两端就此对不上。
   var NAME_SOURCE_BADGES = {
-    "english-only": "仅英文名",
-    "chrid-fallback": "无游戏内名称",
-    "manual": "名称手工补录",
-    "community": "社区资料",
-    "community-npcname": "社区资料"
+    "english-only": TEXT.nameEnglishOnlyBadge,
+    "chrid-fallback": TEXT.nameNoGameNameBadge,
+    "manual": TEXT.nameManualBadge,
+    "community": TEXT.nameCommunityBadge,
+    "community-npcname": TEXT.nameCommunityBadge
   };
 
-  var BADGE_NAME_INFERRED = "名称按 ID 推断";
-  var BADGE_NAME_APPROX = "近似匹配";
-  var BADGE_NAME_FALLBACK = "参考译名 · 非本作游戏文本";
+  var BADGE_NAME_INFERRED = TEXT.nameInferredBadge;
+  var BADGE_NAME_APPROX = TEXT.nameApproxBadge;
+  var BADGE_NAME_FALLBACK = TEXT.nameFallbackBadge;
 
   // -------------------------------------------------------------- 纯计算层
   // 以下函数不碰 DOM，windows/tests/bosses.test.mjs 直接 require 本文件测试。
@@ -182,14 +250,19 @@
   // 一条数值行的徽标文案（不含 DOM）：顺序即渲染顺序。
   function entryBadgeTexts(item, entry, stats) {
     var out = [];
-    if (entry && entry.isMain) out.push("主战");
+    // 顺序与 macOS 端 BossFightRowView 的 Pill 顺序一致：威胁档位 → 主战 →
+    // 标签为社区推测 → 深夜数值 → 深夜专属修正 → 变异个体。
     if (item && item.kind === "boss" && entry && entry.threat) {
       out.push(entry.threat === "night" ? "守夜" : "野外");
     }
+    if (entry && entry.isMain) out.push("主战");
     if (entry && entry.labelUncertain) out.push(BADGE_LABEL_UNCERTAIN);
-    // 只在这一行真的换了深度数值时挂徽标：没有 depthStats 的行在深度模式下显示的
-    // 仍是常规值，挂「深夜 N」会骗人（展开区另写「该行无深夜数值」）。
-    if (stats && stats.depth && stats.hasDepth) out.push("深夜 " + stats.depth);
+    // 只在这一行真的换了深度数值时挂「深夜数值」：没有 depthStats 的行在深度模式下
+    // 显示的仍是常规值，挂徽标会骗人（展开区另写「该行无深夜数值」）。
+    if (stats && stats.depth && stats.hasDepth) out.push(TEXT.deepRowBadge);
+    // 另一枚：这一行还额外吃一组「深夜专属修正」（deepOfNight，394 行里只有 31 行）。
+    // 两枚分工与 macOS 端 BossFightRowView 的两枚 Pill 完全一致。
+    if (stats && stats.depth && stats.isDeep) out.push(TEXT.deepExclusiveBadge);
     if (stats && stats.hasMutation) out.push(BADGE_MUTATION);
     return out;
   }
@@ -219,14 +292,19 @@
 
   // 深度模式下换用 depthStats[N] 的那一组数值。
   // depthStats 只给 hp / hpMultiplier / poiseTakenBase / attackRateBase（已含
-  // 常驻缩放 × 深夜修正 × 深度倍率），削韧恢复与异常发动伤害没有深度专属字段，
-  // 仍从 deepOfNight（深夜修正，非 null 时）取，没有就用常规值。
+  // 常驻缩放 × 深夜修正 × 深度倍率），削韧恢复倍率 / 异常发动伤害基准 / 常驻 SpEffect
+  // 清单没有深度专属字段，仍从 deepOfNight（深夜修正，非 null 时）取，没有就用常规值。
+  //
+  // 「请求了深度、但这一行没有 depthStats」时整组回落到常规值（hasDepth = false，
+  // 页面写「该行无深夜数值」），与 macOS 端 BossFight.baseline(mode:) 的同一支一致。
+  // 上一版这里会退到 deepOfNight 那一组，于是同一条假想行两端能给出不同的血量；
+  // v3 数据里 394 行全部带 depthStats，走不到这一支，但口径不能两套。
   function numbersFor(entry, depth) {
     var level = depthValue(depth);
     var depthRow = depthStatsFor(entry, level);
-    var deepNums = level && entry && entry.deepOfNight ? entry.deepOfNight : null;
+    var deepNums = depthRow && entry && entry.deepOfNight ? entry.deepOfNight : null;
     var soft = deepNums || entry || {};
-    var hard = depthRow || soft;
+    var hard = depthRow || entry || {};
     return {
       depth: level,
       // 本行在当前模式下是否真的换了数值：深度模式且查得到 depthStats。
@@ -238,7 +316,10 @@
       poiseTakenBase: numberOr(hard.poiseTakenBase, 1),
       attackRateBase: numberOr(hard.attackRateBase, numberOr(entry && entry.attackRateBase, 1)),
       poiseRecoverMultiplier: numberOr(soft.poiseRecoverMultiplier, 1),
-      ailmentDamageRateBase: numberOr(soft.ailmentDamageRateBase, 0),
+      // 缺字段时回落到 1（中性倍率），与 macOS 的
+      // `bossDouble(.ailmentDamageRateBase, default: 1)` 一致。上一版回落到 0，
+      // 会把「数据里没写」显示成「异常发动完全不造成伤害」。
+      ailmentDamageRateBase: numberOr(soft.ailmentDamageRateBase, 1),
       permScalingIds: Array.isArray(soft.permScalingIds) ? soft.permScalingIds : [],
       depthSpEffectId: depthRow && depthRow.depthSpEffectId !== undefined ? depthRow.depthSpEffectId : null
     };
@@ -363,86 +444,132 @@
     return value === null || value === undefined ? "" : String(value);
   }
 
-  // 名字的显示口径（schemaVersion 3）：
-  //   nameZh 非空            → 主标题 nameZh，副标题 nameEn；
-  //   nameZh 空、有 nameEn   → 主标题 nameEn，副标题 nameZhFallback（旧手工译名）；
-  //   只剩 nameZhFallback    → 主标题就用它；
-  //   三者都没有             → 才轮到「未知敌人 cXXXX」。
-  // 关键点：「未知敌人」不再由页面顶掉英文名。数据里 chrid-fallback 的两组本来就把
-  // 「未知敌人 c7931」写在 nameZh 里，走第一支；页面只在真的一个名字都没有时自己拼。
+  // 主标题的四级回退（两端唯一正式版本，macOS 端 BossCard.displayName 同一套）：
+  //   1. nameZh            —— 本作游戏文本里的简中名，不挂名字徽标；
+  //   2. nameZhFallback    —— 《艾尔登法环》官方简中的参考译名，挂「参考译名 · 非本作游戏文本」；
+  //   3. displayFallbackZh —— 生成器按 chrId 拼的占位名「未知敌人 cXXXX」，挂「无游戏内名称」；
+  //   4. nameEn            —— 只剩英文名时显示英文名。
+  // 副标题恒为英文名（主标题已经是英文名时不重复）。
+  //
+  // 两处必须讲清楚的改动：
+  //   · 第 2 级上一版被压在副标题里，14 组让出 nameZh 的首领在列表上全是一串英文。
+  //     「参考译名不能冒充游戏里的名字」这条顾虑改由徽标逐条承担。
+  //   · 第 3 级是**这一轮修掉的 bug**：数据集第二版把占位名从 nameZh 挪进了新字段
+  //     displayFallbackZh，Windows 端没跟着读，于是 c7931 / c7932 两组的卡头从
+  //     「未知敌人 c7931」变成了「Unknown Enemy (c7931)」。
+  // 四级全空才自己拼 chrId（数据里 nameEn 恒非空，这一支只为不渲染空标题）。
   function displayName(boss) {
     var zh = asText(boss && boss.nameZh);
     var en = asText(boss && boss.nameEn);
     var fallback = asText(boss && boss.nameZhFallback);
+    var placeholder = asText(boss && boss.displayFallbackZh);
     var chrIds = boss && Array.isArray(boss.chrIds) ? boss.chrIds : [];
     var source = asText(boss && boss.nameSource);
     var info = {
       primary: "",
       secondary: "",
-      // usesFallback：副标题（或主标题）用的是 nameZhFallback，要挂「参考译名」徽标。
+      // usesFallback：主标题用的是 nameZhFallback，必须挂「参考译名」徽标。
       usesFallback: false,
-      // fallbackName：无论有没有用上，都保留原串给搜索索引与展开区说明。
+      // usesPlaceholder：主标题用的是 displayFallbackZh（占位名）。
+      usesPlaceholder: false,
+      // fallbackName / placeholderName：无论有没有用上，都保留原串给搜索索引与展开区说明。
       fallbackName: fallback,
+      placeholderName: placeholder,
       // gameTextName：名字直接来自本作游戏文本（nameZh 非空且不是 chrid 兜底）。
       gameTextName: Boolean(zh) && source !== "chrid-fallback",
       approx: Boolean(boss && boss.nameApprox),
       inferred: Boolean(boss && boss.nameInferred),
       unknown: false
     };
-    if (zh) {
-      info.primary = zh;
-      info.secondary = en && en !== zh ? en : "";
-      return info;
+    if (zh) info.primary = zh;
+    else if (fallback) { info.primary = fallback; info.usesFallback = true; }
+    else if (placeholder) { info.primary = placeholder; info.usesPlaceholder = true; }
+    else if (en) info.primary = en;
+    else {
+      info.primary = chrIds.length ? "未知敌人 c" + chrIds[0] : "未知敌人";
+      info.unknown = true;
     }
-    if (en) {
-      info.primary = en;
-      info.secondary = fallback;
-      info.usesFallback = Boolean(fallback);
-      return info;
-    }
-    if (fallback) {
-      info.primary = fallback;
-      info.usesFallback = true;
-      return info;
-    }
-    info.primary = chrIds.length ? "未知敌人 c" + chrIds[0] : "未知敌人";
-    info.unknown = true;
+    info.secondary = en && en !== info.primary ? en : "";
     return info;
   }
 
-  // 名字相关徽标（顺序即渲染顺序）。全部灰色：它们说明「这名字的可信度」，
-  // 不是首领属性，不能和分组 / 变体徽标抢颜色。
+  // 名字相关徽标（顺序即渲染顺序，与 macOS 端 BossCard.nameBadges 逐项同序同文案）。
+  // 全部灰色：它们说明「这名字的可信度」，不是首领属性，不能和分组 / 变体徽标抢颜色。
+  //
+  // **四层，不是一条链**——每层回答的问题不同，挤进一条 if-else 就必然丢信息：
+  //   1. 名字本身缺不缺：chrid-fallback → 无游戏内名称；nameZh 为空 →
+  //      english-only 写「仅英文名」、其余（community 等）写「无游戏内名称」；
+  //      再往后才是 manual / inferred。
+  //   2. 身份是谁认出来的：nameSource 以 community 打头**且没有游戏文本依据**时
+  //      追加「社区资料」。挖石山妖那种 community-npcname + nameEvidence 的组不挂，
+  //      否则会和展开区同时显示的「游戏文本依据」自相矛盾。
+  //   3. nameApprox → 近似匹配。
+  //   4. 主标题取自参考译名 → 参考译名 · 非本作游戏文本。
   function nameBadges(info, boss) {
     var out = [];
     var source = asText(boss && boss.nameSource);
-    var sourceText = NAME_SOURCE_BADGES[source];
-    if (sourceText) out.push({ text: sourceText, kind: "gray" });
-    else if (info.inferred) out.push({ text: BADGE_NAME_INFERRED, kind: "gray" });
+    var zh = asText(boss && boss.nameZh);
+    if (source === "chrid-fallback") {
+      out.push({ text: TEXT.nameNoGameNameBadge, kind: "gray" });
+    } else if (!zh) {
+      out.push({
+        text: source === "english-only" ? TEXT.nameEnglishOnlyBadge : TEXT.nameNoGameNameBadge,
+        kind: "gray"
+      });
+    } else if (source === "manual") {
+      out.push({ text: TEXT.nameManualBadge, kind: "gray" });
+    } else if (info.inferred) {
+      out.push({ text: BADGE_NAME_INFERRED, kind: "gray" });
+    }
+    if (source.indexOf("community") === 0 && !(boss && boss.nameEvidence)) {
+      out.push({ text: TEXT.nameCommunityBadge, kind: "gray" });
+    }
     if (info.approx) out.push({ text: BADGE_NAME_APPROX, kind: "gray" });
     if (info.usesFallback) out.push({ text: BADGE_NAME_FALLBACK, kind: "gray" });
     return out;
   }
 
-  function entryLabel(entry, index) {
-    var label = entry && entry.labelZh ? String(entry.labelZh) : "";
-    if (label) return label;
-    if (entry && entry.labelEn) return String(entry.labelEn);
-    return "变体 " + (index + 1);
+  // 一条数值行在页面上写着的标签。四级回退与 macOS 端 BossFight.displayLabel 一致：
+  // labelZh → labelEn → paramdexName → 「行 <npcId>」。上一版最后一支写的是
+  // 「变体 N」（还带序号，同一行在不同筛选下会换名字），而 isStagingRow 正是照这个
+  // 标签判的，两端判据一旦不同，代表行就会分叉。
+  function entryLabel(entry) {
+    if (!entry) return "行 ?";
+    if (entry.labelZh) return String(entry.labelZh);
+    if (entry.labelEn) return String(entry.labelEn);
+    if (entry.paramdexName) return String(entry.paramdexName);
+    return "行 " + String(entry.npcId);
   }
 
-  // 某个分组下参与「代表行」评选的候选行。三步过滤，任一步没有候选就原样放行：
+  // 登场演出 / 血条实体 / 教程这类玩家打不到、或只是挂血条的行。
+  // 只用于代表行评选，不影响展开区逐行展示（与 macOS 端 BossFight.isStagingRow 同判据）。
+  function isStagingRow(entry) {
+    var label = entryLabel(entry);
+    return STAGING_LABEL_KEYWORDS.some(function (keyword) {
+      return label.indexOf(keyword) !== -1;
+    });
+  }
+
+  // 某个分组下参与「代表行」评选的候选行。四步过滤，**任一步会把候选池清空就跳过
+  // 那一步**（跳过是规则的一部分，不是容错）。规则正文见 macOS 端
+  // BossCard.rows(in:) 的文档注释，两端必须同序：
   //   1. 守夜 / 野外分组先按 threat 过滤——同一组首领可能两种档位都有（数据里 6 组），
   //      在「野外」分组下就该看野外那几行，而不是血量更高的守夜行；
   //   2. 再收敛到 isMain（夜王的主战行**不唯一**，多阶段 / 多体有 2～5 条）；
-  //   3. 最后排除 noReward = true 的行（整组都 noReward 就不排除）。
+  //   3. 排除登场演出 / 血条实体 / 教程这类演出行（isStagingRow）；
+  //   4. 最后排除 noReward = true 的行（整池都 noReward 就不排除）。
   //
-  // 第 3 步的位置是两端约定好的：**必须在 isMain 之后**。夜王的主战行几乎都是
+  // 第 4 步的位置是两端约定好的：**必须在 isMain 之后**。夜王的主战行几乎都是
   // noReward = true（奖励挂在远征结算上，不在 NpcParam 的 getSoul/掉落表里），
   // 把这一步提到 isMain 之前会把整组主战行踢掉——玛利斯的代表行会从 12,687 掉到
   // 3,045、格拉狄乌斯会从 npcId 75000020 变成 75000000。放在 isMain 之后，18 位
   // 夜王的代表行一条不变，只修掉真正抢位的模板/无奖励行：恶兆妖鬼的「教程」行
   //（21300520，hp 9920）→ 21300030、神皮使徒守夜的「基准」行（35600900）→
   // 35600110、火焰战车的「血条实体」（44600015，hp 8009）→ 44600010 等 16 组。
+  //
+  // 第 3 步是这一轮补上的：**演出行不一定 noReward**，第 4 步拦不住它们。
+  // 少了这一步，巨鸦群野外代表行会是只挂血条的「血条实体」45601020（hp 2117，
+  // noReward = false），鲜血贵族野外代表行会是「鲜血君王 · 登场演出」35500020。
   function candidateEntries(entries, group) {
     var pool = Array.isArray(entries) ? entries.filter(Boolean) : [];
     if (group === "night" || group === "field") {
@@ -451,6 +578,8 @@
     }
     var mains = pool.filter(function (entry) { return entry.isMain; });
     if (mains.length) pool = mains;
+    var playable = pool.filter(function (entry) { return !isStagingRow(entry); });
+    if (playable.length) pool = playable;
     var rewarding = pool.filter(function (entry) { return !entry.noReward; });
     return rewarding.length ? rewarding : pool;
   }
@@ -537,27 +666,44 @@
     return out;
   }
 
-  // 整张卡片的「深夜专属修正」覆盖情况：all = 每条数值行都有 deepOfNight，
-  // some = 部分行有，none = 都没有。深度倍率（depthStats）几乎每行都有，
-  // 所以这里说的是 2287 条件效果那一层，展开区的说明按它写。
-  function deepCoverage(item) {
-    var entries = item && Array.isArray(item.entries) ? item.entries : [];
-    if (!entries.length) return "none";
+  // 一张卡里有多少行带某类深夜数值。只看代表行会把「首条没有、其余行有」的卡片判错，
+  // 所以一律扫描整卡。
+  function coverage(entries, has) {
+    var list = Array.isArray(entries) ? entries : [];
+    if (!list.length) return "none";
     var hit = 0;
-    entries.forEach(function (entry) { if (entry && entry.deepOfNight) hit += 1; });
+    list.forEach(function (entry) { if (entry && has(entry)) hit += 1; });
     if (!hit) return "none";
-    return hit === entries.length ? "all" : "some";
+    return hit === list.length ? "all" : "some";
   }
 
-  // 整张卡片有没有深度数值（depthStats）。一条都没有的卡在深度模式下
-  // 要直说「该行无深夜数值」，不能默默显示常规值。
-  function depthCoverage(item) {
-    var entries = item && Array.isArray(item.entries) ? item.entries : [];
-    if (!entries.length) return "none";
-    var hit = 0;
-    entries.forEach(function (entry) { if (entry && entry.depthStats) hit += 1; });
-    if (!hit) return "none";
-    return hit === entries.length ? "all" : "some";
+  // **两套口径，别混用**（函数名与 macOS 端 BossCard 的两个同名属性一一对应）：
+  //   · deepCoverage       数的是 depthStats ——「深度模式下这张卡的数值变不变」，
+  //     徽标写「深夜数值」；v3 数据里 394 行全有 depthStats，所以实际恒为 all。
+  //   · deepOfNightCoverage 数的是 deepOfNight ——「有没有额外那组深夜专属常驻修正」，
+  //     徽标写「深夜专属修正」；只有 31 行有。
+  //
+  // 上一版两个名字**正好反着**（Windows 的 deepCoverage 数 deepOfNight、
+  // depthCoverage 数 depthStats），两端对读时必然踩坑，这一轮按 macOS 的语义统一。
+  function deepCoverage(item) {
+    return coverage(item && item.entries, function (entry) { return entry.depthStats; });
+  }
+
+  function deepOfNightCoverage(item) {
+    return coverage(item && item.entries, function (entry) { return entry.deepOfNight; });
+  }
+
+  // 卡头徽标文案（macOS 端 BossDeepCoverage.badgeText / exclusiveBadgeText）。
+  function deepCoverageBadge(kind) {
+    if (kind === "all") return TEXT.deepRowBadge;
+    if (kind === "some") return TEXT.deepRowBadgePartial;
+    return "";
+  }
+
+  function deepOfNightCoverageBadge(kind) {
+    if (kind === "all") return TEXT.deepExclusiveBadge;
+    if (kind === "some") return TEXT.deepExclusiveBadgePartial;
+    return "";
   }
 
   // 把数据集拍平成页面用的卡片列表；fold 用 ctx.helpers.foldForSearch（测试里传 Core.foldForSearch）。
@@ -626,6 +772,7 @@
         nameEvidence: boss.nameEvidence && typeof boss.nameEvidence === "object" ? boss.nameEvidence : null,
         nameFallback: info.fallbackName,
         nameFallbackNote: asText(boss.nameZhFallbackNote),
+        namePlaceholder: info.placeholderName,
         nameSourceUrl: asText(boss.nameSourceUrl),
         // hidden：整组不掉奖励且（不吃削韧 ∪ 名字连社区都认不出 ∪ 社区标为杂兵）的
         // 召唤物 / 投射物实体。默认不显示，由工具条的「显示隐藏实体」开关放出来。
@@ -646,8 +793,10 @@
         // chrId / npcId 这类行号进 numbers，按前缀匹配。
         // nameZhFallback 必须进搜索串：schemaVersion 3 把「大型黄金河马」这类旧译名
         // 移出了 nameZh，不收进索引的话用户搜「河马」就再也搜不到这张卡。
+        // displayFallbackZh（「未知敌人 cXXXX」）同理——它现在就是卡头上写着的名字，
+        // 页面上看得见的名字必须搜得到。两端同一组搜索键。
         search: folder(joinSearch([
-          boss.nameZh, boss.nameEn, boss.nameZhFallback
+          boss.nameZh, boss.nameEn, boss.nameZhFallback, boss.displayFallbackZh
         ].concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); })))),
         numbers: numberKeys(
           entryNumbers(entries)
@@ -732,7 +881,21 @@
     if (value === null || value === undefined || value === "") return "—";
     var number = Number(value);
     if (!isFinite(number)) return "—";
-    return number === 1 ? "不变" : fmtMul(number, 3);
+    return number === 1 ? TEXT.attackRateUnchanged : fmtMul(number, 3);
+  }
+
+  // 血量旁的多人攻击徽标：「多人攻击 ×1.1」（macOS 端 BossRowText.multiplayerAttackBadge）。
+  function multiplayerAttackBadge(rate) {
+    return "多人攻击 " + fmtMul(rate, 3);
+  }
+
+  // 夜王某深度的出现权重文案（macOS 端 BossRowText.depthWeightText）。
+  // 上一版这里只写个数字，权重 0 会显示成「0」——用户读不出「这一档根本刷不出来」。
+  function depthWeightText(weight) {
+    var value = Number(weight);
+    if (!isFinite(value) || value <= 0) return TEXT.depthWeightZero;
+    // 不加千位分隔符：权重只有 500–1600 这个量级，macOS 端写的也是「权重 1600」。
+    return "权重 " + String(Math.round(value));
   }
 
   // kind 来自 computeStats().poiseKind，与 macOS 端 BossPoiseKind.placeholder 同表：
@@ -898,9 +1061,10 @@
       "<div class='bosses-control'><span class='bosses-control-label'>模式</span>" +
       depthControl() + "</div>" +
       "<div class='bosses-control'><span class='bosses-control-label'>隐藏实体</span>" +
-      "<label class='switch-control bosses-hidden-switch' title='召唤物 / 投射物等非首领实体：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵。默认不显示。'>" +
+      "<label class='switch-control bosses-hidden-switch' title='" + esc(TEXT.hiddenToggleHelp) +
+      "：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵。默认不显示。'>" +
       "<input type='checkbox' data-testid='bosses-hidden'>" +
-      "<span class='switch-track'></span><span>显示隐藏实体</span></label></div>" +
+      "<span class='switch-track'></span><span>" + esc(TEXT.hiddenToggleTitle) + "</span></label></div>" +
       "</div>" +
       "<div class='bosses-toolbar-row bosses-toolbar-row--tabs'>" +
       "<div class='segmented-control bosses-group' role='radiogroup' aria-label='首领分组' data-testid='bosses-group'>" +
@@ -993,15 +1157,15 @@
     if (item.hidden) badges.push(pill(BADGE_HIDDEN, "gray"));
     if (state.depth) {
       // 深度模式下只给真有 depthStats 的卡片挂徽标；一条都没有的卡另在展开区写明。
-      var coverage = depthCoverage(item);
-      if (coverage === "all") badges.push(pill(deepText(state.data, "depth") + " " + state.depth, "amber"));
-      else if (coverage === "some") badges.push(pill("部分行有深夜数值", "amber"));
+      // 徽标文案不带深度数字：深度已经写在顶部「模式」下拉与列表计数里，
+      // 这里要回答的是「这张卡在深度模式下数值变不变」（与 macOS 的同一枚徽标同文案）。
+      var depthBadge = deepCoverageBadge(deepCoverage(item));
+      if (depthBadge) badges.push(pill(depthBadge, "amber"));
       // 另有一层「深夜专属修正」（2287 条件效果，22 张卡有）：它把永夜之王 / DLC 的
       // 常驻加成在深夜里压回去，数值已经含在 depthStats 里，但值得标出来。
       // 只看代表行会把格诺斯塔·永夜之王这类首条无深夜修正、其余行有的卡片判错，所以扫全卡。
-      var deep = deepCoverage(item);
-      if (deep === "all") badges.push(pill("含深夜专属修正", "amber"));
-      else if (deep === "some") badges.push(pill("部分行有深夜专属修正", "amber"));
+      var exclusiveBadge = deepOfNightCoverageBadge(deepOfNightCoverage(item));
+      if (exclusiveBadge) badges.push(pill(exclusiveBadge, "amber"));
     }
     return badges.join("");
   }
@@ -1030,7 +1194,7 @@
       : (Array.isArray(item.groups) ? item.groups.length : 1) > 1;
     if (ambiguous && pool.length > 1) {
       var list = pool.map(function (row) {
-        return entryLabel(row, item.entries.indexOf(row)) + " " +
+        return entryLabel(row) + " " +
           fmtInt(computeStats(row, state.party, state.depth, null).hp);
       }).join(" · ");
       var lead = item.kind === "nightlord"
@@ -1039,7 +1203,7 @@
       return "<div class='bosses-stat-caption bosses-stat-caption--warn'>" + esc(lead + list) + "</div>";
     }
     if (item.entries.length < 2) return "";
-    var label = entryLabel(entry, item.entries.indexOf(entry));
+    var label = entryLabel(entry);
     return "<div class='bosses-stat-caption'>代表行：" + esc(label) +
       "<span>共 " + item.entries.length + " 组，展开看全部</span></div>";
   }
@@ -1054,7 +1218,7 @@
   // 否则摘要与卡头徽标看着像在互相打架。
   function summaryHpHint(stats) {
     if (state.depth) {
-      if (!stats.hasDepth) return "该行无深夜数值";
+      if (!stats.hasDepth) return TEXT.noDepthStatsText;
       return state.party === 1 ? "含深度倍率" : "深度 1 人 " + fmtInt(stats.hpSingle);
     }
     return state.party === 1 ? "含常驻缩放" : "1 人 " + fmtInt(stats.hpSingle);
@@ -1065,7 +1229,7 @@
   function partyAttackNote(stats) {
     if (!stats.tier || !(stats.partyAttackRate > 1)) return "";
     return "<div class='bosses-stat-caption bosses-stat-caption--warn'>" +
-      esc("多人攻击 " + fmtMul(stats.partyAttackRate, 3) + "：该档位在 " + partyLabel() +
+      esc(multiplayerAttackBadge(stats.partyAttackRate) + "：该档位在 " + partyLabel() +
         "时敌人攻击力也会上浮，不只是血条变长。") + "</div>";
   }
 
@@ -1143,7 +1307,8 @@
   function depthTable(item, entry) {
     var rows = depthRows(entry, state.party, selectedMutation(item, entry));
     if (!rows) {
-      return "<p class='bosses-note bosses-note--muted'>该行无深夜数值（数据里没有 depthStats）。</p>";
+      return "<p class='bosses-note bosses-note--muted'>" + esc(TEXT.noDepthStatsText) +
+        "（数据里没有 depthStats）。</p>";
     }
     var body = rows.map(function (row) {
       var active = row.depth === state.depth;
@@ -1172,7 +1337,8 @@
       if (!mutation) return "<span class='bosses-chip'>" + esc("档位 " + id) + "</span>";
       return "<span class='bosses-chip'>" + esc(mutationOptionLabel(id, mutation)) + "</span>";
     }).join("");
-    var options = ["<option value=''" + (current ? "" : " selected") + ">无</option>"].concat(
+    var options = ["<option value=''" + (current ? "" : " selected") + ">" +
+      esc(TEXT.mutationPickerNone) + "</option>"].concat(
       pool.map(function (id) {
         var value = String(id);
         return "<option value='" + esc(value) + "'" + (current === value ? " selected" : "") + ">" +
@@ -1182,11 +1348,12 @@
     return "<div class='bosses-sub'>" + esc(BADGE_MUTATION) + "（可能的变异档位）</div>" +
       "<div class='bosses-chips'>" + chips + "</div>" +
       "<label class='select-field bosses-mutation-field'>" +
-      "<span class='sr-only'>按变异个体计算</span>" +
+      "<span class='sr-only'>" + esc(TEXT.mutationPickerTitle) + "</span>" +
       "<select data-bosses-mutation='" + esc(key) + "' data-testid='bosses-mutation'>" + options + "</select></label>" +
-      "<p class='bosses-note bosses-note--muted'>选中档位后，本行上面的数值会在当前基础上再乘一层" +
-      "（血量 / 攻击力 / 卢恩）。变异倍率的 spCategory = 203，与常驻(0)、深度(0)、人数(140) 都不同分类，" +
-      "不互相覆盖——「再乘一层」是按参数结构推断的，游戏里没有公开说明。</p>";
+      "<p class='bosses-note bosses-note--muted'>" + esc(TEXT.mutationStackNote) +
+      "：选中档位后，本行上面的血量 / 攻击力 / 卢恩会在当前基础上再乘一层。" +
+      "变异倍率的 spCategory = 203，与常驻(0)、深度(0)、人数(140) 都不同分类，不互相覆盖——" +
+      "「再乘一层」是按参数结构推断的，游戏里没有公开说明。</p>";
   }
 
   function permScalingLine(stats) {
@@ -1220,7 +1387,7 @@
       out.push("深度 " + stats.depth + " 用的是 SpEffect " + stats.depthSpEffectId + "。");
     }
     if (entry.noReward) {
-      out.push("该行不掉任何奖励（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全为 0 或 -1），" +
+      out.push(TEXT.noRewardRowNote + "（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全为 0 或 -1），" +
         "通常是模板行、血条实体或演出行；选代表行时会排在同分组的实战行之后。");
     }
     if (!out.length) return "";
@@ -1229,7 +1396,7 @@
     }).join("");
   }
 
-  function entryBlock(item, entry, index) {
+  function entryBlock(item, entry) {
     var stats = statsFor(item, entry);
     var tiers = state.data && state.data.scalingTiers ? state.data.scalingTiers : null;
     var caption = scalingCaption(entry, tiers);
@@ -1246,7 +1413,7 @@
 
     return "<section class='bosses-entry'>" +
       "<header class='bosses-entry-head'>" +
-      "<strong>" + esc(entryLabel(entry, index)) + "</strong>" +
+      "<strong>" + esc(entryLabel(entry)) + "</strong>" +
       "<span class='bosses-entry-badges'>" + badges.join("") + "</span>" +
       "<span class='bosses-entry-id'>" + esc(idText) + "</span>" +
       "</header>" +
@@ -1290,6 +1457,10 @@
         ("「" + item.nameFallback + "」不是本作的游戏内文本，是按《艾尔登法环》官方简中补的参考译名。"));
     }
     if (item.nameSourceUrl) parts.push("社区来源：" + item.nameSourceUrl);
+    // noReward 只作小字，不影响是否显示：Storm King / 蚯蚓脸这些不掉奖励但仍是首领。
+    // 上一版把它漏在这一块外面，于是巨大骷髅躯干（五个名字字段全空、noReward = true）
+    // 展开后一句说明都没有，与 macOS 的 showsNameNotes 对不上。
+    if (item.noReward) parts.push(TEXT.noRewardGroupNote + "。");
     if (item.hidden) {
       parts.push("本组默认隐藏：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵，" +
         "判定为召唤物、投射物等非首领实体。");
@@ -1311,7 +1482,7 @@
       var value = Number(weights[String(depth)]);
       var zero = !isFinite(value) || value === 0;
       return "<td" + (zero ? " class='bosses-zero'" : "") + ">" +
-        esc(zero ? "该深度不会出现" : fmtInt(value)) + "</td>";
+        esc(depthWeightText(value)) + "</td>";
     }).join("");
     var head = DEPTHS.map(function (depth) {
       return "<th scope='col'>" + esc(deepText(state.data, "depth") + " " + depth) + "</th>";
@@ -1329,8 +1500,8 @@
     if (item.description) {
       head = "<p class='bosses-desc'>" + esc(item.description) + "</p>";
     }
-    return head + nameNoteBlock(item) + depthChanceBlock(item) + item.entries.map(function (entry, index) {
-      return entryBlock(item, entry, index);
+    return head + nameNoteBlock(item) + depthChanceBlock(item) + item.entries.map(function (entry) {
+      return entryBlock(item, entry);
     }).join("");
   }
 
@@ -1410,10 +1581,7 @@
       "<summary><span class='bosses-summary-title'>人数缩放档位说明</span>" +
       pill(keys.length + " 档", "purple") + "</summary>" +
       "<div class='bosses-details-body'>" +
-      "<p class='bosses-note bosses-note--lead'>多人<strong>不是</strong>简单乘倍：血量按档位从 ×1 到 ×3 不等" +
-      "（最终 Boss ×2 / ×3，野外常见档 7740 只有 ×1.1 / ×1.2，突袭档 98810 / 98815 完全不加血）；" +
-      "7744 / 7753 / 7754 / 7758 四档还会让敌人<strong>攻击力上浮</strong> ×1.1 / ×1.2；" +
-      "防御、卢恩与掉落、异常阈值三类字段人数缩放一律不碰，变的只是异常累积量与发动伤害倍率（都往下走）。</p>" +
+      "<p class='bosses-note bosses-note--lead'>" + esc(TEXT.multiplayerAuditSummary) + "</p>" +
       "<ul class='bosses-legend'>" +
       "<li><b>血量</b>：多人时 Boss 血量乘这个倍率，页面顶部切人数后所有血量都按它换算。</li>" +
       "<li><b>攻击力</b>：敌人对玩家的伤害倍率（五属性同值）。绝大多数档位「不变」，只有上面四档是 ×1.1 / ×1.2。</li>" +
@@ -1501,8 +1669,9 @@
       "<summary><span class='bosses-summary-title'>" + esc(BADGE_MUTATION) + "出现只数</span>" +
       pill(list.length + " 行", "red") + "</summary>" +
       "<div class='bosses-details-body'>" +
-      "<p class='bosses-note bosses-note--lead'>表里的数字是「该地图、该深度下这一类敌人有<strong>几只</strong>会变异」，" +
-      "<strong>不是百分比概率</strong>——这点最容易读错。野外首领与封印监牢首领深度 1 全是 0，也就是深度 1 遇不到变异的野外/监牢首领。</p>" +
+      "<p class='bosses-note bosses-note--lead'>" + esc(TEXT.mutationCountNote) +
+      "：数字说的是「该地图、该深度下这一类敌人有几只会变异」，这点最容易读错。" +
+      "野外首领与封印监牢首领深度 1 全是 0，也就是深度 1 遇不到变异的野外/监牢首领。</p>" +
       "<div class='table-wrap bosses-table-wrap'><table class='bosses-mini-table bosses-mutation-table'>" +
       "<thead><tr><th scope='col'>地图</th><th scope='col'>敌人类别</th>" +
       DEPTHS.map(function (depth) {
@@ -1790,7 +1959,12 @@
       itemMatches: itemMatches,
       bossGroups: bossGroups,
       deepCoverage: deepCoverage,
-      depthCoverage: depthCoverage,
+      deepOfNightCoverage: deepOfNightCoverage,
+      deepCoverageBadge: deepCoverageBadge,
+      deepOfNightCoverageBadge: deepOfNightCoverageBadge,
+      isStagingRow: isStagingRow,
+      multiplayerAttackBadge: multiplayerAttackBadge,
+      depthWeightText: depthWeightText,
       itemInGroup: itemInGroup,
       topDamageTypes: topDamageTypes,
       buildItems: buildItems,
@@ -1814,7 +1988,9 @@
       DEPTHS: DEPTHS,
       GROUP_LABELS: GROUP_LABELS,
       GROUP_TITLES: GROUP_TITLES,
-      NAME_SOURCE_BADGES: NAME_SOURCE_BADGES
+      NAME_SOURCE_BADGES: NAME_SOURCE_BADGES,
+      STAGING_LABEL_KEYWORDS: STAGING_LABEL_KEYWORDS,
+      TEXT: TEXT
     }
   };
 

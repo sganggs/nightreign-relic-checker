@@ -1637,6 +1637,9 @@ public struct BossNightBoss: Codable, Sendable, Hashable, Identifiable {
     /// 被移出 nameZh 的旧手工译名（《艾尔登法环》官方简中，不是本作游戏文本）。
     public let nameZhFallback: String
     public let nameZhFallbackNote: String
+    /// 生成器用 chrId 拼出来的占位名「未知敌人 cXXXX」。它既不是游戏文本也不是译名，
+    /// 所以第二版核验把它从 nameZh 挪到了这里（只有 c7931 / c7932 两组非空）。
+    public let displayFallbackZh: String
     /// 因为「同一个 nameZh 不能挂两组首领」而被挡下的游戏文本候选。
     public let nameZhRejected: BossNameEvidence?
     /// 召唤物 / 投射物等非首领实体，默认不显示。
@@ -1671,6 +1674,7 @@ public struct BossNightBoss: Codable, Sendable, Hashable, Identifiable {
         nameSourceUrl = container.bossString(.nameSourceUrl)
         nameZhFallback = container.bossString(.nameZhFallback)
         nameZhFallbackNote = container.bossString(.nameZhFallbackNote)
+        displayFallbackZh = container.bossString(.displayFallbackZh)
         nameZhRejected = try? container.decodeIfPresent(BossNameEvidence.self, forKey: .nameZhRejected)
         hidden = container.bossBool(.hidden)
         noReward = container.bossBool(.noReward)
@@ -1912,6 +1916,10 @@ public enum BossNameBadge: String, Sendable, Hashable {
     case inferred
     /// nameSource = community / community-npcname：身份来自社区资料（4laric 的敌人表）。
     case community
+    /// nameApprox：游戏文本不是逐字命中，靠中心词 / 唯一词条匹配上的。
+    case approx
+    /// 主标题取自 nameZhFallback（《艾尔登法环》官方简中的参考译名，不是本作文本）。
+    case fallback
 
     public var text: String {
         switch self {
@@ -1920,6 +1928,8 @@ public enum BossNameBadge: String, Sendable, Hashable {
         case .manual: return "名称手工补录"
         case .inferred: return "名称按 ID 推断"
         case .community: return "社区资料"
+        case .approx: return BossRowText.nameApproxBadge
+        case .fallback: return BossRowText.nameFallbackBadge
         }
     }
 }
@@ -2016,9 +2026,11 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// 取名过程的说明（展开区小字）。
     public let nameNote: String
     public let nameSourceUrl: String
-    /// 被移出 nameZh 的旧手工译名；只能当副标题用，且必须标「非本作游戏文本」。
+    /// 被移出 nameZh 的旧手工译名；当主标题时必须挂「参考译名 · 非本作游戏文本」。
     public let nameZhFallback: String
     public let nameZhFallbackNote: String
+    /// 占位名「未知敌人 cXXXX」（生成器按 chrId 拼的，只有 c7931 / c7932 两组非空）。
+    public let displayFallbackZh: String
     public let nameEvidence: BossNameEvidence?
     public let nameZhRejected: BossNameEvidence?
     /// 召唤物 / 投射物等非首领实体，默认不显示。
@@ -2039,22 +2051,43 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// 可按行号搜索的数字：全部 npcIds（含被合并掉的行）+ chrIds + npcNameId。
     public let numberKeys: [String]
 
-    /// 主标题：nameZh 非空用 nameZh，否则用 nameEn；两者都没有才兜底成「未知敌人 cXXXX」。
+    /// 主标题的四级回退（两端唯一正式版本，Windows 端 `displayName()` 必须照抄）：
     ///
-    /// nameZhFallback **不进主标题**——它是《艾尔登法环》的官方简中，不是本作游戏文本，
-    /// 混进主标题就等于把参考译名冒充成游戏里的名字。它走 `subtitle`，并带徽标说明。
+    ///   1. `nameZh` —— 本作游戏文本里的简中名，不挂任何名字徽标；
+    ///   2. `nameZhFallback` —— 《艾尔登法环》官方简中的参考译名，挂
+    ///      `BossRowText.nameFallbackBadge`「参考译名 · 非本作游戏文本」；
+    ///   3. `displayFallbackZh` —— 生成器用 chrId 拼的占位名「未知敌人 cXXXX」，
+    ///      挂 `BossNameBadge.noGameName`「无游戏内名称」（nameSource = chrid-fallback）；
+    ///   4. `nameEn` —— 只有英文名时就显示英文名。
+    ///
+    /// 四项都空才自己拼「未知敌人 cXXXX」——数据集里不存在这种组（nameEn 恒非空），
+    /// 留着只是不让标题渲染成空白。
+    ///
+    /// 上一版把 nameZhFallback 压到副标题，理由是「参考译名不能冒充游戏里的名字」。
+    /// 改成主标题是因为那个理由已经由徽标承担：14 组让出 nameZh 的首领在列表里全是
+    /// 一串英文，中文用户扫不过来；徽标逐条写明「非本作游戏文本」，比整行英文更诚实。
     public var displayName: String {
         if !nameZh.isEmpty { return nameZh }
+        if !nameZhFallback.isEmpty { return nameZhFallback }
+        if !displayFallbackZh.isEmpty { return displayFallbackZh }
         if !nameEn.isEmpty { return nameEn }
         if let chrId = chrIds.first { return "未知敌人 c\(chrId)" }
         return "未知敌人"
     }
 
-    /// 副标题：主标题用了英文名、而我们手上有参考译名时，把参考译名显示出来。
-    /// 非空时页面必须同时挂 `BossRowText.nameFallbackBadge`。
-    public var fallbackSubtitle: String? {
-        guard nameZh.isEmpty, !nameZhFallback.isEmpty else { return nil }
-        return nameZhFallback
+    /// 主标题用的是 `nameZhFallback`（第 2 级）。为真时徽标里必须有
+    /// `BossRowText.nameFallbackBadge`，否则参考译名会被当成游戏里的名字。
+    public var usesNameFallback: Bool { nameZh.isEmpty && !nameZhFallback.isEmpty }
+
+    /// 主标题用的是 `displayFallbackZh`（第 3 级）——占位名，徽标是「无游戏内名称」。
+    public var usesDisplayFallback: Bool {
+        nameZh.isEmpty && nameZhFallback.isEmpty && !displayFallbackZh.isEmpty
+    }
+
+    /// 副标题：主标题不是英文名时把英文名显示出来（英文名恒非空，是最稳的对照键）。
+    public var subtitleName: String? {
+        guard !nameEn.isEmpty, nameEn != displayName else { return nil }
+        return nameEn
     }
 
     /// 名字缺失 / 非游戏内文本时的灰色徽标；夜王的名字一定来自菜单参数，不挂徽标。
@@ -2070,6 +2103,10 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     ///
     /// 于是 Elder Dragon Greyoll / Storm King / Centipede Grub 这三组会同时挂
     /// 「无游戏内名称 + 社区资料」，两件事都说清楚。
+    ///
+    /// 第 3、4 层是「这个标题是怎么来的」：`nameApprox` → 近似匹配；主标题取自
+    /// `nameZhFallback` → 参考译名。四层的顺序就是渲染顺序，Windows 端
+    /// `nameBadges()` 逐项同序同文案。
     public var nameBadges: [BossNameBadge] {
         guard group != .nightlord else { return [] }
         var badges: [BossNameBadge] = []
@@ -2085,13 +2122,15 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         if nameSource.hasPrefix("community"), nameEvidence == nil {
             badges.append(.community)
         }
+        if nameApprox { badges.append(.approx) }
+        if usesNameFallback { badges.append(.fallback) }
         return badges
     }
 
     /// 只要一个徽标时取第一条（= 上面第 1 层的结论）。
     public var nameBadge: BossNameBadge? { nameBadges.first }
 
-    /// 近似匹配徽标；夜王不挂。
+    /// 近似匹配徽标；夜王不挂。已并入 `nameBadges`，留着给旧调用点。
     public var showsApproxBadge: Bool { group != .nightlord && nameApprox }
 
     /// 展开区那块「名字来历 + 组级不掉奖励」小字整体显不显示。
@@ -2141,14 +2180,14 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     ///   1. `threat`：守夜 / 野外分组先按档位过滤——同一组首领可能两种档位都有，
     ///      在「野外首领」下就该看野外那几行，而不是血量更高的守夜行；
     ///   2. `isMain`：收敛到主战行（夜王有；守夜 / 野外的 variants 没有这个字段）；
-    ///   3. `noReward`：排掉不掉奖励的行，免得 Paramdex 模板行抢走代表位；
-    ///   4. `isStagingRow`：排掉登场演出 / 血条实体 / 教程这类演出行。
+    ///   3. `isStagingRow`：排掉登场演出 / 血条实体 / 教程这类演出行；
+    ///   4. `noReward`：排掉不掉奖励的行，免得 Paramdex 模板行抢走代表位。
     ///
     /// 然后在剩下的候选里取 1 人基准血量最高的一条，同血量取 npcId 较小者。
     ///
-    /// ## 为什么第 3 步在 isMain **之后**（与任务书字面顺序不同）
+    /// ## 为什么第 4 步在 isMain **之后**
     ///
-    /// 任务书原话把 noReward 写在 isMain 之前。按字面顺序实现会让 **11 张夜王卡**的
+    /// 早先的版本把 noReward 写在 isMain 之前。按那个顺序实现会让 **11 张夜王卡**的
     /// 代表行退化成参数标签行：夜王收敛到 isMain 后候选池整池都是 noReward
     /// （格拉狄乌斯 75000020 等远征首领行本身不掉奖励，奖励挂在别处），先排 noReward
     /// 就把它们全踢掉，代表位落到「格拉狄乌斯（常驻缩放 ×3.54）」75000000 这类
@@ -2158,10 +2197,15 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// 表（与 `windows/tests/bosses.test.mjs` 同一张）逐条钉住「卡片 + 分组 → 代表行
     /// npcId」，任一端改了顺序都会立刻红。
     ///
-    /// ## 第 4 步为什么不能并进第 3 步
+    /// ## 第 3 步为什么不能并进第 4 步
     ///
     /// 演出行不一定 noReward：`鲜血君王 · 登场演出` 35500020 与巨鸦群的 `血条实体`
     /// 45601020 都是 noReward = false，noReward 那层拦不住，只能单独认标签。
+    ///
+    /// 两步谁先谁后在 v3 数据上结果完全一样（脚本逐卡逐分组比对过 0 处差异），
+    /// 但顺序仍要钉死：一旦出现「演出行掉奖励、实战行不掉奖励」的组合，先排谁就会
+    /// 决定代表位归谁。这里按「先把打不到的行排掉，再谈奖励」取，与 Windows 端
+    /// `candidateEntries()` 同序。
     public func rows(in group: Group) -> [BossFight] {
         var pool = rows
         if let threat = group.threat {
@@ -2170,10 +2214,10 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         }
         let mains = pool.filter(\.isMain)
         if !mains.isEmpty { pool = mains }
-        let rewarding = pool.filter { !$0.noReward }
-        if !rewarding.isEmpty { pool = rewarding }
         let playable = pool.filter { !$0.isStagingRow }
         if !playable.isEmpty { pool = playable }
+        let rewarding = pool.filter { !$0.noReward }
+        if !rewarding.isEmpty { pool = rewarding }
         return pool
     }
 
@@ -2200,6 +2244,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         descriptionZh: String, nameSource: String, nameInferred: Bool,
         nameApprox: Bool = false, nameNote: String = "", nameSourceUrl: String = "",
         nameZhFallback: String = "", nameZhFallbackNote: String = "",
+        displayFallbackZh: String = "",
         nameEvidence: BossNameEvidence? = nil, nameZhRejected: BossNameEvidence? = nil,
         hidden: Bool = false, noReward: Bool = false, menuId: Int? = nil,
         chrIds: [Int] = [], npcNameId: Int? = nil, rows: [BossFight]
@@ -2223,6 +2268,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         self.nameSourceUrl = nameSourceUrl
         self.nameZhFallback = nameZhFallback
         self.nameZhFallbackNote = nameZhFallbackNote
+        self.displayFallbackZh = displayFallbackZh
         self.nameEvidence = nameEvidence
         self.nameZhRejected = nameZhRejected
         self.hidden = hidden
@@ -2231,12 +2277,17 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         self.chrIds = chrIds
         self.npcNameId = npcNameId
         self.rows = rows
-        // 搜索串的组成两端必须一致：中英文名 + 参考译名 + 远征名 + 变体名 + 官方弱点 + 每行标签。
-        // nameZhFallback 也算进来：它虽然不当主标题，但用户就是照着「河马」「山妖」这些
-        // 旧译名找的，搜不到等于名字改动把人挡在门外。
+        // 搜索串的组成两端必须一致：中英文名 + 参考译名 + 占位名 + 远征名 + 变体名
+        // + 官方弱点 + 每行标签。
+        // nameZhFallback 也算进来：用户就是照着「河马」「山妖」这些旧译名找的，
+        // 搜不到等于名字改动把人挡在门外。displayFallbackZh 同理——它现在就写在卡头上，
+        // 页面上看得见的名字必须搜得到。
         // 分组名不进搜索串（分组已有独立筛选器，混进来会让「野外」命中全部野外卡），
         // nameSource / threat / variantKey 这类内部枚举值同样不进。
-        var parts = [nameZh, nameEn, nameZhFallback, expeditionZh, expeditionEn, variantNameZh, variantNameEn]
+        var parts = [
+            nameZh, nameEn, nameZhFallback, displayFallbackZh,
+            expeditionZh, expeditionEn, variantNameZh, variantNameEn,
+        ]
         parts.append(contentsOf: weakness.map(\.display))
         parts.append(contentsOf: rows.map(\.displayLabel))
         parts.append(contentsOf: rows.map(\.labelEn))
@@ -2317,6 +2368,7 @@ public struct BossDataIndex: Sendable {
                     nameSourceUrl: boss.nameSourceUrl,
                     nameZhFallback: boss.nameZhFallback,
                     nameZhFallbackNote: boss.nameZhFallbackNote,
+                    displayFallbackZh: boss.displayFallbackZh,
                     nameEvidence: boss.nameEvidence,
                     nameZhRejected: boss.nameZhRejected,
                     hidden: boss.hidden,

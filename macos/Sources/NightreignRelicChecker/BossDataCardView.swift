@@ -53,7 +53,6 @@ struct BossCardView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
                 titleLine
-                fallbackLine
                 badges
                 weaknessNote
                 primaryRowNote
@@ -71,30 +70,18 @@ struct BossCardView: View {
         .contentShape(Rectangle())
     }
 
-    /// 主标题：nameZh 非空用 nameZh，否则用 nameEn；两者都没有才是「未知敌人 cXXXX」。
+    /// 主标题走 `BossCard.displayName` 的四级回退（nameZh → nameZhFallback →
+    /// displayFallbackZh → nameEn）；副标题恒为英文名（主标题已经是英文名时不重复）。
+    /// 「这个标题是不是游戏里的名字」由 `badges` 里的名字徽标负责说明。
     private var titleLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(card.displayName)
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.white)
-            if !card.nameEn.isEmpty, card.nameEn != card.displayName {
-                Text(card.nameEn)
+            if let subtitle = card.subtitleName {
+                Text(subtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.tertiaryText)
-            }
-        }
-    }
-
-    /// 副标题：主标题只剩英文时，把旧的参考译名显示出来，并写明它不是本作的游戏文本。
-    /// 不这么做的话，用户要么看到一串英文，要么被一个「像是游戏里的」译名误导。
-    @ViewBuilder
-    private var fallbackLine: some View {
-        if let fallback = card.fallbackSubtitle {
-            HStack(spacing: 6) {
-                Text(fallback)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(AppTheme.secondaryText)
-                Pill(text: BossRowText.nameFallbackBadge, color: AppTheme.amber, symbol: "character.book.closed")
             }
         }
     }
@@ -119,10 +106,8 @@ struct BossCardView: View {
                         symbol: group.symbol
                     )
                 }
+                // 近似匹配与「参考译名」已并进 card.nameBadges（与 Windows 端同序）。
                 nameSourceBadge
-                if card.showsApproxBadge {
-                    Pill(text: BossRowText.nameApproxBadge, color: AppTheme.amber, symbol: "wand.and.stars")
-                }
                 if card.hidden {
                     Pill(text: BossRowText.hiddenToggleHelp, color: AppTheme.tertiaryText, symbol: "eye.slash")
                 }

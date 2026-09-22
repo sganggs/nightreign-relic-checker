@@ -453,9 +453,10 @@ struct BossDataView: View {
             let unmatched = index.dataset.notes?.unmatchedNames ?? []
             if !unmatched.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("以下 \(unmatched.count) 组首领在本作游戏文本里查不到简中词条，主标题只能用英文名"
-                         + "（其中一部分另有《艾尔登法环》的参考译名，作副标题显示并已标注「"
-                         + BossRowText.nameFallbackBadge + "」，搜索也认这些旧译名）：")
+                    Text("以下 \(unmatched.count) 组首领在本作游戏文本里查不到简中词条"
+                         + "（其中一部分另有《艾尔登法环》的参考译名，主标题用它并已标注「"
+                         + BossRowText.nameFallbackBadge + "」，搜索也认这些旧译名；"
+                         + "其余只能显示英文名）：")
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
