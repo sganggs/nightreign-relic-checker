@@ -10,8 +10,8 @@ import RelicCore
 /// 检查项列表：名称 + 检查函数（返回校验条数）。
 private let gameDataChecks: [(name: String, run: () throws -> Int)] = [
     ("新页面数据资源存在且是合法 JSON", checkGameDataResourcesArePresent),
-    ("GameDataLoader 能定位已构建的资源包", checkGameDataLoaderResolvesBundledResources)
-    // ("首领数据字段完整性", checkBossData),
+    ("GameDataLoader 能定位已构建的资源包", checkGameDataLoaderResolvesBundledResources),
+    ("首领数据字段完整性", checkBossData),
     // ("技能 / 增益数据字段完整性", checkSkillAndBuffData),
 ]
 
