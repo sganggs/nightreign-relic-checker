@@ -82,17 +82,17 @@ ctx.getGameData("bosses").then(function (data) {
   - `resources/<name>.json` 不存在或读取失败；
   - 文件还是脚手架占位内容（顶层 `{"placeholder": true}`）；
   - `name` 不在 `"bosses" | "skills" | "buffs" | "heroes"` 之内。
-- 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」）——三个 JSON
+- 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」）——四个 JSON
   由另一条数据流水线生成，换版本或重新生成期间随时可能缺位。
-- 自 v0.3.0 起 bosses / skills / buffs 三份数据都已就位（regulation 1.03.5 导出，当前
-  `bossesSchemaVersion` 2 / skills 2 / buffs 5——这三个数字是写死的，重新生成数据集时
-  要连同 `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
+- bosses / heroes / skills / buffs 四份数据现已全部就位（regulation 1.03.5 导出，当前
+  `bossesSchemaVersion` 3 / heroes `schemaVersion` 1 / skills `schemaVersion` 2 /
+  buffs `schemaVersion` 5——这四个数字在页面与测试里是写死的，重新生成数据集时要连同
+  `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
   [`macos/DataSources/PROVENANCE.md`](../../../macos/DataSources/PROVENANCE.md)
   和 JSON 自带的 `notes` / `usage` / `caveats` / `fieldNotes` 为准**，页面不要另立说法，
   也不要把参数表数值当成实测值展示。
-- `heroes`（角色属性）的数据还在生成中：`data/nightreign-heroes-v1.03.5.json` 与
-  `macos/DataSources/generate_heroes.py` 由另一位同事负责，两端 `resources/heroes.json`
-  目前是占位 JSON，页面会走「数据未内置」分支。结构以生成后的 JSON 自带说明为准。
+- 即便数据已就位，`data === null` 的分支仍然必须保留：重新生成数据集或换版本期间，
+  `resources/<name>.json` 随时可能缺位或退回占位 JSON。
 
 数据文件的来源与落地：
 
@@ -138,8 +138,8 @@ ctx.getGameData("bosses").then(function (data) {
 - 纯计算层建议写成既能被浏览器加载、又能被 node `require` 的模块（顶层不碰
   `document` / `window`，渲染部分放进 `install(root)` 之后再执行，见 `lookup.js`），
   这样可以直接用 `node --test tests/*.test.mjs` 覆盖，不必起浏览器。当前
-  `tests/bosses.test.mjs`、`tests/lookup_index.test.mjs`、`tests/ranker.test.mjs`
-  就是这三页的纯逻辑测试（`heroes` 还是占位实现，尚无测试文件）；改页面时请一并
-  更新，整套测试的条数只增不减。
+  `tests/bosses.test.mjs`、`tests/heroes.test.mjs`、`tests/lookup_index.test.mjs`、
+  `tests/ranker.test.mjs`（外加与 macOS 对拍的 `tests/ranker_crosscheck.test.mjs`）
+  就是这四页的纯逻辑测试；改页面时请一并更新，整套测试的条数只增不减。
 - 新增数据文件（除上面四个以外）需要同时改 `main.go` 的 `go:embed` 与
   `scripts/sync-data.sh`，请先与维护者确认。

@@ -6,17 +6,18 @@
 
 ## 功能
 
-七个页面，行为与 Windows 版一致：
+八个页面，行为与 Windows 版一致：
 
 - **词条检查** — 严格检查普通遗物当前 1.03.4 + DLC 词条池（340 条），可切换旧版 / 无 DLC 池（290 条）；检查重复 `effectId` 与 `compatibilityId` 互斥，按 `(overrideEffectId, effectId)` 给出正确保存顺序；热门词条快捷填入、合法随机组合；按游戏参数中的七种真实三正面槽位模板预检深夜词条。
 - **词条库** — 搜索完整词条库，查看分类、说明与叠加性。
 - **存档检查**（v0.2.0 起） — 只读解析 `.sl2` / `.co2` 存档，逐件校验全部角色的全部遗物（含深夜遗物正负词条配对、唯一遗物重复、保存顺序），指出非法遗物的种类与词条。v0.3.0 新增自动查找存档、拖拽打开、导出报告 / CSV、与另一份存档逐件对比，以及在遗物卡片上就地展开词条说明。自动查找只扫 CrossOver 的 bottle 目录 `~/Library/Application Support/CrossOver/Bottles/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/`（macOS 上游戏跑在 CrossOver / Wine 里，存档落在 bottle 的模拟 Windows 盘上；候选项按 bottle 名与账户名标注）——存档不在 CrossOver bottle 下时这里找不到，仍可手动选择或拖入。
-- **首领数据**（v0.3.0 新增） — 夜王与守夜 / 野外 Boss 的血量、削韧、八系承伤倍率、异常抗性与人数缩放。
+- **首领数据**（v0.3.0 新增） — 18 个夜王条目与 116 个守夜 / 野外 Boss 的血量、削韧、八系承伤倍率、异常抗性与人数缩放。第二版数据集（`bossesSchemaVersion` 3）起：简中名只按本作游戏文本对照、没有的显示英文名（旧《艾尔登法环》译名降级为「参考译名·非本作游戏文本」），深夜按深度 1–5 分档、另有可连乘的变异个体（红化）倍率，人数缩放核实为「按敌人档位 ×1～×3 不等、部分档位多人时敌人攻击力 ×1.1 / ×1.2，防御 / 卢恩 / 异常阈值不变」。
+- **角色属性**（v0.3.0 新增，导航里紧跟首领数据） — 10 个夜行者 1–15 级的八项属性与血量 / 专注值 / 精力 / 负重上限，可叠加 20 条转职遗物词条、切换利普拉的交易（五套整表替换），并按等级横向对比十个角色。
 - **词条反查**（v0.3.0 新增） — 从词条反查它能出现在哪些遗物、哪些槽位层与颜色上，以及互斥组。
 - **增伤排名**（v0.3.0 新增） — 按武器 + 战技 / 法术解出伤害构成，给出增伤手段的有效倍率排名与可叠加组合。
 - **数据设置** — 查看内置数据版本与来源，导入 / 导出离线 JSON 词条库。
 
-三个新页面的数值口径与已知局限（数值取自参数表而非实测、增伤排名只给相对构成且叠加关系为参数结构推断、人数缩放来自参数）见仓库根 README 的「功能」一节与 [`DataSources/PROVENANCE.md`](DataSources/PROVENANCE.md)。
+四个新页面的数值口径与已知局限（数值取自参数表而非实测、增伤排名只给相对构成且叠加关系为参数结构推断、人数缩放与深夜深度 / 变异倍率来自参数、角色属性的中间等级为插值且转职遗物 2–11 级为推算）见仓库根 README 的「功能」一节与 [`DataSources/PROVENANCE.md`](DataSources/PROVENANCE.md)。
 
 ## 运行
 
@@ -32,8 +33,9 @@ swift run RelicCoreChecks   # 自检，最后一行打印通过的检查条数
 zsh Scripts/build_app.sh    # 产出 build/夜幕验物.app（Universal 2 + 临时签名）
 ```
 
-`RelicCoreChecks` 把每组检查的条数逐行打印出来，末行是总数；**总数只增不减**，改动后
-的数字必须不低于改动前。注意 `GameDataLoader 能定位已构建的资源包` 这一组依赖
+`RelicCoreChecks` 把每组检查的条数逐行打印出来，末行是总数（目前一万余项，含首领数据、
+角色属性、词条反查、增伤排名四页的数据自检）；**总数只增不减**，改动后的数字必须不低于
+改动前。注意 `GameDataLoader 能定位已构建的资源包` 这一组依赖
 `swift build` 产生的资源包：没先构建过应用目标时它会打印「应用资源包未构建，跳过」
 并计 0 项，总数因此比正常少 4 项——所以请按上面的顺序先 `swift build`。
 
@@ -44,7 +46,7 @@ swift build -c release --product NightreignRelicChecker
 ```
 
 `Scripts/build_app.sh` 在此基础上再编一份 `x86_64-apple-macosx13.0`，用 `lipo` 合成
-Universal 2 可执行文件，拷入 `Info.plist`、五个数据 JSON、`LICENSE` 与
+Universal 2 可执行文件，拷入 `Info.plist`、六个数据 JSON、`LICENSE` 与
 `THIRD_PARTY_NOTICES.md`，生成图标并做本地临时签名。产物位于 `build/夜幕验物.app`。
 
 ## 数据更新
@@ -61,8 +63,8 @@ zsh scripts/sync-data.sh
 
 脚本把 `data/nightreign-<名字>-v<版本>.json` 同步成两端的 `<名字>.json`
 （affixes、relics、bosses、skills、buffs、heroes 六项），Windows 与 macOS 一次覆盖，代码无需改动。
-`heroes.json` 的源文件还在生成中，脚本会跳过它，`Resources/heroes.json` 暂时保持占位
-JSON，「角色属性」页显示“数据未内置”。
+六个源文件现已全部就位，`Resources/heroes.json` 与 `data/nightreign-heroes-v1.03.5.json`
+的 sha256 一致；数据缺位或退回占位 JSON 时页面仍会走「数据未内置」分支。
 
 这些 JSON 的生成管线在 [`DataSources/`](DataSources/PROVENANCE.md)：
 `dump_regulation.py`（regulation.bin → 每表一个 CSV）、`extract_msg.py`（游戏归档 →
@@ -75,7 +77,8 @@ JSON，「角色属性」页显示“数据未内置”。
 
 ## 页面结构（首领数据 / 角色属性 / 词条反查 / 增伤排名）
 
-四页各自一个视图文件，页面状态全部自持，**功能开发不需要再改 `AppModel.swift` / `RootView.swift`**：
+四页各自一个视图文件（导航顺序：首领数据 → 角色属性 → 词条反查 → 增伤排名），页面状态
+全部自持，**功能开发不需要再改 `AppModel.swift` / `RootView.swift`**：
 
 | 页面 | 视图文件 | 数据 |
 | --- | --- | --- |
@@ -84,8 +87,10 @@ JSON，「角色属性」页显示“数据未内置”。
 | 增伤排名 | `Sources/NightreignRelicChecker/BuffRankerView.swift` | `GameDataLoader.dataIfAvailable(for: .skills / .buffs)` |
 | 角色属性 | `Sources/NightreignRelicChecker/HeroStatsView.swift` | `GameDataLoader.dataIfAvailable(for: .heroes)` |
 
-- 纯逻辑放 `Sources/RelicCore/`（`BossData.swift` / `AffixLookup.swift` / `SkillData.swift` /
-  `BuffRanker.swift`），视图只做展示——两端的判定与算法口径靠这一层与 Windows 端对齐。
+- 纯逻辑放 `Sources/RelicCore/`（`BossData.swift` / `HeroData.swift` / `AffixLookup.swift` /
+  `SkillData.swift` / `BuffRanker.swift`），视图只做展示——两端的判定与算法口径靠这一层与
+  Windows 端对齐；`HeroData.swift` 里的 `HeroStatsCopy` 与 Windows 端 `pages/heroes.js`
+  的 `COPY` 是同一份文案，改字要两端加两份用例一起改。
 - `RelicCore/GameDataLoader.swift` 提供 `GameDataResource`（bosses / skills / buffs / heroes）与
   `url(for:)`、`data(for:)`（未内置时抛出可读错误）、`isPlaceholder(_:)`、
   `dataIfAvailable(for:)`（未内置 / 占位 / 读取失败时返回 nil）。加载器**只返回原始
@@ -94,9 +99,11 @@ JSON，「角色属性」页显示“数据未内置”。
 - 数据文件缺失或仍是占位 JSON（`{"placeholder": true}`）时页面显示“数据未内置”，
   不影响其它功能与构建；用 `scripts/sync-data.sh` 覆盖后重新构建即可。
 - 自检：`Sources/RelicCoreChecks/GameDataChecks.swift` 里维护一个检查列表，
-  功能开发者把自己的 `() throws -> Int` 检查函数写在新文件里，只往列表加一行。
+  功能开发者把自己的 `() throws -> Int` 检查函数写在新文件里，只往列表加一行；四页各有
+  一个文件（`BossDataChecks` / `HeroStatsChecks` / `AffixLookupChecks` / `BuffRankerChecks`）。
+  `BossDataChecks` 钉着首领数据的收录统计与名字回退口径，换数据集时要一并更新。
 - 两端共享的数据契约（`getGameData` / `dataIfAvailable` 的「永不失败、未内置返回空」
-  语义，三个数据文件与 `data/` 源文件的对应关系）另有一份更详细的说明，见 Windows 端的
+  语义，四个数据文件与 `data/` 源文件的对应关系）另有一份更详细的说明，见 Windows 端的
   页面模块契约 [`../windows/renderer/pages/README.md`](../windows/renderer/pages/README.md)。
 
 ## 许可

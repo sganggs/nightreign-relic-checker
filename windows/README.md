@@ -58,17 +58,22 @@ go-winres make --arch 386,amd64
 
 ## 测试
 
-审计核心（JS）与三个新页面的纯计算层测试，任意平台可跑（无依赖，用 node 自带的
+审计核心（JS）与四个新页面的纯计算层测试，任意平台可跑（无依赖，用 node 自带的
 测试运行器）：
 
 ```
 node --test tests/*.test.mjs
 ```
 
-当前覆盖 `tests/` 下七个文件：`core_audit`（存档审计规则，用例取自仓库根
+当前覆盖 `tests/` 下八个文件：`core_audit`（存档审计规则，用例取自仓库根
 `testdata/`，与 macOS 端对拍）、`save_report` / `save_diff`（报告导出与存档对比，
 口径与 macOS 端 `SaveReport.swift` / `SaveCompare.swift` 逐行一致）、
-`bosses` / `lookup_index` / `ranker` / `ranker_crosscheck`（三个新页面的纯逻辑层，以及增伤排名与 macOS 端的对照用例）。
+`bosses` / `heroes` / `lookup_index` / `ranker` / `ranker_crosscheck`（四个新页面的纯逻辑层，
+以及增伤排名与 macOS 端的对照用例）。`heroes.test.mjs` 覆盖角色属性页的逐级插值、
+转职遗物叠加与钳位、利普拉的交易与同级对比，并与 macOS 端 `HeroStatsChecks.swift`
+共用一组对照用例。两端的数据契约断言要一起改：`bosses.test.mjs` 钉着
+`bossesSchemaVersion` 与收录统计（夜王 18 · 守夜 50 · 野外 72 · 数值行 394），
+重新生成数据集时必须同步。
 
 存档解析器（Go 子包，无平台约束）：
 
@@ -99,8 +104,8 @@ zsh scripts/sync-data.sh
 
 把 `data/nightreign-<名字>-v<版本>.json` 同步成 `windows/resources/<名字>.json`
 （affixes、relics、bosses、skills、buffs、heroes 六项），两端同时覆盖，代码无需改动。
-`heroes.json` 的源文件还在生成中，脚本会跳过它，`resources/heroes.json` 暂时保持占位
-JSON，「角色属性」页显示「数据未内置」。
+六个源文件现已全部就位，`resources/heroes.json` 与 `data/nightreign-heroes-v1.03.5.json`
+的 sha256 一致。
 
 `resources/bosses.json`、`skills.json`、`buffs.json`、`heroes.json` 的生成管线在
 [`../macos/DataSources/`](../macos/DataSources/PROVENANCE.md)（`dump_regulation.py` /
@@ -128,7 +133,8 @@ JSON，「角色属性」页显示「数据未内置」。
 - `renderer/` — 界面：`index.html` / `app.js` / `core.js`（规则与审计）/
   `styles.css`，以及存档页的 `savereport.js`（报告与 CSV 导出）与
   `savediff.js`（存档对比）。
-- `renderer/pages/` — 四个新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）各自的
+- `renderer/pages/` — 四个新页面（导航顺序：首领数据 → 角色属性 → 词条反查 → 增伤排名，
+  整体排在「存档检查」之后、「数据设置」之前）各自的
   `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**：
   注册方式、`ctx` 的内容、`ctx.getGameData` 的语义、样式与 CSP 约束都在那里，
   功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。
