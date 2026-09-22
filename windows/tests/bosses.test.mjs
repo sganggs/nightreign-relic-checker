@@ -263,14 +263,13 @@ test("承伤偏高：代表行 damageRates > 1 的属性按倍率降序取前几
   assert.ok(hot.length > 60, `代表行承伤 > 1 的 Boss 应该很多，实际 ${hot.length}`);
 });
 
-test("深夜徽标扫描整张卡：首条 isMain 没有深夜值不等于整张卡没有", () => {
+test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡没有", () => {
   const items = B.buildItems(data, Core.foldForSearch);
   const byUid = new Map(items.map((item) => [item.uid, item]));
 
-  // menuId 12 = 格诺斯塔·永夜之王：6 条 fights 里 3 条有 deepOfNight，但首条 isMain 没有。
+  // menuId 12 = 格诺斯塔·永夜之王：6 条 fights 里 3 条有 deepOfNight。
   const gnoster = byUid.get("nl:12");
   assert.ok(gnoster);
-  assert.equal(Boolean(B.mainEntry(gnoster.entries).deepOfNight), false, "首条 isMain 确实没有深夜值");
   assert.equal(B.deepCoverage(gnoster), "some", "整张卡应判为「部分行有深夜数值」");
 
   const allDeep = items.find((item) => item.entries.length && item.entries.every((e) => e.deepOfNight));
@@ -281,15 +280,21 @@ test("深夜徽标扫描整张卡：首条 isMain 没有深夜值不等于整张
   assert.equal(B.deepCoverage({ entries: [] }), "none");
 
   // 代表行没有深夜值、卡里其余行却有的卡片，一张都不能漏判成 none。
+  // 与 macOS 端 BossDataChecks 的同名断言对着同一组卡片。
   const misjudged = items.filter((item) => {
-    const main = B.mainEntry(item.entries);
+    const main = B.representativeEntry(item.entries, item.group);
     return B.deepCoverage(item) !== "none" && !(main && main.deepOfNight);
   }).map((item) => item.uid);
   assert.deepEqual(
     misjudged.sort(),
-    ["nb:Dreg Wormface@7660", "nl:12", "nl:13", "nl:18"],
-    "格诺斯塔 / 玛利斯 / 哈尔莫妮亚·救世旗手 与废弃物蚯蚓脸靠扫描全部行才判得对"
+    ["nb:Dreg Wormface@7660", "nl:18"],
+    "哈尔莫妮亚·救世旗手与废弃物蚯蚓脸靠扫描全部行才判得对"
   );
+  assert.equal(
+    items.filter((item) => B.deepCoverage(item) !== "none").length, 22,
+    "带深夜专属数值的卡片共 22 张（与 macOS 自检同一个数）"
+  );
+  assert.equal(items.filter((item) => B.deepCoverage(item) === "all").length, 4);
 });
 
 test("深夜数值并非夜王独有：守夜 / 野外里也有带 deepOfNight 的条目", () => {
@@ -361,6 +366,155 @@ test("poise = 0 与 poise = -1 语义分开：无削韧槽 ≠ 不吃削韧", ()
   assert.equal(B.computeStats(normal, 1, false).poiseKind, "value");
 });
 
+// ------------------------------------------------------ 双端一致性（macOS 对照）
+
+test("夜王代表行取主战行里血量最高的一条，而不是第一条", () => {
+  const multiMain = data.nightlords.filter((lord) => lord.fights.filter((f) => f.isMain).length > 1);
+  assert.equal(multiMain.length, 5, "当前数据里有 5 位夜王带多条 isMain 行");
+
+  for (const lord of multiMain) {
+    const mains = lord.fights.filter((f) => f.isMain);
+    const rep = B.representativeEntry(lord.fights, "nightlords");
+    assert.equal(rep.isMain, true);
+    assert.equal(rep.hp, Math.max(...mains.map((f) => f.hp)), `${lord.nameZh} 应取血量最高的主战行`);
+  }
+
+  // 玛利斯·永夜之王：一阶段 3172 排在前面，二阶段 29453 才是该显示的那条。
+  const maris = data.nightlords.find((lord) => lord.menuId === 13);
+  const marisMains = maris.fights.filter((f) => f.isMain);
+  assert.equal(marisMains[0].hp, 3172, "首条 isMain 确实是血量更低的一阶段");
+  assert.equal(B.representativeEntry(maris.fights, "nightlords").npcId, 75410000);
+  assert.equal(B.representativeEntry(maris.fights, "nightlords").hp, 29453);
+
+  // 格诺斯塔·永夜之王 5 条主战行里最高的是弗堤士一阶段 8564。
+  assert.equal(B.representativeEntry(data.nightlords.find((l) => l.menuId === 12).fights, "nightlords").hp, 8564);
+
+  // 同血量按 npcId 升序兜底，两端排序结果一致。
+  const tie = [
+    { hp: 100, npcId: 20, isMain: true },
+    { hp: 100, npcId: 10, isMain: true },
+    { hp: 90, npcId: 1, isMain: true },
+  ];
+  assert.equal(B.representativeEntry(tie, "nightlords").npcId, 10);
+});
+
+test("守夜 / 野外卡片的代表行随分组切换，不再恒取 variants[0]", () => {
+  const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
+  assert.equal(apostle.variants[0].threat, "night", "变体按守夜优先排序，rows[0] 是守夜行");
+
+  const night = B.representativeEntry(apostle.variants, "night");
+  const field = B.representativeEntry(apostle.variants, "field");
+  assert.equal(night.npcId, 35600900);
+  assert.equal(field.npcId, 35600020, "野外分组要取「封印监牢」，不是血量更高的守夜行");
+  assert.equal(field.threat, "field");
+  assert.ok(night.hp > field.hp, "守夜行血量更高，正是它会盖掉野外数值");
+
+  const dual = data.nightBosses.filter((boss) => new Set(boss.tiers || [boss.tier]).size > 1);
+  for (const boss of dual) {
+    assert.equal(B.representativeEntry(boss.variants, "night").threat, "night", boss.id);
+    assert.equal(B.representativeEntry(boss.variants, "field").threat, "field", boss.id);
+  }
+
+  // 只有一种档位的组不受影响：按分组取出来的仍是血量最高的那行。
+  const single = data.nightBosses.find((boss) => (boss.tiers || [boss.tier]).length === 1 && boss.variants.length > 2);
+  const rep = B.representativeEntry(single.variants, single.tier);
+  assert.equal(rep.hp, Math.max(...single.variants.map((v) => v.hp)));
+
+  // 候选行：夜王收敛到 isMain，守夜 / 野外收敛到该档位。
+  assert.equal(B.candidateEntries(apostle.variants, "field").length, 4);
+  assert.equal(B.candidateEntries(apostle.variants, "nightlords").length, apostle.variants.length);
+  assert.equal(B.candidateEntries(data.nightlords.find((l) => l.menuId === 13).fights, "nightlords").length, 2);
+});
+
+test("搜索：纯数字按行号前缀匹配，文本串不含分组名与内部枚举值", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  const fold = Core.foldForSearch;
+
+  // 被合并掉的 npcId 也能搜到（格拉狄乌斯主战行是合并行）。
+  assert.ok(B.filterItems(items, "nightlords", "75001020", fold).some((item) => item.name === "格拉狄乌斯"));
+  assert.ok(B.filterItems(items, "nightlords", "75000020", fold).some((item) => item.name === "格拉狄乌斯"));
+  // 「1」不该命中任何夜王：夜王的 npcId 都以 75/76/46 开头。
+  assert.equal(B.filterItems(items, "nightlords", "1", fold).length, 0);
+  // chrId 与 NpcName ID 仍可搜。
+  assert.ok(B.filterItems(items, "night", "7800", fold).length > 0, "chrId 仍可搜");
+  const withNameId = data.nightBosses.find((boss) => boss.npcNameId);
+  assert.ok(
+    B.filterItems(items, withNameId.tier, String(withNameId.npcNameId), fold)
+      .some((item) => item.uid === "nb:" + withNameId.id),
+    "npcNameId 也应能搜到"
+  );
+  // 分组名不进搜索串。
+  const fieldCount = B.filterItems(items, "field", "", fold).length;
+  assert.ok(B.filterItems(items, "field", "野外", fold).length < fieldCount);
+  // 官方弱点文字可搜（与 macOS 端同一组搜索键）。
+  assert.ok(B.filterItems(items, "nightlords", "圣", fold).length > 0);
+
+  assert.equal(B.itemMatches({ search: "abc", numbers: ["12345"] }, ""), true);
+  assert.equal(B.itemMatches({ search: "abc", numbers: ["12345"] }, "123"), true);
+  assert.equal(B.itemMatches({ search: "abc", numbers: ["12345"] }, "234"), false, "数字只按前缀匹配");
+  assert.equal(B.itemMatches({ search: "abc", numbers: [] }, "b"), true);
+});
+
+test("双端对照表：同一条行 + 同一组输入，五个数值必须与 macOS 完全一致", () => {
+  // 同一张表也写在 macos/Sources/RelicCoreChecks/BossDataChecks.swift（12b 节）里。
+  const rows = new Map(allEntries.map((entry) => [entry.npcId, entry]));
+  assert.equal(rows.size, allEntries.length, "npcId 在全量行里唯一，对照表才能按它定位");
+
+  const cases = [
+    ["格拉狄乌斯 · 远征首领 / 1 人", 75000020, 1, false, 11328, 120, "value", 0.058, 0.5, 1],
+    ["格拉狄乌斯 · 远征首领 / 2 人", 75000020, 2, false, 22656, 218.181818, "value", 0.0319, 0.375, 0.85],
+    ["格拉狄乌斯 · 远征首领 / 3 人", 75000020, 3, false, 33984, 400, "value", 0.0174, 0.25, 0.7],
+    ["玛利斯 · 永夜之王 · 二阶段 / 2 人", 75410000, 2, false, 58906, 1090.909091, "value", 0, 0.375, 0.85],
+    ["史柴格斯 · 远征首领 / 3 人 · 深夜", 76100010, 3, true, 34665, 500.160051, "value", 0.0174, 0.25, 0.7],
+    ["神皮使徒 · 守夜代表行 / 2 人", 35600900, 2, false, 9551, 145.454545, "value", 0.1595, 0.46, 0.955],
+    ["神皮使徒 · 野外代表行 / 2 人", 35600020, 2, false, 6535, 106.666667, "value", 0.2175, 0.82, 0.889],
+    ["大型黄金河马 · 守夜代表行 / 3 人", 50100010, 3, false, 17747, 266.666667, "value", 0.087, 0.315, 0.778],
+    ["大型黄金河马 · 野外代表行 / 3 人", 50100000, 3, false, 5606, 160, "value", 0.145, 0.95, 0.97],
+    ["未知敌人 c7931（poise = 0）/ 2 人", 79310000, 2, false, 6851, null, "zero", 0.1595, 0.46, 0.955],
+    ["鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", 48010010, 2, false, 674, null, "none", 0.0319, 0.375, 0.85],
+  ];
+
+  for (const [title, npcId, party, deep, hp, poise, kind, recover, ailment, buildup] of cases) {
+    const entry = rows.get(npcId);
+    assert.ok(entry, `对照表找不到 npcId ${npcId}（${title}）`);
+    const stats = B.computeStats(entry, party, deep);
+    assert.equal(stats.hp, hp, `${title}：血量`);
+    assert.equal(stats.poiseKind, kind, `${title}：削韧槽语义`);
+    if (poise === null) {
+      assert.equal(stats.effectivePoise, null, `${title}：有效韧性应算不出来`);
+    } else {
+      assert.ok(Math.abs(stats.effectivePoise - poise) < 1e-4, `${title}：有效韧性 ${stats.effectivePoise}`);
+    }
+    assert.ok(Math.abs(stats.poiseRecover - recover) < 1e-6, `${title}：削韧恢复 ${stats.poiseRecover}`);
+    assert.ok(Math.abs(stats.ailmentDamageRate - ailment) < 1e-6, `${title}：异常发动伤害 ${stats.ailmentDamageRate}`);
+    assert.ok(Math.abs(stats.buildupRate - buildup) < 1e-6, `${title}：异常累积 ${stats.buildupRate}`);
+  }
+
+  // 对照表里的代表行必须就是折叠态会选中的那一行。
+  const hippo = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
+  assert.equal(B.representativeEntry(hippo.variants, "night").npcId, 50100010);
+  assert.equal(B.representativeEntry(hippo.variants, "field").npcId, 50100000);
+  assert.equal(B.representativeEntry(data.nightlords.find((l) => l.menuId === 0).fights, "nightlords").npcId, 75000020);
+});
+
+test("收录统计与 macOS 的 inventorySummary 是同一组数字", () => {
+  const counts = { night: 0, field: 0, both: 0, rows: 0 };
+  for (const boss of data.nightBosses) {
+    const groups = B.bossGroups(boss);
+    if (groups.includes("night")) counts.night += 1;
+    if (groups.includes("field")) counts.field += 1;
+    if (groups.length > 1) counts.both += 1;
+    counts.rows += boss.variants.length;
+  }
+  for (const lord of data.nightlords) counts.rows += lord.fights.length;
+
+  assert.equal(data.nightlords.length, 18);
+  assert.equal(counts.night, 51);
+  assert.equal(counts.field, 72);
+  assert.equal(counts.both, 6);
+  assert.equal(counts.rows, 384);
+});
+
 test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {
   const groups = new Set(
     Object.values(data.scalingTiers).map((tier) => tier.group).filter(Boolean)
@@ -368,4 +522,13 @@ test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {
   for (const group of groups) {
     assert.ok(B.GROUP_LABELS[group], `档位分组缺少中文标签：${group}`);
   }
+  // 与 macOS 端 BossScalingGroup.title(for:) 一一对应。
+  assert.equal(B.GROUP_LABELS["Field Boss Threat"], "野外首领威胁档");
+  assert.equal(B.GROUP_LABELS["Night Boss Threat"], "守夜首领威胁档");
+  assert.equal(B.GROUP_LABELS["Final Boss Threat"], "最终首领威胁档");
+  assert.ok(Object.values(data.scalingTiers).some((tier) => !tier.group), "数据里存在 group = null 的档位");
+});
+
+test("分组名与 macOS 的 BossCard.Group.title 一致", () => {
+  assert.deepEqual(B.GROUP_TITLES, { nightlords: "夜王", night: "守夜首领", field: "野外首领" });
 });

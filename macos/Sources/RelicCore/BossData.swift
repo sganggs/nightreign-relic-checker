@@ -284,15 +284,29 @@ public struct BossDamageRates: Codable, Sendable, Hashable {
     }
 
     /// 倍率 > 1 的属性（按倍率降序），即数值意义上的「弱点」。
+    /// 同倍率按 `allCases` 的声明顺序（= Windows 端 DAMAGE_TYPES 的顺序）兜底，
+    /// 保证两端列出来的「承伤偏高」属性顺序完全一致（Swift 的 sort 不保证稳定）。
     public var weakKinds: [BossDamageKind] {
-        BossDamageKind.allCases.filter { value(for: $0) > 1 }
-            .sorted { value(for: $0) > value(for: $1) }
+        orderedKinds { $0 > 1 } by: { $0 > $1 }
     }
 
     /// 倍率 < 1 的属性（按倍率升序），即抗性。
     public var resistantKinds: [BossDamageKind] {
-        BossDamageKind.allCases.filter { value(for: $0) < 1 }
-            .sorted { value(for: $0) < value(for: $1) }
+        orderedKinds { $0 < 1 } by: { $0 < $1 }
+    }
+
+    private func orderedKinds(
+        _ include: (Double) -> Bool,
+        by isBefore: (Double, Double) -> Bool
+    ) -> [BossDamageKind] {
+        BossDamageKind.allCases.enumerated()
+            .filter { include(value(for: $0.element)) }
+            .sorted { lhs, rhs in
+                let left = value(for: lhs.element)
+                let right = value(for: rhs.element)
+                return left == right ? lhs.offset < rhs.offset : isBefore(left, right)
+            }
+            .map(\.element)
     }
 }
 
@@ -444,10 +458,25 @@ public struct BossScalingPair: Codable, Sendable, Hashable {
 
 /// 顶层 `scalingTiers` 的一项（带 Paramdex 分组名）。
 public struct BossScalingGroup: Codable, Sendable, Hashable, Identifiable {
+    /// 档位分组的中文标签。与 Windows 端 `pages/bosses.js` 的 GROUP_LABELS 一一对应，
+    /// 两端必须给同一个 group 值同一个中文名（数据里还存在 group = null 的档位）。
+    public static func title(for group: String?) -> String {
+        switch group {
+        case "Field Boss Threat": return "野外首领威胁档"
+        case "Night Boss Threat": return "守夜首领威胁档"
+        case "Final Boss Threat": return "最终首领威胁档"
+        case .some(let name) where !name.isEmpty: return name
+        default: return "其它档位"
+        }
+    }
+
     public let id: Int
     public let group: String?
     public let duo: BossScalingTier?
     public let trio: BossScalingTier?
+
+    /// 分组中文名；group 缺失时是「其它档位」。
+    public var title: String { Self.title(for: group) }
 
     private enum CodingKeys: String, CodingKey {
         case group, duo, trio
@@ -555,12 +584,34 @@ public struct BossDeepOfNightStats: Codable, Sendable, Hashable {
     }
 }
 
+/// 削韧槽的三种语义。`poise = -1`（子弹 / 投射物等实体）与 `poise = 0`（没有削韧槽）
+/// 都算不出有效韧性，但**不是一回事**，文案必须分开；两端口径一致。
+public enum BossPoiseKind: String, Sendable, Hashable {
+    /// superArmorDurability > 0，能算出有效韧性。
+    case value
+    /// superArmorDurability = 0：没有削韧槽。
+    case zero
+    /// superArmorDurability < 0：不吃削韧。
+    case none
+
+    /// 算不出有效韧性时的显示文案（与 Windows 端 fmtPoise 一致）。
+    public var placeholder: String {
+        switch self {
+        case .value: return ""
+        case .zero: return "无削韧槽"
+        case .none: return "不吃削韧"
+        }
+    }
+}
+
 /// 一条战斗记录换算到指定人数 / 模式后的结果。
 public struct BossComputedStats: Sendable, Hashable {
     /// 玩家真正要打掉的血量。
     public let hp: Int
-    /// 有效韧性 = poise / (poiseTakenBase × tier.poiseTaken)；nil 表示不吃削韧。
+    /// 有效韧性 = poise / (poiseTakenBase × tier.poiseTaken)；nil 表示算不出（见 poiseKind）。
     public let effectivePoise: Double?
+    /// 有效韧性为 nil 时用它区分「不吃削韧」与「无削韧槽」。
+    public let poiseKind: BossPoiseKind
     /// 削韧恢复速度 = poiseRecover × poiseRecoverMultiplier × tier.poiseRecover。
     public let poiseRecover: Double
     /// 异常发动伤害倍率 = ailmentDamageRateBase × tier.ailmentDamageRate。
@@ -701,10 +752,17 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
         return Int(scaled.rounded())
     }
 
+    /// 削韧槽语义：> 0 能算有效韧性，= 0 是「没有削韧槽」，< 0 是「不吃削韧」。
+    public var poiseKind: BossPoiseKind {
+        if poise < 0 || !poise.isFinite { return .none }
+        return poise == 0 ? .zero : .value
+    }
+
     /// 有效韧性 = poise / (poiseTakenBase × 人数档承受削韧倍率)；
-    /// poise < 0（不吃削韧）或分母为 0 时返回 nil。
+    /// poise ≤ 0（不吃削韧 / 无削韧槽）或分母为 0 时返回 nil。
+    /// poise = 0 不能算成「有效韧性 0」——那是「没有削韧槽」，与 -1 的「不吃削韧」都不该显示数字。
     public func effectivePoise(for players: BossPartySize, deepOfNight useDeep: Bool = false) -> Double? {
-        guard poise >= 0 else { return nil }
+        guard poiseKind == .value else { return nil }
         let base = baseline(deepOfNight: useDeep)
         let factor = base.poiseTakenBase * tier(for: players).poiseTaken
         guard factor > 0, factor.isFinite else { return nil }
@@ -735,6 +793,7 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
         return BossComputedStats(
             hp: hp(for: players, deepOfNight: useDeep),
             effectivePoise: effectivePoise(for: players, deepOfNight: useDeep),
+            poiseKind: poiseKind,
             poiseRecover: poiseRecoverSpeed(for: players, deepOfNight: useDeep),
             ailmentDamageRate: ailmentDamageRate(for: players, deepOfNight: useDeep),
             ailmentBuildupRate: tier.buildupRate,
@@ -960,6 +1019,44 @@ public func bossFoldForSearch(_ text: String) -> String {
     text.foldedForSearch
 }
 
+/// 名字缺失时的灰色徽标。四种取值与 Windows 端 `nameBadge()` 一一对应，文案必须相同。
+public enum BossNameBadge: String, Sendable, Hashable {
+    /// nameSource = english-only：游戏文本里只有英文名。
+    case englishOnly
+    /// nameSource = chrid-fallback：游戏文本与 Paramdex 都没有名字，只能用 chrId 兜底。
+    case noGameName
+    /// nameSource = manual：按 Elden Ring 官方简中手工补录，不是本作游戏内文本。
+    case manual
+    /// nameInferred：名字是按 ID 结构推断的（借兄弟行 / 序号对应）。
+    case inferred
+
+    public var text: String {
+        switch self {
+        case .englishOnly: return "仅英文名"
+        case .noGameName: return "无游戏内名称"
+        case .manual: return "名称手工补录"
+        case .inferred: return "名称按 ID 推断"
+        }
+    }
+}
+
+/// 一张卡片里有多少行带「深夜」专属缩放。只看代表行会把「首条代表行没有深夜值、
+/// 其余行有」的卡片判错，所以一律扫描整卡。取值与 Windows 端 `deepCoverage()` 一致。
+public enum BossDeepCoverage: String, Sendable, Hashable {
+    case none
+    case some
+    case all
+
+    /// 深夜开关打开时挂在卡头的徽标文案；none 不挂徽标。
+    public var badgeText: String? {
+        switch self {
+        case .none: return nil
+        case .some: return "部分行有深夜数值"
+        case .all: return "深夜数值"
+        }
+    }
+}
+
 public struct BossCard: Identifiable, Sendable, Hashable {
     public enum Group: String, CaseIterable, Identifiable, Sendable {
         case nightlord
@@ -983,6 +1080,15 @@ public struct BossCard: Identifiable, Sendable, Hashable {
             case .field: return "map"
             }
         }
+
+        /// 变体行 `threat` 字段对应的档位（夜王没有 threat）。
+        public var threat: String? {
+            switch self {
+            case .nightlord: return nil
+            case .night: return "night"
+            case .field: return "field"
+            }
+        }
     }
 
     public let id: String
@@ -995,8 +1101,10 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     public let nameEn: String
     /// 夜王远征名（守夜 / 野外为空）。
     public let expeditionZh: String
+    public let expeditionEn: String
     /// 变体名：永夜之王 / 救世旗手（普通形态为空）。
     public let variantNameZh: String
+    public let variantNameEn: String
     public let isEverdark: Bool
     /// 菜单参数标注的官方弱点。
     public let weakness: [BossWeakness]
@@ -1015,22 +1123,58 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// 可按行号搜索的数字：全部 npcIds（含被合并掉的行）+ chrIds + npcNameId。
     public let numberKeys: [String]
 
-    public var displayName: String { nameZh.isEmpty ? nameEn : nameZh }
+    /// 简中名优先，缺失时回退英文名，两者都空时给「未知敌人」（与 Windows 端一致）。
+    public var displayName: String {
+        if !nameZh.isEmpty { return nameZh }
+        return nameEn.isEmpty ? "未知敌人" : nameEn
+    }
+
+    /// 名字缺失 / 非游戏内文本时的灰色徽标；夜王的名字一定来自菜单参数，不挂徽标。
+    public var nameBadge: BossNameBadge? {
+        guard group != .nightlord else { return nil }
+        if nameZh.isEmpty { return nameSource == "english-only" ? .englishOnly : .noGameName }
+        if nameSource == "chrid-fallback" { return .noGameName }
+        if nameSource == "manual" { return .manual }
+        if nameInferred { return .inferred }
+        return nil
+    }
+
+    /// 整张卡片的深夜覆盖情况（扫描全部行，不只看代表行）。
+    public var deepCoverage: BossDeepCoverage {
+        guard !rows.isEmpty else { return .none }
+        let hit = rows.filter(\.hasDeepOfNight).count
+        if hit == 0 { return .none }
+        return hit == rows.count ? .all : .some
+    }
 
     /// 全部主战行。**`isMain` 不唯一**：多阶段 / 多体夜王（玛利斯·永夜之王、
     /// 救世旗手、格诺斯塔…）会有 2～5 条，折叠态必须把这件事说清楚。
     public var mainRows: [BossFight] { rows.filter(\.isMain) }
 
-    /// 折叠态头条用的行：主战行里**血量最高**的一条（同血量取 npcId 较小者）；
-    /// 没有主战行时取第一行（守夜 / 野外的 variants 已按 hp 降序排好）。
+    /// 某个分组下参与「代表行」评选的候选行。两步过滤，任一步没有候选就原样放行：
+    ///   1. 守夜 / 野外分组先按 `threat` 过滤——同一组首领可能两种档位都有，
+    ///      在「野外首领」下就该看野外那几行，而不是血量更高的守夜行；
+    ///   2. 再收敛到 `isMain`（夜王的主战行；守夜 / 野外没有 isMain）。
+    public func rows(in group: Group) -> [BossFight] {
+        var pool = rows
+        if let threat = group.threat {
+            let byThreat = pool.filter { $0.threat == threat }
+            if !byThreat.isEmpty { pool = byThreat }
+        }
+        let mains = pool.filter(\.isMain)
+        return mains.isEmpty ? pool : mains
+    }
+
+    /// 折叠态头条用的行：候选行里**血量最高**的一条（同血量取 npcId 较小者）。
     /// 排序用 1 人基准血量，与当前人数 / 深夜开关无关，保证头条行不会跟着设置跳。
-    public var primaryRow: BossFight? {
-        let mains = mainRows
-        guard !mains.isEmpty else { return rows.first }
-        return mains.sorted { lhs, rhs in
+    public func representativeRow(in group: Group) -> BossFight? {
+        rows(in: group).sorted { lhs, rhs in
             lhs.hp == rhs.hp ? lhs.npcId < rhs.npcId : lhs.hp > rhs.hp
         }.first
     }
+
+    /// 卡片自身主分组下的代表行。
+    public var primaryRow: BossFight? { representativeRow(in: group) }
 
     /// 主战行不止一条时，折叠态要并列展示全部主战血量。
     public var hasMultipleMainRows: Bool { mainRows.count > 1 }
@@ -1039,7 +1183,8 @@ public struct BossCard: Identifiable, Sendable, Hashable {
 
     public init(
         id: String, group: Group, groups: [Group]? = nil, nameZh: String, nameEn: String,
-        expeditionZh: String, variantNameZh: String, isEverdark: Bool, weakness: [BossWeakness],
+        expeditionZh: String, expeditionEn: String = "", variantNameZh: String,
+        variantNameEn: String = "", isEverdark: Bool, weakness: [BossWeakness],
         descriptionZh: String, nameSource: String, nameInferred: Bool,
         chrIds: [Int] = [], npcNameId: Int? = nil, rows: [BossFight]
     ) {
@@ -1049,7 +1194,9 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         self.nameZh = nameZh
         self.nameEn = nameEn
         self.expeditionZh = expeditionZh
+        self.expeditionEn = expeditionEn
         self.variantNameZh = variantNameZh
+        self.variantNameEn = variantNameEn
         self.isEverdark = isEverdark
         self.weakness = weakness
         self.descriptionZh = descriptionZh
@@ -1058,8 +1205,10 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         self.chrIds = chrIds
         self.npcNameId = npcNameId
         self.rows = rows
-        // 分组名不进搜索串：分组已有独立筛选器，混进来会让「野外」命中全部野外卡。
-        var parts = [nameZh, nameEn, expeditionZh, variantNameZh]
+        // 搜索串的组成两端必须一致：中英文名 + 远征名 + 变体名 + 官方弱点 + 每行标签。
+        // 分组名不进搜索串（分组已有独立筛选器，混进来会让「野外」命中全部野外卡），
+        // nameSource / threat / variantKey 这类内部枚举值同样不进。
+        var parts = [nameZh, nameEn, expeditionZh, expeditionEn, variantNameZh, variantNameEn]
         parts.append(contentsOf: weakness.map(\.display))
         parts.append(contentsOf: rows.map(\.displayLabel))
         parts.append(contentsOf: rows.map(\.labelEn))
@@ -1105,7 +1254,9 @@ public struct BossDataIndex: Sendable {
                     nameZh: lord.nameZh,
                     nameEn: lord.nameEn,
                     expeditionZh: lord.expeditionZh,
+                    expeditionEn: lord.expeditionEn,
                     variantNameZh: lord.variantNameZh,
+                    variantNameEn: lord.variantNameEn,
                     isEverdark: lord.isEverdark,
                     weakness: lord.weakness,
                     descriptionZh: lord.descriptionZh,
@@ -1198,6 +1349,19 @@ public struct BossDataIndex: Sendable {
         let dual = dualTierCards.count
         var text = "\(lords) 位夜王 · \(night) 个守夜首领 · \(field) 个野外首领"
         if dual > 0 { text += "（其中 \(dual) 组两种档位都有）" }
+        return text
+    }
+
+    /// 「数据版本与来源」区块里的收录统计。措辞与 Windows 端 versionBlock 的「收录」一行一致。
+    public var inventorySummary: String {
+        let lords = cards(in: .nightlord).count
+        let night = cards(in: .night).count
+        let field = cards(in: .field).count
+        let dual = dualTierCards.count
+        let rows = cards.reduce(0) { $0 + $1.rows.count }
+        var text = "夜王 \(lords) · 守夜 \(night) · 野外 \(field)"
+        if dual > 0 { text += "（含 \(dual) 组两边都出现）" }
+        text += " · 数值行 \(rows)"
         return text
     }
 }

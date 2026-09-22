@@ -5,13 +5,19 @@ import RelicCore
 
 struct BossCardView: View {
     let card: BossCard
+    /// 当前所在的分组区块。同一张卡片可能同时出现在「守夜」与「野外」两个区块里，
+    /// 折叠态的代表行必须跟着分组走（野外区块就看野外那几行），不能恒取 rows[0]。
+    let group: BossCard.Group
     let index: BossDataIndex
     let players: BossPartySize
     let deepOfNight: Bool
     let isExpanded: Bool
     let onToggle: () -> Void
 
-    private var primary: BossFight? { card.primaryRow }
+    private var primary: BossFight? { card.representativeRow(in: group) }
+
+    /// 该分组下参与评选的候选行（守夜 / 野外先按 threat 过滤，夜王收敛到 isMain）。
+    private var candidates: [BossFight] { card.rows(in: group) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -53,6 +59,7 @@ struct BossCardView: View {
                     }
                 }
                 badges
+                weaknessNote
                 primaryRowNote
             }
             Spacer(minLength: 8)
@@ -90,8 +97,9 @@ struct BossCardView: View {
                 }
                 nameSourceBadge
             }
-            if deepOfNight, card.rows.contains(where: \.hasDeepOfNight) {
-                Pill(text: "深夜专属缩放", color: AppTheme.amber, symbol: "moon.fill")
+            // 深夜徽标扫描整卡：首条代表行没有深夜值，不代表整张卡都没有。
+            if deepOfNight, let text = card.deepCoverage.badgeText {
+                Pill(text: text, color: AppTheme.amber, symbol: "moon.fill")
             }
             Text("\(card.rows.count) 条战斗记录")
                 .font(.system(size: 10))
@@ -99,26 +107,75 @@ struct BossCardView: View {
         }
     }
 
-    /// 折叠态头条数值取自哪一行。`isMain` 在数据里不唯一（多阶段 / 多体夜王有 2～5 条），
-    /// 只显示一个数字会误导，所以主战行不止一条时把全部主战血量并列出来。
+    /// 折叠态头条数值取自哪一行。两种情况都必须写清楚，否则同一张卡里差几倍的数值
+    /// 会被当成算错：夜王的 `isMain` 不唯一（多阶段 / 多体有 2～5 条），
+    /// 守夜 / 野外的候选行则随分组切换（同一组首领可能两种档位都有）。
     @ViewBuilder
     private var primaryRowNote: some View {
         if let primary {
-            let mains = card.mainRows
-            if mains.count > 1 {
-                let list = mains
+            let pool = candidates
+            // 只有「代表行本身有歧义」的卡片才铺开列全部候选行：夜王有多条 isMain，
+            // 或同时属于守夜与野外的组（同一张卡在两个分组下给的是不同的行）。
+            let ambiguous = card.group == .nightlord ? card.hasMultipleMainRows : card.groups.count > 1
+            if ambiguous, pool.count > 1 {
+                let list = pool
                     .map { "\($0.displayLabel) \(BossFormat.integer($0.hp(for: players, deepOfNight: deepOfNight)))" }
                     .joined(separator: " · ")
-                Text("\(mains.count) 条主战行，上方取血量最高的一条：" + list)
+                let lead = card.group == .nightlord
+                    ? "\(pool.count) 条主战行，上方取血量最高的一条："
+                    : "该分组 \(pool.count) 条数值行，上方取血量最高的一条："
+                Text(lead + list)
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.amber)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("数值取自「\(primary.displayLabel)」")
+            } else if card.rows.count > 1 {
+                Text("代表行：\(primary.displayLabel)（共 \(card.rows.count) 组，展开看全部）")
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// weakness（NightBossMenuParam 的菜单弱点标注）只有夜王有：守夜 / 野外首领的数据里
+    /// 根本没有这个字段，所以绝不能显示「官方标注：无弱点」——那是把「数据里没有」
+    /// 说成「官方说没有」。它们改为给出代表行里承伤偏高的属性（页面自己按 damageRates 算的）。
+    @ViewBuilder
+    private var weaknessNote: some View {
+        if card.group != .nightlord {
+            let hot = primary.map { BossCardView.topDamageKinds($0) } ?? []
+            if hot.isEmpty {
+                Text("本作只给夜王官方弱点标注；展开看承伤倍率")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            } else {
+                HStack(spacing: 6) {
+                    Text("代表行承伤偏高")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                    ForEach(hot) { item in
+                        Pill(
+                            text: index.dataset.title(for: item.kind) + " "
+                                + BossFormat.multiplier(item.rate, digits: 2),
+                            color: AppTheme.amber
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// 代表行里某个属性的承伤倍率。
+    struct HotRate: Identifiable {
+        let kind: BossDamageKind
+        let rate: Double
+        var id: String { kind.rawValue }
+    }
+
+    /// 代表行里承伤倍率 > 1 的属性，按倍率降序取前三个（与 Windows 端 topDamageTypes 同口径）。
+    static func topDamageKinds(_ row: BossFight, limit: Int = 3) -> [HotRate] {
+        row.damageRates.weakKinds.prefix(limit).map {
+            HotRate(kind: $0, rate: row.damageRates.value(for: $0))
         }
     }
 
@@ -135,35 +192,41 @@ struct BossCardView: View {
 
     @ViewBuilder
     private var nameSourceBadge: some View {
-        if card.nameSource == "manual" {
-            Pill(text: "译名手工补充", color: AppTheme.amber)
-        } else if card.nameZh.isEmpty {
-            Pill(text: "仅英文名", color: AppTheme.amber)
-        } else if card.nameInferred {
-            Pill(text: "名称按 ID 推断", color: AppTheme.amber)
+        if let badge = card.nameBadge {
+            Pill(text: badge.text, color: AppTheme.amber)
         }
     }
 
     /// 主战行不止一条时标明头条取的是最高那条，别让用户以为「这只 Boss 就这点血」。
     private var hpMetricTitle: String {
         guard card.group == .nightlord else { return "血量" }
-        return card.hasMultipleMainRows ? "主战血量（最高）" : "主战血量"
+        return card.hasMultipleMainRows ? "主战血量 · 最高" : "主战血量"
+    }
+
+    /// 深夜开着但代表行没有深夜专属缩放时，要直说这一行回落到了常规值，
+    /// 否则摘要与卡头的「部分行有深夜数值」徽标看着像在互相打架。
+    private func hpCaption(_ stats: BossComputedStats, row: BossFight) -> String {
+        if deepOfNight {
+            guard row.hasDeepOfNight else { return "该行深夜同常规" }
+            return players == .solo ? "深夜数值" : "深夜 1 人 \(BossFormat.integer(row.deepOfNight?.hp ?? row.hp))"
+        }
+        return players == .solo ? "含常驻缩放" : "1 人 \(BossFormat.integer(row.hp))"
     }
 
     private func summaryMetrics(for row: BossFight) -> some View {
         let stats = row.stats(for: players, deepOfNight: deepOfNight)
         return HStack(alignment: .top, spacing: 18) {
             BossMetric(
-                title: hpMetricTitle,
+                title: "\(hpMetricTitle)（\(players.title)）",
                 value: BossFormat.integer(stats.hp),
-                caption: players == .solo ? "1 人" : "\(players.shortTitle) ×\(BossFormat.decimal(stats.tier.hp))",
+                caption: hpCaption(stats, row: row),
                 tint: AppTheme.purpleSoft,
-                width: 118
+                width: 128
             )
             BossMetric(
                 title: "有效韧性",
-                value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? "不吃削韧",
-                caption: stats.effectivePoise == nil ? nil : "韧性 \(BossFormat.decimal(row.poise, digits: 0))",
+                value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? stats.poiseKind.placeholder,
+                caption: stats.effectivePoise == nil ? nil : "韧性槽 \(BossFormat.decimal(row.poise, digits: 0))",
                 width: 84
             )
             BossMetric(
@@ -307,7 +370,7 @@ struct BossFightRowView: View {
             )
             BossMetric(
                 title: "有效韧性",
-                value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? "不吃削韧",
+                value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? stats.poiseKind.placeholder,
                 caption: poiseCaption,
                 width: 178
             )
@@ -327,15 +390,19 @@ struct BossFightRowView: View {
         }
     }
 
-    /// 有效韧性为 nil 有两条来源：poise = -1（真的不吃削韧），
-    /// 以及承受削韧倍率为 0 / 非有限（数据异常）。两者文案必须分开。
+    /// 有效韧性为 nil 有三条来源：poise < 0（真的不吃削韧）、poise = 0（没有削韧槽），
+    /// 以及承受削韧倍率为 0 / 非有限（数据异常）。三者文案必须分开。
     private var poiseCaption: String {
         guard stats.effectivePoise == nil else {
             let factor = stats.poiseTakenBase * stats.tier.poiseTaken
             return "韧性 \(BossFormat.decimal(row.poise, digits: 0)) ÷ 承受削韧 \(BossFormat.decimal(factor, digits: 3))"
         }
-        if row.poise < 0 { return "superArmorDurability = -1" }
-        return "承受削韧倍率异常（\(BossFormat.decimal(stats.poiseTakenBase * stats.tier.poiseTaken, digits: 3))）"
+        switch stats.poiseKind {
+        case .none: return "superArmorDurability = \(BossFormat.decimal(row.poise, digits: 0))"
+        case .zero: return "superArmorDurability = 0，该实体没有削韧槽"
+        case .value:
+            return "承受削韧倍率异常（\(BossFormat.decimal(stats.poiseTakenBase * stats.tier.poiseTaken, digits: 3))）"
+        }
     }
 
     private var damageSection: some View {
@@ -410,12 +477,20 @@ struct BossFightRowView: View {
                 }
             }
 
-            if !deepOfNight, row.hasDeepOfNight {
-                Text("该行有「深夜」专属数值，打开顶部的深夜开关查看")
+            // 深夜提示随开关反向：关着时告诉用户「可以切」，开着时给出常规值作对照。
+            // 三条文案与 Windows 端 deepNote() 完全一致。
+            if let deep = row.deepOfNight, !deepOfNight {
+                Text("该行有深夜专属缩放：血量 \(BossFormat.integer(deep.hp))（1 人），可用顶部「深夜」开关切换。")
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.amber)
-            } else if deepOfNight, !row.hasDeepOfNight {
-                Text("该行没有深夜专属缩放，深夜数值与常规相同")
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if deepOfNight, row.hasDeepOfNight {
+                Text("当前为深夜数值；常规数值：血量 \(BossFormat.integer(row.hp))（1 人）。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if deepOfNight {
+                Text("该行没有深夜专属缩放，深夜数值与常规相同。")
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
             }
@@ -424,9 +499,7 @@ struct BossFightRowView: View {
 
     private var scalingCaption: String {
         guard let scalingId = row.scalingId else { return "无缩放档位" }
-        if let group = index.dataset.scalingGroup(scalingId)?.group, !group.isEmpty {
-            return "档位 #\(scalingId) · \(group)"
-        }
-        return "档位 #\(scalingId)"
+        guard let group = index.dataset.scalingGroup(scalingId) else { return "档位 #\(scalingId)" }
+        return "档位 #\(scalingId) · \(group.title)"
     }
 }

@@ -14,6 +14,11 @@ private var bossesResourceURL: URL {
         .appendingPathComponent("Sources/NightreignRelicChecker/Resources/bosses.json")
 }
 
+/// 夜王 fight + 守夜 / 野外 variant 的全部数值行。
+private func bossAllRows(_ dataset: BossDataset) -> [BossFight] {
+    dataset.nightlords.flatMap(\.fights) + dataset.nightBosses.flatMap(\.variants)
+}
+
 private func bossExpect(_ condition: Bool, _ message: String, counter: inout Int) throws {
     guard condition else { throw CheckFailure(description: "首领数据：" + message) }
     counter += 1
@@ -289,6 +294,197 @@ func checkBossData() throws -> Int {
         counter: &count
     )
 
+    // 9g. 守夜 / 野外的代表行必须跟着分组走（Windows 侧遗留问题：恒取 variants[0]）
+    //     同一组首领可能两种档位都有，野外分组下就该看野外那几行。
+    guard let apostleNight = apostle.representativeRow(in: .night),
+          let apostleField = apostle.representativeRow(in: .field)
+    else {
+        throw CheckFailure(description: "首领数据：神皮使徒在两个分组下都应有代表行")
+    }
+    try bossExpect(
+        apostleNight.npcId == 35600900 && apostleNight.threat == "night",
+        "神皮使徒在守夜分组下的代表行应是 npcId 35600900，实际 \(apostleNight.npcId)",
+        counter: &count
+    )
+    try bossExpect(
+        apostleField.npcId == 35600020 && apostleField.threat == "field",
+        "神皮使徒在野外分组下的代表行应是「封印监牢」npcId 35600020（不是血量更高的守夜行），实际 \(apostleField.npcId)",
+        counter: &count
+    )
+    try bossExpect(
+        apostle.rows.first?.npcId == 35600900,
+        "变体已按守夜优先 + 血量降序排好，rows[0] 是守夜行——正因如此不能拿它当野外分组的代表行",
+        counter: &count
+    )
+    try bossExpect(
+        dual.allSatisfy { card in
+            guard let night = card.representativeRow(in: .night),
+                  let field = card.representativeRow(in: .field) else { return false }
+            return night.threat == "night" && field.threat == "field"
+        },
+        "6 组双档位首领在各自分组下的代表行都应来自该档位",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards.allSatisfy { card in
+            card.groups.allSatisfy { card.representativeRow(in: $0) != nil }
+        },
+        "每张卡片在它所属的每个分组下都应能确定代表行",
+        counter: &count
+    )
+    try bossExpect(
+        maris.rows(in: .nightlord).count == 2 && gladiusCard.rows(in: .nightlord).count == 1,
+        "夜王分组下的候选行应收敛到 isMain",
+        counter: &count
+    )
+
+    // 9h. poise = 0 与 poise = -1 语义分开：无削韧槽 ≠ 不吃削韧，两者都不能显示成「有效韧性 0」
+    let zeroPoiseRows = bossAllRows(dataset).filter { $0.poise == 0 }
+    let negativePoiseRows = bossAllRows(dataset).filter { $0.poise < 0 }
+    try bossExpect(zeroPoiseRows.count == 2, "数据里应有 2 条 poise = 0 的行，实际 \(zeroPoiseRows.count)", counter: &count)
+    try bossExpect(negativePoiseRows.count == 5, "数据里应有 5 条 poise = -1 的行，实际 \(negativePoiseRows.count)", counter: &count)
+    guard let zeroRow = zeroPoiseRows.first(where: { $0.npcId == 79310000 }) else {
+        throw CheckFailure(description: "首领数据：找不到 poise = 0 的行 npcId 79310000")
+    }
+    try bossExpect(zeroRow.poiseKind == .zero, "poise = 0 应判为「无削韧槽」", counter: &count)
+    try bossExpect(
+        zeroRow.effectivePoise(for: .duo) == nil && zeroRow.stats(for: .duo).effectivePoise == nil,
+        "poise = 0 不能算成「有效韧性 0」",
+        counter: &count
+    )
+    try bossExpect(zeroRow.poiseKind.placeholder == "无削韧槽", "poise = 0 的文案应为「无削韧槽」", counter: &count)
+    guard let negativeRow = negativePoiseRows.first else {
+        throw CheckFailure(description: "首领数据：找不到 poise = -1 的行")
+    }
+    try bossExpect(negativeRow.poiseKind == .none, "poise = -1 应判为「不吃削韧」", counter: &count)
+    try bossExpect(negativeRow.poiseKind.placeholder == "不吃削韧", "poise = -1 的文案应为「不吃削韧」", counter: &count)
+    try bossExpect(main.poiseKind == .value, "poise > 0 的行应能算出有效韧性", counter: &count)
+    try bossExpect(
+        bossAllRows(dataset).allSatisfy { row in
+            (row.poiseKind == .value) == (row.effectivePoise(for: .solo) != nil)
+        },
+        "有效韧性是否为 nil 应与 poiseKind 完全对应",
+        counter: &count
+    )
+
+    // 9i. 名字缺失回退的四种徽标：仅英文名 / 无游戏内名称 / 名称手工补录 / 名称按 ID 推断
+    func cardForBoss(_ id: String) throws -> BossCard {
+        guard let card = index.cards.first(where: { $0.id == "boss-" + id }) else {
+            throw CheckFailure(description: "首领数据：找不到卡片 \(id)")
+        }
+        return card
+    }
+    let englishOnly = try cardForBoss("Putrid Flesh@4171")
+    try bossExpect(englishOnly.nameBadge == .englishOnly, "english-only 应挂「仅英文名」徽标", counter: &count)
+    try bossExpect(englishOnly.nameBadge?.text == "仅英文名", "徽标文案应为「仅英文名」", counter: &count)
+    try bossExpect(englishOnly.displayName == "Putrid Flesh", "没有简中名时显示英文名", counter: &count)
+    let chrFallback = try cardForBoss("Unknown Enemy (c4504)@4504")
+    try bossExpect(
+        chrFallback.nameBadge == .noGameName && chrFallback.nameBadge?.text == "无游戏内名称",
+        "chrid-fallback 应挂「无游戏内名称」徽标（它的 nameZh 是生成器兜底的「未知敌人 cXXXX」）",
+        counter: &count
+    )
+    try bossExpect(chrFallback.displayName == "未知敌人 c4504", "chrid-fallback 的显示名应是「未知敌人 c4504」", counter: &count)
+    let manualCard = try cardForBoss("Cemetery Shade@3664")
+    try bossExpect(
+        manualCard.nameSource == "manual" && manualCard.nameInferred,
+        "Cemetery Shade 同时是 manual 与 nameInferred，用来验证徽标优先级",
+        counter: &count
+    )
+    try bossExpect(
+        manualCard.nameBadge == .manual && manualCard.nameBadge?.text == "名称手工补录",
+        "manual 优先于 nameInferred，文案应为「名称手工补录」",
+        counter: &count
+    )
+    let inferredCard = try cardForBoss("Horned Warrior@5250")
+    try bossExpect(
+        inferredCard.nameBadge == .inferred && inferredCard.nameBadge?.text == "名称按 ID 推断",
+        "nameInferred 且非手工补录的组应挂「名称按 ID 推断」",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards(in: .nightlord).allSatisfy { $0.nameBadge == nil },
+        "夜王的名字来自菜单参数，不应挂名称徽标",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards(in: .night).first(where: { $0.nameSource == "npcname" && !$0.nameInferred })?.nameBadge == nil,
+        "正常 npcname 的组不挂徽标",
+        counter: &count
+    )
+
+    // 9j. 深夜覆盖度扫描整张卡，不只看代表行
+    try bossExpect(
+        gnoster.deepCoverage == .some,
+        "格诺斯塔 · 永夜之王 6 条 fights 里 3 条有深夜值，整卡应判为「部分行有深夜数值」",
+        counter: &count
+    )
+    try bossExpect(
+        gnoster.deepCoverage.badgeText == "部分行有深夜数值",
+        "「部分行有深夜数值」的徽标文案两端一致",
+        counter: &count
+    )
+    // 只看代表行会判错的两张卡：哈尔莫妮亚 · 救世旗手与废弃物蚯蚓脸，
+    // 代表行没有深夜值，卡里其余行却有。
+    let misjudged = index.cards.filter { card in
+        card.deepCoverage != .none && card.representativeRow(in: card.group)?.hasDeepOfNight != true
+    }
+    try bossExpect(
+        Set(misjudged.map(\.id)) == ["nightlord-18", "boss-Dreg Wormface@7660"],
+        "靠扫描整卡才判得对的应是哈尔莫妮亚 · 救世旗手与废弃物蚯蚓脸，实际 \(misjudged.map(\.id).sorted())",
+        counter: &count
+    )
+    let deepCards = index.cards.filter { $0.deepCoverage != .none }
+    try bossExpect(deepCards.count == 22, "应有 22 张卡片带深夜专属数值，实际 \(deepCards.count)", counter: &count)
+    try bossExpect(
+        index.cards.filter { $0.deepCoverage == .all }.count == 4,
+        "其中 4 张整卡每行都有深夜值",
+        counter: &count
+    )
+    try bossExpect(
+        deepCards.contains { $0.group != .nightlord },
+        "深夜数值不是夜王独有，守夜 / 野外也有",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards.first(where: { $0.deepCoverage == .all })?.deepCoverage.badgeText == "深夜数值",
+        "整卡都有深夜值时徽标为「深夜数值」",
+        counter: &count
+    )
+
+    // 9k. 档位分组中文名与收录统计：与 Windows 端同文案
+    try bossExpect(
+        BossScalingGroup.title(for: "Final Boss Threat") == "最终首领威胁档"
+            && BossScalingGroup.title(for: "Night Boss Threat") == "守夜首领威胁档"
+            && BossScalingGroup.title(for: "Field Boss Threat") == "野外首领威胁档"
+            && BossScalingGroup.title(for: nil) == "其它档位",
+        "档位分组的中文标签应与 Windows 端 GROUP_LABELS 一致",
+        counter: &count
+    )
+    try bossExpect(
+        index.scalingGroups.allSatisfy { !$0.title.isEmpty },
+        "每个档位都应有可显示的分组名",
+        counter: &count
+    )
+    try bossExpect(
+        index.inventorySummary == "夜王 18 · 守夜 51 · 野外 72（含 6 组两边都出现） · 数值行 384",
+        "收录统计文案应为「夜王 18 · 守夜 51 · 野外 72（含 6 组两边都出现） · 数值行 384」，实际「\(index.inventorySummary)」",
+        counter: &count
+    )
+
+    // 9l. 承伤偏高的属性排序：同倍率按 DAMAGE_TYPES 声明顺序兜底，两端结果一致
+    try bossExpect(
+        main.damageRates.weakKinds.first == .holy,
+        "格拉狄乌斯承伤最高的属性应是圣",
+        counter: &count
+    )
+    let tieRates = BossDamageRates(standard: 1.2, slash: 1.2, strike: 1, pierce: 1, magic: 1, fire: 1.2, lightning: 1, holy: 1)
+    try bossExpect(
+        tieRates.weakKinds == [.standard, .slash, .fire],
+        "同倍率时应按标准 / 斩击 / 打击 / 突刺 / 魔力 / 火 / 雷 / 圣 的顺序排",
+        counter: &count
+    )
+
     // 10. 常驻缩放 / 缩放档位能按 ID 反查，且 ID 已从 key 回填
     try bossExpect(!dataset.permanentScaling.isEmpty, "permanentScaling 不应为空", counter: &count)
     try bossExpect(!index.scalingGroups.isEmpty, "scalingTiers 不应为空", counter: &count)
@@ -372,6 +568,96 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(allRows.allSatisfy { !$0.displayLabel.isEmpty }, "每行都应有可显示的标签", counter: &count)
+
+    // 12b. 双端对照表：同一条行、同一组输入（人数 + 深夜开关）下的五个数值。
+    //      同一张表也写在 windows/tests/bosses.test.mjs 里，两端都对这些硬编码常数，
+    //      任一端的公式或代表行选取被改动都会立刻红。
+    struct ParityCase {
+        let title: String
+        let npcId: Int
+        let players: BossPartySize
+        let deep: Bool
+        let hp: Int
+        /// nil = 算不出有效韧性（不吃削韧 / 无削韧槽）。
+        let effectivePoise: Double?
+        let poiseKind: BossPoiseKind
+        let poiseRecover: Double
+        let ailmentDamageRate: Double
+        let buildupRate: Double
+    }
+    let parityCases: [ParityCase] = [
+        .init(title: "格拉狄乌斯 · 远征首领 / 1 人", npcId: 75000020, players: .solo, deep: false,
+              hp: 11328, effectivePoise: 120, poiseKind: .value,
+              poiseRecover: 0.058, ailmentDamageRate: 0.5, buildupRate: 1),
+        .init(title: "格拉狄乌斯 · 远征首领 / 2 人", npcId: 75000020, players: .duo, deep: false,
+              hp: 22656, effectivePoise: 218.181818, poiseKind: .value,
+              poiseRecover: 0.0319, ailmentDamageRate: 0.375, buildupRate: 0.85),
+        .init(title: "格拉狄乌斯 · 远征首领 / 3 人", npcId: 75000020, players: .trio, deep: false,
+              hp: 33984, effectivePoise: 400, poiseKind: .value,
+              poiseRecover: 0.0174, ailmentDamageRate: 0.25, buildupRate: 0.7),
+        .init(title: "玛利斯 · 永夜之王 · 二阶段 / 2 人", npcId: 75410000, players: .duo, deep: false,
+              hp: 58906, effectivePoise: 1090.909091, poiseKind: .value,
+              poiseRecover: 0, ailmentDamageRate: 0.375, buildupRate: 0.85),
+        .init(title: "史柴格斯 · 远征首领 / 3 人 · 深夜", npcId: 76100010, players: .trio, deep: true,
+              hp: 34665, effectivePoise: 500.160051, poiseKind: .value,
+              poiseRecover: 0.0174, ailmentDamageRate: 0.25, buildupRate: 0.7),
+        .init(title: "神皮使徒 · 守夜代表行 / 2 人", npcId: 35600900, players: .duo, deep: false,
+              hp: 9551, effectivePoise: 145.454545, poiseKind: .value,
+              poiseRecover: 0.1595, ailmentDamageRate: 0.46, buildupRate: 0.955),
+        .init(title: "神皮使徒 · 野外代表行 / 2 人", npcId: 35600020, players: .duo, deep: false,
+              hp: 6535, effectivePoise: 106.666667, poiseKind: .value,
+              poiseRecover: 0.2175, ailmentDamageRate: 0.82, buildupRate: 0.889),
+        .init(title: "大型黄金河马 · 守夜代表行 / 3 人", npcId: 50100010, players: .trio, deep: false,
+              hp: 17747, effectivePoise: 266.666667, poiseKind: .value,
+              poiseRecover: 0.087, ailmentDamageRate: 0.315, buildupRate: 0.778),
+        .init(title: "大型黄金河马 · 野外代表行 / 3 人", npcId: 50100000, players: .trio, deep: false,
+              hp: 5606, effectivePoise: 160, poiseKind: .value,
+              poiseRecover: 0.145, ailmentDamageRate: 0.95, buildupRate: 0.97),
+        .init(title: "未知敌人 c7931（poise = 0）/ 2 人", npcId: 79310000, players: .duo, deep: false,
+              hp: 6851, effectivePoise: nil, poiseKind: .zero,
+              poiseRecover: 0.1595, ailmentDamageRate: 0.46, buildupRate: 0.955),
+        .init(title: "鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", npcId: 48010010, players: .duo, deep: false,
+              hp: 674, effectivePoise: nil, poiseKind: .none,
+              poiseRecover: 0.0319, ailmentDamageRate: 0.375, buildupRate: 0.85),
+    ]
+    let rowsByNpcId = Dictionary(bossAllRows(dataset).map { ($0.npcId, $0) }, uniquingKeysWith: { first, _ in first })
+    for item in parityCases {
+        guard let row = rowsByNpcId[item.npcId] else {
+            throw CheckFailure(description: "首领数据：对照表找不到 npcId \(item.npcId)（\(item.title)）")
+        }
+        let got = row.stats(for: item.players, deepOfNight: item.deep)
+        try bossExpect(got.hp == item.hp, "对照表 \(item.title)：血量应为 \(item.hp)，实际 \(got.hp)", counter: &count)
+        try bossExpect(got.poiseKind == item.poiseKind, "对照表 \(item.title)：削韧槽语义不符", counter: &count)
+        if let expected = item.effectivePoise {
+            try bossExpectClose(got.effectivePoise, expected, "对照表 \(item.title)：有效韧性", tolerance: 0.0001, counter: &count)
+        } else {
+            try bossExpect(got.effectivePoise == nil, "对照表 \(item.title)：有效韧性应算不出来", counter: &count)
+        }
+        try bossExpectClose(got.poiseRecover, item.poiseRecover, "对照表 \(item.title)：削韧恢复", tolerance: 0.000001, counter: &count)
+        try bossExpectClose(got.ailmentDamageRate, item.ailmentDamageRate, "对照表 \(item.title)：异常发动伤害", tolerance: 0.000001, counter: &count)
+        try bossExpectClose(got.ailmentBuildupRate, item.buildupRate, "对照表 \(item.title)：异常累积", tolerance: 0.000001, counter: &count)
+    }
+    // 对照表里的代表行必须就是页面折叠态会选中的那一行
+    guard let hippo = index.cards.first(where: { $0.id == "boss-Large Golden Hippopotamus@5010" }) else {
+        throw CheckFailure(description: "首领数据：对照表锚点卡片「大型黄金河马」缺失")
+    }
+    try bossExpect(
+        rowsByNpcId.count == bossAllRows(dataset).count,
+        "代表行 npcId 在全量行里应唯一，对照表才能按 npcId 定位",
+        counter: &count
+    )
+    try bossExpect(
+        gladiusCard.representativeRow(in: .nightlord)?.npcId == 75000020
+            && maris.representativeRow(in: .nightlord)?.npcId == 75410000,
+        "对照表里的夜王代表行应与折叠态一致",
+        counter: &count
+    )
+    try bossExpect(
+        hippo.representativeRow(in: .night)?.npcId == 50100010
+            && hippo.representativeRow(in: .field)?.npcId == 50100000,
+        "对照表里的大型黄金河马代表行应与折叠态一致",
+        counter: &count
+    )
 
     // 13. 宽容解码：未知字段忽略 + 缺字段退默认值 + 坏元素跳过
     let lenientJSON = """

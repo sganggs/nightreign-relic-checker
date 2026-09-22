@@ -44,10 +44,18 @@
     "Final Boss Threat": "最终首领威胁档"
   };
 
+  // 分组名两端一致（macOS 端 BossCard.Group.title）：顶部筛选、卡头徽标都用它。
+  // 行内的威胁档位徽标另用短名「守夜 / 野外」，与 macOS 的 threatTitle 对应。
+  var GROUP_TITLES = {
+    nightlords: "夜王",
+    night: "守夜首领",
+    field: "野外首领"
+  };
+
   var TABS = [
-    { key: "nightlords", label: "夜王" },
-    { key: "night", label: "守夜 Boss" },
-    { key: "field", label: "野外 Boss" }
+    { key: "nightlords", label: GROUP_TITLES.nightlords },
+    { key: "night", label: GROUP_TITLES.night },
+    { key: "field", label: GROUP_TITLES.field }
   ];
 
   var PARTY_OPTIONS = [
@@ -184,18 +192,75 @@
     return "变体 " + (index + 1);
   }
 
-  function mainEntry(entries) {
-    if (!Array.isArray(entries) || !entries.length) return null;
-    for (var i = 0; i < entries.length; i += 1) {
-      if (entries[i] && entries[i].isMain) return entries[i];
+  // 某个分组下参与「代表行」评选的候选行。两步过滤，任一步没有候选就原样放行：
+  //   1. 守夜 / 野外分组先按 threat 过滤——同一组首领可能两种档位都有（数据里 6 组），
+  //      在「野外」分组下就该看野外那几行，而不是血量更高的守夜行；
+  //   2. 再收敛到 isMain（夜王的主战行**不唯一**，多阶段 / 多体有 2～5 条）。
+  function candidateEntries(entries, group) {
+    var pool = Array.isArray(entries) ? entries.filter(Boolean) : [];
+    if (group === "night" || group === "field") {
+      var byThreat = pool.filter(function (entry) { return entry.threat === group; });
+      if (byThreat.length) pool = byThreat;
     }
-    return entries[0];
+    var mains = pool.filter(function (entry) { return entry.isMain; });
+    return mains.length ? mains : pool;
+  }
+
+  // 候选行里血量最高的一条（同血量取 npcId 较小者）。排序用 1 人基准血量，
+  // 与当前人数 / 深夜开关无关，保证头条行不会跟着设置跳。
+  function representativeEntry(entries, group) {
+    var pool = candidateEntries(entries, group);
+    var best = null;
+    pool.forEach(function (entry) {
+      if (!best) { best = entry; return; }
+      var hp = Number(entry.hp) || 0;
+      var bestHp = Number(best.hp) || 0;
+      if (hp !== bestHp) {
+        if (hp > bestHp) best = entry;
+        return;
+      }
+      if ((Number(entry.npcId) || 0) < (Number(best.npcId) || 0)) best = entry;
+    });
+    return best;
+  }
+
+  // 不区分分组的代表行（夜王卡片用；守夜 / 野外请用 representativeEntry 带上分组）。
+  function mainEntry(entries) {
+    return representativeEntry(entries, null);
+  }
+
+  function mainRows(entries) {
+    return (Array.isArray(entries) ? entries : []).filter(function (entry) {
+      return entry && entry.isMain;
+    });
   }
 
   function joinSearch(parts) {
     return parts.filter(function (part) {
       return part !== null && part !== undefined && part !== "";
     }).join("\n");
+  }
+
+  // 可按行号搜索的数字串（npcId / chrId / NpcName ID）。纯数字查询走前缀匹配，
+  // 所以这些值不能混进全文搜索串——否则「1」「50」会命中全表。
+  function numberKeys(values) {
+    var out = [];
+    values.forEach(function (value) {
+      if (value === null || value === undefined || value === "") return;
+      var text = String(value);
+      if (out.indexOf(text) === -1) out.push(text);
+    });
+    return out;
+  }
+
+  function entryNumbers(entries) {
+    var out = [];
+    (Array.isArray(entries) ? entries : []).forEach(function (entry) {
+      if (!entry) return;
+      var ids = Array.isArray(entry.npcIds) && entry.npcIds.length ? entry.npcIds : [entry.npcId];
+      ids.forEach(function (id) { out.push(id); });
+    });
+    return out;
   }
 
   function defaultFold(value) {
@@ -259,10 +324,15 @@
         entries: entries,
         main: mainEntry(entries),
         idText: "菜单行 " + String(lord.menuId),
+        // 搜索串的组成两端必须一致：中英文名 + 远征名 + 变体名 + 官方弱点 + 每行标签。
+        // 分组名、nameSource / threat / variantKey 这类内部枚举值都不进搜索串。
         search: folder(joinSearch([
           lord.nameZh, lord.nameEn, lord.expeditionZh, lord.expeditionEn,
-          lord.variantNameZh, lord.variantNameEn, lord.paramdexName, String(lord.menuId)
-        ].concat(entries.map(function (fight) { return joinSearch([fight.labelZh, fight.labelEn]); }))))
+          lord.variantNameZh, lord.variantNameEn
+        ].concat((Array.isArray(lord.weakness) ? lord.weakness : []).map(function (weak) {
+          return joinSearch([weak.zh, weak.en]);
+        })).concat(entries.map(function (fight) { return joinSearch([fight.labelZh, fight.labelEn]); })))),
+        numbers: numberKeys(entryNumbers(entries))
       });
     });
 
@@ -286,13 +356,19 @@
         weakness: null,
         description: "",
         entries: entries,
-        main: entries.length ? entries[0] : null,
+        // 卡片自身主分组下的代表行；渲染时按当前分组重新取（见 representativeEntry）。
+        main: representativeEntry(entries, groups[0]),
         idText: "chr " + (Array.isArray(boss.chrIds) ? boss.chrIds.join(" / ") : "?"),
-        // nameSource 是内部枚举（npcname / manual / chrid-fallback…），不进全文搜索串。
+        // nameSource 是内部枚举（npcname / manual / chrid-fallback…），不进全文搜索串；
+        // chrId / npcId 这类行号进 numbers，按前缀匹配。
         search: folder(joinSearch([
-          boss.nameZh, boss.nameEn, boss.id,
-          Array.isArray(boss.chrIds) ? boss.chrIds.join(" ") : ""
-        ].concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); }))))
+          boss.nameZh, boss.nameEn
+        ].concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); })))),
+        numbers: numberKeys(
+          entryNumbers(entries)
+            .concat(Array.isArray(boss.chrIds) ? boss.chrIds : [])
+            .concat(boss.npcNameId === null || boss.npcNameId === undefined ? [] : [boss.npcNameId])
+        )
       });
     });
 
@@ -305,13 +381,21 @@
     return item.group === group;
   }
 
+  // 纯数字按行号前缀匹配：npcId / chrId 是 4～9 位数，contains 会让「1」「50」命中全表。
+  function itemMatches(item, needle) {
+    if (!needle) return true;
+    if (/^\d+$/.test(needle)) {
+      return (item.numbers || []).some(function (text) { return text.indexOf(needle) === 0; });
+    }
+    return item.search.indexOf(needle) !== -1;
+  }
+
   function filterItems(items, group, query, fold) {
     var folder = typeof fold === "function" ? fold : defaultFold;
     var needle = folder(String(query == null ? "" : query).trim());
     return items.filter(function (item) {
       if (group && !itemInGroup(item, group)) return false;
-      if (!needle) return true;
-      return item.search.indexOf(needle) !== -1;
+      return itemMatches(item, needle);
     });
   }
 
@@ -431,7 +515,7 @@
       partyControl() + "</div></div>" +
       "<div class='bosses-control bosses-control--grow'><span class='bosses-control-label'>搜索</span>" +
       "<label class='search-field'><span aria-hidden='true'>⌕</span>" +
-      "<input type='search' placeholder='搜索中文名、英文名、变体或 chrId' autocomplete='off' data-testid='bosses-search'></label></div>" +
+      "<input type='search' placeholder='搜索首领名、远征名、变体标签，或输入 npcId / chrId 前缀' autocomplete='off' data-testid='bosses-search'></label></div>" +
       "<div class='bosses-control'><span class='bosses-control-label'>深夜</span>" +
       "<label class='switch-control bosses-deep'><input type='checkbox' data-testid='bosses-deep'>" +
       "<span class='switch-track'></span><span data-testid='bosses-deep-label'>深夜数值</span></label></div>" +
@@ -481,7 +565,7 @@
 
   // weakness（NightBossMenuParam 的菜单弱点图标）只有夜王有。守夜 / 野外 Boss 的数据里
   // 根本没有这个字段，所以不能显示「官方标注：无弱点」——那是把「数据里没有」说成「官方说没有」。
-  function weaknessRow(item) {
+  function weaknessRow(item, entry) {
     if (item.kind === "nightlord") {
       var list = Array.isArray(item.weakness) ? item.weakness : [];
       if (!list.length) return "<span class='bosses-none'>官方标注：无弱点</span>";
@@ -489,7 +573,7 @@
         return pill(weak.zh || weak.en || String(weak.code), "amber");
       }).join("");
     }
-    var hot = topDamageTypes(item.main, 3);
+    var hot = topDamageTypes(entry, 3);
     if (!hot.length) {
       return "<span class='bosses-none'>本作只给夜王官方弱点标注；展开看承伤倍率</span>";
     }
@@ -516,7 +600,7 @@
     } else {
       // tiers 里同时含 field 与 night 的 Boss 两枚徽标都画，和分组切换里两边都能搜到对应。
       (Array.isArray(item.groups) && item.groups.length ? item.groups : [item.group]).forEach(function (group) {
-        badges.push(pill(group === "night" ? "守夜" : "野外", group === "night" ? "blue" : "green"));
+        badges.push(pill(GROUP_TITLES[group] || group, group === "night" ? "blue" : "green"));
       });
     }
     if (item.nameBadge) badges.push(pill(item.nameBadge.text, item.nameBadge.kind));
@@ -539,14 +623,39 @@
     return parts.join(" · ");
   }
 
-  // 卡面这三格只是「代表行」的数值（夜王取第一条 isMain，守夜/野外取 variants[0]）。
-  // 同一张卡常有 5 组差距很大的数值（古龙 2,672～6,167），不写清楚取自哪一行会被当成算错。
-  function summaryCaption(item) {
-    var entry = item.main;
-    if (!entry || item.entries.length < 2) return "";
+  // 卡面这三格只是「代表行」的数值。同一张卡常有 5 组差距很大的数值（古龙 2,672～6,167），
+  // 不写清楚取自哪一行会被当成算错；而且两种情况必须分别说明：
+  //   · 夜王的 isMain 不唯一（多阶段 / 多体有 2～5 条），并列列出全部主战血量；
+  //   · 守夜 / 野外的候选行随分组切换（同一组首领可能两种档位都有）。
+  function summaryCaption(item, entry) {
+    if (!entry) return "";
+    var pool = candidateEntries(item.entries, state.group);
+    // 只有「代表行本身有歧义」的卡片才铺开列全部候选行，别把普通卡片的摘要撑成两行：
+    //   · 夜王有多条 isMain（哪条才是「这只夜王的血量」说不清）；
+    //   · 同时属于守夜与野外的组（同一张卡在两个分组下给的是不同的行）。
+    var ambiguous = item.kind === "nightlord"
+      ? mainRows(item.entries).length > 1
+      : (Array.isArray(item.groups) ? item.groups.length : 1) > 1;
+    if (ambiguous && pool.length > 1) {
+      var list = pool.map(function (row) {
+        return entryLabel(row, item.entries.indexOf(row)) + " " +
+          fmtInt(computeStats(row, state.party, state.deep).hp);
+      }).join(" · ");
+      var lead = item.kind === "nightlord"
+        ? pool.length + " 条主战行，上方取血量最高的一条："
+        : "该分组 " + pool.length + " 条数值行，上方取血量最高的一条：";
+      return "<div class='bosses-stat-caption bosses-stat-caption--warn'>" + esc(lead + list) + "</div>";
+    }
+    if (item.entries.length < 2) return "";
     var label = entryLabel(entry, item.entries.indexOf(entry));
     return "<div class='bosses-stat-caption'>代表行：" + esc(label) +
       "<span>共 " + item.entries.length + " 组，展开看全部</span></div>";
+  }
+
+  // 夜王的主战行不止一条时要标明头条取的是最高那条，别让用户以为「这只夜王就这点血」。
+  function hpMetricTitle(item) {
+    if (item.kind !== "nightlord") return "血量";
+    return mainRows(item.entries).length > 1 ? "主战血量 · 最高" : "主战血量";
   }
 
   // 深夜开着、但代表行没有深夜专属缩放时（卡头徽标写「部分行有深夜数值」的那几张），
@@ -559,12 +668,11 @@
     return state.party === 1 ? "含常驻缩放" : "1 人 " + fmtInt(stats.hpSingle);
   }
 
-  function cardSummary(item) {
-    var entry = item.main;
+  function cardSummary(item, entry) {
     if (!entry) return "<p class='bosses-none'>该首领没有可用的数值行。</p>";
     var stats = computeStats(entry, state.party, state.deep);
-    return summaryCaption(item) + "<div class='bosses-stat-row'>" +
-      statCell("血量（" + partyLabel() + "）", fmtInt(stats.hp), summaryHpHint(stats)) +
+    return summaryCaption(item, entry) + "<div class='bosses-stat-row'>" +
+      statCell(hpMetricTitle(item) + "（" + partyLabel() + "）", fmtInt(stats.hp), summaryHpHint(stats)) +
       statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), stats.effectivePoise === null ? "" : "韧性槽 " + fmtNumber(stats.poise, 0)) +
       statCell("削韧恢复", fmtNumber(stats.poiseRecover, 3), "每秒") +
       "</div>";
@@ -645,14 +753,21 @@
 
   // 深夜提示随开关反向：关着时告诉用户「可以切」，开着时给出常规值作对照，
   // 不要在已经显示深夜血量的行上再重复播报一遍同一个数字。
+  // 三条文案与 macOS 端 BossFightRowView.scalingSection 完全一致。
   function deepNote(entry) {
-    if (!entry || !entry.deepOfNight) return "";
-    if (state.deep) {
-      return "<p class='bosses-note'>当前为深夜数值；常规数值：血量 " +
-        esc(fmtInt(entry.hp)) + "（1 人）。</p>";
+    if (!entry) return "";
+    if (entry.deepOfNight) {
+      if (state.deep) {
+        return "<p class='bosses-note'>当前为深夜数值；常规数值：血量 " +
+          esc(fmtInt(entry.hp)) + "（1 人）。</p>";
+      }
+      return "<p class='bosses-note'>该行有深夜专属缩放：血量 " + esc(fmtInt(entry.deepOfNight.hp)) +
+        "（1 人），可用顶部「深夜」开关切换。</p>";
     }
-    return "<p class='bosses-note'>该行有深夜专属缩放：血量 " + esc(fmtInt(entry.deepOfNight.hp)) +
-      "（1 人），可用顶部「深夜」开关切换。</p>";
+    if (state.deep) {
+      return "<p class='bosses-note bosses-note--muted'>该行没有深夜专属缩放，深夜数值与常规相同。</p>";
+    }
+    return "";
   }
 
   function entryBlock(item, entry, index) {
@@ -707,6 +822,9 @@
 
   function cardInner(item) {
     var expanded = Boolean(state.expanded[item.uid]);
+    // 折叠态的代表行跟着当前分组走：同一张卡可能同时出现在「守夜」与「野外」里，
+    // 野外分组下就该看野外那几行，而不是恒取 variants[0]（常常是血量更高的守夜行）。
+    var entry = representativeEntry(item.entries, state.group);
     return "" +
       "<button type='button' class='bosses-card-head' data-bosses-toggle='" + esc(item.uid) + "' aria-expanded='" + expanded + "'>" +
       "<span class='bosses-card-title'>" +
@@ -716,9 +834,9 @@
       "<span class='bosses-card-badges'>" + cardHeadBadges(item) + "</span>" +
       "<span class='bosses-chevron' aria-hidden='true'>" + (expanded ? "▴" : "▾") + "</span>" +
       "</button>" +
-      "<div class='bosses-weakness'>" + weaknessRow(item) +
+      "<div class='bosses-weakness'>" + weaknessRow(item, entry) +
       "<span class='bosses-entry-count'>" + esc(item.entries.length + " 组数值") + "</span></div>" +
-      cardSummary(item) +
+      cardSummary(item, entry) +
       (expanded ? "<div class='bosses-card-body'>" + cardBody(item) + "</div>" : "");
   }
 
@@ -819,7 +937,7 @@
       "<div><dt>游戏版本</dt><dd>" + esc(data.gameVersion || "—") + "</dd></div>" +
       "<div><dt>数据版本</dt><dd>" + esc(data.dataVersion || "—") + "</dd></div>" +
       "<div><dt>生成时间</dt><dd>" + esc(data.generatedAt || "—") + "</dd></div>" +
-      "<div><dt>schema</dt><dd>bossesSchemaVersion " + esc(data.bossesSchemaVersion || "—") + "</dd></div>" +
+      "<div><dt>数据集结构版本</dt><dd>bossesSchemaVersion " + esc(data.bossesSchemaVersion || "—") + "</dd></div>" +
       "<div><dt>收录</dt><dd>夜王 " + counts.lords + " · 守夜 " + counts.night +
       " · 野外 " + counts.field + (counts.both ? "（含 " + counts.both + " 组两边都出现）" : "") +
       " · 数值行 " + counts.rows + "</dd></div>" +
@@ -1011,6 +1129,10 @@
       nameBadge: nameBadge,
       entryLabel: entryLabel,
       mainEntry: mainEntry,
+      mainRows: mainRows,
+      candidateEntries: candidateEntries,
+      representativeEntry: representativeEntry,
+      itemMatches: itemMatches,
       bossGroups: bossGroups,
       deepCoverage: deepCoverage,
       itemInGroup: itemInGroup,
@@ -1024,7 +1146,8 @@
       fmtPoise: fmtPoise,
       DAMAGE_TYPES: DAMAGE_TYPES,
       AILMENTS: AILMENTS,
-      GROUP_LABELS: GROUP_LABELS
+      GROUP_LABELS: GROUP_LABELS,
+      GROUP_TITLES: GROUP_TITLES
     }
   };
 

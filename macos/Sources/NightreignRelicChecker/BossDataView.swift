@@ -199,6 +199,7 @@ struct BossDataView: View {
                             ForEach(section.cards) { card in
                                 BossCardView(
                                     card: card,
+                                    group: section.group,
                                     index: index,
                                     players: players,
                                     deepOfNight: deepOfNight,
@@ -246,10 +247,14 @@ struct BossDataView: View {
             )
 
             disclosure(
-                title: "数据集取舍与已知问题（\(index.dataset.caveats.count) 条）",
+                title: "数据说明与已知取舍（\(index.dataset.caveats.count) 条）",
                 isOn: $showCaveats
             ) {
                 VStack(alignment: .leading, spacing: 7) {
+                    Text("本页数值直接读取游戏参数表，不是官方公布数据，也不是实测结论；标注与实际手感可能有出入。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(index.dataset.caveats.enumerated()), id: \.offset) { item in
                         HStack(alignment: .top, spacing: 7) {
                             Text("·")
@@ -264,13 +269,13 @@ struct BossDataView: View {
             }
 
             disclosure(
-                title: "缩放档位说明（\(index.scalingGroups.count) 档）",
+                title: "人数缩放档位说明（\(index.scalingGroups.count) 档）",
                 isOn: $showScalingTiers
             ) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("人数缩放来自 MultiPlayCorrectionParam：血量按档位倍率上浮，"
                          + "承受削韧与削韧恢复下调（更难打断），异常发动伤害与累积量下调（更难触发）。"
-                         + "触发阈值本身不随人数变化。")
+                         + "异常累积量倍率越小越难打出异常，不是阈值下调——触发阈值本身不随人数变化。")
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -281,7 +286,7 @@ struct BossDataView: View {
                                 Text("#\(tier.id)")
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                                     .foregroundStyle(AppTheme.purpleSoft)
-                                Text(tier.group ?? "未命名档位")
+                                Text(tier.title)
                                     .font(.system(size: 11))
                                     .foregroundStyle(AppTheme.secondaryText)
                                 Spacer(minLength: 0)
@@ -339,6 +344,7 @@ struct BossDataView: View {
                     BossDetailRow(label: "生成时间", value: index.dataset.generatedAt)
                 }
                 BossDetailRow(label: "数据集结构版本", value: "bossesSchemaVersion \(index.dataset.schemaVersion)")
+                BossDetailRow(label: "收录", value: index.inventorySummary)
                 ForEach(Array(index.dataset.sources.enumerated()), id: \.offset) { item in
                     BossDetailRow(
                         label: item.element.name,

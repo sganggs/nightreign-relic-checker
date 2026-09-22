@@ -208,6 +208,13 @@
   color: var(--text-tertiary);
 }
 
+/* 多条主战行 / 同分组多条数值行时并列列出全部血量，可能很长，允许换行。 */
+.bosses-stat-caption--warn {
+  color: var(--amber);
+  white-space: normal;
+  line-height: 1.5;
+}
+
 .bosses-stat-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
@@ -316,6 +323,11 @@
   color: var(--text-secondary);
   font-size: 9.5px;
   line-height: 1.55;
+}
+
+/* 「该行没有深夜专属缩放」这类对照说明，语气要弱于真正有深夜数值的提示。 */
+.bosses-note--muted {
+  color: var(--text-tertiary);
 }
 
 /* ------------------------------------------------------------------- 小表格 */
