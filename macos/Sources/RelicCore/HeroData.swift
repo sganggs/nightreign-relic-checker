@@ -325,7 +325,9 @@ public struct HeroGrowthGraph: Codable, Sendable, Hashable, Identifiable {
             let denominator = Int(x1) - Int(x0)
             return Int(y0) + HeroStatsMath.floorDivide(numerator, denominator)
         }
-        return Int(value(at: stat).rounded(.down))
+        // 端点不是整数 / 这一段带指数时退回浮点：先抹掉 1e-9 以下的尾巴再 floor，
+        // 否则 239.99999999 会被取成 239。与 Windows 端 normalize() 同一口径。
+        return Int(HeroStatsMath.normalize(value(at: stat)).rounded(.down))
     }
 }
 
@@ -342,6 +344,14 @@ public enum HeroStatsMath {
         let remainder = numerator % denominator
         if remainder != 0 && ((remainder < 0) != (denominator < 0)) { return quotient - 1 }
         return quotient
+    }
+
+    /// 浮点噪声归一：CalcCorrectGraph 的分段斜率都是有理数，真值离整数至少 0.01，
+    /// 先抹掉 1e-9 以下的尾巴再 floor，结果与整数精确运算逐格一致。
+    /// Windows 端 `normalize()` 是同一条公式，两端的取整边界因此不会漂。
+    public static func normalize(_ value: Double) -> Double {
+        guard value.isFinite else { return value }
+        return (value * 1e9).rounded() / 1e9
     }
 
     /// 保留若干位小数（四舍五入、远离零），负重上限用 1 位。
@@ -375,11 +385,16 @@ public enum HeroStatsMath {
     /// 把若干条转职遗物的增减量叠加到基础属性上。
     ///
     /// 多条词条同时生效时增减量直接相加；结果小于 1 的属性钳到 1，并在
-    /// `clamped` 里列出被钳的属性（页面要注明）。
+    /// `clamped` 里列出被钳的属性（页面要注明），`clampedFrom` 保留钳位前的原值
+    /// （页面上写「原为 0，已钳到最低 1」要用）。
+    ///
+    /// `order` 是页面上的属性展示顺序（8 项）：`clamped` 按它排，页面的钳位汇总
+    /// 才与属性卡片同序。缺省（纯函数测试直接调用时）退回 key 字典序。
     public static func apply(
         deltas: [[String: Int]],
-        to base: [String: Int]
-    ) -> (stats: [String: Int], requested: [String: Int], clamped: [String]) {
+        to base: [String: Int],
+        order: [String] = []
+    ) -> (stats: [String: Int], requested: [String: Int], clamped: [String], clampedFrom: [String: Int]) {
         var requested: [String: Int] = [:]
         for delta in deltas {
             for (key, value) in delta {
@@ -387,17 +402,24 @@ public enum HeroStatsMath {
             }
         }
         var stats = base
-        var clamped: [String] = []
+        var clampedFrom: [String: Int] = [:]
         for (key, change) in requested {
-            let raw = (base[key] ?? 0) + change
+            // 基础表里根本没有这一项时不编一个数字出来：页面显示破折号，也不记钳位
+            // （0 是真实数值，破折号才是「没有」）。Windows 端 applyDeltas 同一条。
+            guard let baseValue = base[key] else { continue }
+            let raw = baseValue + change
             if raw < minimumStat {
                 stats[key] = minimumStat
-                clamped.append(key)
+                clampedFrom[key] = raw
             } else {
                 stats[key] = raw
             }
         }
-        return (stats, requested, clamped.sorted())
+        var clamped = order.filter { clampedFrom[$0] != nil }
+        for key in clampedFrom.keys.sorted() where !clamped.contains(key) {
+            clamped.append(key)
+        }
+        return (stats, requested, clamped, clampedFrom)
     }
 }
 
@@ -691,6 +713,8 @@ public struct HeroCrossCheck: Codable, Sendable, Hashable, Identifiable {
     public let cellsCompared: Int
     public let mismatchCount: Int
     public let mismatches: [HeroCrossCheckMismatch]
+    /// 差异以哪一边为准（当前数据集一律是 "params"，页面据此写「本页以参数为准」）。
+    public let authoritative: String
     public let note: String
 
     public var id: String { heroKey }
@@ -702,6 +726,7 @@ public struct HeroCrossCheck: Codable, Sendable, Hashable, Identifiable {
         cellsCompared = container.heroInt(.cellsCompared, default: 0)
         mismatchCount = container.heroInt(.mismatchCount, default: 0)
         mismatches = container.heroArray(.mismatches)
+        authoritative = container.heroString(.authoritative)
         note = container.heroString(.note)
     }
 }
@@ -725,7 +750,7 @@ public struct HeroInterpolation: Codable, Sendable, Hashable {
     public static let empty = HeroInterpolation()
 
     public init(
-        baseAnchorLevels: [Int] = [], modifierAnchorLevels: [Int] = [], maxLevel: Int = 15,
+        baseAnchorLevels: [Int] = [], modifierAnchorLevels: [Int] = [], maxLevel: Int = 0,
         baseRule: String = "", baseRounding: String = "", baseVerified: Bool = false,
         baseVerification: String = "", derivedRule: String = "", modifierRule: String = "",
         modifierRounding: String = "", modifierVerified: Bool = false, modifierVerifiedNote: String = "",
@@ -776,7 +801,9 @@ public struct HeroInterpolation: Codable, Sendable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         baseAnchorLevels = container.heroIntArray(.baseAnchorLevels)
         modifierAnchorLevels = container.heroIntArray(.modifierAnchorLevels)
-        maxLevel = container.heroInt(.maxLevel, default: 15)
+        // 缺这一项时留 0，**不要**假装数据集声明了 15：由 HeroStatsIndex.maxLevel
+        // 退回「各角色 levels 里的最大等级」（Windows 端 maxLevelOf 同一条兜底）。
+        maxLevel = container.heroInt(.maxLevel, default: 0)
         baseRule = container.heroString(.baseRule)
         baseRounding = container.heroString(.baseRounding)
         baseVerified = container.heroBool(.baseVerified)
@@ -793,55 +820,29 @@ public struct HeroInterpolation: Codable, Sendable, Hashable {
         libraRule = container.heroString(.libraRule)
     }
 
-    /// 底部「插值说明」折叠区逐条展示（空字段自动跳过）。
+    /// 底部「插值说明」折叠区逐条展示（正文为空的条目跳过）。
+    ///
+    /// 标题与两条拼装出来的正文都走 `HeroStatsCopy`，Windows 端
+    /// `renderer/pages/heroes.js` 的 `interpolationNotes(data)` 拼的是同一组条目、
+    /// 同一个顺序 —— 折叠区标题里的「N 条」因此两端必然相同。
     public var notes: [HeroNote] {
-        var result: [HeroNote] = []
-        func append(_ title: String, _ text: String) {
-            guard !text.isEmpty else { return }
-            result.append(HeroNote(title: title, text: text))
-        }
-        if !baseAnchorLevels.isEmpty {
-            append(
-                "参数锚点",
-                "基础属性表只有 \(baseAnchorLevels.map(String.init).joined(separator: " / ")) 级是参数原值，"
-                    + "转职遗物只有 \(modifierAnchorLevels.map(String.init).joined(separator: " / ")) 级是参数原值。"
-            )
-        }
-        append("基础属性插值", baseRule)
-        append("基础表验证", baseVerification)
-        append("派生值换算", derivedRule)
-        append("转职遗物插值", modifierRule)
-        append("转职遗物锚点验证", modifierAnchorVerification)
-        append("转职遗物中间等级", modifierInference)
-        append("取整方向", roundingNote)
-        append("兼容字段说明", modifierVerifiedNote)
-        append("利普拉的交易", libraRule)
-        return result
-    }
-
-    /// `baseRounding` / `modifierRounding` 这两条口径页面也要看得见：
-    /// floor 与 trunc 只在**负**增减量上差 1，正是 caveats 点名的歧义来源，
-    /// 数据集为此对受影响的等级另给了 `deltaFloorAlt`。
-    private var roundingNote: String {
-        func text(_ raw: String) -> String {
-            switch raw {
-            case "floor": return "向下取整（floor）"
-            case "trunc": return "向零取整（trunc）"
-            case "round": return "四舍五入（round）"
-            default: return raw
-            }
-        }
-        var parts: [String] = []
-        if !baseRounding.isEmpty { parts.append("基础属性表按\(text(baseRounding))") }
-        if !modifierRounding.isEmpty { parts.append("转职遗物增减量按\(text(modifierRounding))") }
-        guard !parts.isEmpty else { return "" }
-        var note = parts.joined(separator: "，") + "。"
-        if baseRounding != modifierRounding && !baseRounding.isEmpty && !modifierRounding.isEmpty {
-            note += "两种取整只在负的增减量上差 1；"
-        }
-        note += "换成另一种取整后结果不同的等级，数据集在 statModifiers[].levels[].deltaFloorAlt 里另给了一份备用值，"
-            + "本页展示的一律是上面这一种。"
-        return note
+        let titles = HeroStatsCopy.interpolationNoteTitles
+        let candidates: [(String, String)] = [
+            (titles[0], baseAnchorLevels.isEmpty
+                ? ""
+                : HeroStatsCopy.interpolationAnchorNote(
+                    baseAnchorLevels: baseAnchorLevels, modifierAnchorLevels: modifierAnchorLevels)),
+            (titles[1], baseRule),
+            (titles[2], baseVerification),
+            (titles[3], derivedRule),
+            (titles[4], modifierRule),
+            (titles[5], modifierAnchorVerification),
+            (titles[6], modifierInference),
+            (titles[7], HeroStatsCopy.interpolationRoundingNote(base: baseRounding, modifier: modifierRounding)),
+            (titles[8], modifierVerifiedNote),
+            (titles[9], libraRule)
+        ]
+        return candidates.filter { !$0.1.isEmpty }.map { HeroNote(title: $0.0, text: $0.1) }
     }
 }
 
@@ -993,16 +994,22 @@ public struct HeroStatsSnapshot: Sendable, Hashable {
     public let finalStats: [String: Int]
     /// 转职遗物给出的原始增减量之和（未钳位）。
     public let requestedDelta: [String: Int]
-    /// 被钳到 1 的属性。
+    /// 被钳到 1 的属性，按页面上的属性展示顺序排。
     public let clampedStats: [String]
+    /// 被钳属性钳位前的原值（页面写「原为 0，已钳到最低 1」）。
+    public let clampedFrom: [String: Int]
     public let baseDerived: [String: Double]
     public let finalDerived: [String: Double]
     /// 生效的词条（按数据集顺序）。
     public let activeModifiers: [HeroStatModifier]
-    /// 生效词条里有「推算」等级（2–11）。
-    public let hasInferredDelta: Bool
-    /// 当前等级 > 12，增减量沿用 12 级锚点。
-    public let carriesAnchorDelta: Bool
+    /// 这一级增减量的来历（锚点 / 推算 / 沿用最后一个锚点）；没勾词条时为 nil。
+    /// 页面上的徽标、表里的备注列都读它，**别再另算一份**，否则标记会和这里对不上。
+    public let modifierSource: HeroModifierSourceTag?
+
+    /// 生效词条里有「推算」等级（锚点之间的 2–11 级）。
+    public var hasInferredDelta: Bool { modifierSource?.source == .inferred }
+    /// 当前等级在最后一个锚点之后，增减量沿用那个锚点。
+    public var carriesAnchorDelta: Bool { modifierSource?.source == .carried }
 
     public var hasModifier: Bool { !activeModifiers.isEmpty }
     public var isModified: Bool { hasModifier || libraKey != nil }
@@ -1055,7 +1062,9 @@ public struct HeroStatsIndex: Sendable {
     public var statNames: HeroStatNames { dataset.statNames }
     public var libraRespecs: [HeroLibraRespec] { dataset.libraRespecs }
 
-    /// 数据集声明的最大等级（缺失时退回角色表里的最大值）。
+    /// 数据集声明的最大等级；没声明（或声明成 0）时退回各角色 levels 里的最大等级，
+    /// 再没有才退回 15。Windows 端 `maxLevelOf(data)` 是同一条，两端的等级选择器、
+    /// 表体行数、标题与汇总因此一起跟着数据集走。
     public var maxLevel: Int {
         let declared = dataset.interpolation.maxLevel
         if declared > 0 { return declared }
@@ -1073,6 +1082,11 @@ public struct HeroStatsIndex: Sendable {
     public func libra(_ key: String?) -> HeroLibraRespec? {
         guard let key else { return nil }
         return libraByKey[key]
+    }
+
+    /// 某个角色与外部 wiki 的逐格对照；**只有真有差异时**才返回（0 差异不必打扰用户）。
+    public func crossCheck(for heroKey: String) -> HeroCrossCheck? {
+        dataset.crossChecks.first { $0.heroKey == heroKey && $0.mismatchCount > 0 }
     }
 
     public var summary: String {
@@ -1105,9 +1119,10 @@ public struct HeroStatsIndex: Sendable {
         guard let baseRow = baseLevel(heroKey: heroKey, level: level, libraKey: libraKey) else { return nil }
         let active = modifiers(for: heroKey).filter { modifierIDs.contains($0.affixId) }
         let rows = active.compactMap { $0.level(level) }
-        let applied = HeroStatsMath.apply(deltas: rows.map(\.delta), to: baseRow.stats)
+        let applied = HeroStatsMath.apply(
+            deltas: rows.map(\.delta), to: baseRow.stats, order: dataset.statNames.attributeKeys
+        )
         let anchorLevels = dataset.interpolation.modifierAnchorLevels
-        let lastAnchor = anchorLevels.max() ?? 12
         return HeroStatsSnapshot(
             heroKey: hero.key,
             heroNameZh: hero.nameZh,
@@ -1119,11 +1134,14 @@ public struct HeroStatsIndex: Sendable {
             finalStats: applied.stats,
             requestedDelta: applied.requested,
             clampedStats: applied.clamped,
+            clampedFrom: applied.clampedFrom,
             baseDerived: derivedValues(for: baseRow.stats),
             finalDerived: derivedValues(for: applied.stats),
             activeModifiers: active,
-            hasInferredDelta: rows.contains { $0.inferred } && level <= lastAnchor,
-            carriesAnchorDelta: !rows.isEmpty && level > lastAnchor
+            // 没勾词条就没有「增减量来历」可言；勾了就一律走同一条判定（页面徽标读的也是它）。
+            modifierSource: active.isEmpty
+                ? nil
+                : HeroStatsText.modifierSource(level: level, anchorLevels: anchorLevels)
         )
     }
 
@@ -1136,6 +1154,17 @@ public struct HeroStatsIndex: Sendable {
         levelRange.compactMap {
             snapshot(heroKey: heroKey, level: $0, modifierIDs: modifierIDs, libraKey: libraKey)
         }
+    }
+
+    /// 全部等级表的钳位汇总：按**行**聚合成「等级 → 被钳属性中文名」。
+    /// 表里一次能看到 1–15 行，汇总也要覆盖这 15 行，不能只报当前等级那一行。
+    public func clampedByLevel(_ snapshots: [HeroStatsSnapshot]) -> [(level: Int, names: [String])] {
+        snapshots
+            .filter { !$0.clampedStats.isEmpty }
+            .sorted { $0.level < $1.level }
+            .map { snapshot in
+                (snapshot.level, snapshot.clampedStats.map { dataset.statNames.attributeTitle($0) })
+            }
     }
 
     /// 「同级对比」表：当前等级下 10 个角色的基础属性与派生值（不含转职遗物 / 利普拉）。
@@ -1181,11 +1210,219 @@ public enum HeroStatsText {
         return "0"
     }
 
-    /// 某一级的「推算 / 锚点」标记文案；nil 表示不用标。
-    public static func inferenceTag(level: Int, anchorLevels: [Int]) -> String? {
-        guard let last = anchorLevels.max() else { return nil }
-        if anchorLevels.contains(level) { return nil }
-        if level > last { return "沿用 \(last) 级锚点" }
-        return "推算"
+    /// 属性值：没有数值时给破折号，不要退回 0。
+    public static func statText(_ value: Int?) -> String {
+        guard let value else { return HeroStatsCopy.missing }
+        return String(value)
     }
+
+    /// 派生值：整数项直接显示，负重上限**固定**保留 1 位小数；缺 growthGraph 或
+    /// 缺来源属性时给破折号 —— 退回 0 会让「数据缺失」看起来像「真的是 0」。
+    ///
+    /// 这里不走 `decimal`（它会去掉末尾的 0）：整列都是 1 位小数时，45.0 写成「45」
+    /// 会在 74.1 旁边看着像整数，一列小数点也对不齐。`decimal` 仍用于增减量
+    /// （「+3」比「+3.0」读着顺），两者口径不同是故意的。
+    public static func derivedText(_ value: Double?, integer: Bool) -> String {
+        guard let value, value.isFinite else { return HeroStatsCopy.missing }
+        return integer ? String(Int(value.rounded())) : String(format: "%.1f", value)
+    }
+
+    /// 某一级的转职遗物增减量来源：锚点 / 推算 / 沿用最后一个锚点。
+    /// 锚点等级一律读数据集的 `interpolation.modifierAnchorLevels`，两端都不写死 1 / 12。
+    /// 数据里没有锚点信息时返回 nil（页面此时什么都不标，而不是瞎标「推算」）。
+    public static func modifierSource(level: Int, anchorLevels: [Int]) -> HeroModifierSourceTag? {
+        guard let last = anchorLevels.max() else { return nil }
+        if anchorLevels.contains(level) { return HeroModifierSourceTag(source: .anchor, label: "词条锚点") }
+        if level > last { return HeroModifierSourceTag(source: .carried, label: "词条沿用 \(last) 级锚点") }
+        return HeroModifierSourceTag(source: .inferred, label: "词条推算")
+    }
+}
+
+/// 转职遗物增减量在某一级的来历。
+public enum HeroModifierSource: String, Sendable, Hashable {
+    /// 参数表原值（1 / 12 级）。
+    case anchor
+    /// 锚点之间的线性插值推算（2–11 级）。
+    case inferred
+    /// 沿用最后一个锚点（13–15 级）。
+    case carried
+
+    /// 三档三色，两端同一张表（Windows 端 heroes.js 的 `SOURCE_PILL`）。
+    /// 颜色名放在 RelicCore 而不是视图层，是为了让自检能把「来源 → 配色」钉死：
+    /// 上一轮 macOS 把 `.carried` 和 `.anchor` 画成同一个绿底 + 同一个对勾，
+    /// 页面上「词条锚点」与「词条沿用 12 级锚点」只有文字不同，而 Windows 是绿 vs 蓝。
+    public var colorToken: String {
+        switch self {
+        case .anchor: return "green"
+        case .inferred: return "amber"
+        case .carried: return "blue"
+        }
+    }
+
+    /// macOS 端徽标用的 SF Symbol；三档同样各有各的图标（Windows 端只靠颜色区分）。
+    public var symbolName: String {
+        switch self {
+        case .anchor: return "checkmark.seal"
+        case .inferred: return "exclamationmark.triangle"
+        case .carried: return "arrow.right.circle"
+        }
+    }
+}
+
+public struct HeroModifierSourceTag: Sendable, Hashable {
+    public let source: HeroModifierSource
+    public let label: String
+
+    public init(source: HeroModifierSource, label: String) {
+        self.source = source
+        self.label = label
+    }
+}
+
+// MARK: - 双端共用文案
+
+/// 「角色属性」页两端必须逐字相同的文案。
+///
+/// Windows 端 `renderer/pages/heroes.js` 里有一份同名同结构的 `COPY`，两端的
+/// 测试 / 自检各自把下面这些字符串钉死 —— 只要一端改字、另一端没跟上，两边的
+/// 用例就会各自红一片（上一轮两端各写各的字面量、注释却都声称「逐字一致」，
+/// 就是这么漂掉的）。改文案时请两端 + 两份用例一起改。
+public enum HeroStatsCopy {
+    /// 没有数值时统一显示破折号，**不要**退回 0（0 是真实数值，破折号才是「没有」）。
+    public static let missing = "—"
+
+    // 视图
+    public static let viewSingle = "单角色"
+    public static let viewCompare = "同级对比"
+
+    // 基础表的等级来源
+    public static func baseLevelBadge(level: Int, isAnchor: Bool) -> String {
+        isAnchor ? "\(level) 级是参数锚点" : "\(level) 级为插值推算"
+    }
+    public static let baseAnchorTag = "参数锚点"
+    public static let baseInterpolatedTag = "插值推算"
+    public static func allLevelsCaption(anchorLevels: [Int]) -> String {
+        "加粗行是参数表里的锚点（" + anchorLevels.map(String.init).joined(separator: " / ")
+            + " 级），其余等级按相邻锚点线性插值后向下取整。"
+    }
+
+    // 转职遗物
+    public static func modifierCountBadge(_ count: Int) -> String { "转职遗物 \(count) 条" }
+    public static let modifierSubtitle = "勾选后在基础属性上加减（可同时勾选，效果相加）；派生值按 CalcCorrectGraph 重算"
+    public static let dlcOnlyTag = "仅 DLC 池可掉"
+    public static let noDeltaAtLevel = "本级无增减"
+    public static let noModifierData = "数据未内置该角色的转职遗物词条"
+
+    /// 「生命力 -5、集中力 +10」：增减量摘要，按属性展示顺序排、跳过 0。
+    public static func deltaSummary(_ delta: [String: Int], names: HeroStatNames) -> String {
+        names.attributeKeys
+            .filter { (delta[$0] ?? 0) != 0 }
+            .map { names.attributeTitle($0) + " " + HeroStatsText.signed(delta[$0] ?? 0) }
+            .joined(separator: "、")
+    }
+
+    /// `deltaFloorAlt` 只含「换成 floor 取整后结果不同」的项，而这些项恒为负
+    /// （floor 与 trunc 只在负数上差 1）。所以文案要写清楚这是**负向项**的替换，
+    /// 而不是整条词条改成这几项。
+    public static func floorAlt(_ summary: String) -> String {
+        "若按 floor 取整，负向项改为：" + summary + "（其余项不变）"
+    }
+
+    // 钳位
+    public static let clampCellTag = "钳"
+    public static let clampRowTag = "已钳位"
+    public static var clampTail: String { "已钳到最低 \(HeroStatsMath.minimumStat)" }
+    public static func clampedFromNote(_ raw: Int) -> String { "原为 \(raw)，" + clampTail }
+    /// 卡片上的大数字是**生效**增减量（最终 − 基础）；被钳位时请求值与生效值不一样，
+    /// 请求值只在这句小字 / tooltip 里出现（「词条请求 -9，已钳到最低 1」）。
+    /// 上一轮 Windows 的卡片写请求值 -9、macOS 写生效值 -8，同一输入两端两个数字。
+    public static func clampRequestedNote(_ requested: Int) -> String {
+        "词条请求 " + HeroStatsText.signed(requested) + "，" + clampTail
+    }
+    public static func clampSummary(_ names: [String]) -> String {
+        names.joined(separator: "、") + " 叠加后不足 \(HeroStatsMath.minimumStat)，" + clampTail
+            + "（游戏里属性不会低于 \(HeroStatsMath.minimumStat)）"
+    }
+    /// 全部等级视图的钳位汇总：**按行聚合**（每一级各列哪些属性被钳），
+    /// 而不是只报当前等级那一行 —— 表里一次能看到 15 行，汇总也要对得上 15 行。
+    public static func clampSummaryByLevel(_ rows: [(level: Int, names: [String])], maxLevel: Int) -> String {
+        guard !rows.isEmpty else { return "" }
+        let body = rows
+            .map { "\($0.level) 级 " + $0.names.joined(separator: "、") }
+            .joined(separator: "；")
+        return "1–\(maxLevel) 级里有 \(rows.count) 级叠加后不足 \(HeroStatsMath.minimumStat)："
+            + body + "；" + clampTail + "（游戏里属性不会低于 \(HeroStatsMath.minimumStat)）"
+    }
+
+    // 利普拉的交易
+    public static let libraSwapTag = "整套替换"
+    public static let libraHint = "利普拉的交易把整套基础属性表替换掉；能否与转职遗物叠加是按参数字段结构推断的，未实测"
+    public static let libraEmptyHint = "选中后基础表整套换成对应的替换表，转职遗物仍可叠加。"
+    public static func libraBadge(_ statName: String) -> String { "利普拉：" + statName }
+
+    // 与外部 wiki 的逐格对照
+    public static func crossCheckNote(count: Int, note: String) -> String {
+        "与外部 wiki 有 \(count) 格差异，本页以参数为准" + (note.isEmpty ? "" : "：" + note)
+    }
+    /// 做了利普拉的交易之后，基础表已经不是该角色的原表，wiki 差异提示无从谈起。
+    public static let libraCrossCheckNote = "已做利普拉的交易，基础表整套替换，与外部 wiki 的角色原表差异不再适用"
+
+    // 负重上限：遗留列
+    public static let legacyMark = "*"
+    public static func legacyHeader(_ title: String) -> String { title + " " + legacyMark }
+    public static let equipLoadHint = "本作装备没有重量，负重上限是《艾尔登法环》继承下来的遗留列，未经实测"
+    public static let equipLoadFootnote = legacyMark
+        + " 负重上限是《艾尔登法环》继承下来的遗留列：本作装备没有重量、界面也没有负重条，未经实测，仅供参考。"
+
+    // 同级对比
+    public static let compareCaption = "对比表只用各角色的基础表：利普拉的交易不分角色（叠上去每行都一样），"
+        + "转职遗物是逐角色的词条，都不进对比。"
+
+    // 底部折叠区
+    //
+    // 「插值与验证口径」两端渲染的是同一组说明（同序、同标题、同正文，见
+    // `HeroInterpolation.notes` 与 Windows 端 `interpolationNotes(data)`），标题里的
+    // N 因此两端必然相同 —— 上一轮一端数 interpolation 的**字段数**（17）、另一端数
+    // 拼出来的**条目数**（10），同一份数据在两端的页面上写着两个数字。
+    public static let interpolationNoteTitles = [
+        "参数锚点", "基础属性插值", "基础表验证", "派生值换算", "转职遗物插值",
+        "转职遗物锚点验证", "转职遗物中间等级", "取整方向", "兼容字段说明", "利普拉的交易"
+    ]
+    public static func interpolationAnchorNote(baseAnchorLevels: [Int], modifierAnchorLevels: [Int]) -> String {
+        let base: String = baseAnchorLevels.map(String.init).joined(separator: " / ")
+        let modifier: String = modifierAnchorLevels.map(String.init).joined(separator: " / ")
+        return "基础属性表只有 \(base) 级是参数原值，转职遗物只有 \(modifier) 级是参数原值。"
+    }
+    public static func roundingTerm(_ raw: String) -> String {
+        switch raw {
+        case "floor": return "向下取整（floor）"
+        case "trunc": return "向零取整（trunc）"
+        case "round": return "四舍五入（round）"
+        default: return raw
+        }
+    }
+    /// `baseRounding` / `modifierRounding` 这两条口径页面也要看得见：floor 与 trunc
+    /// 只在**负**增减量上差 1，正是 caveats 点名的歧义来源，数据集为此对受影响的等级
+    /// 另给了 `deltaFloorAlt`。两个字段都缺时返回空串（整条说明不出现，不硬造）。
+    public static func interpolationRoundingNote(base: String, modifier: String) -> String {
+        var parts: [String] = []
+        if !base.isEmpty { parts.append("基础属性表按" + roundingTerm(base)) }
+        if !modifier.isEmpty { parts.append("转职遗物增减量按" + roundingTerm(modifier)) }
+        guard !parts.isEmpty else { return "" }
+        var note = parts.joined(separator: "，") + "。"
+        if base != modifier && !base.isEmpty && !modifier.isEmpty {
+            note += "两种取整只在负的增减量上差 1；"
+        }
+        note += "换成另一种取整后结果不同的等级，数据集在 statModifiers[].levels[].deltaFloorAlt 里另给了一份备用值，"
+            + "本页展示的一律是上面这一种。"
+        return note
+    }
+    public static func interpolationTitle(_ count: Int) -> String { "插值与验证口径（\(count) 条）" }
+    public static func caveatsTitle(_ count: Int) -> String { "已知取舍（\(count) 条）" }
+    public static func sourcesTitle(_ count: Int) -> String { "数据出处（\(count) 条）与外部对照" }
+    public static let versionLabels = ["游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"]
+    public static func contentSummary(heroes: Int, maxLevel: Int, modifiers: Int, libra: Int) -> String {
+        "\(heroes) 位夜行者 × \(maxLevel) 级 · \(modifiers) 条转职遗物词条 · \(libra) 笔利普拉交易"
+    }
+    public static let emptyData = "数据未内置"
 }

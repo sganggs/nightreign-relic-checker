@@ -7,9 +7,14 @@ import RelicCore
 // relicColorLabel（HeroRelicItem.colorText），与遗物卡 / 报告 / CSV 同一份口径。
 
 enum HeroFormat {
-    /// 属性值：整数直接显示；派生值里的负重上限保留 1 位小数。
+    /// 属性值：整数直接显示；派生值里的负重上限固定保留 1 位小数。
     static func value(_ value: Double, integer: Bool) -> String {
-        integer ? String(Int(value.rounded())) : HeroStatsText.decimal(value)
+        HeroStatsText.derivedText(value, integer: integer)
+    }
+
+    /// 可能缺失的数值：缺 growthGraph / 缺来源属性时给破折号，不要退回 0。
+    static func value(_ value: Double?, integer: Bool) -> String {
+        HeroStatsText.derivedText(value, integer: integer)
     }
 
     /// 增减量配色：涨绿、跌红、不变中性。
@@ -17,6 +22,22 @@ enum HeroFormat {
         if delta > 0.0001 { return AppTheme.green }
         if delta < -0.0001 { return AppTheme.red }
         return AppTheme.secondaryText
+    }
+
+    /// 转职遗物增减量来源（锚点 / 推算 / 沿用）→ 展示色。
+    ///
+    /// 配色名由 RelicCore 的 `HeroModifierSource.colorToken` 给出（两端同一张表，
+    /// 自检把映射钉死），这里只负责把颜色名换成本端的色值。蓝色取 Windows 端
+    /// `.pill--blue` 的 #7ab8f5，两端的「词条沿用 N 级锚点」因此是同一个蓝。
+    static let sourceBlue = Color(red: 0.478, green: 0.722, blue: 0.961)
+
+    static func sourceColor(_ source: HeroModifierSource) -> Color {
+        switch source.colorToken {
+        case "green": return AppTheme.green
+        case "amber": return AppTheme.amber
+        case "blue": return sourceBlue
+        default: return AppTheme.secondaryText
+        }
     }
 
     /// 遗物颜色码（0 红 / 1 蓝 / 2 黄 / 3 绿 / 4 白）→ 展示色。
@@ -74,17 +95,25 @@ struct HeroPickerChip: View {
 
 /// 一项属性 / 派生值的大数字卡片：未修改时只显示一个数字，
 /// 修改后显示「基础 → 修改后」并用绿 / 红标出增减量。
+///
+/// 右上角那个增减量一律是**生效值**（final − base）。属性被钳到下限时，词条
+/// 请求的那个数（-9）与真正发生的变化（-8）不一样，请求值只出现在下面那行
+/// 小字里 —— Windows 端的卡片是同一条口径，两端用例各钉一遍。
 struct HeroStatTile: View {
     let title: String
-    let base: Double
-    let final: Double
+    /// 缺数据时传 nil（显示破折号），不要传 0。
+    let base: Double?
+    let final: Double?
     let integer: Bool
-    /// 属性被钳到下限时标出来。
-    var clamped: Bool = false
+    /// 属性被钳到下限时，这里是词条**请求**的增减量（页面写「词条请求 -9，已钳到最低 1」）。
+    var clampRequested: Int? = nil
     var caption: String? = nil
 
-    private var delta: Double { final - base }
-    private var changed: Bool { abs(delta) > 0.0001 }
+    private var delta: Double? {
+        guard let base, let final else { return nil }
+        return final - base
+    }
+    private var changed: Bool { abs(delta ?? 0) > 0.0001 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -93,7 +122,7 @@ struct HeroStatTile: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AppTheme.tertiaryText)
                 Spacer(minLength: 0)
-                if changed {
+                if changed, let delta {
                     Text(HeroStatsText.signed(delta, digits: integer ? 0 : 1))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(HeroFormat.deltaColor(delta))
@@ -111,12 +140,13 @@ struct HeroStatTile: View {
                 }
                 Text(HeroFormat.value(final, integer: integer))
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundStyle(changed ? HeroFormat.deltaColor(delta) : .white)
+                    .foregroundStyle(changed ? HeroFormat.deltaColor(delta ?? 0) : .white)
             }
-            if clamped {
-                Text("已钳到下限 1")
+            if let clampRequested {
+                Text(HeroStatsCopy.clampRequestedNote(clampRequested))
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(AppTheme.amber)
+                    .help(HeroStatsCopy.clampRequestedNote(clampRequested))
             } else if let caption {
                 Text(caption)
                     .font(.system(size: 9))
@@ -132,7 +162,7 @@ struct HeroStatTile: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(changed ? HeroFormat.deltaColor(delta).opacity(0.35) : AppTheme.border, lineWidth: 1)
+                .stroke(changed ? HeroFormat.deltaColor(delta ?? 0).opacity(0.35) : AppTheme.border, lineWidth: 1)
         )
     }
 }
@@ -147,6 +177,8 @@ struct HeroModifierToggleRow: View {
     let level: Int
     let anchorLevels: [Int]
     let delta: [String: Int]
+    /// 取整方向换成 floor 时结果不同的属性（只含不同的项，且恒为负向项）。
+    let deltaFloorAlt: [String: Int]
     let action: () -> Void
 
     var body: some View {
@@ -164,23 +196,25 @@ struct HeroModifierToggleRow: View {
                             .foregroundStyle(isOn ? .white : AppTheme.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
-                        if let tag = HeroStatsText.inferenceTag(level: level, anchorLevels: anchorLevels) {
-                            // 标的是「本级增减量的来历」，与勾没勾无关
-                            Pill(text: "本级" + tag, color: tag == "推算" ? AppTheme.amber : AppTheme.green)
+                        if let tag = HeroStatsText.modifierSource(level: level, anchorLevels: anchorLevels) {
+                            // 标的是「本级增减量的来历」，与勾没勾无关。
+                            // 三档三色（锚点绿 / 推算琥珀 / 沿用蓝），与 Windows 端同一张表。
+                            Pill(text: tag.label, color: HeroFormat.sourceColor(tag.source))
                         }
                         if modifier.dlcOnly {
-                            Pill(text: "仅 DLC 权重", color: AppTheme.purpleSoft)
+                            Pill(text: HeroStatsCopy.dlcOnlyTag, color: AppTheme.purpleSoft)
                         }
                     }
 
-                    // 当前等级的增减量
-                    if delta.isEmpty {
-                        Text("本级无增减量数据")
+                    // 当前等级的增减量（跳过 0，与 Windows 端 deltaSummary 同序同口径）
+                    let changedKeys = statNames.attributeKeys.filter { (delta[$0] ?? 0) != 0 }
+                    if changedKeys.isEmpty {
+                        Text(HeroStatsCopy.noDeltaAtLevel)
                             .font(.system(size: 10))
                             .foregroundStyle(AppTheme.tertiaryText)
                     } else {
                         HStack(spacing: 8) {
-                            ForEach(statNames.attributeKeys.filter { delta[$0] != nil }, id: \.self) { key in
+                            ForEach(changedKeys, id: \.self) { key in
                                 let value = delta[key] ?? 0
                                 HStack(spacing: 3) {
                                     Text(statNames.attributeTitle(key))
@@ -192,6 +226,14 @@ struct HeroModifierToggleRow: View {
                                 }
                             }
                         }
+                    }
+
+                    // 取整方向的另一种口径：只列出会变的（负向）项，其余项不变
+                    if !deltaFloorAlt.isEmpty {
+                        Text(HeroStatsCopy.floorAlt(HeroStatsCopy.deltaSummary(deltaFloorAlt, names: statNames)))
+                            .font(.system(size: 10))
+                            .foregroundStyle(AppTheme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     // 携带该词条的遗物
@@ -210,7 +252,7 @@ struct HeroModifierToggleRow: View {
                             }
                         }
                         if modifier.relicItems.isEmpty {
-                            Text("数据未内置携带它的遗物")
+                            Text("遗物：" + HeroStatsCopy.emptyData)
                                 .font(.system(size: 10))
                                 .foregroundStyle(AppTheme.tertiaryText)
                         }

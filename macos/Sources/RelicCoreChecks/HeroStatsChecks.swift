@@ -11,7 +11,11 @@ import RelicCore
 //   ③ 属性被减到 0 或负数时钳到 1 —— 注意这条要连同「利普拉 + 转职遗物」一起扫：
 //      不选利普拉时当前数据集确实一次都不触发，但选了利普拉之后钳位是常态
 //      （实测 750 组「5 套利普拉 × 两条词条全勾」里 313 组会钳位），页面上的
-//      「已钳到下限 1」注记因此是用户真看得到的东西，不是防御性代码。
+//      「已钳到最低 1」注记因此是用户真看得到的东西，不是防御性代码。
+//
+// 最后两段（⑩ ⑪）是「双端对照基线」：6 组真实数据与一整份共用文案，Windows 端
+// tests/heroes.test.mjs 用同一张表、同一批期望值跑同一批断言。改这里请连同那边一起改，
+// 否则两端会各自红一片 —— 这正是它们存在的意义（注释互相声称「逐字一致」不算数）。
 
 /// 内置资源目录下的 heroes.json（以源码路径定位，不依赖应用目标是否已构建）。
 private var heroesResourceURL: URL {
@@ -60,6 +64,10 @@ func runHeroStatsChecks() throws -> Int {
     count += try checkHeroLibra(index)
     count += try checkHeroComparison(index)
     count += try checkHeroText(index)
+    count += try checkHeroCrossEndFixtures(index)
+    count += try checkHeroCrossEndCopy(index)
+    count += try checkHeroCrossEndParity(index)
+    count += try checkHeroIntegerValuePaths(index)
     count += try checkHeroLenientDecoding()
     return count
 }
@@ -529,21 +537,29 @@ private func scanHeroClamping(
                 scan.combinations += 1
                 let place = "\(hero.display) \(level) 级 · \(libraLabel) · \(group.label)"
 
-                // 最终值必须逐格等于 max(1, 基础 + 请求增减量)，clampedStats 与之一致
+                // 最终值必须逐格等于 max(1, 基础 + 请求增减量)，clampedStats 与之一致。
+                // clampedStats 按**页面上的属性展示顺序**排（不是 key 字典序）：页面的
+                // 钳位汇总「生命力、集中力 叠加后不足 1」要与上面 8 张属性卡片同序。
                 var expectedStats = snapshot.baseStats
-                var expectedClamped: [String] = []
+                var expectedClampedFrom: [String: Int] = [:]
                 for (key, change) in snapshot.requestedDelta {
                     let raw = (snapshot.baseStats[key] ?? 0) + change
                     expectedStats[key] = max(HeroStatsMath.minimumStat, raw)
-                    if raw < HeroStatsMath.minimumStat { expectedClamped.append(key) }
+                    if raw < HeroStatsMath.minimumStat { expectedClampedFrom[key] = raw }
                 }
-                expectedClamped.sort()
+                let expectedClamped = index.statNames.attributeKeys.filter { expectedClampedFrom[$0] != nil }
 
                 if snapshot.finalStats != expectedStats {
                     scan.note("\(place) 最终属性应为 max(1, 基础 + 增减量) = \(expectedStats)，实际 \(snapshot.finalStats)")
                 }
                 if snapshot.clampedStats != expectedClamped {
-                    scan.note("\(place) 钳位列表应为 \(expectedClamped)，实际 \(snapshot.clampedStats)")
+                    scan.note("\(place) 钳位列表应为 \(expectedClamped)（按属性展示顺序），实际 \(snapshot.clampedStats)")
+                }
+                if snapshot.clampedFrom != expectedClampedFrom {
+                    scan.note("\(place) 钳位前的原值应为 \(expectedClampedFrom)，实际 \(snapshot.clampedFrom)")
+                }
+                for key in snapshot.clampedStats where (snapshot.clampedFrom[key] ?? 1) >= HeroStatsMath.minimumStat {
+                    scan.note("\(place) 的 \(key) 被记成钳位，但原值 \(snapshot.clampedFrom[key] ?? 0) 并不小于 1")
                 }
                 if !snapshot.finalStats.values.allSatisfy({ $0 >= HeroStatsMath.minimumStat }) {
                     scan.note("\(place) 最终属性出现 < 1 的值：\(snapshot.finalStats)")
@@ -647,7 +663,7 @@ private func checkHeroClamping(_ index: HeroStatsIndex) throws -> Int {
     )
 
     // ② 选了利普拉：钳位是常态，按实测值钉死。数据集换代后这里会红，
-    //    说明要重新核一遍页面上「已钳到下限 1」那批数字（这是用户真看得到的一批）。
+    //    说明要重新核一遍页面上「已钳到最低 1」那批数字（这是用户真看得到的一批）。
     try heroExpect(
         libraBoth.clampedCombinations == 313,
         "利普拉 + 两条词条全勾应有 313 组触发钳位，实际 \(libraBoth.clampedCombinations)",
@@ -861,12 +877,38 @@ private func checkHeroText(_ index: HeroStatsIndex) throws -> Int {
     try heroExpect(HeroStatsText.decimal(1120) == "1120", "整数派生值不带小数点", counter: &count)
 
     let anchors = index.dataset.interpolation.modifierAnchorLevels
-    try heroExpect(HeroStatsText.inferenceTag(level: 1, anchorLevels: anchors) == nil, "1 级是锚点，不标记", counter: &count)
-    try heroExpect(HeroStatsText.inferenceTag(level: 12, anchorLevels: anchors) == nil, "12 级是锚点，不标记", counter: &count)
-    try heroExpect(HeroStatsText.inferenceTag(level: 6, anchorLevels: anchors) == "推算", "2–11 级应标「推算」", counter: &count)
-    try heroExpect(HeroStatsText.inferenceTag(level: 15, anchorLevels: anchors) == "沿用 12 级锚点",
-                   "13–15 级应标「沿用 12 级锚点」", counter: &count)
-    try heroExpect(HeroStatsText.inferenceTag(level: 3, anchorLevels: []) == nil, "没有锚点信息时不标记", counter: &count)
+    // 三种来源都要有话说：锚点也标出来（上一轮锚点级什么都不标，页面上「勾了词条但
+    // 没有任何来源标记」与「没勾词条」长得一样）。锚点等级一律读数据集，不写死 1 / 12。
+    try heroExpect(HeroStatsText.modifierSource(level: 1, anchorLevels: anchors)?.source == .anchor,
+                   "1 级应判为词条锚点", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 1, anchorLevels: anchors)?.label == "词条锚点",
+                   "1 级应标「词条锚点」", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 12, anchorLevels: anchors)?.label == "词条锚点",
+                   "12 级应标「词条锚点」", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 6, anchorLevels: anchors)?.source == .inferred,
+                   "2–11 级应判为推算", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 6, anchorLevels: anchors)?.label == "词条推算",
+                   "2–11 级应标「词条推算」", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 15, anchorLevels: anchors)?.source == .carried,
+                   "13–15 级应判为沿用锚点", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 15, anchorLevels: anchors)?.label == "词条沿用 12 级锚点",
+                   "13–15 级应标「词条沿用 12 级锚点」", counter: &count)
+    try heroExpect(HeroStatsText.modifierSource(level: 3, anchorLevels: []) == nil, "没有锚点信息时不标记", counter: &count)
+    // 锚点表换一组数字，标记要跟着走（不能写死 12）
+    try heroExpect(HeroStatsText.modifierSource(level: 9, anchorLevels: [1, 8])?.label == "词条沿用 8 级锚点",
+                   "沿用文案里的等级应取自数据集锚点表", counter: &count)
+
+    // 缺数值时一律破折号，不要退回 0（0 是真实数值）
+    try heroExpect(HeroStatsText.statText(nil) == HeroStatsCopy.missing, "缺属性值应显示破折号", counter: &count)
+    try heroExpect(HeroStatsText.statText(0) == "0", "属性值 0 应原样显示", counter: &count)
+    try heroExpect(HeroStatsText.derivedText(nil, integer: true) == HeroStatsCopy.missing,
+                   "缺派生值应显示破折号", counter: &count)
+    try heroExpect(HeroStatsText.derivedText(0, integer: true) == "0", "派生值 0 应原样显示", counter: &count)
+    try heroExpect(HeroStatsText.derivedText(74.1, integer: false) == "74.1", "负重上限保留 1 位小数", counter: &count)
+    // 固定 1 位小数：45.0 不能写成「45」，否则整列小数点对不齐（Windows 端 fmtDerived 同口径）
+    try heroExpect(HeroStatsText.derivedText(45, integer: false) == "45.0", "负重上限固定 1 位小数", counter: &count)
+    try heroExpect(HeroStatsText.derivedText(72, integer: false) == "72.0", "负重上限固定 1 位小数（整数值）", counter: &count)
+    try heroExpect(HeroStatsText.derivedText(1120, integer: true) == "1120", "整数派生值不带小数点", counter: &count)
 
     try heroExpect(index.summary.contains("10 位夜行者"), "页面摘要应写角色数，实际 \(index.summary)", counter: &count)
     try heroExpect(index.summary.contains("1–15 级"), "页面摘要应写等级范围，实际 \(index.summary)", counter: &count)
@@ -946,9 +988,13 @@ private func checkHeroLenientDecoding() throws -> Int {
     try heroExpect(decoded.dataset.libraRespecs.isEmpty, "坏的利普拉元素应被跳过", counter: &count)
     try heroExpect(decoded.dataset.gameVersion.isEmpty, "缺失的 gameVersion 应退回空串而不是抛错", counter: &count)
     try heroExpect(decoded.dataset.caveats.isEmpty, "缺失的 caveats 应退回空数组", counter: &count)
-    try heroExpect(decoded.dataset.interpolation.maxLevel == 15, "缺失的 interpolation 应退回默认值", counter: &count)
+    try heroExpect(decoded.dataset.interpolation.maxLevel == 0,
+                   "缺失的 interpolation 不该假装声明了最大等级", counter: &count)
     try heroExpect(decoded.dataset.interpolation.notes.isEmpty, "缺失的 interpolation 不应生成说明条目", counter: &count)
-    try heroExpect(decoded.maxLevel == 15, "缺失 interpolation 时最大等级应退回 15", counter: &count)
+    // 缺 interpolation 时最大等级退回角色表（这份样本只有 1–2 级），而不是硬写 15
+    try heroExpect(decoded.maxLevel == 2, "缺失 interpolation 时应退回角色表的最大等级，实际 \(decoded.maxLevel)",
+                   counter: &count)
+    try heroExpect(decoded.levelRange == [1, 2], "等级范围同样跟着角色表走", counter: &count)
 
     // 缺 growthGraph 的派生值：跳过而不是算出 0
     let derived = decoded.derivedValues(for: ["vigor": 8, "mind": 4])
@@ -970,6 +1016,601 @@ private func checkHeroLenientDecoding() throws -> Int {
     )
     try heroExpect(!brokenGraph.isUsable, "端点数组不等长应判为不可用", counter: &count)
     try heroExpect(brokenGraph.value(at: 10) == 0 && brokenGraph.integerValue(at: 10) == 0, "不可用图表应返回 0", counter: &count)
+
+    return count
+}
+
+// MARK: - ⑩ 双端对照基线
+
+/// 一组双端对照用例：同样的角色 / 等级 / 词条 / 利普拉，两端钉死同一批期望值。
+///
+/// Windows 端 `tests/heroes.test.mjs` 里有一张一模一样的 `FIXTURES` 表，跑的是同一批
+/// 断言（绝对值 + 相对关系）。任何一端的纯逻辑漂了，两端的用例会各自红 —— 这就是
+/// 「双端一致」的可执行定义，而不是靠注释互相声称。
+private struct HeroFixture {
+    let name: String
+    let heroKey: String
+    let level: Int
+    let modifierIDs: [Int]
+    let libraKey: String?
+    let isAnchor: Bool
+    /// 按 statNames.attributeOrder 排的 8 项。
+    let baseStats: [Int]
+    let baseDerived: [String: Double]
+    let delta: [String: Int]
+    /// 卡片 / 表格里真正显示的那个数：**生效**增减量（最终 − 基础）。
+    /// 没钳位时与 delta 相同；被钳时比 delta 小（请求 -9、生效 -8）。
+    /// Windows 端 FIXTURES 里有同名同值的一张表。
+    let cardDelta: [String: Int]
+    /// nil = 没勾词条，不该产生「修改后」的表。
+    let finalStats: [Int]?
+    let finalDerived: [String: Double]?
+    let clampedFrom: [String: Int]
+    var clampSummary: String? = nil
+    /// 被钳位的卡片上那行小字（请求值只出现在这里）。
+    var clampRequestedText: String? = nil
+    var floorAlt: [String: Int]? = nil
+    var floorAltText: String? = nil
+    var sourceLabel: String? = nil
+    var source: HeroModifierSource? = nil
+}
+
+private let heroFixtures: [HeroFixture] = [
+    HeroFixture(
+        name: "追踪者 15 级：两条词条全勾",
+        heroKey: "wylder", level: 15, modifierIDs: [6_640_000, 6_640_100], libraKey: nil,
+        isAnchor: true,
+        baseStats: [52, 19, 27, 50, 40, 15, 15, 10],
+        baseDerived: ["hp": 1120, "fp": 140, "stamina": 102, "equipLoad": 74.1],
+        delta: ["vigor": -5, "mind": 10, "strength": -7, "dexterity": -5, "intelligence": 15, "faith": 15],
+        cardDelta: ["vigor": -5, "mind": 10, "strength": -7, "dexterity": -5, "intelligence": 15, "faith": 15],
+        finalStats: [47, 29, 27, 43, 35, 30, 30, 10],
+        finalDerived: ["hp": 1020, "fp": 190, "stamina": 102, "equipLoad": 74.1],
+        clampedFrom: [:],
+        sourceLabel: "词条沿用 12 级锚点", source: .carried
+    ),
+    HeroFixture(
+        name: "铁之眼 15 级：利普拉（力气）+ 降灵巧词条（会钳位）",
+        heroKey: "ironeye", level: 15, modifierIDs: [6_642_000], libraKey: "strength",
+        isAnchor: true,
+        baseStats: [47, 6, 23, 73, 9, 3, 3, 3],
+        baseDerived: ["hp": 1020, "fp": 75, "stamina": 94, "equipLoad": 68.8],
+        delta: ["dexterity": -9, "arcane": 15],
+        // 灵巧被钳到 1：词条请求 -9，真正生效的只有 -8。卡片上的大数字写 -8，
+        // 请求值 -9 只出现在小字里 —— 上一轮 Windows 写 -9、macOS 写 -8。
+        cardDelta: ["dexterity": -8, "arcane": 15],
+        finalStats: [47, 6, 23, 73, 1, 3, 3, 18],
+        finalDerived: ["hp": 1020, "fp": 75, "stamina": 94, "equipLoad": 68.8],
+        clampedFrom: ["dexterity": 0],
+        clampSummary: "灵巧 叠加后不足 1，已钳到最低 1（游戏里属性不会低于 1）",
+        clampRequestedText: "词条请求 -9，已钳到最低 1",
+        sourceLabel: "词条沿用 12 级锚点", source: .carried
+    ),
+    HeroFixture(
+        name: "学者 5 级：第 2 条词条（有 deltaFloorAlt）",
+        heroKey: "scholar", level: 5, modifierIDs: [6_647_300], libraKey: nil,
+        isAnchor: false,
+        baseStats: [20, 9, 10, 5, 7, 12, 6, 50],
+        baseDerived: ["hp": 480, "fp": 90, "stamina": 68, "equipLoad": 48.2],
+        delta: ["endurance": 2, "dexterity": 18, "intelligence": -2, "arcane": -10],
+        cardDelta: ["endurance": 2, "dexterity": 18, "intelligence": -2, "arcane": -10],
+        finalStats: [20, 9, 12, 5, 25, 10, 6, 40],
+        finalDerived: ["hp": 480, "fp": 90, "stamina": 72, "equipLoad": 51.4],
+        clampedFrom: [:],
+        floorAlt: ["intelligence": -3, "arcane": -11],
+        floorAltText: "若按 floor 取整，负向项改为：智力 -3、感应 -11（其余项不变）",
+        sourceLabel: "词条推算", source: .inferred
+    ),
+    HeroFixture(
+        name: "女爵 12 级：不勾词条",
+        heroKey: "duchess", level: 12, modifierIDs: [], libraKey: nil,
+        isAnchor: true,
+        baseStats: [35, 24, 14, 9, 38, 36, 24, 11],
+        baseDerived: ["hp": 780, "fp": 165, "stamina": 76, "equipLoad": 54.5],
+        delta: [:], cardDelta: [:], finalStats: nil, finalDerived: nil, clampedFrom: [:]
+    ),
+    HeroFixture(
+        name: "送葬者 1 级：不勾词条",
+        heroKey: "undertaker", level: 1, modifierIDs: [], libraKey: nil,
+        isAnchor: true,
+        baseStats: [7, 4, 3, 5, 2, 2, 5, 10],
+        baseDerived: ["hp": 220, "fp": 65, "stamina": 54, "equipLoad": 45],
+        delta: [:], cardDelta: [:], finalStats: nil, finalDerived: nil, clampedFrom: [:]
+    )
+]
+
+private func checkHeroCrossEndFixtures(_ index: HeroStatsIndex) throws -> Int {
+    var count = 0
+    let names = index.statNames
+    let keys = names.attributeKeys
+    let anchors = index.dataset.interpolation.modifierAnchorLevels
+
+    for fixture in heroFixtures {
+        guard let snapshot = index.snapshot(
+            heroKey: fixture.heroKey, level: fixture.level,
+            modifierIDs: Set(fixture.modifierIDs), libraKey: fixture.libraKey
+        ) else {
+            throw CheckFailure(description: "角色属性：\(fixture.name) 应能算出快照")
+        }
+        try heroExpect(snapshot.isAnchorLevel == fixture.isAnchor,
+                       "\(fixture.name)：基础表锚点标记应为 \(fixture.isAnchor)", counter: &count)
+        let base = keys.map { snapshot.baseStats[$0] ?? -1 }
+        try heroExpect(base == fixture.baseStats,
+                       "\(fixture.name)：基础属性应为 \(fixture.baseStats)，实际 \(base)", counter: &count)
+        for key in names.derivedKeys {
+            try heroExpectClose(snapshot.baseDerived[key] ?? .nan, fixture.baseDerived[key] ?? .nan,
+                                "\(fixture.name)：基础 \(names.derivedTitle(key))", counter: &count)
+        }
+
+        guard let expectedFinal = fixture.finalStats, let expectedFinalDerived = fixture.finalDerived else {
+            try heroExpect(!snapshot.hasModifier, "\(fixture.name)：没勾词条就不该有生效词条", counter: &count)
+            try heroExpect(snapshot.finalStats == snapshot.baseStats,
+                           "\(fixture.name)：没勾词条时最终属性应等于基础属性", counter: &count)
+            try heroExpect(snapshot.requestedDelta.isEmpty, "\(fixture.name)：没勾词条就没有增减量", counter: &count)
+            try heroExpect(snapshot.clampedStats.isEmpty && snapshot.clampedFrom.isEmpty,
+                           "\(fixture.name)：没勾词条不会钳位", counter: &count)
+            continue
+        }
+
+        for key in keys {
+            try heroExpect((snapshot.requestedDelta[key] ?? 0) == (fixture.delta[key] ?? 0),
+                           "\(fixture.name)：\(names.attributeTitle(key)) 增减量应为 \(fixture.delta[key] ?? 0)，"
+                               + "实际 \(snapshot.requestedDelta[key] ?? 0)", counter: &count)
+        }
+        // 卡片 / 表格上真正显示的那个数是**生效值**（最终 − 基础）：钳位时它比请求值小。
+        // Windows 端 FIXTURES 的 cardDelta 是同一张表，两端不可能再一个写 -9、一个写 -8。
+        for key in keys {
+            try heroExpect(snapshot.effectiveDelta(key) == (fixture.cardDelta[key] ?? 0),
+                           "\(fixture.name)：\(names.attributeTitle(key)) 卡片上显示的增减量（生效值）应为 "
+                               + "\(fixture.cardDelta[key] ?? 0)，实际 \(snapshot.effectiveDelta(key))", counter: &count)
+        }
+        let final = keys.map { snapshot.finalStats[$0] ?? -1 }
+        try heroExpect(final == expectedFinal,
+                       "\(fixture.name)：最终属性应为 \(expectedFinal)，实际 \(final)", counter: &count)
+        for key in names.derivedKeys {
+            try heroExpectClose(snapshot.finalDerived[key] ?? .nan, expectedFinalDerived[key] ?? .nan,
+                                "\(fixture.name)：最终 \(names.derivedTitle(key))", counter: &count)
+        }
+        try heroExpect(snapshot.clampedFrom == fixture.clampedFrom,
+                       "\(fixture.name)：钳位前原值应为 \(fixture.clampedFrom)，实际 \(snapshot.clampedFrom)",
+                       counter: &count)
+        // 钳位列表按属性展示顺序（与页面上 8 张卡片同序）
+        let expectedClamped = keys.filter { fixture.clampedFrom[$0] != nil }
+        try heroExpect(snapshot.clampedStats == expectedClamped,
+                       "\(fixture.name)：钳位列表应为 \(expectedClamped)，实际 \(snapshot.clampedStats)",
+                       counter: &count)
+
+        let tag = HeroStatsText.modifierSource(level: fixture.level, anchorLevels: anchors)
+        try heroExpect(tag?.label == fixture.sourceLabel,
+                       "\(fixture.name)：增减量来源文案应为 \(fixture.sourceLabel ?? "—")，实际 \(tag?.label ?? "—")",
+                       counter: &count)
+        try heroExpect(tag?.source == fixture.source, "\(fixture.name)：增减量来源分类", counter: &count)
+
+        // 相对断言①：最终值恒等于 max(1, 基础 + 增减量)
+        for key in keys {
+            let raw = (snapshot.baseStats[key] ?? 0) + (snapshot.requestedDelta[key] ?? 0)
+            try heroExpect(snapshot.finalStats[key] == max(HeroStatsMath.minimumStat, raw),
+                           "\(fixture.name)：\(names.attributeTitle(key)) 钳位口径", counter: &count)
+            try heroExpect((snapshot.clampedFrom[key] != nil) == (raw < HeroStatsMath.minimumStat),
+                           "\(fixture.name)：\(names.attributeTitle(key)) 是否记为钳位", counter: &count)
+        }
+        // 相对断言②：派生值一律由最终属性复算，而不是拿未钳位的属性算
+        let recomputed = index.derivedValues(for: snapshot.finalStats)
+        for key in names.derivedKeys {
+            try heroExpectClose(snapshot.finalDerived[key] ?? .nan, recomputed[key] ?? .nan,
+                                "\(fixture.name)：\(names.derivedTitle(key)) 应按钳位后的属性重算", counter: &count)
+        }
+
+        if let expectedNote = fixture.clampRequestedText {
+            // 卡片小字：请求值只出现在这里，大数字写的是生效值
+            try heroExpect(snapshot.clampedStats.count == 1, "\(fixture.name)：本组只应有一项被钳", counter: &count)
+            guard let clampedKey = snapshot.clampedStats.first else {
+                throw CheckFailure(description: "角色属性：\(fixture.name) 应有一项被钳")
+            }
+            let note = HeroStatsCopy.clampRequestedNote(snapshot.requestedDelta[clampedKey] ?? 0)
+            try heroExpect(note == expectedNote,
+                           "\(fixture.name)：钳位小字应为「\(expectedNote)」，实际「\(note)」", counter: &count)
+            try heroExpect(snapshot.effectiveDelta(clampedKey) != (snapshot.requestedDelta[clampedKey] ?? 0),
+                           "\(fixture.name)：被钳的那一项，生效值与请求值本来就不该相等", counter: &count)
+        }
+        if let expected = fixture.clampSummary {
+            let text = HeroStatsCopy.clampSummary(snapshot.clampedStats.map { names.attributeTitle($0) })
+            try heroExpect(text == expected,
+                           "\(fixture.name)：钳位汇总文案应为「\(expected)」，实际「\(text)」", counter: &count)
+        }
+        if let expectedAlt = fixture.floorAlt, let expectedText = fixture.floorAltText {
+            guard let affixID = fixture.modifierIDs.first,
+                  let modifier = index.modifiers(for: fixture.heroKey).first(where: { $0.affixId == affixID }),
+                  let row = modifier.level(fixture.level) else {
+                throw CheckFailure(description: "角色属性：\(fixture.name) 找不到词条的这一级")
+            }
+            try heroExpect(row.deltaFloorAlt == expectedAlt,
+                           "\(fixture.name)：deltaFloorAlt 应为 \(expectedAlt)，实际 \(row.deltaFloorAlt)", counter: &count)
+            let text = HeroStatsCopy.floorAlt(HeroStatsCopy.deltaSummary(row.deltaFloorAlt, names: names))
+            try heroExpect(text == expectedText,
+                           "\(fixture.name)：deltaFloorAlt 文案应为「\(expectedText)」，实际「\(text)」", counter: &count)
+            // deltaFloorAlt 恒为负向项、且恰好比 trunc 少 1（floor 与 trunc 只在负数上差 1）
+            for (key, value) in row.deltaFloorAlt {
+                try heroExpect(value < 0, "\(fixture.name)：deltaFloorAlt 只会出现在负向项上（\(key) = \(value)）",
+                               counter: &count)
+                try heroExpect(value == (row.delta[key] ?? 0) - 1,
+                               "\(fixture.name)：\(key) 的 floor 版应比 trunc 版少 1", counter: &count)
+            }
+        }
+    }
+
+    // 第 6 组：同级对比 10 级按血量降序，前三名与兜底顺序
+    let rows = index.comparisonRows(level: 10)
+    try heroExpect(rows.count == 10, "10 级对比表应有 10 行，实际 \(rows.count)", counter: &count)
+    let byHP = HeroComparison.sorted(rows, by: .derived("hp"), ascending: false)
+    let topNames = byHP.prefix(3).map(\.nameZh)
+    try heroExpect(topNames == ["守护者", "无赖", "追踪者"],
+                   "10 级血量前三名应是 守护者 / 无赖 / 追踪者，实际 \(topNames)", counter: &count)
+    let topHP = byHP.prefix(3).compactMap { $0.derived["hp"] }
+    try heroExpect(topHP == [1020, 940, 880], "10 级血量前三名应是 1020 / 940 / 880，实际 \(topHP)", counter: &count)
+    let topVigor = byHP.prefix(3).compactMap { $0.stats["vigor"] }
+    try heroExpect(topVigor == [47, 43, 40], "10 级血量前三名的生命力应是 47 / 43 / 40，实际 \(topVigor)", counter: &count)
+    // 相对断言：降序单调不增，且血量恒等于 20 × 生命力 + 80（CalcCorrectGraph 100 的斜率）
+    let hpValues = byHP.compactMap { $0.derived["hp"] }
+    try heroExpect(hpValues == hpValues.sorted(by: >), "血量降序应单调不增", counter: &count)
+    for row in byHP {
+        try heroExpectClose(row.derived["hp"] ?? .nan, Double(20 * (row.stats["vigor"] ?? 0) + 80),
+                            "\(row.nameZh) 的血量应等于 20 × 生命力 + 80", counter: &count)
+    }
+
+    return count
+}
+
+// MARK: - ⑪ 双端共用文案
+
+/// 两端必须逐字相同的那批字符串。Windows 端 `tests/heroes.test.mjs` 的
+/// 「双端共用文案 COPY」用例逐条断言同一批字面量。
+private func checkHeroCrossEndCopy(_ index: HeroStatsIndex) throws -> Int {
+    var count = 0
+    let names = index.statNames
+
+    try heroExpect(HeroStatsCopy.missing == "—", "缺值占位符", counter: &count)
+    try heroExpect(HeroStatsCopy.emptyData == "数据未内置", "数据未内置", counter: &count)
+    try heroExpect(HeroStatsCopy.viewSingle == "单角色", "单角色视图名", counter: &count)
+    try heroExpect(HeroStatsCopy.viewCompare == "同级对比", "同级对比视图名", counter: &count)
+
+    try heroExpect(HeroStatsCopy.baseLevelBadge(level: 15, isAnchor: true) == "15 级是参数锚点",
+                   "锚点等级徽标", counter: &count)
+    try heroExpect(HeroStatsCopy.baseLevelBadge(level: 7, isAnchor: false) == "7 级为插值推算",
+                   "插值等级徽标", counter: &count)
+    try heroExpect(HeroStatsCopy.baseAnchorTag == "参数锚点", "表内锚点标记", counter: &count)
+    try heroExpect(HeroStatsCopy.baseInterpolatedTag == "插值推算", "表内插值标记", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.allLevelsCaption(anchorLevels: [1, 2, 12, 15])
+            == "加粗行是参数表里的锚点（1 / 2 / 12 / 15 级），其余等级按相邻锚点线性插值后向下取整。",
+        "全部等级表脚注", counter: &count
+    )
+
+    try heroExpect(HeroStatsCopy.modifierCountBadge(2) == "转职遗物 2 条", "词条条数徽标", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.modifierSubtitle == "勾选后在基础属性上加减（可同时勾选，效果相加）；派生值按 CalcCorrectGraph 重算",
+        "转职遗物卡片副标题", counter: &count
+    )
+    try heroExpect(HeroStatsCopy.dlcOnlyTag == "仅 DLC 池可掉", "DLC 词条标记", counter: &count)
+    try heroExpect(HeroStatsCopy.noDeltaAtLevel == "本级无增减", "本级无增减", counter: &count)
+    try heroExpect(HeroStatsCopy.noModifierData == "数据未内置该角色的转职遗物词条", "缺词条数据", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.floorAlt("智力 -3、感应 -11") == "若按 floor 取整，负向项改为：智力 -3、感应 -11（其余项不变）",
+        "deltaFloorAlt 文案", counter: &count
+    )
+
+    try heroExpect(HeroStatsCopy.clampCellTag == "钳", "表内钳位角标", counter: &count)
+    try heroExpect(HeroStatsCopy.clampRowTag == "已钳位", "表内钳位行标", counter: &count)
+    try heroExpect(HeroStatsCopy.clampedFromNote(0) == "原为 0，已钳到最低 1", "钳位前原值（0）", counter: &count)
+    try heroExpect(HeroStatsCopy.clampedFromNote(-3) == "原为 -3，已钳到最低 1", "钳位前原值（负）", counter: &count)
+    try heroExpect(HeroStatsCopy.clampRequestedNote(-9) == "词条请求 -9，已钳到最低 1", "钳位小字（请求值）", counter: &count)
+    try heroExpect(HeroStatsCopy.clampRequestedNote(-13) == "词条请求 -13，已钳到最低 1",
+                   "钳位小字（请求值，另一条词条）", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.clampSummary(["生命力", "集中力"]) == "生命力、集中力 叠加后不足 1，已钳到最低 1（游戏里属性不会低于 1）",
+        "单等级钳位汇总", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.clampSummaryByLevel([(13, ["灵巧"]), (15, ["灵巧", "感应"])], maxLevel: 15)
+            == "1–15 级里有 2 级叠加后不足 1：13 级 灵巧；15 级 灵巧、感应；已钳到最低 1（游戏里属性不会低于 1）",
+        "全部等级钳位汇总（按行聚合）", counter: &count
+    )
+    try heroExpect(HeroStatsCopy.clampSummaryByLevel([], maxLevel: 15).isEmpty, "没钳位时不写汇总", counter: &count)
+
+    try heroExpect(HeroStatsCopy.libraSwapTag == "整套替换", "利普拉整套替换标记", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.libraHint == "利普拉的交易把整套基础属性表替换掉；能否与转职遗物叠加是按参数字段结构推断的，未实测",
+        "利普拉提示", counter: &count
+    )
+    try heroExpect(HeroStatsCopy.libraEmptyHint == "选中后基础表整套换成对应的替换表，转职遗物仍可叠加。",
+                   "未选利普拉时的提示", counter: &count)
+    try heroExpect(HeroStatsCopy.libraBadge("力气") == "利普拉：力气", "利普拉徽标", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.libraCrossCheckNote == "已做利普拉的交易，基础表整套替换，与外部 wiki 的角色原表差异不再适用",
+        "选了利普拉后的 wiki 差异说明", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.crossCheckNote(count: 14, note: "补丁 1.02.2") == "与外部 wiki 有 14 格差异，本页以参数为准：补丁 1.02.2",
+        "wiki 差异提示", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.crossCheckNote(count: 14, note: "") == "与外部 wiki 有 14 格差异，本页以参数为准",
+        "wiki 差异提示（无补充说明）", counter: &count
+    )
+
+    try heroExpect(HeroStatsCopy.legacyMark == "*", "遗留列注记符", counter: &count)
+    try heroExpect(HeroStatsCopy.legacyHeader("负重上限") == "负重上限 *", "遗留列列头", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.equipLoadHint == "本作装备没有重量，负重上限是《艾尔登法环》继承下来的遗留列，未经实测",
+        "负重上限小字", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.equipLoadFootnote
+            == "* 负重上限是《艾尔登法环》继承下来的遗留列：本作装备没有重量、界面也没有负重条，未经实测，仅供参考。",
+        "负重上限脚注", counter: &count
+    )
+
+    try heroExpect(
+        HeroStatsCopy.compareCaption
+            == "对比表只用各角色的基础表：利普拉的交易不分角色（叠上去每行都一样），转职遗物是逐角色的词条，都不进对比。",
+        "对比表脚注", counter: &count
+    )
+
+    // 折叠区标题里的 N 两端必须是同一个数：两端渲染的都是 notes 那 10 条
+    // （Windows 端 interpolationNotes(data) 同序同文），不再是一端数字段、一端数条目。
+    try heroExpect(HeroStatsCopy.interpolationTitle(10) == "插值与验证口径（10 条）", "折叠区标题①", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.interpolationTitle(index.dataset.interpolation.notes.count) == "插值与验证口径（10 条）",
+        "折叠区标题①的 N 就是实际渲染的条数", counter: &count
+    )
+    try heroExpect(HeroStatsCopy.caveatsTitle(13) == "已知取舍（13 条）", "折叠区标题②", counter: &count)
+    try heroExpect(HeroStatsCopy.sourcesTitle(10) == "数据出处（10 条）与外部对照", "折叠区标题③", counter: &count)
+    try heroExpect(HeroStatsCopy.versionLabels == ["游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"],
+                   "数据版本块的 5 行标签", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.contentSummary(heroes: 10, maxLevel: 15, modifiers: 20, libra: 5)
+            == "10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易",
+        "数据版本块的「收录」", counter: &count
+    )
+
+    // 增减量摘要：按属性展示顺序、跳过 0、带正负号
+    guard let wylder = index.modifiers(for: "wylder").first(where: { $0.affixId == 6_640_000 }),
+          let row12 = wylder.level(12) else {
+        throw CheckFailure(description: "角色属性：找不到【追踪者】提升集中力但降低生命力 的 12 级行")
+    }
+    try heroExpect(HeroStatsCopy.deltaSummary(row12.delta, names: names) == "生命力 -5、集中力 +10",
+                   "增减量摘要应按属性顺序并带符号", counter: &count)
+    try heroExpect(HeroStatsCopy.deltaSummary([:], names: names).isEmpty, "空增减量摘要为空串", counter: &count)
+    try heroExpect(HeroStatsCopy.deltaSummary(["vigor": 0, "mind": 3], names: names) == "集中力 +3",
+                   "增减量摘要应跳过 0 项", counter: &count)
+
+    // 遗留列当前只有负重上限，且页面靠 inGameLabel 判定（不写死 key）
+    let legacy = names.derivedKeys.filter { names.derivedEntry($0)?.inGameLabel == false }
+    try heroExpect(legacy == ["equipLoad"], "遗留列当前只有负重上限，实际 \(legacy)", counter: &count)
+
+    // 与外部 wiki 的逐格对照：只有真有差异的角色才返回
+    try heroExpect(index.crossCheck(for: "duchess")?.mismatchCount == 14, "女爵应有 14 格差异", counter: &count)
+    try heroExpect(index.crossCheck(for: "duchess")?.authoritative == "params", "差异以参数为准", counter: &count)
+    try heroExpect(index.crossCheck(for: "wylder") == nil, "追踪者 0 差异，不必提示", counter: &count)
+    try heroExpect(index.crossCheck(for: "executor") == nil, "执行者 0 差异，不必提示", counter: &count)
+    try heroExpect(index.crossCheck(for: "不存在") == nil, "未知角色没有对照结果", counter: &count)
+
+    // 全部等级表的钳位汇总按行聚合：与逐行的 clampedStats 对得上
+    let snapshots = index.snapshots(heroKey: "ironeye", modifierIDs: [6_642_000], libraKey: "strength")
+    try heroExpect(snapshots.count == 15, "全部等级表应有 15 行", counter: &count)
+    let clampedRows = index.clampedByLevel(snapshots)
+    try heroExpect(clampedRows.count > 1, "这一组合应有多级触发钳位（否则「按行聚合」没意义）", counter: &count)
+    let expectedRows = snapshots.filter { !$0.clampedStats.isEmpty }
+    try heroExpect(clampedRows.map(\.level) == expectedRows.map(\.level), "聚合结果应覆盖所有被钳的行", counter: &count)
+    for (aggregated, snapshot) in zip(clampedRows, expectedRows) {
+        try heroExpect(aggregated.names == snapshot.clampedStats.map { names.attributeTitle($0) },
+                       "\(snapshot.level) 级的聚合属性名应与该行的 clampedStats 一致", counter: &count)
+    }
+    let summary = HeroStatsCopy.clampSummaryByLevel(clampedRows, maxLevel: index.maxLevel)
+    try heroExpect(summary.hasPrefix("1–15 级里有 \(clampedRows.count) 级叠加后不足 1："),
+                   "钳位汇总应写清有几级被钳，实际 \(summary)", counter: &count)
+    for entry in clampedRows {
+        try heroExpect(summary.contains("\(entry.level) 级 " + entry.names.joined(separator: "、")),
+                       "钳位汇总应逐行列出 \(entry.level) 级", counter: &count)
+    }
+    try heroExpect(index.clampedByLevel(index.snapshots(heroKey: "ironeye")).isEmpty,
+                   "不勾词条时没有任何钳位", counter: &count)
+
+    return count
+}
+
+// MARK: - ⑫ 本轮补的双端对称断言
+
+/// 上一轮两端「各写各的」而任何一端的用例都抓不到的几处，逐条补上对称断言。
+/// Windows 端 `tests/heroes.test.mjs` 末尾有同名同结构的一组用例。
+private func checkHeroCrossEndParity(_ index: HeroStatsIndex) throws -> Int {
+    var count = 0
+    let dataset = index.dataset
+    let names = index.statNames
+
+    // ① 折叠区「插值与验证口径（N 条）」：两端渲染同一组 10 条说明
+    let notes = dataset.interpolation.notes
+    try heroExpect(notes.count == 10, "真实数据集应拼出 10 条插值说明，实际 \(notes.count)", counter: &count)
+    try heroExpect(notes.map(\.title) == HeroStatsCopy.interpolationNoteTitles,
+                   "10 条说明的标题与顺序应与共用文案一致，实际 \(notes.map(\.title))", counter: &count)
+    try heroExpect(
+        notes[0].text == "基础属性表只有 1 / 2 / 12 / 15 级是参数原值，转职遗物只有 1 / 12 级是参数原值。",
+        "锚点一条应由数据集的两组锚点拼出，实际 \(notes[0].text)", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.interpolationAnchorNote(baseAnchorLevels: [1, 8], modifierAnchorLevels: [1, 6])
+            == "基础属性表只有 1 / 8 级是参数原值，转职遗物只有 1 / 6 级是参数原值。",
+        "锚点文案里的等级应跟着数据集走", counter: &count
+    )
+    try heroExpect(notes[1].text == dataset.interpolation.baseRule, "正文应直接取数据集那一段", counter: &count)
+    try heroExpect(notes[2].text == dataset.interpolation.baseVerification, "基础表验证正文", counter: &count)
+    try heroExpect(notes[9].text == dataset.interpolation.libraRule, "利普拉一条的正文", counter: &count)
+    try heroExpect(notes[7].text.hasPrefix("基础属性表按向下取整（floor）"), "取整方向应写出 floor", counter: &count)
+    try heroExpect(notes[7].text.contains("转职遗物增减量按向零取整（trunc）"), "取整方向应写出 trunc", counter: &count)
+    try heroExpect(notes[7].text.contains("两种取整只在负的增减量上差 1；"), "取整方向应点明两者的差别", counter: &count)
+    try heroExpect(HeroStatsCopy.roundingTerm("floor") == "向下取整（floor）", "取整术语①", counter: &count)
+    try heroExpect(HeroStatsCopy.roundingTerm("round") == "四舍五入（round）", "取整术语②", counter: &count)
+    try heroExpect(HeroStatsCopy.roundingTerm("别的") == "别的", "未知取整名原样回显", counter: &count)
+    try heroExpect(HeroStatsCopy.interpolationRoundingNote(base: "", modifier: "").isEmpty,
+                   "两个取整字段都缺时整条说明不出现", counter: &count)
+    try heroExpect(HeroInterpolation(baseRule: "x").notes.map(\.title) == ["基础属性插值"],
+                   "只有一个字段时只出一条说明", counter: &count)
+
+    // ② 最大等级一律读数据集：maxLevel = 20 时等级范围 / 表体行数 / 汇总一起变。
+    //    用构造出来的 JSON 走一遍真实解码路径（页面拿到的也是这条路径的产物）。
+    func levelsJSON(_ top: Int) -> String {
+        (1...top).map { level -> String in
+            let anchor = (level == 1 || level == top) ? "true" : "false"
+            return "{\"level\": \(level), \"isAnchor\": \(anchor), \"stats\": {\"vigor\": \(level + 5)}}"
+        }.joined(separator: ",")
+    }
+    func datasetJSON(levels: Int, declaredMaxLevel: Int?) -> String {
+        let declared: String = declaredMaxLevel.map { ", \"maxLevel\": \($0)" } ?? ""
+        let names = "\"statNames\": {\"attributeOrder\": [\"vigor\"], \"derivedOrder\": [], \"derived\": [],"
+            + " \"attributes\": [{\"key\": \"vigor\", \"zh\": \"生命力\", \"en\": \"Vigor\"}]}"
+        let interpolation = "\"interpolation\": {\"baseAnchorLevels\": [1, 2]" + declared + "}"
+        let heroes = "\"heroes\": [{\"id\": 1, \"key\": \"wylder\", \"nameZh\": \"追踪者\", \"nameEn\": \"Wylder\","
+            + " \"levels\": [" + levelsJSON(levels) + "]}]"
+        return "{\"schemaVersion\": 1, " + names + ", " + interpolation + ", " + heroes + "}"
+    }
+    let big = try HeroStatsIndex(data: Data(datasetJSON(levels: 20, declaredMaxLevel: 20).utf8))
+    try heroExpect(big.maxLevel == 20, "声明 maxLevel = 20 时最大等级应为 20，实际 \(big.maxLevel)", counter: &count)
+    try heroExpect(big.levelRange == Array(1...20), "等级选择器的范围应是 1–20，实际 \(big.levelRange.count) 项",
+                   counter: &count)
+    try heroExpect(big.snapshots(heroKey: "wylder").count == 20, "全部等级表应有 20 行", counter: &count)
+    try heroExpect(big.snapshot(heroKey: "wylder", level: 20)?.baseStats["vigor"] == 25,
+                   "20 级应算得出快照", counter: &count)
+    try heroExpect(big.summary.contains("1–20 级"), "页面摘要应写 1–20 级，实际 \(big.summary)", counter: &count)
+    try heroExpect(
+        HeroStatsCopy.clampSummaryByLevel([(20, ["灵巧"])], maxLevel: big.maxLevel)
+            == "1–20 级里有 1 级叠加后不足 1：20 级 灵巧；已钳到最低 1（游戏里属性不会低于 1）",
+        "钳位汇总里的范围同样是 1–20", counter: &count
+    )
+    try heroExpect(
+        HeroStatsCopy.contentSummary(heroes: 1, maxLevel: big.maxLevel, modifiers: 0, libra: 0)
+            == "1 位夜行者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易",
+        "版本块的「收录」同样是 20 级", counter: &count
+    )
+    // 没声明 maxLevel 时退回各角色 levels 的最大等级（Windows 端 maxLevelOf 同一条兜底）
+    let undeclared = try HeroStatsIndex(data: Data(datasetJSON(levels: 20, declaredMaxLevel: nil).utf8))
+    try heroExpect(undeclared.dataset.interpolation.maxLevel == 0, "没声明时不该假装声明了 15", counter: &count)
+    try heroExpect(undeclared.maxLevel == 20, "没声明 maxLevel 时应退回角色表的最大等级，实际 \(undeclared.maxLevel)",
+                   counter: &count)
+    try heroExpect(undeclared.levelRange.count == 20, "等级范围同样跟着角色表走", counter: &count)
+    // 声明值与角色表不一致时以声明为准（数据集自己说了算）
+    let declaredShort = try HeroStatsIndex(data: Data(datasetJSON(levels: 20, declaredMaxLevel: 12).utf8))
+    try heroExpect(declaredShort.maxLevel == 12, "声明 12 级时以声明为准，实际 \(declaredShort.maxLevel)", counter: &count)
+    try heroExpect(declaredShort.snapshots(heroKey: "wylder").count == 12, "表体同样只到 12 行", counter: &count)
+    try heroExpect(index.maxLevel == 15, "真实数据集仍是 15 级", counter: &count)
+
+    // ③ 词条来源三档三色：来源 → 配色名两端钉同一张表
+    try heroExpect(HeroModifierSource.anchor.colorToken == "green", "锚点应为绿", counter: &count)
+    try heroExpect(HeroModifierSource.inferred.colorToken == "amber", "推算应为琥珀", counter: &count)
+    try heroExpect(HeroModifierSource.carried.colorToken == "blue", "沿用应为蓝", counter: &count)
+    try heroExpect(HeroModifierSource.carried.colorToken != HeroModifierSource.anchor.colorToken,
+                   "「沿用锚点」与「锚点」不能同色，否则页面上只有文字能区分", counter: &count)
+    try heroExpect(HeroModifierSource.carried.symbolName != HeroModifierSource.anchor.symbolName,
+                   "「沿用锚点」与「锚点」也不该是同一个图标", counter: &count)
+    let anchors = dataset.interpolation.modifierAnchorLevels
+    for (level, token) in [(1, "green"), (6, "amber"), (15, "blue")] {
+        try heroExpect(HeroStatsText.modifierSource(level: level, anchorLevels: anchors)?.source.colorToken == token,
+                       "\(level) 级的来源配色应是 \(token)", counter: &count)
+    }
+
+    // ④ 属性缺失给破折号，且不编一个最终值出来
+    let holed = HeroLevelRow(
+        level: 1, isAnchor: true,
+        stats: names.attributeKeys.filter { $0 != "arcane" }.reduce(into: [:]) { $0[$1] = 10 },
+        derived: [:]
+    )
+    let applied = HeroStatsMath.apply(
+        deltas: [["arcane": -20, "vigor": -20]], to: holed.stats, order: names.attributeKeys
+    )
+    try heroExpect(applied.stats["arcane"] == nil, "基础表没有的属性不该被编出一个最终值", counter: &count)
+    try heroExpect(!applied.clamped.contains("arcane"), "缺项不记钳位", counter: &count)
+    try heroExpect(applied.clampedFrom["arcane"] == nil, "缺项没有钳位前原值", counter: &count)
+    try heroExpect(applied.stats["vigor"] == HeroStatsMath.minimumStat, "有基础值的那一项照常钳位", counter: &count)
+    try heroExpect(HeroStatsText.statText(applied.stats["arcane"]) == HeroStatsCopy.missing,
+                   "缺属性的格子应显示破折号", counter: &count)
+    try heroExpect(HeroStatsText.statText(0) == "0", "0 是真实数值，照常显示", counter: &count)
+
+    // ⑤ growthGraph 的「可用性」：三个数组必须等长（Windows 端 isUsableGraph 同一条）
+    let shortAdj = HeroGrowthGraph(id: 9001, name: "adjPt 残缺", stageMaxVal: [1, 10],
+                                   stageMaxGrowVal: [0, 90], adjPt: [1], linear: true, usedFor: [])
+    try heroExpect(!shortAdj.isUsable, "adjPt 比端点少一项就算不可用", counter: &count)
+    try heroExpect(shortAdj.value(at: 5) == 0 && shortAdj.integerValue(at: 5) == 0,
+                   "不可用图表一律返回 0，由调用方跳过（页面破折号）", counter: &count)
+    let longY = HeroGrowthGraph(id: 9002, name: "ys 偏长", stageMaxVal: [1, 10],
+                                stageMaxGrowVal: [0, 90, 100], adjPt: [1, 1], linear: true, usedFor: [])
+    try heroExpect(!longY.isUsable, "ys 比 xs 长同样不可用", counter: &count)
+    try heroExpect(
+        HeroStatsMath.derivedValues(for: ["vigor": 20], names: names, graphs: [100: shortAdj])["hp"] == nil,
+        "图表不可用时不该算出派生值（页面给破折号）", counter: &count
+    )
+
+    return count
+}
+
+// MARK: - ⑬ 整数求值的逐格兜底
+
+/// `integerValue` 的两条路径都要跑到：端点全为整数且 adjPt == 1 时走精确整数除法，
+/// 其余情况退回 `normalize + floor`。Windows 端 tests/heroes.test.mjs 有 1..99 的逐格
+/// 对照，这里补上同构的一份，并用构造出来的图表把兜底分支真跑一遍
+/// （真实数据集的 100 / 101 / 104 三行端点全是整数，这条分支一行都执行不到）。
+private func checkHeroIntegerValuePaths(_ index: HeroStatsIndex) throws -> Int {
+    var count = 0
+
+    guard let hp = index.dataset.growthGraphs[100],
+          let fp = index.dataset.growthGraphs[101],
+          let stamina = index.dataset.growthGraphs[104] else {
+        throw CheckFailure(description: "角色属性：缺少 CalcCorrectGraph 100/101/104")
+    }
+    for graph in [hp, fp, stamina] {
+        for stat in 1...99 {
+            let expected = Int(HeroStatsMath.normalize(graph.value(at: stat)).rounded(.down))
+            try heroExpect(
+                graph.integerValue(at: stat) == expected,
+                "CalcCorrectGraph \(graph.id) 在 \(stat) 上的整数求值应与 normalize + floor 一致"
+                    + "（期望 \(expected)，实际 \(graph.integerValue(at: stat))）",
+                counter: &count
+            )
+        }
+    }
+
+    // 端点非整数：走不了整数除法，只能退回 normalize + floor
+    let fractional = HeroGrowthGraph(
+        id: 9101, name: "端点非整数", stageMaxVal: [1, 10], stageMaxGrowVal: [0.5, 100.25],
+        adjPt: [1, 1], linear: true, usedFor: []
+    )
+    try heroExpect(fractional.isUsable, "构造的图表应可用", counter: &count)
+    for stat in 1...12 {
+        let expected = Int(HeroStatsMath.normalize(fractional.value(at: stat)).rounded(.down))
+        try heroExpect(fractional.integerValue(at: stat) == expected,
+                       "端点非整数时 \(stat) 应退回 normalize + floor（期望 \(expected)，"
+                           + "实际 \(fractional.integerValue(at: stat))）", counter: &count)
+    }
+    // 手算一格：0.5 + (100.25 − 0.5) × (5 − 1) / 9 = 44.8333… → 44
+    try heroExpect(fractional.integerValue(at: 5) == 44, "端点非整数的 5 应取到 44，实际 \(fractional.integerValue(at: 5))",
+                   counter: &count)
+
+    // 带指数的一段：同样走兜底，且 normalize 把 1e-9 以下的尾巴抹掉后才 floor。
+    // 端点取成「真值恰好是整数、浮点上差一丁点」的一组：ratio^2 在 x = 5 上是 0.25，
+    // y = 0 + 240 × 0.25 = 60，没有 normalize 的话浮点可能给 59.999999999。
+    let curved = HeroGrowthGraph(
+        id: 9102, name: "带指数", stageMaxVal: [1, 9], stageMaxGrowVal: [0, 240],
+        adjPt: [2, 2], linear: false, usedFor: []
+    )
+    try heroExpect(curved.integerValue(at: 5) == 60, "带指数的一段应取到 60，实际 \(curved.integerValue(at: 5))",
+                   counter: &count)
+    for stat in 1...9 {
+        let expected = Int(HeroStatsMath.normalize(curved.value(at: stat)).rounded(.down))
+        try heroExpect(curved.integerValue(at: stat) == expected,
+                       "带指数时 \(stat) 应退回 normalize + floor", counter: &count)
+    }
+    try heroExpect(HeroStatsMath.normalize(59.9999999999).rounded(.down) == 60,
+                   "normalize 应把 1e-9 以下的尾巴抹掉再取整（否则 59.9999999999 会被取成 59）", counter: &count)
+    try heroExpect(HeroStatsMath.normalize(59.99).rounded(.down) == 59,
+                   "normalize 不该把真实的 0.01 差距也抹掉", counter: &count)
 
     return count
 }

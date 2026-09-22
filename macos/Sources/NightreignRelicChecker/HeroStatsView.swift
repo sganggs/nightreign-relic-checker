@@ -28,8 +28,8 @@ struct HeroStatsView: View {
 
         var title: String {
             switch self {
-            case .single: return "单角色"
-            case .compare: return "同级对比"
+            case .single: return HeroStatsCopy.viewSingle
+            case .compare: return HeroStatsCopy.viewCompare
             }
         }
     }
@@ -112,7 +112,8 @@ struct HeroStatsView: View {
                 Toggle("全部等级", isOn: $showAllLevels)
                     .toggleStyle(.switch)
                     .font(.caption)
-                    .help("切换成 1–15 级的完整表，参数锚点行（1 / 2 / 12 / 15）高亮")
+                    // 等级范围与锚点一律读数据集，界面上不写死 15 与 1/2/12/15
+                    .help(allLevelsHelp(index))
 
                 Picker("利普拉的交易", selection: $libraKey) {
                     Text("利普拉：无").tag("")
@@ -140,6 +141,15 @@ struct HeroStatsView: View {
         }
     }
 
+    /// 基础表的参数锚点等级（读数据集，不写死 1 / 2 / 12 / 15）。
+    private func anchorText(_ index: HeroStatsIndex) -> String {
+        index.dataset.interpolation.baseAnchorLevels.map(String.init).joined(separator: " / ")
+    }
+
+    private func allLevelsHelp(_ index: HeroStatsIndex) -> String {
+        "切换成 1–\(index.maxLevel) 级的完整表，参数锚点行（\(anchorText(index))）高亮"
+    }
+
     // MARK: - 主体
 
     @ViewBuilder
@@ -156,7 +166,7 @@ struct HeroStatsView: View {
 
         case .missing:
             EmptyStateView(
-                title: "数据未内置",
+                title: HeroStatsCopy.emptyData,
                 symbol: "person.text.rectangle",
                 detail: "尚未提供 Resources/heroes.json，运行 scripts/sync-data.sh 同步后重新构建。"
             )
@@ -196,7 +206,8 @@ struct HeroStatsView: View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeading(
                 title: "选择夜行者",
-                subtitle: "共 \(index.heroes.count) 位，属性表取自 HeroStatusParam（1 / 2 / 12 / 15 级为参数原值）",
+                subtitle: "共 \(index.heroes.count) 位，属性表取自 HeroStatusParam"
+                    + "（\(anchorText(index)) 级为参数原值）",
                 symbol: "person.2"
             )
             LazyVGrid(
@@ -224,12 +235,12 @@ struct HeroStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: "转职遗物",
-                subtitle: "勾选后在基础属性上加减（可同时勾选，效果相加）；派生值按 CalcCorrectGraph 重算",
+                subtitle: HeroStatsCopy.modifierSubtitle,
                 symbol: "sparkles"
             )
 
             if modifiers.isEmpty {
-                Text("数据未内置该角色的转职遗物词条")
+                Text(HeroStatsCopy.noModifierData)
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             } else {
@@ -240,7 +251,8 @@ struct HeroStatsView: View {
                         statNames: index.statNames,
                         level: level,
                         anchorLevels: anchors,
-                        delta: modifier.level(level)?.delta ?? [:]
+                        delta: modifier.level(level)?.delta ?? [:],
+                        deltaFloorAlt: modifier.level(level)?.deltaFloorAlt ?? [:]
                     ) {
                         if selectedModifiers.contains(modifier.affixId) {
                             selectedModifiers.remove(modifier.affixId)
@@ -257,13 +269,12 @@ struct HeroStatsView: View {
                         Text(respec.display)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
-                        Pill(text: "整套替换", color: AppTheme.purpleSoft)
+                        Pill(text: HeroStatsCopy.libraSwapTag, color: AppTheme.purpleSoft)
                         Pill(text: "参数结构推断、未实测", color: AppTheme.amber, symbol: "exclamationmark.triangle")
                     }
                     Text("已把基础属性表整套换成「\(respec.nameZh)」（\(respec.effectNameZh)：\(respec.effectInfoZh)）。"
-                         + (index.dataset.interpolation.libraRule.isEmpty
-                            ? "转职遗物仍在替换后的表上加减。"
-                            : index.dataset.interpolation.libraRule))
+                         + HeroStatsCopy.libraHint + "。"
+                         + (index.dataset.interpolation.libraRule.isEmpty ? "" : index.dataset.interpolation.libraRule))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -298,12 +309,14 @@ struct HeroStatsView: View {
 
                 badges(snapshot, index: index)
 
+                let allSnapshots = showAllLevels
+                    ? index.snapshots(heroKey: heroKey, modifierIDs: selectedModifiers, libraKey: activeLibraKey)
+                    : []
+
                 if showAllLevels {
                     ScrollView(.horizontal, showsIndicators: true) {
                         HeroAllLevelsTable(
-                            snapshots: index.snapshots(
-                                heroKey: heroKey, modifierIDs: selectedModifiers, libraKey: activeLibraKey
-                            ),
+                            snapshots: allSnapshots,
                             statNames: index.statNames,
                             modifierAnchorLevels: index.dataset.interpolation.modifierAnchorLevels,
                             hasModifier: snapshot.hasModifier,
@@ -311,29 +324,48 @@ struct HeroStatsView: View {
                         )
                         .padding(.bottom, 4)
                     }
+                    Text(HeroStatsCopy.allLevelsCaption(
+                        anchorLevels: index.dataset.interpolation.baseAnchorLevels
+                    ))
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 } else {
                     statTiles(snapshot, index: index)
                 }
 
-                if !snapshot.clampedStats.isEmpty {
-                    let names = snapshot.clampedStats.map { index.statNames.attributeTitle($0) }.joined(separator: "、")
-                    Text("\(names) 被减到 0 或负数，已钳到最低值 1（游戏里属性不会低于 1）。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(AppTheme.amber)
-                        .fixedSize(horizontal: false, vertical: true)
+                // 钳位汇总。全部等级视图下**按行聚合**：表里一次看得到 15 行，
+                // 只报当前那一行会与表里的「已钳位」标记对不上。
+                if showAllLevels {
+                    let clampedRows = index.clampedByLevel(allSnapshots)
+                    if !clampedRows.isEmpty {
+                        Text(HeroStatsCopy.clampSummaryByLevel(clampedRows, maxLevel: index.maxLevel))
+                            .font(.system(size: 11))
+                            .foregroundStyle(AppTheme.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if !snapshot.clampedStats.isEmpty {
+                    Text(HeroStatsCopy.clampSummary(
+                        snapshot.clampedStats.map { index.statNames.attributeTitle($0) }
+                    ))
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.amber)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("负重上限是《艾尔登法环》继承下来的遗留值：本作装备没有重量、界面也没有负重条，未经实测，仅供参考。")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let footnote = HeroTableMetrics.legacyFootnote(index.statNames) {
+                    Text(footnote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .appCard()
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 SectionHeading(title: "属性表", subtitle: "选中的角色或等级没有数据", symbol: "chart.bar.doc.horizontal")
-                Text("数据未内置")
+                Text(HeroStatsCopy.emptyData)
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             }
@@ -342,26 +374,59 @@ struct HeroStatsView: View {
         }
     }
 
-    /// 当前状态的标签条：锚点 / 推算 / 沿用锚点 / 利普拉。
+    /// 当前状态的标签条：基础表等级来源 / 词条增减量来源 / 利普拉 / 与 wiki 的差异。
+    /// 文案全部走 HeroStatsCopy，与 Windows 端 statusRow 逐字一致。
     private func badges(_ snapshot: HeroStatsSnapshot, index: HeroStatsIndex) -> some View {
-        HStack(spacing: 7) {
-            Pill(
-                text: snapshot.isAnchorLevel ? "\(level) 级是参数锚点" : "\(level) 级为插值推算",
-                color: snapshot.isAnchorLevel ? AppTheme.green : AppTheme.purpleSoft,
-                symbol: snapshot.isAnchorLevel ? "checkmark.seal" : "function"
-            )
-            if snapshot.hasInferredDelta {
-                Pill(text: "词条增减量为推算", color: AppTheme.amber, symbol: "exclamationmark.triangle")
+        let source = snapshot.modifierSource
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Pill(
+                    text: HeroStatsCopy.baseLevelBadge(level: level, isAnchor: snapshot.isAnchorLevel),
+                    color: snapshot.isAnchorLevel ? AppTheme.green : AppTheme.purpleSoft,
+                    symbol: snapshot.isAnchorLevel ? "checkmark.seal" : "function"
+                )
+                if snapshot.hasModifier {
+                    Pill(
+                        text: HeroStatsCopy.modifierCountBadge(snapshot.activeModifiers.count),
+                        color: AppTheme.purpleSoft,
+                        symbol: "sparkles"
+                    )
+                }
+                if let source {
+                    // 三档三色三图标：锚点绿 / 推算琥珀 / 沿用蓝，与 Windows 端 SOURCE_PILL
+                    // 同一张表（配色名在 RelicCore 的 HeroModifierSource.colorToken 上）。
+                    Pill(
+                        text: source.label,
+                        color: HeroFormat.sourceColor(source.source),
+                        symbol: source.source.symbolName
+                    )
+                }
+                if let respec = index.libra(activeLibraKey) {
+                    Pill(
+                        text: HeroStatsCopy.libraBadge(respec.shortTitle),
+                        color: AppTheme.amber,
+                        symbol: "arrow.triangle.2.circlepath"
+                    )
+                }
+                Spacer(minLength: 0)
             }
-            if snapshot.carriesAnchorDelta {
-                let anchor = index.dataset.interpolation.modifierAnchorLevels.max() ?? 12
-                Pill(text: "词条沿用 \(anchor) 级锚点", color: AppTheme.green, symbol: "checkmark.seal")
+            if let note = crossCheckNote(index) {
+                Text(note)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if let respec = index.libra(activeLibraKey) {
-                Pill(text: "利普拉：" + respec.shortTitle, color: AppTheme.amber, symbol: "arrow.triangle.2.circlepath")
-            }
-            Spacer(minLength: 0)
         }
+    }
+
+    /// 与外部 wiki 的逐格差异提示。
+    ///
+    /// 做了利普拉的交易之后基础表已经**整套换掉**，展示的不再是该角色的原表，
+    /// 再提「本角色与 wiki 差 N 格」会把人带偏 —— 这时改写成一句说明。
+    private func crossCheckNote(_ index: HeroStatsIndex) -> String? {
+        guard let check = index.crossCheck(for: heroKey) else { return nil }
+        if activeLibraKey != nil { return HeroStatsCopy.libraCrossCheckNote }
+        return HeroStatsCopy.crossCheckNote(count: check.mismatchCount, note: check.note)
     }
 
     private func statTiles(_ snapshot: HeroStatsSnapshot, index: HeroStatsIndex) -> some View {
@@ -374,10 +439,13 @@ struct HeroStatsView: View {
                 ForEach(names.orderedAttributes) { attribute in
                     HeroStatTile(
                         title: attribute.display,
-                        base: Double(snapshot.baseStats[attribute.key] ?? 0),
-                        final: Double(snapshot.finalStats[attribute.key] ?? 0),
+                        base: snapshot.baseStats[attribute.key].map(Double.init),
+                        final: snapshot.finalStats[attribute.key].map(Double.init),
                         integer: true,
-                        clamped: snapshot.clampedStats.contains(attribute.key)
+                        // 被钳位的那一项：大数字旁写生效值，小字写词条请求的 -9
+                        clampRequested: snapshot.clampedFrom[attribute.key] == nil
+                            ? nil
+                            : snapshot.requestedDelta[attribute.key]
                     )
                 }
             }
@@ -387,11 +455,15 @@ struct HeroStatsView: View {
             ) {
                 ForEach(names.orderedDerived) { derived in
                     HeroStatTile(
-                        title: derived.display,
-                        base: snapshot.baseDerived[derived.key] ?? 0,
-                        final: snapshot.finalDerived[derived.key] ?? 0,
+                        title: derived.inGameLabel
+                            ? derived.display
+                            : HeroStatsCopy.legacyHeader(derived.display),
+                        base: snapshot.baseDerived[derived.key],
+                        final: snapshot.finalDerived[derived.key],
                         integer: derived.integer,
-                        caption: "来自" + names.attributeTitle(derived.fromStat)
+                        caption: derived.inGameLabel
+                            ? "来自" + names.attributeTitle(derived.fromStat)
+                            : HeroStatsCopy.equipLoadHint
                     )
                 }
             }
@@ -411,7 +483,7 @@ struct HeroStatsView: View {
                 symbol: "arrow.up.arrow.down.square"
             )
             if rows.isEmpty {
-                Text("数据未内置")
+                Text(HeroStatsCopy.emptyData)
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             } else {
@@ -426,11 +498,16 @@ struct HeroStatsView: View {
                     .padding(.bottom, 4)
                 }
             }
-            Text("对比表用各角色自己的基础属性表，不含转职遗物与利普拉的交易；"
-                 + "非锚点等级（3–11、13–14 级）是锚点之间的线性插值。")
+            Text(HeroStatsCopy.compareCaption)
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
+            if let footnote = HeroTableMetrics.legacyFootnote(index.statNames) {
+                Text(footnote)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .appCard()
@@ -457,7 +534,7 @@ struct HeroStatsView: View {
                 symbol: "info.circle"
             )
 
-            HeroDisclosure(title: "插值与验证口径（\(dataset.interpolation.notes.count) 条）", isOn: $showInterpolation) {
+            HeroDisclosure(title: HeroStatsCopy.interpolationTitle(dataset.interpolation.notes.count), isOn: $showInterpolation) {
                 VStack(alignment: .leading, spacing: 9) {
                     ForEach(dataset.interpolation.notes) { note in
                         VStack(alignment: .leading, spacing: 3) {
@@ -473,7 +550,7 @@ struct HeroStatsView: View {
                 }
             }
 
-            HeroDisclosure(title: "已知取舍（\(dataset.caveats.count) 条）", isOn: $showCaveats) {
+            HeroDisclosure(title: HeroStatsCopy.caveatsTitle(dataset.caveats.count), isOn: $showCaveats) {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(Array(dataset.caveats.enumerated()), id: \.offset) { item in
                         HeroBulletText(text: item.element)
@@ -481,7 +558,7 @@ struct HeroStatsView: View {
                 }
             }
 
-            HeroDisclosure(title: "数据出处（\(dataset.sources.count) 条）与外部对照", isOn: $showSources) {
+            HeroDisclosure(title: HeroStatsCopy.sourcesTitle(dataset.sources.count), isOn: $showSources) {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(Array(dataset.sources.enumerated()), id: \.offset) { item in
                         HeroDetailRow(
@@ -501,17 +578,23 @@ struct HeroStatsView: View {
                 }
             }
 
+            // 数据版本块：5 行标签与取值口径两端逐字一致（HeroStatsCopy.versionLabels）
             VStack(alignment: .leading, spacing: 5) {
-                HeroDetailRow(label: "游戏版本", value: dataset.gameVersion)
-                HeroDetailRow(label: "数据版本", value: dataset.dataVersion)
-                if !dataset.generatedAt.isEmpty {
-                    HeroDetailRow(label: "生成时间", value: dataset.generatedAt)
-                }
-                HeroDetailRow(label: "数据集结构版本", value: "schemaVersion \(dataset.schemaVersion)")
+                HeroDetailRow(label: HeroStatsCopy.versionLabels[0], value: dataset.gameVersion)
+                HeroDetailRow(label: HeroStatsCopy.versionLabels[1], value: dataset.dataVersion)
                 HeroDetailRow(
-                    label: "收录",
-                    value: "\(dataset.heroes.count) 位夜行者 × \(index.maxLevel) 级 · "
-                        + "\(dataset.statModifiers.count) 条转职遗物词条 · \(dataset.libraRespecs.count) 笔利普拉交易"
+                    label: HeroStatsCopy.versionLabels[2],
+                    value: dataset.generatedAt.isEmpty ? HeroStatsCopy.missing : dataset.generatedAt
+                )
+                HeroDetailRow(label: HeroStatsCopy.versionLabels[3], value: "schemaVersion \(dataset.schemaVersion)")
+                HeroDetailRow(
+                    label: HeroStatsCopy.versionLabels[4],
+                    value: HeroStatsCopy.contentSummary(
+                        heroes: dataset.heroes.count,
+                        maxLevel: index.maxLevel,
+                        modifiers: dataset.statModifiers.count,
+                        libra: dataset.libraRespecs.count
+                    )
                 )
             }
             .padding(10)

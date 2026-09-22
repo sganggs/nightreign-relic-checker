@@ -1,13 +1,33 @@
 import SwiftUI
 import RelicCore
 
-// 「角色属性」页的两张表：全部等级表（1–15 级）与同级对比表（10 个角色）。
+// 「角色属性」页的两张表：全部等级表（1 … 数据集声明的最大等级）与同级对比表。
 // 纯展示，所有数值都由 RelicCore 的 HeroStatsIndex 算好后传进来。
+//
+// 两张表的缺数据一律是破折号（HeroStatsText.statText / derivedText），**不要**退回 0：
+// 0 是真实数值，破折号才是「没有」—— 全部等级表之前是这三张表里唯一写 0 的。
+//
+// 「负重上限」是《艾尔登法环》继承下来的遗留列（本作装备没有重量），两张表的列头
+// 都带 `*` 注记、表下都有同一条脚注 —— 单等级卡片上有小字提示，表格里没有地方写，
+// 之前只有卡片提到这件事，表格里的数字看着就像实测值。
 
 enum HeroTableMetrics {
     static let levelColumn: CGFloat = 54
-    static let statColumn: CGFloat = 56
-    static let derivedColumn: CGFloat = 68
+    static let statColumn: CGFloat = 62         // 三位数 + 逐格的「钳」角标（8.5pt）也放得下
+    static let derivedColumn: CGFloat = 74      // 「负重上限 *」比原来多一个注记符
+
+    /// 列头文案：遗留列（没有游戏内 UI 标签的派生值，当前只有负重上限）带 `*`。
+    static func derivedHeader(_ key: String, names: HeroStatNames) -> String {
+        let title = names.derivedTitle(key)
+        guard let entry = names.derivedEntry(key), !entry.inGameLabel else { return title }
+        return HeroStatsCopy.legacyHeader(title)
+    }
+
+    /// 表下的脚注：只在表里真有遗留列时才写。
+    static func legacyFootnote(_ names: HeroStatNames) -> String? {
+        let hasLegacy = names.derivedKeys.contains { names.derivedEntry($0)?.inGameLabel == false }
+        return hasLegacy ? HeroStatsCopy.equipLoadFootnote : nil
+    }
     /// 「说明」列最长的一条是「参数锚点 · 词条沿用 12 级锚点 · 已钳位」
     /// （10pt 系统字实测 173.8pt，出现在「利普拉 + 转职遗物」把属性减到下限的 15 级行），
     /// 留到 186 才不会把结尾的「已钳位」吃掉。
@@ -18,7 +38,7 @@ enum HeroTableMetrics {
 
 // MARK: - 全部等级表
 
-/// 1–15 级完整表；锚点行（1 / 2 / 12 / 15）高亮。
+/// 1 … 数据集声明的最大等级的完整表；锚点行（由数据集的 baseAnchorLevels 决定）高亮。
 struct HeroAllLevelsTable: View {
     let snapshots: [HeroStatsSnapshot]
     let statNames: HeroStatNames
@@ -43,7 +63,10 @@ struct HeroAllLevelsTable: View {
                 HeroHeaderCell(title: statNames.attributeTitle(key), width: HeroTableMetrics.statColumn)
             }
             ForEach(statNames.derivedKeys, id: \.self) { key in
-                HeroHeaderCell(title: statNames.derivedTitle(key), width: HeroTableMetrics.derivedColumn)
+                HeroHeaderCell(
+                    title: HeroTableMetrics.derivedHeader(key, names: statNames),
+                    width: HeroTableMetrics.derivedColumn
+                )
             }
             HeroHeaderCell(title: "说明", width: HeroTableMetrics.noteColumn, alignment: .leading)
         }
@@ -63,28 +86,45 @@ struct HeroAllLevelsTable: View {
             .frame(width: HeroTableMetrics.levelColumn, alignment: .leading)
 
             ForEach(statNames.attributeKeys, id: \.self) { key in
-                let base = Double(snapshot.baseStats[key] ?? 0)
-                let final = Double(snapshot.finalStats[key] ?? 0)
-                HeroValueCell(
-                    text: HeroFormat.value(final, integer: true),
-                    width: HeroTableMetrics.statColumn,
-                    tint: final == base ? .white : HeroFormat.deltaColor(final - base),
-                    weight: final == base ? .medium : .bold
-                )
-                .help(final == base ? "" : "基础 \(Int(base)) → \(Int(final))")
+                // 缺这一项属性时给破折号，不要退回 0（与同级对比表、单等级卡片同一条）
+                let base = snapshot.baseStats[key].map(Double.init)
+                let final = snapshot.finalStats[key].map(Double.init)
+                let changed = base != nil && final != nil && base != final
+                let clampedFrom = snapshot.clampedFrom[key]
+                HStack(spacing: 3) {
+                    Spacer(minLength: 0)
+                    Text(HeroStatsText.statText(snapshot.finalStats[key]))
+                        .font(.system(size: 12, weight: changed ? .bold : .medium, design: .rounded))
+                        .foregroundStyle(changed ? HeroFormat.deltaColor((final ?? 0) - (base ?? 0)) : .white)
+                        .lineLimit(1)
+                    // 逐格的「钳」角标：这一行哪一格被钳、钳位前是多少，鼠标停上去看得到
+                    // （Windows 端表里是同一个角标 + 同一句 title）。
+                    if clampedFrom != nil {
+                        Text(HeroStatsCopy.clampCellTag)
+                            .font(.system(size: 8.5, weight: .bold))
+                            .foregroundStyle(AppTheme.red)
+                    }
+                }
+                .frame(width: HeroTableMetrics.statColumn, alignment: .trailing)
+                .help(cellHelp(base: base, final: final, changed: changed, clampedFrom: clampedFrom))
             }
 
             ForEach(statNames.derivedKeys, id: \.self) { key in
                 let entry = statNames.derivedEntry(key)
-                let base = snapshot.baseDerived[key] ?? 0
-                let final = snapshot.finalDerived[key] ?? 0
+                let integer = entry?.integer ?? true
+                // 缺 growthGraph / 缺来源属性时是 nil，显示破折号而不是 0
+                let base = snapshot.baseDerived[key]
+                let final = snapshot.finalDerived[key]
+                let changed = base != nil && final != nil && base != final
                 HeroValueCell(
-                    text: HeroFormat.value(final, integer: entry?.integer ?? true),
+                    text: HeroFormat.value(final, integer: integer),
                     width: HeroTableMetrics.derivedColumn,
-                    tint: final == base ? AppTheme.secondaryText : HeroFormat.deltaColor(final - base),
-                    weight: final == base ? .medium : .bold
+                    tint: changed ? HeroFormat.deltaColor((final ?? 0) - (base ?? 0)) : AppTheme.secondaryText,
+                    weight: changed ? .bold : .medium
                 )
-                .help(final == base ? "" : "基础 \(HeroFormat.value(base, integer: entry?.integer ?? true)) → \(HeroFormat.value(final, integer: entry?.integer ?? true))")
+                .help(changed
+                      ? "基础 \(HeroFormat.value(base, integer: integer)) → \(HeroFormat.value(final, integer: integer))"
+                      : "")
             }
 
             Text(note(for: snapshot))
@@ -103,19 +143,26 @@ struct HeroAllLevelsTable: View {
         )
     }
 
-    /// 备注列：基础表是否锚点 + 勾了词条时的推算标记。
+    /// 属性格子的 tooltip：被钳的格子写「原为 N，已钳到最低 1」（比「基础 9 → 1」多说了
+    /// 一件事：这一格是被钳的，原值是多少），其余变动的格子写「基础 x → y」。
+    /// 与 Windows 端表格里 `title=clampedFromNote(raw)` 逐字一致。
+    private func cellHelp(base: Double?, final: Double?, changed: Bool, clampedFrom: Int?) -> String {
+        if let clampedFrom { return HeroStatsCopy.clampedFromNote(clampedFrom) }
+        guard changed, let base, let final else { return "" }
+        return "基础 \(Int(base)) → \(Int(final))"
+    }
+
+    /// 备注列：基础表是否锚点 + 勾了词条时的增减量来源标记 + 是否钳位。
+    /// 两端逐字一致（Windows 端同名的三个 pill 用同一串文案）。
     private func note(for snapshot: HeroStatsSnapshot) -> String {
         var parts: [String] = []
-        if snapshot.isAnchorLevel {
-            parts.append("参数锚点")
-        } else {
-            parts.append("插值")
-        }
-        if hasModifier, let tag = HeroStatsText.inferenceTag(level: snapshot.level, anchorLevels: modifierAnchorLevels) {
-            parts.append("词条" + tag)
+        parts.append(snapshot.isAnchorLevel ? HeroStatsCopy.baseAnchorTag : HeroStatsCopy.baseInterpolatedTag)
+        if hasModifier,
+           let tag = HeroStatsText.modifierSource(level: snapshot.level, anchorLevels: modifierAnchorLevels) {
+            parts.append(tag.label)
         }
         if !snapshot.clampedStats.isEmpty {
-            parts.append("已钳位")
+            parts.append(HeroStatsCopy.clampRowTag)
         }
         return parts.joined(separator: " · ")
     }
@@ -165,7 +212,7 @@ struct HeroCompareTable: View {
             }
             ForEach(statNames.derivedKeys, id: \.self) { key in
                 HeroHeaderCell(
-                    title: statNames.derivedTitle(key),
+                    title: HeroTableMetrics.derivedHeader(key, names: statNames),
                     width: HeroTableMetrics.derivedColumn,
                     sortState: sortState(for: .derived(key)),
                     onTap: { onSort(.derived(key)) }
@@ -188,22 +235,22 @@ struct HeroCompareTable: View {
             .frame(width: HeroTableMetrics.heroColumn, alignment: .leading)
 
             ForEach(statNames.attributeKeys, id: \.self) { key in
-                let value = Double(row.stats[key] ?? 0)
+                let value = row.stats[key].map(Double.init)
                 HeroValueCell(
-                    text: HeroFormat.value(value, integer: true),
+                    text: HeroStatsText.statText(row.stats[key]),
                     width: HeroTableMetrics.statColumn,
-                    tint: best[.stat(key)] == value ? AppTheme.green : .white,
-                    weight: best[.stat(key)] == value ? .bold : .medium
+                    tint: value != nil && best[.stat(key)] == value ? AppTheme.green : .white,
+                    weight: value != nil && best[.stat(key)] == value ? .bold : .medium
                 )
             }
             ForEach(statNames.derivedKeys, id: \.self) { key in
                 let entry = statNames.derivedEntry(key)
-                let value = row.derived[key] ?? 0
+                let value = row.derived[key]
                 HeroValueCell(
                     text: HeroFormat.value(value, integer: entry?.integer ?? true),
                     width: HeroTableMetrics.derivedColumn,
-                    tint: best[.derived(key)] == value ? AppTheme.green : AppTheme.secondaryText,
-                    weight: best[.derived(key)] == value ? .bold : .medium
+                    tint: value != nil && best[.derived(key)] == value ? AppTheme.green : AppTheme.secondaryText,
+                    weight: value != nil && best[.derived(key)] == value ? .bold : .medium
                 )
             }
         }
