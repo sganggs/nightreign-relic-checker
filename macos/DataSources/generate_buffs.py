@@ -94,7 +94,7 @@ PARAM_DIR = HERE / "raw" / "params"
 MSG_DIR = HERE / "raw" / "msg"
 DEFAULT_OUT = ROOT / "data" / "nightreign-buffs-v1.03.5.json"
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 SMITHBOX_COMMIT = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
@@ -109,6 +109,49 @@ CHAIN_INHERIT_LIMIT = 4
 # bump would not need this, but v1 -> v2 also narrowed countsAsDamage and
 # affectsAllies, which silently changes any ranking built on v1).
 SCHEMA_CHANGELOG: list[dict[str, Any]] = [
+    {
+        "version": 5,
+        "zh": "① **buffs[].target 再修正 43 条 self→enemy：命中投递槽补全第三条路径。** "
+              "v4 把『命中槽』从 Bullet.spEffectId0..4 扩到 atkOccurrenceSpEffectId，改判了 33 条油脂／"
+              "附加属性武器的异常累积行，但同一机制还有一条投递路径没纳入："
+              "EquipParamWeapon.spEffectBehaviorId0..2（武器打中目标时交给目标的负载）与 "
+              "AttachEffectParam.onHitSpEffect（『攻击附带异常状态』遗物词条的命中槽）。"
+              "结果 3176『[Item] Poison Grease (Right) - Poison』已判 enemy，"
+              "而与它**逐列同构**的 106010『Lvl 1-2 Poison +45』（毒匕首，"
+              "poizonAttackPower／poisonInflictRate=1／isUseStatusAilmentAtkPowerCorrect=1／"
+              "cycleOccurrenceSpEffectId=505／stateInfo=2／spCategory=10004／effectEndurance=40／"
+              "changeHpPoint=10 的中毒 DoT 全部相同，只差阵营位与投递槽）仍是 self。"
+              "v5 把这两个槽纳入同一套判定（阵营位优先、两侧都开时看负载类型），"
+              "28 条武器自带异常属性累积行 ＋ 15 条 8110000-8110502『[Weapon] Attacks Inflict X』"
+              "共 43 条改判 enemy，全部是 status／flag 负载、countsAsDamage=false，不影响伤害乘积；"
+              "新增 targetSource weaponHitOpposeOnly／weaponHitSelfOnly／weaponHitStatusPayload。"
+              "counts.buffsByTarget：self 759→716、enemy 65→108。"
+              "**做『异常状态累积』榜的页面必须重取**：武器／词条带来的累积现在全在 target=enemy 侧。"
+              "② **新增 buffs[].selfInflictedStatus（bool，仅 true 时出现，20 条）。** "
+              "反方向的坑：target=self、阵营位 effectTargetSelfTarget=1／effectTargetOpposeTarget=0、"
+              "且带 status 组**加算点数**（valueKind=flat 的 xxxAttackPower）的行，累的是**玩家自己**"
+              "——1753『Seppuku - Self Blood Loss』+9999、"
+              "1732002『Frenzied Burst (Self Madness +20)』、6851301／8810301『血量没有全满时，累积中毒量表』"
+              "（简中 descZh 直接写『会持续受到损伤』）。v4 把其中 5 条由 conditional 改判成 passive，"
+              "按『target=self ＋ activation=passive』默认计入的异常累积榜会把自伤列成玩家增益。"
+              "xxxInflictRate（multiplier，含义是『自身造成的累积倍率』）刻意不算在内，"
+              "99620『艾奥尼亚蝶』的状态标签「强化异常状态腥红腐败」证明那是真实增益、方向相反。"
+              "配套 counts.buffsWithSelfInflictedStatus、diagnostics.selfInflictedStatus + Note，"
+              "notes.target／notes.ranking 第⑤步已写明 status 轴的过滤口径。"
+              "③ **enums.stateInfo 的条数以实测为准并纳入自检。** 实际 37 项，v4 的修复报告与说明写成 36 项。"
+              "新增 counts.stateInfoLabels，self_check 改为断言 enums.stateInfo 的键集合与"
+              "全表非 0 stacking.stateInfo 的取值集合**完全相等**（既不许缺标签，也不许有死标签），"
+              "口径不会再只靠散文维护。"
+              "④ **stackLadder 的字段口径写进说明，并更正排除举例。** 新增 notes.stackLadder："
+              "tiers 含第 1 层、tierSpEffectIds 是第 2 层起且长度恒为 tiers-1、"
+              "topRates 是最后一层、saved 表示 saveCategory≠-1。"
+              "diagnostics.stackLaddersNote 里『[Relic] Improved Throwing Pot Damage +1/+2』"
+              "引用了不存在的行名（参数表只有 7040300 ×1.15 与 7040301『…… +1』×1.30 两条有名字的档位，"
+              "空行名的 7040302 才是 ×1.35），已改写成真实结构；"
+              "self_check 增加 tierSpEffectIds 升序、不含自身、不与已收录 buff 相交、saved 必为 true 四条断言。"
+              "⑤ diagnostics.opposeBitsWithoutHitSlot 由 42 条降为 37 条（1939、105510、8110200-202 已改判），"
+              "其 Note 里把『武器行为槽』列为『无法确认投递路径』的说法是错的，已更正。",
+    },
     {
         "version": 4,
         "zh": "① **activation 判定不再把计时列当成发动条件。** v3 的第③条规则是『conditions 非空 → conditional』，"
@@ -135,6 +178,10 @@ SCHEMA_CHANGELOG: list[dict[str, Any]] = [
               "弹道投递版（1722000 毒雾、1631001 授血）自相矛盾地一个标 self 一个标 enemy。"
               "现已把 atkOccurrenceSpEffectId 纳入命中槽，新增 targetSource "
               "attackHitOpposeOnly／attackHitSelfOnly／attackHitStatusPayload。"
+              "（**v5 补充**：这一轮只补了一半——同一机制还有 EquipParamWeapon.spEffectBehaviorId0..2 与 "
+              "AttachEffectParam.onHitSpEffect 两个命中槽没纳入，43 条武器自带异常属性／"
+              "『攻击附带异常状态』词条的累积行仍留在 self，其中 106010『Lvl 1-2 Poison +45』"
+              "与本条已改判的 3176 逐列同构。v5 已按同一规则改判，见 v5 条目①。）"
               "④ **修正 v3 changelog ⑤ 与 enums.targetSource 里一句与参数相反的说明**："
               "v3 写『3176 毒油脂……根本没走命中槽……本数据集正确地把它标成 target=\"self\"』，"
               "但 3176 的投递路径正是 refId_default->atkOccurrenceSpEffectId，"
@@ -915,6 +962,41 @@ BULLET_SHOOTER_VIA_RE = re.compile(r"Bullet\d+\.spEffectIDForShooter(?:->|$)")
 # faction bits, same spCategory, same cycleOccurrenceSpEffectId, opposite label.
 ATTACK_HIT_VIA_RE = re.compile(r"atkOccurrenceSpEffectId(?:->|$)")
 
+# The *third* hit slot, and the one v4 still missed.  EquipParamWeapon's
+# spEffectBehaviorId0..2 ("特殊効果行動ID") and AttachEffectParam.onHitSpEffect
+# are not resident buffs on the wielder -- they are the payload the weapon /
+# relic affix hands to whatever the attack connects with.  Two independent
+# reads of the raw CSV say so:
+#   * 106010 "Lvl 1-2 Poison +45" (the Poison Dagger's buildup, reached through
+#     EquipParamWeapon.spEffectBehaviorId0) is column-for-column identical to
+#     3176 "[Item] Poison Grease (Right) - Poison" -- poizonAttackPower,
+#     poisonInflictRate=1, isUseStatusAilmentAtkPowerCorrect=1,
+#     cycleOccurrenceSpEffectId=505, stateInfo=2, spCategory=10004,
+#     effectEndurance=40, changeHpPoint=10 / changeHpRate=0.1 (the poison DoT
+#     tick) -- and v4 already reclassified 3176 as target="enemy".  The only
+#     differences are the faction bits and the buildup value.
+#   * the delivery chain itself: EquipParamGoods 1460 "[Common] Poison Grease"
+#     -> SpEffect 3175 "[Item] Poison Grease (Right)" (the 30 s buff that really
+#     does sit on the player: wepParamChange=1, poizonAttackPower=0)
+#     -> atkOccurrenceSpEffectId 3176.  The buildup lives one hop further out,
+#     on the thing that was hit; reading it as a player-side buff would mean the
+#     grease buff re-buffs the player on every swing.
+#   * 105000 "Lvl 1-1 Blood Loss +30" carries changeHpPoint=100 /
+#     changeHpRate=12.5 -- the blood-loss burst.  That damage is dealt to the
+#     victim, not to the wielder holding the dagger.
+# v4 left 43 such rows (28 weapon-buildup rows + 15 "[Weapon] Attacks Inflict X"
+# relic affixes) on target="self", structurally identical to the grease rows it
+# had just moved to "enemy".  The faction bits are still asked first, so the two
+# genuinely self-directed rows that use this slot (704030 "[Skill - Raider]
+# Retaliate (Fully Restore Stamina)", 5121800 "[Ultimate - Recluse] Soulblood
+# Song", both effectTargetSelfTarget=1 / effectTargetOpposeTarget=0) stay self.
+WEAPON_HIT_VIA_RE = re.compile(r"(?:spEffectBehaviorId[0-2]|onHitSpEffect)(?:->|$)")
+
+# Any of the three "handed to what the attack hit" slots (the Bullet slots have
+# their own branch because the bullet's AtkParam gives them one extra question).
+HIT_SLOT_VIA_RE = re.compile(
+    r"(?:atkOccurrenceSpEffectId|spEffectBehaviorId[0-2]|onHitSpEffect)(?:->|$)")
+
 # Revenant family (Helen / Frederick / Sebastian) stat scaling: these rows are
 # applied to the summons, not to the player.
 SUMMON_ROW_RE = re.compile(
@@ -951,7 +1033,8 @@ TARGET_SOURCE_LABELS = {
         "区分它投给敌方还是己方，判定为敌方。"
         "⚠️ 这两个位**单独出现不足以判定 target**：它们的语义是『这份异常累积／效果允许打给哪个阵营』，"
         "不是『这条 SpEffect 挂在谁身上』，必须先确认投递路径确实是命中槽"
-        "（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId）。"
+        "（Bullet.spEffectId0..4、SpEffectParam.atkOccurrenceSpEffectId、"
+        "EquipParamWeapon.spEffectBehaviorId0..2 或 AttachEffectParam.onHitSpEffect）。"
         "本版本仍有一批条目带着 oppose-only 的阵营位、却只能靠 Paramdex 行名或武器行为槽追溯来源，"
         "投递路径无法确认，一律保守地按 self 处理——清单见 diagnostics.opposeBitsWithoutHitSlot，"
         "那是缺省而不是已证实的结论。"
@@ -982,6 +1065,28 @@ TARGET_SOURCE_LABELS = {
         "（没有任何倍率或攻击力加算）——这种行是『打中谁就给谁累积』，视为挂在被命中的敌人身上"
         "（例：3141『[Item] Freezing Grease (Right) - Frostbite』、"
         "1449001『[Sorcery] Frozen Armament - Frost』、1632002『血炎武器 - 出血』）。",
+    "weaponHitOpposeOnly":
+        "全部来源都经由**武器／词条的命中槽**投递——EquipParamWeapon.spEffectBehaviorId0..2"
+        "（『特殊効果行動ID』，武器打中目标时交给目标的负载）或 AttachEffectParam.onHitSpEffect"
+        "（遗物词条『攻击附带异常状态』的命中槽）——且阵营过滤位 effectTargetSelfTarget=0／"
+        "effectTargetOpposeTarget=1，只能打给敌方。"
+        "例：1939『[Serpent Bow] Arrow Poison』、105510『Lvl 1-2 Sleep +45』（托莉娜剑）、"
+        "8110200-202『[Weapon] Attacks Inflict Sleep - Potency 1-3』。",
+    "weaponHitSelfOnly":
+        "全部来源都经由 EquipParamWeapon.spEffectBehaviorId0..2 或 AttachEffectParam.onHitSpEffect 投递，"
+        "但阵营位只允许打给自己（effectTargetSelfTarget=1 且 effectTargetOpposeTarget=0，"
+        "或两侧都开而负载不只是异常累积）——这是『命中瞬间给自己上 buff』的形态，效果挂在玩家身上。"
+        "本版本没有实例进入数据集（704030『[Skill - Raider] Retaliate (Fully Restore Stamina)』与 "
+        "5121800『[Ultimate - Recluse] Soulblood Song』走的就是这条路，但它们没有合格的倍率字段，未入选）。",
+    "weaponHitStatusPayload":
+        "全部来源都经由 EquipParamWeapon.spEffectBehaviorId0..2 或 AttachEffectParam.onHitSpEffect 投递，"
+        "阵营过滤两侧都开，而负载只有异常累积／开关（没有任何倍率或攻击力加算）——"
+        "『打中谁就给谁累积』，挂在被命中的敌人身上。"
+        "这是各类武器自带的出血／中毒／冻伤／腐败／发狂累积行（105000『Lvl 1-1 Blood Loss +30』、"
+        "106010『Lvl 1-2 Poison +45』…）以及『攻击附带异常状态』遗物词条（8110000-8110502）。"
+        "判定依据：106010 与已判 enemy 的 3176『[Item] Poison Grease (Right) - Poison』逐列同构"
+        "（stateInfo=2、spCategory=10004、cycleOccurrenceSpEffectId=505、effectEndurance=40、"
+        "changeHpPoint=10／changeHpRate=0.1 的中毒持续伤害），只差阵营位与投递槽。",
     "bulletHitSupportBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 伤害修正全为 0（纯辅助弹道，只会罩到己方）",
     "bulletHitStatusMist": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，弹道本身不造成伤害，且效果只有异常状态累积（站在雾里的人吃累积，视为敌人侧）",
     "bulletHitOffensiveBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 是会造成伤害的攻击弹道（命中的是敌人）",
@@ -1904,21 +2009,31 @@ def build() -> dict[str, Any]:
                 # (Freezing Mist), not a party buff.
                 return "enemy", "bulletHitStatusMist"
             return "enemy", "bulletHitOffensiveBullet"
-        if vias and all(ATTACK_HIT_VIA_RE.search(via) for via in vias):
+        if vias and all(HIT_SLOT_VIA_RE.search(via) for via in vias):
             # every route is "applied when the attack connects".  Same three
             # questions as the bullet branch, minus the bullet: the faction
             # bits first, and when both are open, what the payload is.
+            #
+            # The prefix only records *which* hit slot delivered it, so the
+            # verdict can be traced back to a column; the three questions are
+            # identical for all of them.  A row reachable through more than one
+            # family of hit slot (none in this regulation) is filed under
+            # attackHit*.
+            prefix = ("attackHit"
+                      if any(ATTACK_HIT_VIA_RE.search(via) for via in vias)
+                      else "weaponHit")
             self_side = row.get("effectTargetSelfTarget") == "1"
             oppose_side = row.get("effectTargetOpposeTarget") == "1"
             if oppose_side and not self_side:
-                return "enemy", "attackHitOpposeOnly"
+                return "enemy", prefix + "OpposeOnly"
             if self_side and not oppose_side:
-                return "self", "attackHitSelfOnly"
+                return "self", prefix + "SelfOnly"
             if not rate_groups - {"status", "flag"}:
                 # nothing but ailment buildup -- it is what the weapon puts on
-                # the thing it hit (greases, Frozen Armament, Bloodflame Blade)
-                return "enemy", "attackHitStatusPayload"
-            return "self", "attackHitSelfOnly"
+                # the thing it hit (greases, Frozen Armament, Bloodflame Blade,
+                # and every weapon's own bleed / poison / frost buildup row)
+                return "enemy", prefix + "StatusPayload"
+            return "self", prefix + "SelfOnly"
         if ALLIES_ROW_RE.search(name):
             return "ally", "alliesRow"
         return "self", "default"
@@ -2142,6 +2257,37 @@ def build() -> dict[str, Any]:
             sp_id, row, sources[sp_id],
             {RATE_FIELD_BY_KEY[key]["group"] for key in rates})
 
+        # --- ailment buildup that lands on the player ---------------------
+        # v5.  A status-group value on a row that sits on the player normally
+        # means "your attacks inflict +X buildup".  It means the opposite when
+        # the faction filter only allows the row to be applied to *yourself*
+        # (effectTargetSelfTarget=1 / effectTargetOpposeTarget=0): then the
+        # buildup accumulates on the player.  That is Seppuku's blood loss
+        # (1753, +9999), the Frenzied Flame incantations' self madness
+        # (1731002/1732002/... , whose 简中 descZh literally reads
+        # 「血量、专注值会受到大损伤」) and the "poison builds up while below max
+        # HP" relic affixes (6851301/8810301, descZh 「会持续受到损伤」).
+        # v4 moved five of them from conditional to passive, so an "ailment
+        # buildup" ranking that filters on target=self + activation=passive
+        # lists self-harm as if it were a player buff.  The flag is structural
+        # (faction bits + payload kind), not an id list.
+        #
+        # Only the *flat* buildup columns qualify.  The xxxInflictRate
+        # multipliers are documented (and used) the other way round -- 「自身造成
+        # 的累积倍率」, the rate the bearer inflicts on others -- and the game's
+        # own text confirms it: 99620 「艾奥尼亚蝶」 diseaseInflictRate=1.3 carries
+        # the label 「强化异常状态腥红腐败」 / "Strengthen Scarlet Rot Effect",
+        # while every flat row here carries a *suffering* label instead
+        # (「异常状态：中毒」+「会持续受到损伤」).  Mixing the two would flag the
+        # butterfly's real rot bonus as self-harm.
+        self_inflicted_status = (
+            buff_target == "self"
+            and any(RATE_FIELD_BY_KEY[key]["group"] == "status"
+                    and RATE_FIELD_BY_KEY[key]["valueKind"] == "flat"
+                    for key in rates)
+            and row.get("effectTargetSelfTarget") == "1"
+            and row.get("effectTargetOpposeTarget") == "0")
+
         sp_category = int(row["spCategory"])
         behaviour, _behaviour_zh = spcategory_behaviour(sp_category)
         if behaviour in ("none", "stackSelf"):
@@ -2254,6 +2400,10 @@ def build() -> dict[str, Any]:
             "activation": buff_activation,
             "activationSource": buff_activation_source,
         }
+        if self_inflicted_status:
+            # v5, optional, only ever true.  See notes.target / enums.target
+            # and diagnostics.selfInflictedStatus.
+            entry["selfInflictedStatus"] = True
         if stack_ladder:
             entry["stackLadder"] = stack_ladder
         if inferred_name:
@@ -2507,7 +2657,29 @@ def build() -> dict[str, Any]:
                   "与结构完全相同、由弹道投递的同类自相矛盾）。"
                   "但它们**确实是玩家的异常累积手段**——要做『异常状态累积』榜时不要只留 target=self，"
                   "应按 sources[].kind 取玩家可获得的来源（goods／spell／weaponPassive…），"
-                  "target 在那条轴上表示的是『累积加在谁身上』，本来就该是 enemy。",
+                  "target 在那条轴上表示的是『累积加在谁身上』，本来就该是 enemy。"
+                  "**v5 修正（命中槽补全）**：v4 只把 Bullet.spEffectId0..4 与 atkOccurrenceSpEffectId "
+                  "当成命中槽，漏了同一机制的另外两条投递路径——EquipParamWeapon.spEffectBehaviorId0..2"
+                  "（武器自带的出血／中毒／冻伤／腐败／发狂累积）与 AttachEffectParam.onHitSpEffect"
+                  "（『攻击附带异常状态』遗物词条）。结果 43 条与油脂行逐列同构的累积行仍是 self："
+                  "106010『Lvl 1-2 Poison +45』（毒匕首）与已判 enemy 的 3176『[Item] Poison Grease (Right) "
+                  "- Poison』除阵营位与投递槽外完全相同。v5 已按同一套规则改判这 43 条为 enemy，"
+                  "新增 targetSource weaponHitOpposeOnly／weaponHitSelfOnly／weaponHitStatusPayload。"
+                  "**做『异常状态累积』榜的页面请重取**：现在武器／词条带来的累积全部在 target=enemy 侧。"
+                  "**v5 新增 selfInflictedStatus**：反过来，有 20 条 target=self 的行，其 status 加算点数是"
+                  "累在玩家自己身上的自伤（切腹、癫火自伤、『血量没有全满时累积中毒量表』），"
+                  "带 `selfInflictedStatus: true`，异常累积榜必须排除，详见 "
+                  "diagnostics.selfInflictedStatus。",
+        "stackLadder": "`stackLadder`（可缺，只出现在叠层阶梯的第 1 层上）各键的口径："
+                       "`tiers`＝**阶梯总层数，含第 1 层**（本条自己）；"
+                       "`tierSpEffectIds`＝**第 2 层起、不含第 1 层**的 spEffectId 列表，"
+                       "长度恒等于 tiers-1，按层数升序，这些 id 不会作为独立 buff 出现在 buffs[] 里；"
+                       "`topRates`＝最后一层（tierSpEffectIds 的最后一个）的数值，键集合与本条 rates 完全相同，"
+                       "本条自身的 rates 就是第 1 层数值；"
+                       "`saved`＝true 表示该行 saveCategory≠-1，层数会存进存档槽（这也是把它和"
+                       "『可分别装备的词条档位』区分开的依据，见 diagnostics.stackLaddersNote）。"
+                       "同层互斥：任何时刻只有一层生效，**各层数值绝不能相乘**，"
+                       "页面要么显示第 1 层并注明满层值，要么让用户选层数。",
         "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。"
                       "`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，"
                       "而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，"
@@ -2581,7 +2753,11 @@ def build() -> dict[str, Any]:
                    "⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` "
                    "决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，"
                    "attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，"
-                   "stance／status 另开一条轴，special／flag／economy 只展示不乘；"
+                   "stance／status 另开一条轴——**status（异常累积）那条轴的过滤口径与伤害轴不同**："
+                   "武器／油脂／附加属性带来的累积 target 是 enemy（累积加在被命中者身上，要按 "
+                   "sources[].kind 取玩家可获得的来源而不是按 target=self 取），"
+                   "而 target=self 且带 `selfInflictedStatus: true` 的是自伤（切腹、癫火自伤），必须排除；"
+                   "special／flag／economy 只展示不乘；"
                    "⑥ 用 `stacking.group` 分组去重（同组按 `spCategoryBehavior` 处理）后跨组相乘；"
                    "⑦ 列表一律显示 `displayNameZh`（已保证唯一）。",
         "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind："
@@ -2732,6 +2908,11 @@ def build() -> dict[str, Any]:
         "buffsByAttackContext": dict(sorted(attack_context_counts.items())),
         "buffsWithAttackContext": sum(1 for b in buffs if b["scope"].get("attackContexts")),
         "buffsWithStackLadder": sum(1 for b in buffs if b.get("stackLadder")),
+        # v5.  Machine-readable counterparts of two claims that used to live
+        # only in prose (and drifted): how many rows carry self-inflicted
+        # ailment buildup, and how many stateInfo labels enums.stateInfo ships.
+        "buffsWithSelfInflictedStatus": sum(1 for b in buffs if b.get("selfInflictedStatus")),
+        "stateInfoLabels": len(STATE_INFO_TYPE),
         "displayNameZhFallingBackToSpEffectId": len(display_id_fallback),
         "buffsAffectingAllies": sum(1 for b in buffs if b["affectsAllies"]),
         "buffsWithoutChineseName": sum(1 for b in buffs if not b["nameZh"]),
@@ -2878,13 +3059,55 @@ def build() -> dict[str, Any]:
                                        "突刺反击族的 scope 甚至是 affectsSorcery/Incantation/Shaman 全 true）。",
         "opposeBitsWithoutHitSlot": sorted(oppose_without_hit_slot),
         "opposeBitsWithoutHitSlotNote": "这些条目的 effectTargetSelfTarget=0／effectTargetOpposeTarget=1"
-                                        "（阵营过滤位说『只允许打给敌方』），但它们的来源全部是 Paramdex 行名推断、"
-                                        "武器行为槽或其它无法确认投递路径的通道，"
-                                        "既没有 Bullet 命中槽也没有 atkOccurrenceSpEffectId，"
-                                        "因此仍按保守缺省判成 target=\"self\"。"
+                                        "（阵营过滤位说『只允许打给敌方』），但它们的来源全部是 Paramdex 行名推断"
+                                        "或其它无法确认投递路径的通道——四个已知命中槽"
+                                        "（Bullet.spEffectId0..4、atkOccurrenceSpEffectId、"
+                                        "EquipParamWeapon.spEffectBehaviorId0..2、AttachEffectParam.onHitSpEffect）"
+                                        "一个都对不上，因此仍按保守缺省判成 target=\"self\"。"
                                         "**这是缺省而不是已证实的结论**：阵营位本身只说明『这份效果允许打给谁』，"
                                         "不说明『这条 SpEffect 挂在谁身上』。"
-                                        "若下一轮能把 [AoW] 行的投递路径还原出来，这批条目多半要改判 enemy。",
+                                        "剩下的基本都是 [AoW] 战技行（脚本挂载、参数表无引用），"
+                                        "若下一轮能把它们的投递路径还原出来，这批条目多半要改判 enemy。"
+                                        "**v5 修正**：v4 这条把『武器行为槽』也写成『无法确认投递路径』，"
+                                        "那是错的——EquipParamWeapon.spEffectBehaviorId0..2 与 "
+                                        "AttachEffectParam.onHitSpEffect 正是命中槽，v5 已把它们纳入判定，"
+                                        "本清单因此由 42 条降到 37 条（1939、105510、8110200-202 已改判 enemy）。",
+        "selfInflictedStatus": [
+            {
+                "spEffectId": buff["spEffectId"],
+                "displayNameZh": buff["displayNameZh"],
+                "paramName": buff["paramName"],
+                "statusRates": {key: value for key, value in buff["rates"].items()
+                                if RATE_FIELD_BY_KEY[key]["group"] == "status"},
+                "otherRateGroups": [g for g in buff["rateGroups"] if g != "status"],
+                "activation": buff["activation"],
+                "statusLabelsZh": buff.get("statusLabelsZh"),
+                "descZh": buff.get("descZh"),
+            }
+            for buff in buffs if buff.get("selfInflictedStatus")
+        ],
+        "selfInflictedStatusNote": "buffs[].selfInflictedStatus=true 表示**这一行 rates 里 group=\"status\" 的"
+                                   "加算点数（valueKind=\"flat\" 的 xxxAttackPower）是累在玩家自己身上的**（自伤），"
+                                   "不是『让玩家的攻击多附带累积』。"
+                                   "判定是结构性的：target=\"self\" ＋ 带 status 组的 flat 数值 ＋ 阵营过滤位 "
+                                   "effectTargetSelfTarget=1 且 effectTargetOpposeTarget=0"
+                                   "（参数层面只允许施加给自己，异常累积就只能累在自己身上）。"
+                                   "**xxxInflictRate 这类 multiplier 刻意不算在内**：它们的含义是"
+                                   "『自身造成的累积倍率』，方向相反。游戏文本可以佐证这条分界——"
+                                   "99620『艾奥尼亚蝶』diseaseInflictRate=1.3 的状态标签是"
+                                   "「强化异常状态腥红腐败」（Strengthen Scarlet Rot Effect），是真实增益；"
+                                   "而下面这 20 条 flat 行的标签一律是「异常状态：中毒／出血／发狂」"
+                                   "配上「会持续受到损伤」「血量、专注值会受到大损伤」这类**受害**描述。"
+                                   "典型例：1753『[AoW] Seppuku - Self Blood Loss』出血 +9999、"
+                                   "1732002『[Incantation] Frenzied Burst (Self Madness +20)』、"
+                                   "6851301／8810301『血量没有全满时，累积中毒量表』"
+                                   "（这三条的简中 descZh 直接写着『会持续受到损伤』『血量、专注值会受到大损伤』）。"
+                                   "**做『异常状态累积』榜时必须先排除 selfInflictedStatus=true 的条目**："
+                                   "v4 把其中 5 条（1731002／1731003／1731101／1732002／1732003）由 conditional "
+                                   "改判成 passive，按『target=self ＋ activation=passive』默认计入的页面"
+                                   "会把自伤当成玩家增益列出来。"
+                                   "注意这是**按 status 轴**的标记：若某条同时带非 status 的倍率"
+                                   "（见 otherRateGroups），那部分仍然是玩家自己的增益，不受此标记影响。",
         "stackLadders": [
             {
                 "spEffectId": buff["spEffectId"],
@@ -2907,9 +3130,17 @@ def build() -> dict[str, Any]:
                             "8998000『复仇的庇佑』×1.007 → ×1.40（100 层）。"
                             "同层互斥（spCategory 落在 removePrevious 区间），所以任何时刻只有一层生效，"
                             "绝不能把各层相乘。"
-                            "检测是结构性的：ID 连续、行名为空、除倍率外所有列相同、倍率逐层严格递增、"
-                            "且 saveCategory≠-1——最后一条把『[Relic] Improved Throwing Pot Damage +1/+2』"
-                            "这种可分别装备的词条档位排除在外（它们的 saveCategory 都是 -1）。",
+                            "字段口径见 notes.stackLadder（tiers 含第 1 层，tierSpEffectIds 不含）。"
+                            "检测是结构性的：ID 连续、后续各层行名为空且自身不是已收录的 buff、"
+                            "除倍率外所有列相同、非默认倍率的键集合相同、倍率逐层严格递增、且 saveCategory≠-1。"
+                            "**v5 更正排除举例**：最后一条排除的是『可分别装备的词条档位』，"
+                            "v4 把它写成『[Relic] Improved Throwing Pot Damage +1/+2』，"
+                            "但参数表里根本没有叫 +2 的行——真实结构是 7040300"
+                            "『[Relic] Improved Throwing Pot Damage』×1.15、7040301『…… +1』×1.30"
+                            "（两条都是有名字、各自独立收录的词条档位），紧跟着的 7040302 才是空行名的 ×1.35。"
+                            "7040301 除了 saveCategory=-1 之外满足全部叠层特征，正是靠 saveCategory 这一条"
+                            "才没有被误判成『第 1 层 ×1.30、满 2 层 ×1.35』的阶梯；"
+                            "反过来真正的阶梯（7069001 等）saveCategory≠-1，层数会存进存档槽。",
         "passiveWithoutParamName": sorted(
             buff["spEffectId"] for buff in buffs
             if buff["activation"] == "passive" and not buff["paramName"]
@@ -2934,8 +3165,10 @@ def build() -> dict[str, Any]:
                                 "同样带 ×0 的消耗倍率，但它们有 15／20／8 秒的持续时间、确实让施法免费，仍然保留。",
         "nonSelfTargetNote": "target 不是 self 的 buff：summon＝复仇者家人自身的数值缩放行（不是玩家倍率）；"
                              "enemy＝通过命中槽挂到被命中对象身上的效果"
-                             "（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId；"
-                             "减益、魅惑后的敌人增伤，以及油脂／附加属性武器打上去的异常累积）；"
+                             "（四个命中槽：Bullet.spEffectId0..4、atkOccurrenceSpEffectId、"
+                             "EquipParamWeapon.spEffectBehaviorId0..2、AttachEffectParam.onHitSpEffect；"
+                             "减益、魅惑后的敌人增伤，以及油脂／附加属性武器／武器自带异常属性"
+                             "打上去的异常累积）；"
                              "ally＝友方 AoE／团队增益。它们仍然保留在数据集里（有各自的展示价值），"
                              "但**增伤排名必须先按 target 过滤**。",
         "skippedUnnamedSourceRows": {
@@ -2999,7 +3232,19 @@ def self_check(payload: dict[str, Any]) -> None:
         assert len(set(values)) == len(values), f"{name} is not unique"
 
     bullet_hit = re.compile(r"Bullet\d+\.spEffectId[0-4](?:->|$)")
-    attack_hit = re.compile(r"atkOccurrenceSpEffectId(?:->|$)")
+    # v5: all three non-bullet hit slots, not just atkOccurrenceSpEffectId
+    attack_hit = re.compile(
+        r"(?:atkOccurrenceSpEffectId|spEffectBehaviorId[0-2]|onHitSpEffect)(?:->|$)")
+    # enums.stateInfo must be exactly the observed set -- no missing label (a
+    # bare number the page cannot render) and no dead label (which is how the
+    # "36 项" claim in the v4 write-up drifted away from the shipped 37)
+    observed_state_info = {str(b["stacking"]["stateInfo"]) for b in buffs
+                           if b["stacking"]["stateInfo"]}
+    assert set(payload["enums"]["stateInfo"]) == observed_state_info, (
+        "enums.stateInfo must match the observed non-zero values exactly",
+        sorted(set(payload["enums"]["stateInfo"]) - observed_state_info),
+        sorted(observed_state_info - set(payload["enums"]["stateInfo"])))
+    assert payload["counts"]["stateInfoLabels"] == len(payload["enums"]["stateInfo"])
     timing_condition_keys = {
         field["key"] for field in payload["conditionFields"]
         if not field["isActivationCondition"]
@@ -3031,6 +3276,12 @@ def self_check(payload: dict[str, Any]) -> None:
         if ladder:
             assert ladder["tiers"] == len(ladder["tierSpEffectIds"]) + 1, sp_id
             assert set(ladder["topRates"]) == set(buff["rates"]), sp_id
+            # tier ids are the rungs *above* this one and never ship as buffs
+            # of their own (notes.stackLadder states both to the consumer)
+            assert ladder["tierSpEffectIds"] == sorted(ladder["tierSpEffectIds"]), sp_id
+            assert sp_id not in ladder["tierSpEffectIds"], sp_id
+            assert not set(ladder["tierSpEffectIds"]) & set(ids), sp_id
+            assert ladder["saved"] is True, sp_id
             # tier 1 of a saved ladder is never an unconditional multiplier
             assert buff["activation"] == "conditional", (sp_id, "stack ladder but not conditional")
         # a buff every one of whose routes is a bullet *hit* slot lands on the
@@ -3050,6 +3301,13 @@ def self_check(payload: dict[str, Any]) -> None:
             qualifying_here = [key for key in buff["rates"]
                                if group_by_key[field_by_key[key]["group"]]["qualifies"]]
             assert set(qualifying_here) - set(sentinel), (sp_id, "sentinel-only row shipped")
+        # v5: the self-harm flag may only sit on a player-side row that really
+        # carries ailment buildup, and only when the faction filter says the
+        # row can be applied to nobody but the player
+        if buff.get("selfInflictedStatus"):
+            assert buff["selfInflictedStatus"] is True, sp_id
+            assert buff["target"] == "self", sp_id
+            assert "status" in buff["rateGroups"], sp_id
         assert buff["affectsAllies"] == (buff["target"] == "ally"), sp_id
         assert isinstance(buff["effectTargetFriendRaw"], bool), sp_id
         assert buff["stacking"]["spCategoryBehavior"] in behaviours, sp_id
@@ -3061,6 +3319,11 @@ def self_check(payload: dict[str, Any]) -> None:
                 assert entry["id"] is None, (sp_id, entry)
         if buff.get("inferredName"):
             assert buff.get("inferredNameFrom") in ("attachEffectSibling", "siblingSpEffect"), sp_id
+
+    assert (payload["counts"]["buffsWithSelfInflictedStatus"]
+            == len(payload["diagnostics"]["selfInflictedStatus"])
+            == sum(1 for b in buffs if b.get("selfInflictedStatus"))), \
+        "selfInflictedStatus count / diagnostics disagree"
 
     # every buff must keep at least one rate that justified its inclusion
     qualifying = {g["key"] for g in payload["rateFieldGroups"] if g["qualifies"]}

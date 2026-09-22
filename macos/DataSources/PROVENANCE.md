@@ -360,3 +360,14 @@ v4 相对 v3 的变化（完整机读版见产物内的 payload.schemaChangelog�
 6. 抽查清单口径调整：diagnostics.topUnconditionalMultipliers 由 15 条扩到 40 条，筛选条件加上「scope 里既没有 attackContexts 也没有 subCategories」，即真正会被原封不动乘进通用排名的那一批；受作用范围限制的 86 条改列在新的 diagnostics.contextGatedMultipliers（带 attackContexts／subCategories／gateFrom）。v3 的清单只取前 15 条、阈值卡在 ×1.28 且不区分作用范围，致命一击族与突刺反击族正好排在第 16 名开外，躲过了上一轮的人工抽查。
 
 生成时自检（self_check，每次生成自动运行，违反即抛错）在 v3 各项之外新增 6 条：conditionFields 里 isActivationCondition=false 的键集合必须恰好等于 TIMING_CONDITION_FIELDS；带**非计时类** conditions 或 triggered 的 buff 其 activation 不得为 passive；每个 scope.attackContexts 取值必须落在 enums.attackContext 内，且必须能从该行实际携带的 subCategories 或 stateInfo 推出来；非 0 的 stacking.stateInfo 必须能在 enums.stateInfo 里查到；带 stackLadder 的条目 activation 必须是 conditional，且 tiers 与 tierSpEffectIds、topRates 与 rates 的键集合自洽；「全部 via 都是命中槽」的判定扩到 atkOccurrenceSpEffectId。连续两次生成除 generatedAt 外输出完全一致。本轮未 commit／push，未改 PROVENANCE.md，未触碰其它数据集。
+
+### 第四轮核验修复补充（buffs，schemaVersion 5）
+
+第三轮独立复核报出 1 条 medium ＋ 3 条 low，全部核实成立并修复；schemaVersion 4 → 5，仍只增字段／只增取值。
+
+1. **命中投递槽补全第三条路径，target 再修正 43 条 self→enemy。** v4 只把 `Bullet.spEffectId0..4` 与 `atkOccurrenceSpEffectId` 当作命中槽，`EquipParamWeapon.spEffectBehaviorId0..2`（武器命中时交给被命中者的负载）与 `AttachEffectParam.onHitSpEffect`（「攻击附带异常状态」词条的命中槽）没纳入，43 条与油脂行逐列同构的异常累积行仍是 self。依据：106010『Lvl 1-2 Poison +45』（毒匕首）与已判 enemy 的 3176『Poison Grease (Right) - Poison』除阵营位与投递槽外逐列相同；油脂真实链路是 `EquipParamGoods 1460 → SpEffect 3175（挂在玩家身上的 30 秒 buff）→ atkOccurrenceSpEffectId 3176`，累积值在链的外一跳；105000『Blood Loss +30』自带出血爆发伤害，不可能发给握刀者。判定按投递槽 → 阵营位 → 负载类型三问，结构性、无 ID 名单；新增 targetSource `weaponHitOpposeOnly`(5)／`weaponHitSelfOnly`(0)／`weaponHitStatusPayload`(38)。buffsByTarget：self 759→716、enemy 65→108。这 43 条全是 `rateGroups=["flag","status"]`，**伤害排名的乘积一个数都没动**；「异常状态累积」榜必须按 `sources[].kind` 取玩家可得来源，不能只留 target=self。
+2. **新增 `buffs[].selfInflictedStatus`（20 条）标出自伤型异常累积**：target=self、阵营位 `S=1/O=0`、且带 status 组加算点数（`valueKind="flat"` 的 `xxxAttackPower`）的行（切腹自身出血 +9999、癫火系自身发狂 +30、血量未满时累积中毒等），累的是玩家自己；`xxxInflictRate`（「自身造成的累积倍率」，如艾奥尼亚蝶 diseaseInflictRate=1.3）方向相反，刻意不计入。异常累积榜需排除这 20 条。
+3. **enums.stateInfo 以实测为准是 37 项**（上文写 36 项的是散文错误，JSON 一直是 37 且与全表非 0 取值双向相等）；新增 `counts.stateInfoLabels`，self_check 改为双向相等断言。
+4. **stackLadder 口径写进 `notes.stackLadder`**：`tiers` 含第 1 层；`tierSpEffectIds` 从第 2 层起（长度 tiers-1，升序，不会作为独立 buff 出现）；`topRates` 为最后一层数值；`saved` = saveCategory≠-1。排除举例更正为参数表里真实存在的 7040300／7040301／7040302（后者是空行名 ×1.35，7040301 靠 saveCategory=-1 才没被误判成阶梯）。
+
+self_check 新增：stateInfo 枚举与观测值双向相等；selfInflictedStatus 只出现在 target=self 且含 status 组的条目并三方计数一致；stackLadder 的 tierSpEffectIds 升序、不含自身、与已收录 ID 无交集；命中槽正则扩到 spEffectBehaviorId0..2 与 onHitSpEffect。
