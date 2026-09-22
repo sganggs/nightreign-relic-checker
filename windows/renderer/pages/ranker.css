@@ -1,6 +1,770 @@
 /* 增伤排名页样式。由「增伤排名」功能开发者独占。
    共用外壳（.page-content / .page-title / .page-placeholder-card 等）在 styles.css；
    主题变量一律用 styles.css :root 里的 --bg / --card / --border / --text / --purple… */
+
 .ranker-content {
-  /* 先沿用共用外壳的宽度与留白，需要时在此覆盖 */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  /* 伤害类型配色：物理子类型走中性色，四种属性各占一个主题色。
+     颜色只是辅助，图例里始终带中文名与百分比，不靠颜色单独传达信息。 */
+  --ranker-slash: var(--text-secondary);
+  --ranker-blow: var(--text-tertiary);
+  --ranker-thrust: var(--border);
+  --ranker-neutral: var(--text);
+  --ranker-physNone: var(--border-soft);
+  --ranker-magic: var(--purple-soft);
+  --ranker-fire: var(--red);
+  --ranker-lightning: var(--amber);
+  --ranker-holy: var(--green);
+}
+
+.ranker-loading {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ranker-content > .card {
+  padding: 14px 16px;
+}
+
+.ranker-content > .card > .section-heading {
+  margin-bottom: 10px;
+}
+
+.ranker-note {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.ranker-note--warn {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--field);
+}
+
+.ranker-note strong {
+  color: var(--text);
+}
+
+.ranker-empty {
+  margin: 10px 0 0;
+  padding: 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 11.5px;
+}
+
+.ranker-field-label {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.ranker-control {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* -------------------------------------------------------- 输出手段选择 */
+
+.ranker-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.ranker-means-kind {
+  grid-template-columns: repeat(2, minmax(96px, auto));
+}
+
+.ranker-means-search {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
+.ranker-means-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px;
+  max-height: 208px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding: 2px;
+}
+
+.ranker-means-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--field);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.ranker-means-row:hover {
+  border-color: var(--purple-soft);
+  background: var(--card-hover);
+}
+
+.ranker-means-row.is-active {
+  border-color: var(--purple);
+  background: var(--purple-faint);
+}
+
+.ranker-means-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranker-means-en {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranker-means-meta {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.ranker-selection {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--field);
+}
+
+.ranker-selection-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.ranker-selection-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 7px 0 10px;
+}
+
+.ranker-weapon-field {
+  flex: 1 1 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 220px;
+}
+
+.ranker-hand {
+  grid-template-columns: repeat(2, minmax(64px, auto));
+}
+
+.ranker-stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.ranker-stat {
+  flex: 1 1 96px;
+  min-width: 86px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field-soft);
+}
+
+.ranker-stat dt {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.ranker-stat dd {
+  margin: 3px 0 0;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ 分段命中 */
+
+.ranker-hits-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ranker-hits-toolbar .button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.ranker-hits-count {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-hit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 340px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding-right: 2px;
+}
+
+.ranker-hit-row {
+  display: grid;
+  grid-template-columns: 18px minmax(120px, 1.1fr) minmax(160px, 1.8fr) minmax(120px, auto) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field);
+  cursor: pointer;
+}
+
+.ranker-hit-row.is-on {
+  border-color: var(--purple);
+  background: var(--purple-faint);
+}
+
+.ranker-hit-row.is-disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+.ranker-hit-name {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.ranker-hit-id {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-hit-damage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.ranker-hit-el {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  border-left-width: 3px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ranker-hit-el--slash { border-left-color: var(--ranker-slash); }
+.ranker-hit-el--blow { border-left-color: var(--ranker-blow); }
+.ranker-hit-el--thrust { border-left-color: var(--ranker-thrust); }
+.ranker-hit-el--neutral { border-left-color: var(--ranker-neutral); }
+.ranker-hit-el--physNone { border-left-color: var(--ranker-physNone); }
+.ranker-hit-el--magic { border-left-color: var(--ranker-magic); }
+.ranker-hit-el--fire { border-left-color: var(--ranker-fire); }
+.ranker-hit-el--lightning { border-left-color: var(--ranker-lightning); }
+.ranker-hit-el--holy { border-left-color: var(--ranker-holy); }
+.ranker-hit-el--none { color: var(--text-tertiary); }
+
+/* 武器这一属性基础攻击力为 0 → 动作值再高也打不出伤害，调暗但不隐藏。 */
+.ranker-hit-el.is-zero {
+  opacity: .38;
+  border-left-color: var(--border);
+}
+
+.ranker-hit-poise {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ranker-hit-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* ------------------------------------------------------------ 伤害构成 */
+
+.ranker-bar {
+  width: 100%;
+  height: 22px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field);
+  overflow: hidden;
+}
+
+.ranker-bar-seg--slash { fill: var(--ranker-slash); }
+.ranker-bar-seg--blow { fill: var(--ranker-blow); }
+.ranker-bar-seg--thrust { fill: var(--ranker-thrust); }
+.ranker-bar-seg--neutral { fill: var(--ranker-neutral); }
+.ranker-bar-seg--physNone { fill: var(--ranker-physNone); }
+.ranker-bar-seg--magic { fill: var(--ranker-magic); }
+.ranker-bar-seg--fire { fill: var(--ranker-fire); }
+.ranker-bar-seg--lightning { fill: var(--ranker-lightning); }
+.ranker-bar-seg--holy { fill: var(--ranker-holy); }
+
+.ranker-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ranker-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field);
+  font-size: 11px;
+}
+
+.ranker-swatch {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 3px;
+}
+
+.ranker-swatch--slash { background: var(--ranker-slash); }
+.ranker-swatch--blow { background: var(--ranker-blow); }
+.ranker-swatch--thrust { background: var(--ranker-thrust); }
+.ranker-swatch--neutral { background: var(--ranker-neutral); }
+.ranker-swatch--physNone { background: var(--ranker-physNone); }
+.ranker-swatch--magic { background: var(--ranker-magic); }
+.ranker-swatch--fire { background: var(--ranker-fire); }
+.ranker-swatch--lightning { background: var(--ranker-lightning); }
+.ranker-swatch--holy { background: var(--ranker-holy); }
+
+.ranker-legend-name { font-weight: 650; }
+
+.ranker-legend-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-legend-raw {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 数据集原文引用（含它自己的 markdown 标记，原样展示不做解析）。 */
+.ranker-quote {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.ranker-quote-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+/* ------------------------------------------------------------ 增伤排名 */
+
+.ranker-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.ranker-buff-search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  height: 34px;
+}
+
+.ranker-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ranker-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+
+.ranker-chip.is-on {
+  color: var(--purple-soft);
+  border-color: var(--purple); /* 回退：不支持 color-mix 时用实色 */
+  border-color: color-mix(in srgb, var(--purple-soft) 30%, transparent);
+  background: var(--purple-faint);
+}
+
+/* 攻击情境（scope.attackContexts）：默认一个都不勾＝这些倍率不计入通用排名。 */
+.ranker-context-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.ranker-context-block .ranker-chip-row {
+  margin-top: 6px;
+}
+
+.ranker-chip--context.is-on {
+  color: var(--amber);
+  border-color: var(--amber); /* 回退：不支持 color-mix 时用实色 */
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  background: var(--field-soft); /* 回退：不支持 color-mix 时用中性底色 */
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+.ranker-chip-count {
+  margin-left: 5px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.ranker-note--muted {
+  color: var(--text-tertiary);
+}
+
+.ranker-buff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.ranker-buff-row {
+  display: grid;
+  grid-template-columns: 20px 28px minmax(180px, 1.6fr) 104px minmax(160px, 1.5fr) minmax(130px, auto);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.ranker-buff-row.is-conditional {
+  border-style: dashed;
+  color: var(--text-secondary);
+  font-style: italic;
+  background: transparent;
+}
+
+.ranker-buff-pick {
+  display: flex;
+  align-items: center;
+}
+
+.ranker-buff-rank {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ranker-buff-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ranker-buff-name {
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.3;
+}
+
+.ranker-buff-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ranker-buff-source {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.ranker-buff-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-buff-value strong {
+  font-size: 15px;
+  font-weight: 780;
+}
+
+.ranker-buff-value span {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.ranker-buff-flat {
+  color: var(--amber) !important;
+}
+
+.ranker-buff-rates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ranker-rate {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ranker-rate--flat { color: var(--amber); }
+.ranker-rate--muted { color: var(--text-tertiary); font-style: italic; }
+
+.ranker-buff-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  text-align: right;
+}
+
+.ranker-buff-group {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranker-more { margin-top: 10px; }
+
+/* ------------------------------------------------------------ 推荐组合 */
+
+.ranker-combo-total {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.ranker-combo-total > div {
+  flex: 1 1 140px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.ranker-combo-total dt {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.ranker-combo-total dd {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 780;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-combo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 10px 0;
+}
+
+.ranker-combo-row {
+  display: grid;
+  grid-template-columns: 72px minmax(160px, 2fr) minmax(90px, 1fr) minmax(120px, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--field);
+  font-size: 11px;
+}
+
+.ranker-combo-mul {
+  color: var(--green);
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.ranker-combo-name {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ranker-combo-kind,
+.ranker-combo-group {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ 底部折叠 */
+
+.ranker-details {
+  padding: 0;
+}
+
+.ranker-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ranker-details > summary::-webkit-details-marker { display: none; }
+
+.ranker-details > summary::before {
+  content: "▸";
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.ranker-details[open] > summary::before { content: "▾"; }
+
+.ranker-summary-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ranker-details-body {
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.ranker-sub {
+  margin: 12px 0 6px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.ranker-caveat-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.ranker-caveat-list li { margin-bottom: 5px; }
+
+.ranker-raw {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.ranker-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.ranker-meta dt {
+  color: var(--text-secondary);
+  font-size: 9.5px;
+  font-weight: 650;
+}
+
+.ranker-meta dd {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
 }
