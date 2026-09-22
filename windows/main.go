@@ -32,7 +32,7 @@ var builtInCatalog []byte
 //go:embed resources/relics.json
 var builtInRelicData []byte
 
-// 三个新页面（首领数据 / 词条反查 / 增伤排名）的数据文件。内容由另一条数据
+// 新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）的数据文件。内容由另一条数据
 // 流水线生成，未生成前 resources/ 下是最小占位 JSON（`{"placeholder": true}`），
 // 渲染层据此显示「数据未内置」。go:embed 要求文件必须存在，所以占位文件不能删；
 // 拿到真实数据后运行 scripts/sync-data.sh 覆盖即可，本文件无需改动。
@@ -46,11 +46,15 @@ var builtInSkillData []byte
 //go:embed resources/buffs.json
 var builtInBuffData []byte
 
+//go:embed resources/heroes.json
+var builtInHeroData []byte
+
 // builtInGameData 的键就是渲染层 ctx.getGameData(name) 的 name。
 var builtInGameData = map[string][]byte{
 	"bosses": builtInBossData,
 	"skills": builtInSkillData,
 	"buffs":  builtInBuffData,
+	"heroes": builtInHeroData,
 }
 
 // uiResourcesDir 是 ui\ 下存放上述数据文件的目录名（与版本目录同级，对应

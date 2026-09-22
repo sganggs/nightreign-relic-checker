@@ -96,13 +96,17 @@ zsh scripts/sync-data.sh
 
 脚本把 `data/nightreign-<名字>-v<版本>.json` 复制成 `windows/resources/<名字>.json` 与
 `macos/Sources/NightreignRelicChecker/Resources/<名字>.json`（当前映射：affixes、relics、
-bosses、skills、buffs 五项）。源文件不存在时跳过并提示；换版本号只需改脚本里的映射表。
+bosses、skills、buffs、heroes 六项）。源文件不存在时跳过并提示；换版本号只需改脚本里的映射表。
 复制前会用 python3 校验源文件是合法 JSON，坏文件不会污染两端资源目录。
+
+其中 `heroes`（角色属性，建设中）的源文件 `data/nightreign-heroes-v1.03.5.json` 还没生成，
+脚本会跳过它，两端 `heroes.json` 暂时是占位 JSON（`{"placeholder": true}`），桌面双端的
+「角色属性」页显示“数据未内置”，不影响现有功能与构建。
 
 三个客户端共享同一套判定规则与内置词条库，仅界面容器不同。各目录内有独立的 README 与构建说明：
 
 - **Windows 版**（Go 1.25+，纯 Go 构建）：`go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe`
-- **macOS 版**（macOS 13+，Swift）：`swift build && swift run RelicCoreChecks && zsh Scripts/build_app.sh`（`swift build` 不能省——应用资源包没构建过时，`GameDataLoader 能定位已构建的资源包` 那一组会跳过，自检总数少 3 项；顺序见 [`macos/README.md`](macos/README.md)）
+- **macOS 版**（macOS 13+，Swift）：`swift build && swift run RelicCoreChecks && zsh Scripts/build_app.sh`（`swift build` 不能省——应用资源包没构建过时，`GameDataLoader 能定位已构建的资源包` 那一组会跳过，自检总数少 4 项；顺序见 [`macos/README.md`](macos/README.md)）
 - **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`
 
 Android 版专注手机化的三词条检查与词条库，尚未移植桌面端 `.sl2/.co2` 存档解析，也没有本轮新增的三页；详细边界见 [`android/README.md`](android/README.md)。

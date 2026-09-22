@@ -5,7 +5,7 @@
 #
 # 源文件名带版本号（data/nightreign-<名字>-v<版本>.json），目标文件名统一为
 # <名字>.json —— 两端的加载代码只认目标文件名，换版本时只改本脚本的映射表。
-# 源文件不存在时跳过并提示（bosses / skills / buffs 由另一条数据流水线生成，
+# 源文件不存在时跳过并提示（bosses / skills / buffs / heroes 由另一条数据流水线生成，
 # 若某个源文件缺失则跳过，两端会继续使用 resources/ 里已有的副本；只有当副本是占位 JSON 时页面才显示「数据未内置」）。
 set -euo pipefail
 
@@ -21,6 +21,7 @@ PAIRS=(
   "nightreign-bosses-v1.03.5.json:bosses.json"
   "nightreign-skills-v1.03.5.json:skills.json"
   "nightreign-buffs-v1.03.5.json:buffs.json"
+  "nightreign-heroes-v1.03.5.json:heroes.json"
 )
 
 copied=0

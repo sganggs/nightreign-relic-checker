@@ -35,7 +35,7 @@ zsh Scripts/build_app.sh    # 产出 build/夜幕验物.app（Universal 2 + 临�
 `RelicCoreChecks` 把每组检查的条数逐行打印出来，末行是总数；**总数只增不减**，改动后
 的数字必须不低于改动前。注意 `GameDataLoader 能定位已构建的资源包` 这一组依赖
 `swift build` 产生的资源包：没先构建过应用目标时它会打印「应用资源包未构建，跳过」
-并计 0 项，总数因此比正常少 3 项——所以请按上面的顺序先 `swift build`。
+并计 0 项，总数因此比正常少 4 项——所以请按上面的顺序先 `swift build`。
 
 只要发行二进制的话：
 
@@ -51,7 +51,7 @@ Universal 2 可执行文件，拷入 `Info.plist`、五个数据 JSON、`LICENSE
 
 内置数据位于 `Sources/NightreignRelicChecker/Resources/`：词条库 `affixes.json`
 （schema 版本 1，应用内“数据设置”可导入相同格式的 JSON）、遗物物品表 `relics.json`
-（存档检查用），以及三个新页面的 `bosses.json` / `skills.json` / `buffs.json`。
+（存档检查用），以及四个新页面的 `bosses.json` / `skills.json` / `buffs.json` / `heroes.json`。
 
 **不要手动复制**。仓库根的 `data/` 是唯一权威来源，换数据时在仓库根运行：
 
@@ -60,30 +60,33 @@ zsh scripts/sync-data.sh
 ```
 
 脚本把 `data/nightreign-<名字>-v<版本>.json` 同步成两端的 `<名字>.json`
-（affixes、relics、bosses、skills、buffs 五项），Windows 与 macOS 一次覆盖，代码无需改动。
+（affixes、relics、bosses、skills、buffs、heroes 六项），Windows 与 macOS 一次覆盖，代码无需改动。
+`heroes.json` 的源文件还在生成中，脚本会跳过它，`Resources/heroes.json` 暂时保持占位
+JSON，「角色属性」页显示“数据未内置”。
 
 这些 JSON 的生成管线在 [`DataSources/`](DataSources/PROVENANCE.md)：
 `dump_regulation.py`（regulation.bin → 每表一个 CSV）、`extract_msg.py`（游戏归档 →
 每个 FMG 一个 JSON）、`generate_affixes.py` / `generate_relics.py` /
-`generate_bosses.py` / `generate_skills.py` / `generate_buffs.py`。前两步需要本机已安装
+`generate_bosses.py` / `generate_skills.py` / `generate_buffs.py` / `generate_heroes.py`。前两步需要本机已安装
 的游戏本体（macOS 下通过 CrossOver / Wine 的 Steam bottle 访问），导出的 `raw/` 不入库；
 解 KRAK（Oodle 2.9）压缩用的小工具与调用方式见
 [`DataSources/tools/oodledec/README.md`](DataSources/tools/oodledec/README.md)。
 各数据集的来源表、字段映射、推断部分与已知局限见 `DataSources/PROVENANCE.md`。
 
-## 页面结构（首领数据 / 词条反查 / 增伤排名）
+## 页面结构（首领数据 / 角色属性 / 词条反查 / 增伤排名）
 
-三页各自一个视图文件，页面状态全部自持，**功能开发不需要再改 `AppModel.swift` / `RootView.swift`**：
+四页各自一个视图文件，页面状态全部自持，**功能开发不需要再改 `AppModel.swift` / `RootView.swift`**：
 
 | 页面 | 视图文件 | 数据 |
 | --- | --- | --- |
 | 首领数据 | `Sources/NightreignRelicChecker/BossDataView.swift` | `GameDataLoader.dataIfAvailable(for: .bosses)` |
 | 词条反查 | `Sources/NightreignRelicChecker/AffixLookupView.swift` | `model.catalog` / `model.relicData`（无新数据文件） |
 | 增伤排名 | `Sources/NightreignRelicChecker/BuffRankerView.swift` | `GameDataLoader.dataIfAvailable(for: .skills / .buffs)` |
+| 角色属性 | `Sources/NightreignRelicChecker/HeroStatsView.swift` | `GameDataLoader.dataIfAvailable(for: .heroes)` |
 
 - 纯逻辑放 `Sources/RelicCore/`（`BossData.swift` / `AffixLookup.swift` / `SkillData.swift` /
   `BuffRanker.swift`），视图只做展示——两端的判定与算法口径靠这一层与 Windows 端对齐。
-- `RelicCore/GameDataLoader.swift` 提供 `GameDataResource`（bosses / skills / buffs）与
+- `RelicCore/GameDataLoader.swift` 提供 `GameDataResource`（bosses / skills / buffs / heroes）与
   `url(for:)`、`data(for:)`（未内置时抛出可读错误）、`isPlaceholder(_:)`、
   `dataIfAvailable(for:)`（未内置 / 占位 / 读取失败时返回 nil）。加载器**只返回原始
   `Data`**，业务模型各自在自己的文件里定义。

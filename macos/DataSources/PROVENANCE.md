@@ -403,3 +403,92 @@ v4 相对 v3 的变化（完整机读版见产物内的 payload.schemaChangelog�
 4. **stackLadder 口径写进 `notes.stackLadder`**：`tiers` 含第 1 层；`tierSpEffectIds` 从第 2 层起（长度 tiers-1，升序，不会作为独立 buff 出现）；`topRates` 为最后一层数值；`saved` = saveCategory≠-1。排除举例更正为参数表里真实存在的 7040300／7040301／7040302（后者是空行名 ×1.35，7040301 靠 saveCategory=-1 才没被误判成阶梯）。
 
 self_check 新增：stateInfo 枚举与观测值双向相等；selfInflictedStatus 只出现在 target=self 且含 status 组的条目并三方计数一致；stackLadder 的 tierSpEffectIds 升序、不含自身、与已收录 ID 无交集；命中槽正则扩到 spEffectBehaviorId0..2 与 onHitSpEffect。
+
+## 角色属性数据集（v0.3.1 规划）
+
+（这段是给 PROVENANCE.md 用的文本，我没有改那个文件。）
+
+## 角色属性（nightreign-heroes-v1.03.5.json）
+
+生成脚本：macos/DataSources/generate_heroes.py（python3 标准库，`--raw` / `--out` / `--pretty`，自带 self_check）
+
+### 上游数据
+- raw/params/HeroParam.csv —— 10 个角色，characterNameId（288050+，指向 menu/CL_MenuText）、heroStatusParamId
+- raw/params/HeroStatusParam.csv —— 三段：
+  - 10000/20000/…/100000 起每人 4 行「[X] Level 1/2/12/15」= 角色基础属性锚点
+  - 210000/220000/230000/240000/250000 起各 4 行「[Libra - Strength/Dexterity/…] Level 1/2/12/15」= 利普拉交易后的整套替换表
+  - 300000–309101 每条 2 行「[X - +A/-B] Level 1 / Level 12」= 转职遗物的属性增减量
+- raw/params/AttachEffectParam.csv —— 6640000–6647500 共 20 条转职遗物词条；passiveSpEffectId_1 → SpEffect，attachTextId → item/AttachEffectName，allowWylder…allowUndertaker 给出角色归属
+- raw/params/SpEffectParam.csv —— 7640000–7647500 的 heroStatusModifier 指向增减量行；46260–46264「[Libra Deal] Respec to …」的 heroStatusId 指向整套替换表，spEffectTextId_1 = 120700
+- raw/params/CalcCorrectGraph.csv —— 100「HP Scaling - Vigor」、101「FP Scaling - Mind」、104「Stamina - Endurance」、220「Equip Load - Endurance」
+- raw/msg/<zhocn|engus>/menu_dlc01/CL_MenuText —— 角色名（288050+）、血量/专注值/精力标签（10500–10502）
+- raw/msg/<zhocn|engus>/item_dlc01/AttachEffectName —— 词条名（6640000+）、8 项属性名（19700000/19700010/…/19700070）
+- raw/msg/<zhocn|engus>/item_dlc01/AntiqueName —— 遗物物品名
+- raw/msg/<zhocn|engus>/menu_dlc01/SpEffectName + SpEffectInfo —— 120700「扭曲的重生」/「与恶魔谈判过后，能力值产生变化」
+- raw/msg/<zhocn|engus>/menu_dlc01/EventTextForTalk —— 27570060–27570100 五个交易对话选项
+- data/nightreign-relics-v1.03.4.json —— 遗物物品 ↔ 词条反查（可选依赖；缺失时 relicItems 为空数组）
+- 行名（Name 列）来自社区 Paramdex，与 bosses/skills 用同一修订 f5969c060cea240476e9dd4d6a64eafa9dbafaab（MIT）
+
+### 关键读法
+1. **中间等级是算出来的，不是表里的。** 每个角色只有 4 行锚点（1/2/12/15），其余 11 级 = 相邻锚点线性插值后向下取整（floor）。该规则经三张外部表逐格验证，见「交叉验证」。
+2. **派生值各吃一项属性**：血量←生命力(graph 100)、专注值←集中力(101)、精力←耐力(104)、负重上限←耐力(220)。100/101/104 的 adjPt 全为 1（纯分段线性），且本作用到的 [1,25]/[25,50] 两段斜率恰好是整数（血量 20/点、专注值 5/点、精力 2/点），所以这三项必为整数。
+3. **转职遗物 vs 利普拉是两个不同字段**：AttachEffect → SpEffect.heroStatusModifier 是「在基础表上加减」；[Libra Deal] → SpEffect.heroStatusId 是「整套替换」。机制上不互斥，应为「先替换、再叠加」（按参数结构推断，未实测）。利普拉的 5 套表不分角色。
+4. 5 笔交易共用一个 SpEffect 文本（120700），逐笔的可见文案只有 EventTextForTalk 的对话选项。
+
+### 交叉验证（都写进了 JSON 的 crossChecks）
+- 追踪者 1–15 级 165 格（8 属性取自 Fextralife /Wylder，血量/专注值/精力取自 eldenring.wiki.gg /Nightreign:Wylder）：**全中**。唯一例外是该 wiki 把 12 级精力写成 92（与 11 级重复），按 CalcCorrectGraph 104（耐力 24 → 50+48×23/24）应为 96，基线里按参数修正。
+- 执行者 1–15 级 165 格（eldenring.wiki.gg /Nightreign:Executor）：**全中**，包括 12 级精力 96 —— 反过来佐证追踪者那一格是 wiki 笔误。
+- 女爵 1–15 级 165 格（Fextralife + eldenring.wiki.gg，两边表一致）：**151 格中，灵巧列 1–14 级整列偏低 1～3**（15 级两边都是 45）。原因是官方补丁 1.02.2「提高了女爵升级时的灵巧成长」，两个 wiki 的表停在补丁之前。本数据集以 regulation 10350000 为准；差异逐格写在 crossChecks[].mismatches 里，self_check 断言「差异恰好只有灵巧 1–14 级」，以后任何一格意外变动都会立刻报出来。
+
+### 推断（未实测，已在 caveats 与字段里标出）
+- 转职遗物 13–15 级沿用 L12 值：社区资料把 L12 行的数字直接写成词条效果（如 Revenant「集中力 −11 / 生命力 +5 / 耐力 +5」= 305001 行；Raider「+17 感应 / −4 生命力」= 304101 行），并说明等级越低偏移越小。2–11 级的逐级数值没有公开实测 → levels[].inferred = true。
+- 取整方向：基础表全非负，floor 与 trunc 无法区分；转职遗物有负数，两者差 1。本数据集 delta 用向零取整，差异等级另给 deltaFloorAlt。
+- equipLoad：本作没有装备重量、界面也不显示负重，CalcCorrectGraph 220 很可能是从《艾尔登法环》继承下来的遗留行；且 220 的 adjPt_maxGrowVal2 = 1.1（[25,60] 段带指数），指数挂在哪一段没有第二处数据可交叉验证。页面建议默认隐藏这一列。
+
+### 外部链接
+- https://eldenringnightreign.wiki.fextralife.com/Wylder
+- https://eldenring.wiki.gg/wiki/Nightreign:Wylder
+- https://eldenring.wiki.gg/wiki/Nightreign:Executor
+- https://eldenringnightreign.wiki.fextralife.com/Duchess
+- https://eldenring.wiki.gg/wiki/Nightreign:Duchess
+- https://www.bandainamcoent.com/news/elden-ring-nightreign-patch-notes-version-1-02-2
+- https://eldenringnightreign.wiki.fextralife.com/Relic_Effects
+
+### 核验修复补充
+
+以下为 PROVENANCE.md 的来源说明文本（按要求未直接写入文件，请脚手架代理合并）：
+
+### nightreign-heroes-v1.03.5.json（角色属性 / 转职遗物 / 利普拉的交易）
+
+**生成脚本** `macos/DataSources/generate_heroes.py`（python3 标准库，自带 self_check）
+**产物** `data/nightreign-heroes-v1.03.5.json` → `scripts/sync-data.sh` 同步到 `windows/resources/heroes.json` 与 `macos/Sources/NightreignRelicChecker/Resources/heroes.json`（三份字节一致，sha256 `1640d3cb6f2f0eb8844bd44697ac6c2a507bf9c99195cd17f1e1d1fb37d4b0d1`）
+
+**一次来源（游戏本体，regulation 10350000 / exe 1.3.3.0，v1.03.5 + DLC1）**
+- `raw/params/HeroParam.csv` —— 10 个夜行者，`characterNameId` → CL_MenuText 288050+
+- `raw/params/HeroStatusParam.csv` —— 基础锚点表（10000+，每人 Level 1/2/12/15）、利普拉整套替换表（210000–250003）、转职遗物增减量行（300000–309101，每条只有 L1/L12）
+- `raw/params/AttachEffectParam.csv` —— 6640000–6647500 共 20 条转职遗物词条（`attachTextId`、`allow<角色>` 位、`passiveSpEffectId_1`）
+- `raw/params/AttachEffectTableParam.csv` —— 随机池 → 词条的权重表（`chanceWeight` 基础权重 / `chanceWeight_dlc` DLC 权重，−1 = 不覆盖）
+- `raw/params/SpEffectParam.csv` —— 7640000–7647500 的 `heroStatusModifier`（加减）、46260–46264 `[Libra Deal]` 的 `heroStatusId`（整套替换）
+- `raw/params/CalcCorrectGraph.csv` —— 100 HP←生命力 / 101 FP←集中力 / 104 精力←耐力 / 220 负重上限←耐力
+- `raw/msg/<zhocn|engus>/menu_dlc01/{CL_MenuText, SpEffectName, SpEffectInfo, EventTextForTalk}` 与 `item_dlc01/{AttachEffectName, AntiqueName}`（X.json + X_dlc01.json 合并，DLC 覆盖本体）—— 所有 zh/en 名称
+
+**二次来源**
+- Smithbox Paramdex (NR) `f5969c060cea240476e9dd4d6a64eafa9dbafaab`（MIT）—— paramdef 字段名与行名（`[Wylder] Level 12`、`[Libra Deal] Respec to Strength` 等）
+- 本仓库 `data/nightreign-relics-v1.03.4.json` —— 遗物物品 ↔ 词条的反查（`relicItems`、随机池成员）。存在一个小版本差（1.03.4 vs 1.03.5），已写入 caveats。
+
+**外部交叉验证（第三方，仅作核对，数值一律以参数表为准）**
+- Fextralife《Wylder》+ eldenring.wiki.gg《Nightreign:Wylder》—— 追踪者 1–15 级 165 格全中（该 wiki 12 级精力写 92 与 11 级重复，按 CalcCorrectGraph 104 应为 96，基线里已按参数修正）
+- eldenring.wiki.gg《Nightreign:Executor》—— 执行者 165 格全中
+- Fextralife / eldenring.wiki.gg《Duchess》—— 165 格中 14 格不同，全部集中在「灵巧 1–14 级」，原因是补丁 1.02.2「提高了女爵升级时的灵巧成长」而两个 wiki 的表停在补丁之前；差异原样记录在 `crossChecks`，并被 self_check 钉死为已知差异集合
+- Fextralife《Revenant Improved Vigor and Endurance, Reduced Mind》—— 页面原文「Decreases mind by 11, increases vigor by 5 and endurance by 5」＝ HeroStatusParam 305001（L12 锚点）
+- Steam 社区讨论《New stat shifts are a mega trap.》—— 玩家 15 级实测：守护者 灵巧 31→50 / 力气 41→50 / 生命力 60→52（301001）、无赖 感应 10→27 / 生命力 56→52（304101）、隐士 智力 51→41 与 灵巧 +20（306000）、隐士 集中力 30→17（306101）；贴中作参照的裸属性（追踪者 力气 50 / 生命力 52、女爵 智力 42、执行者 感应 28）亦与本数据集 L15 一致
+- Steam 社区讨论《Revenant Needs a Real Identity》—— 15 级复仇者裸装 血量 780 / 专注值 200 / 精力 90，带该词条后 880 / 145 / 100，与本数据集 L15 基础叠加 305001 后（生命力 40 / 集中力 20 / 耐力 26）经 CalcCorrectGraph 算出的值完全一致
+
+**推断与未验证项（详见 JSON 的 `caveats` 13 条与 `interpolation`）**
+- 中间等级 = 相邻锚点线性插值后 **floor**，已用追踪者全表逐格验证（`baseVerified: true`）
+- 转职遗物只有 L1/L12 两个锚点：**13–15 级沿用 L12 已由上述 5 组 15 级实测确认**（`modifierAnchorVerified: true`）；**2–11 级的逐级数值与取整方向（floor vs trunc）仍未实测**（`modifierMidLevelsVerified: false`），delta 按「向零取整」给出，与 floor 结果不同的等级另给 `deltaFloorAlt`
+- 利普拉的交易（`heroStatusId`，整套替换）与转职遗物（`heroStatusModifier`，加减）是 SpEffectParam 的两个不同字段，机制上可同时生效 —— 按参数结构推断，未在游戏内实测
+- `equipLoad` 是未经实测的遗留值（本作没有装备重量，CalcCorrectGraph 220 带指数），页面建议默认不展示
+
+**本次修订（2026-09）**
+修了 5 处核验问题：① 随机池的中英文遗物名改为**按遗物 ID 配对**后整体排序（此前中英文各自排序，按下标配对会错译，例如 `端正的光耀暗淡情景` 被配成 `Deep Delicate Burning Scene`，正确是 `Deep Polished Luminous Scene`），并新增 `relicNames: [{zh, en, relicIds}]`；② 新增 `distinctNameCount` 与 caveat，说明 `relicCount`(72 件) 与名字数(12 个)不同量纲；③ 重跑 `sync-data.sh` 让三份副本字节一致；④ 修正 caveats/`derivedRule` 里「只用到 [1,25] 与 [25,50] 两段」的漏写（守护者 12–15 级生命力 54–60 用到 graph 100 的 [50,75] 段），并加 self_check 枚举真正用到的段；⑤ 把 `modifierVerified` 拆成 `modifierAnchorVerified`(true) / `modifierMidLevelsVerified`(false) 并补进外部证据；⑥ 新增 `statModifiers[].poolWeights` / `dlcOnly`，记录学者/送葬者 4 条词条在池 2200000 的基础权重为 0、仅 DLC 权重 40 生效。所有数值内容未变。

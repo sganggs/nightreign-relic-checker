@@ -134,8 +134,8 @@ const bridgeJS = `(function () {
     loadRelicData: function () {
       return call(function () { return window.__nightreignLoadRelicData(); });
     },
-    // 新页面（首领数据 / 词条反查 / 增伤排名）的数据：name 为
-    // 'bosses' | 'skills' | 'buffs'，未内置时返回 null（渲染层据此降级）。
+    // 新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）的数据：name 为
+    // 'bosses' | 'skills' | 'buffs' | 'heroes'，未内置时返回 null（渲染层据此降级）。
     loadGameData: function (name) {
       return call(function () { return window.__nightreignLoadGameData(String(name)); });
     }

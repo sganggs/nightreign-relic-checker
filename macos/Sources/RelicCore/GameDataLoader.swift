@@ -1,6 +1,6 @@
 import Foundation
 
-/// 三个新页面（首领数据 / 词条反查 / 增伤排名）使用的游戏数据文件。
+/// 新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）使用的游戏数据文件。
 ///
 /// 加载器只负责找到文件并返回原始 `Data`，**不解析、不定义业务模型**：各功能
 /// 自行在自己的文件里定义 `Codable` 模型再解码，互不影响。
@@ -8,6 +8,7 @@ public enum GameDataResource: String, CaseIterable, Sendable {
     case bosses
     case skills
     case buffs
+    case heroes
 
     /// 不带扩展名的资源名。
     public var baseName: String { rawValue }

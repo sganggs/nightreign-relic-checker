@@ -12,8 +12,8 @@
   // 存档报告模块（renderer/savereport.js）。缺失时只影响「导出报告 / 导出 CSV」。
   var Report = window.NightreignSaveReport || null;
 
-  // 新页面（首领数据 / 词条反查 / 增伤排名）可用的游戏数据文件。
-  var GAME_DATA_NAMES = ["bosses", "skills", "buffs"];
+  // 新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）可用的游戏数据文件。
+  var GAME_DATA_NAMES = ["bosses", "skills", "buffs", "heroes"];
 
   // 浏览器预览模式下的读取方式，与 affixes.json / relics.json 一致：
   // renderer/ 与 resources/ 同级，所以相对路径是 ../resources/<name>.json。

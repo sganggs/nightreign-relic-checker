@@ -25,11 +25,12 @@ lipo -create \
 cp "$ROOT/Packaging/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/affixes.json" "$CONTENTS/Resources/affixes.json"
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/relics.json" "$CONTENTS/Resources/relics.json"
-# 新页面数据（首领数据 / 增伤排名）。真实数据未就绪时这里是最小占位 JSON，
+# 新页面数据（首领数据 / 角色属性 / 增伤排名）。真实数据未就绪时这里是最小占位 JSON，
 # 应用会显示「数据未内置」；用 scripts/sync-data.sh 覆盖后重新构建即可。
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/bosses.json" "$CONTENTS/Resources/bosses.json"
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/skills.json" "$CONTENTS/Resources/skills.json"
 cp "$ROOT/Sources/NightreignRelicChecker/Resources/buffs.json" "$CONTENTS/Resources/buffs.json"
+cp "$ROOT/Sources/NightreignRelicChecker/Resources/heroes.json" "$CONTENTS/Resources/heroes.json"
 cp "$ROOT/LICENSE" "$CONTENTS/Resources/LICENSE.txt"
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$CONTENTS/Resources/THIRD_PARTY_NOTICES.md"
 

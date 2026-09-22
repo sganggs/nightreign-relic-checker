@@ -1,7 +1,7 @@
 import Foundation
 import RelicCore
 
-// 新页面（首领数据 / 词条反查 / 增伤排名）的自检入口。
+// 新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）的自检入口。
 //
 // 功能开发者：请把自己的检查写成独立文件里的 `() throws -> Int` 函数
 // （返回本次校验的条数，失败时 `throw CheckFailure(description:)`），
@@ -39,7 +39,8 @@ private var resourcesDirectory: URL {
         .appendingPathComponent("Sources/NightreignRelicChecker/Resources", isDirectory: true)
 }
 
-/// 三个资源文件都存在且是合法 JSON（脚手架占位内容也算合法）。
+/// 四个资源文件都存在且是合法 JSON（脚手架占位内容也算合法）。
+/// 逐项遍历 `GameDataResource.allCases`，新增数据文件时只需给枚举加一个 case。
 private func checkGameDataResourcesArePresent() throws -> Int {
     var count = 0
     for resource in GameDataResource.allCases {
@@ -59,7 +60,7 @@ private func checkGameDataResourcesArePresent() throws -> Int {
     return count
 }
 
-/// `GameDataLoader` 能在应用目标的 SwiftPM 资源包里定位三个资源。
+/// `GameDataLoader` 能在应用目标的 SwiftPM 资源包里定位四个资源。
 ///
 /// `swift run RelicCoreChecks` 只构建 RelicCoreChecks，可执行文件旁不一定有
 /// 应用目标的资源包；此时跳过（返回 0 项）。完整 `swift build` 之后这项会真正

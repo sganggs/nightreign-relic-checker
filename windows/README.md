@@ -98,9 +98,11 @@ zsh scripts/sync-data.sh
 ```
 
 把 `data/nightreign-<名字>-v<版本>.json` 同步成 `windows/resources/<名字>.json`
-（affixes、relics、bosses、skills、buffs 五项），两端同时覆盖，代码无需改动。
+（affixes、relics、bosses、skills、buffs、heroes 六项），两端同时覆盖，代码无需改动。
+`heroes.json` 的源文件还在生成中，脚本会跳过它，`resources/heroes.json` 暂时保持占位
+JSON，「角色属性」页显示「数据未内置」。
 
-`resources/bosses.json`、`skills.json`、`buffs.json` 的生成管线在
+`resources/bosses.json`、`skills.json`、`buffs.json`、`heroes.json` 的生成管线在
 [`../macos/DataSources/`](../macos/DataSources/PROVENANCE.md)（`dump_regulation.py` /
 `extract_msg.py` / `generate_*.py`，需要本机游戏本体；Oodle 解压器的构建与调用
 见 [`../macos/DataSources/tools/oodledec/README.md`](../macos/DataSources/tools/oodledec/README.md)）。
@@ -126,12 +128,12 @@ zsh scripts/sync-data.sh
 - `renderer/` — 界面：`index.html` / `app.js` / `core.js`（规则与审计）/
   `styles.css`，以及存档页的 `savereport.js`（报告与 CSV 导出）与
   `savediff.js`（存档对比）。
-- `renderer/pages/` — 三个新页面（首领数据 / 词条反查 / 增伤排名）各自的
+- `renderer/pages/` — 四个新页面（首领数据 / 角色属性 / 词条反查 / 增伤排名）各自的
   `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**：
   注册方式、`ctx` 的内容、`ctx.getGameData` 的语义、样式与 CSP 约束都在那里，
   功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。
 - `resources/affixes.json`、`relics.json`、`bosses.json`、`skills.json`、
-  `buffs.json`、`build/icon.ico` — 内置词条库、遗物物品表与三套游戏数据集
+  `buffs.json`、`heroes.json`、`build/icon.ico` — 内置词条库、遗物物品表与四套游戏数据集
   （全部由 `go:embed` 内嵌，经 `window.nightreign.loadGameData(name)` 桥交给渲染层）
   与图标。**这些文件不能删**（`go:embed` 要求文件存在）；内容统一由
   `scripts/sync-data.sh` 覆盖。

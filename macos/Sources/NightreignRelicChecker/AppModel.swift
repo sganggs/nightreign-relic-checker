@@ -11,6 +11,7 @@ final class AppModel: ObservableObject {
         case library
         case saveScan
         case bosses
+        case heroes
         case lookup
         case ranker
         case data
@@ -24,6 +25,7 @@ final class AppModel: ObservableObject {
             case .data: return "数据设置"
             case .saveScan: return "存档检查"
             case .bosses: return "首领数据"
+            case .heroes: return "角色属性"
             case .lookup: return "词条反查"
             case .ranker: return "增伤排名"
             }
@@ -36,6 +38,7 @@ final class AppModel: ObservableObject {
             case .data: return "externaldrive"
             case .saveScan: return "externaldrive.badge.checkmark"
             case .bosses: return "shield.lefthalf.filled"
+            case .heroes: return "person.text.rectangle"
             case .lookup: return "magnifyingglass.circle"
             case .ranker: return "chart.bar.xaxis"
             }
