@@ -19,3 +19,9 @@ android/local.properties
 android/**/build/
 android/*.iml
 android/**/*.iml
+
+# 从本机游戏导出的原始参数表（体积大、受游戏权利方约束，不入库）
+macos/DataSources/raw/
+
+# Python
+__pycache__/

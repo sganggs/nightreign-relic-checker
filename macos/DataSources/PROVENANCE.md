@@ -62,3 +62,34 @@
   词条库未收录但被遗物池引用的 1552 条词条以 `extraAffixes` 形式补充最小元数据。
 - 存档二进制格式（BND4 / AES-128-CBC / 80 字节遗物记录，正面词条偏移 16/20/24、
   负面词条偏移 56/60/64）依据同修订的 `src/packer/_pc.py` 与 `src/inventory_handler.py`。
+
+## 本机游戏参数与文本导出（2026-09-22，为伤害/削韧/Boss 数据功能做准备）
+
+工具：`dump_regulation.py`（regulation.bin → 每表一个 CSV）、`extract_msg.py`（归档里的
+msg/<lang>/*.msgbnd.dcx → 每个 FMG 一个 JSON）、`tools/oodledec/`（Wine 下调用游戏自带
+Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不入库）。
+
+- 游戏来源：本机 CrossOver 的 Steam bottle，`nightreign.exe` 1.3.3.0，Steam buildid 22818764，
+  `regulation.bin` sha256 `876a3ca279a4561d0c69f81fe5e510c75c59ab9a8a201694f8cf4a42c91e0268`，
+  容器版本号 `10350000`（即 1.03.5）。
+- regulation.bin：AES-256-CBC（密钥取自 Smithbox 内嵌 SoulsFormats 的 `Keys.NR_REGULATION_KEY`，
+  IV 为文件前 16 字节）→ DCX/ZSTD → BND4（252 个 .param）。字段布局用 Smithbox Paramdex
+  `Assets/PARAM/NR/Defs`（vawser/Smithbox@f5969c060cea240476e9dd4d6a64eafa9dbafaab），
+  版本感知字段按 10350000 过滤；英文行名取同仓库 `Param Row Names/English`，同 ID 多行的表
+  按出现次序取名。252 张表全部匹配到 paramdef，行长逐表核对一致。
+- 解析正确性核验：`EquipParamAntique` / `AttachEffectParam` / `AttachEffectTableParam` /
+  `AntiqueStandParam` 与 Save Editor 0d2ad149 的 1.03.4 CSV 逐格比对（共 17+32+5+12 个
+  共有字段，含位域）全部一致，同时说明 1.03.5 没有改动遗物相关表，现有词条库仍然有效。
+- 归档：data0–3、dlc01 的 .bhd 用 UXM/Smithbox 公开的 RSA 公钥解密（`Keys.NightreignKeys`），
+  条目按 64 位路径哈希（乘数 0x85）定位，用 Smithbox 的 `EldenRingNightreignDictionary.txt`
+  做过命中率核验（data2/data3 全中）。当前版本已不存在 `item.msgbnd.dcx` / `menu.msgbnd.dcx`，
+  完整文本在 `item_dlc01.msgbnd.dcx` / `menu_dlc01.msgbnd.dcx` 里（含无后缀的基础 FMG 与
+  `_dlc01` 增量 FMG）。条目在 .bdt 里带 AES-128-ECB 区间加密，DCX 为 KRAK（Oodle 2.9）。
+- 可用于新功能的关键表：`NpcParam`（血量、韧性 `superArmorDurability`、各属性
+  `*DamageCutRate`、异常抗性、`multiPlayCorrectionParamId`）、`MultiPlayCorrectionParam` +
+  `SpEffectParam`（双人/三人的血量倍率 `maxHpRate`、削韧承受倍率 `saReceiveDamageRate`、
+  异常累积倍率）、`NightBossMenuParam`（夜王列表、`effectiveAffinity` 官方弱点、菜单文本 ID）、
+  `AtkParam_Pc`（动作值 `atk*Correction`、削韧 `atkSuperArmor`，Paramdex 行名已标注大部分战技的
+  分段）、`SpEffectParam`（增伤倍率 `*AttackRate` / `*AttackPowerRate`、叠加分类 `stateInfo`）、
+  `SwordArtsParam` / `Magic` / `EquipParamWeapon` / `Bullet` / `ReinforceParamWeapon` /
+  `AttackElementCorrectParam` / `CalcCorrectGraph`。
