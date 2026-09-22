@@ -244,6 +244,10 @@ struct RankerSegmentRow: View {
     let isSelected: Bool
     let onToggle: () -> Void
 
+    /// noDamage 段构成恒为 0，勾不勾都一样——与 Windows 端 `disabled` 的 checkbox 对齐，
+    /// 这里直接禁掉整行的点击。
+    private var isDisabled: Bool { segment.noDamage }
+
     var body: some View {
         Button(action: onToggle) {
             HStack(alignment: .top, spacing: 10) {
@@ -304,6 +308,9 @@ struct RankerSegmentRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.55 : 1)
+        .help(isDisabled ? "这一段只挂状态、不产生伤害，不能计入构成" : "")
     }
 
     private func componentChip(_ component: SkillSegmentComponent) -> some View {
@@ -398,14 +405,21 @@ struct RankerBuffRow: View {
                         Pill(text: "队友增益", color: Color(red: 0.55, green: 0.78, blue: 0.99))
                     }
                     if row.isInferredSource {
-                        Pill(text: "来源推断", color: AppTheme.tertiaryText)
+                        Pill(text: "来源为推断", color: AppTheme.tertiaryText)
                     }
                     // 只在某种攻击情境下才吃得到：不标出来的话，用户会当成常驻增伤。
                     ForEach(row.attackContextLabels, id: \.self) { label in
                         Pill(text: "限" + label, color: AppTheme.amber)
                     }
                     if let ladder = row.ladder {
-                        Pill(text: "叠层 1/\(ladder.tiers)", color: AppTheme.amber)
+                        Pill(
+                            text: "叠层 1/\(ladder.tiers)" + (ladder.saved ? " · 存档保留" : ""),
+                            color: AppTheme.amber
+                        )
+                    }
+                    // v5：status 组的加算是玩家自伤，不是「攻击附带累积」；不打标会被当成增益。
+                    if row.selfInflictedStatus {
+                        Pill(text: "自伤型异常累积", color: AppTheme.tertiaryText)
                     }
                 }
                 HStack(spacing: 6) {
@@ -428,7 +442,7 @@ struct RankerBuffRow: View {
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(row.effectiveMultiplier > 1 ? AppTheme.green : AppTheme.secondaryText)
                 if let ladder = row.ladder {
-                    Text("满层 " + BuffFormat.multiplier(ladder.topMultiplier))
+                    Text("满 \(ladder.tiers) 层 " + BuffFormat.multiplier(ladder.topMultiplier))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(AppTheme.amber)
                 } else if row.weightedFlat != 0 {
@@ -462,7 +476,7 @@ struct RankerBuffRow: View {
     }
 
     private var activationTitle: String {
-        row.activation == "activated" ? "发动期间" : "需触发"
+        row.activation == "activated" ? "发动期间" : "需满足条件"
     }
 
     private var details: some View {
@@ -540,7 +554,7 @@ struct RankerBuffRow: View {
             RankerDetailRow(
                 label: "叠加",
                 value: "\(row.stackGroup) · \(dataset.stackBehaviorLabel(row.stackBehavior))"
-                    + " · 叠加组 \(row.stateInfoLabel) · spCategory \(row.spCategory)",
+                    + " · spCategory \(row.spCategory) · stateInfo \(row.stateInfoLabel)",
                 tint: AppTheme.secondaryText
             )
             RankerDetailRow(

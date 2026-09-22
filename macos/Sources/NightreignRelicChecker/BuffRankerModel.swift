@@ -58,8 +58,21 @@ final class BuffRankerModel: ObservableObject {
     @Published var includeAttributeScoped: Bool = false {
         didSet { if includeAttributeScoped != oldValue { refreshRanking() } }
     }
+    /// 叠层阶梯按满层数值计算（stackLadder.topRates）；默认关。
+    @Published var useLadderTopRates: Bool = false {
+        didSet { if useLadderTopRates != oldValue { refreshRanking() } }
+    }
+    /// 同族效果只取最高档（按 Paramdex 行名词干合并叠加组）；默认开。
+    @Published var mergeFamilies: Bool = true {
+        didSet { if mergeFamilies != oldValue { refreshPlan() } }
+    }
+    /// 同 stateInfo 视为同一状态（stackingRules 第 3 条的交叉参考，偏保守）；默认关。
+    @Published var mergeStates: Bool = false {
+        didSet { if mergeStates != oldValue { refreshPlan() } }
+    }
+    /// 搜索框：**只影响列表显示**，推荐组合仍按全部命中条目算。
     @Published var buffQuery: String = "" {
-        didSet { if buffQuery != oldValue { refreshRanking() } }
+        didSet { if buffQuery != oldValue { refreshDisplayRows() } }
     }
     @Published private(set) var sourceKinds: Set<String> = []
     /// 用户勾选的攻击情境（notes.ranking ④）。默认全不选 = 通用排名，
@@ -69,6 +82,8 @@ final class BuffRankerModel: ObservableObject {
     // MARK: 结果
 
     @Published private(set) var ranking: BuffRankingResult = .empty
+    /// 列表实际显示的那些行（= ranking.rows 再过一遍搜索词与来源类型）。
+    @Published private(set) var displayRows: [BuffRankingRow] = []
     @Published private(set) var plan: BuffStackPlan = .empty
     /// 用户在推荐组合里勾掉的条目（默认计入的 passive 条目）。
     @Published private(set) var excludedFromPlan: Set<Int> = []
@@ -174,7 +189,15 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
+    /// noDamage 段（只挂状态、构成恒为 0）不可勾选：与 Windows 端把这类段的 checkbox
+    /// 设成 disabled 同一口径，勾上只会让用户以为它进了构成。
+    func canToggleSegment(_ atkId: Int) -> Bool {
+        guard let segment = segments.first(where: { $0.atkId == atkId }) else { return false }
+        return !segment.noDamage
+    }
+
     func toggleSegment(_ atkId: Int) {
+        guard canToggleSegment(atkId) else { return }
         if selectedSegmentIDs.contains(atkId) {
             selectedSegmentIDs.remove(atkId)
         } else {
@@ -183,10 +206,10 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
+    /// 「全选」只勾**当前 FP 侧**的段：FP 版与无 FP 版互为替代，两边一起勾会把同一击算两遍。
+    /// 口径与 Windows 端 hitOverridesFor(action="all") 一致。
     func selectAllSegments() {
-        selectedSegmentIDs = Set(
-            segments.filter { $0.noFp == useNoFp && !$0.noDamage && $0.hasDamage }.map(\.atkId)
-        )
+        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: useNoFp)
         refreshComposition()
     }
 
@@ -216,12 +239,13 @@ final class BuffRankerModel: ObservableObject {
         if let spell {
             return spell.isSorcery ? .sorcery : .incantation
         }
-        return .weaponSkill(slot: weaponSlot)
+        return .weaponSkill
     }
 
     var context: BuffRankingContext {
         BuffRankingContext(
             delivery: delivery,
+            weaponSlot: weaponSlot,
             subCategories: skill == nil ? [] : [BuffRankingContext.skillAttackSubCategory],
             composition: composition
         )
@@ -233,6 +257,9 @@ final class BuffRankerModel: ObservableObject {
             includeAllies: includeAllies,
             includeAttributeScoped: includeAttributeScoped,
             includedAttackContexts: includedAttackContexts,
+            useLadderTopRates: useLadderTopRates,
+            mergeFamilies: mergeFamilies,
+            mergeStates: mergeStates,
             sourceKinds: sourceKinds,
             query: buffQuery
         )
@@ -257,20 +284,24 @@ final class BuffRankerModel: ObservableObject {
         refreshRanking()
     }
 
+    /// 来源类型是**显示筛选**：只换列表，不动推荐组合（否则勾一个来源总倍率就变了）。
     func toggleSourceKind(_ kind: String) {
         if sourceKinds.contains(kind) {
             sourceKinds.remove(kind)
         } else {
             sourceKinds.insert(kind)
         }
-        refreshRanking()
+        refreshDisplayRows()
     }
 
     func clearSourceKinds() {
         guard !sourceKinds.isEmpty else { return }
         sourceKinds = []
-        refreshRanking()
+        refreshDisplayRows()
     }
+
+    /// 被搜索词 / 来源类型筛掉、但仍计入推荐组合的条目数（页面要写明这一点）。
+    var hiddenFromDisplayCount: Int { ranking.rows.count - displayRows.count }
 
     /// 这一条当前是否计入推荐组合：passive 默认计入（可勾掉），
     /// 条件型默认不计入（勾上才纳入，对应 notes.ranking ③）。
@@ -311,29 +342,39 @@ final class BuffRankerModel: ObservableObject {
     }
 
     var pageCount: Int {
-        max(1, Int(ceil(Double(ranking.rows.count) / Double(pageSize))))
+        max(1, Int(ceil(Double(displayRows.count) / Double(pageSize))))
     }
 
     var pageRows: [BuffRankingRow] {
         let start = page * pageSize
-        guard start < ranking.rows.count else { return [] }
-        let end = min(start + pageSize, ranking.rows.count)
-        return Array(ranking.rows[start..<end])
+        guard start < displayRows.count else { return [] }
+        let end = min(start + pageSize, displayRows.count)
+        return Array(displayRows[start..<end])
     }
 
     private func refreshRanking() {
         guard let buffs else { return }
         ranking = buffs.rankResult(context: context, options: options)
-        page = 0
+        refreshDisplayRows()
         refreshPlan()
+    }
+
+    /// 只重算列表显示（搜索词 / 来源类型）——推荐组合不受影响。
+    private func refreshDisplayRows() {
+        guard let buffs else { return }
+        displayRows = buffs.visibleRows(ranking.rows, options: options)
+        page = 0
     }
 
     private func refreshPlan() {
         guard let buffs else { return }
+        // 组合按**全部命中条目**算，不吃搜索框与来源类型筛选：那两个是看列表用的视图筛选，
+        // 不是取舍。要排除某一条请在列表里勾掉它。
         plan = buffs.stackPlan(
             rows: ranking.rows,
             excluded: excludedFromPlan,
-            includedConditional: includedConditional
+            includedConditional: includedConditional,
+            options: options
         )
     }
 
@@ -354,21 +395,47 @@ final class BuffRankerModel: ObservableObject {
     }
 
     var deliveryLabel: String {
+        let slot = weaponSlot == 2 ? "左手" : "右手"
         if let spell {
-            return spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh
+            let kind = spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh
+            return "\(kind) · \(slot)施法器"
         }
-        return weaponSlot == 2 ? "战技攻击 · 左手武器" : "战技攻击 · 右手武器"
+        return "战技攻击 · \(slot)武器"
     }
 
     /// 当前是按什么规则匹配 buff 的 scope —— 列表上方原样说明，避免「为什么这条没出现」。
     var scopeNote: String {
+        let slot = weaponSlot == 2 ? "左手" : "右手"
         if spell != nil {
-            return "法术按 scope.affectsSorcery / affectsIncantation 匹配；普通施法不属于任何攻击子类别，"
+            return "法术按 scope.affectsSorcery / affectsIncantation + 武器槽（\(slot)，"
+                + "scope.weaponSlot 为空或「自身」视为不限）匹配；普通施法不属于任何攻击子类别，"
                 + "因此带子类别限定（蓄力法术、绝招…）的条目不计入。"
         }
-        let slot = weaponSlot == 2 ? "左手" : "右手"
         return "战技命中按攻击子类别 112（战技攻击）+ 武器槽（\(slot)，scope.weaponSlot 为空或「自身」视为不限）匹配；"
-            + "带其它子类别限定（跳跃攻击 / 防御反击 / 蓄力 / 绝招 / 远程…）的条目不计入。"
+            + "带其它子类别限定（跳跃攻击 / 防御反击 / 蓄力 / 绝招 / 远程 / 只标 130 近战…）的条目不计入，"
+            + "只作用于魔法／祷告（weaponSlot=自身 + 只点亮魔法／祷告）与只作用于致命一击／投掷"
+            + "（只点亮 affectsThrow）的条目同样不计入。"
+    }
+
+    /// 排除原因的分项文案（按条数降序）：与 Windows 端 scopeBreakdownHtml 同一顺序、同一措辞。
+    var scopeReasonText: String {
+        ranking.scopeReasonBreakdown
+            .map { "\($0.reason) \($0.count) 条" }
+            .joined(separator: "；")
+    }
+
+    /// 「本页自己承担的判定」13 条。正文在 RelicCore 的 `BuffRankerPageNotes` 里，
+    /// 与 Windows 端 ranker.js 的 pageRuleNotes **逐字同文**；这里只负责把数据现算的条数喂进去。
+    var pageRuleNotes: [String] {
+        BuffRankerPageNotes.rules(
+            attributeScoped: buffs?.attributeScopedCount ?? 0,
+            ladders: buffs?.ladderCount ?? 0,
+            selfInflicted: buffs?.selfInflictedStatusCount ?? 0,
+            meleeOnly: buffs?.meleeOnlyCount ?? 0,
+            skillsWithoutDamage: skills?.skillsWithoutDamage ?? 0,
+            spellsWithoutDamage: skills?.spellsWithoutDamage ?? 0,
+            hasAttackContexts: !(buffs?.availableAttackContexts.isEmpty ?? true)
+        )
     }
 
     var datasetVersions: [(String, String)] {

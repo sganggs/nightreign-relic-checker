@@ -148,7 +148,8 @@ private func halfSlashHalfFire() -> [Double] {
 
 private func skillContext(shares: [Double], slot: Int = 1) -> BuffRankingContext {
     BuffRankingContext(
-        delivery: .weaponSkill(slot: slot),
+        delivery: .weaponSkill,
+        weaponSlot: slot,
         subCategories: [BuffRankingContext.skillAttackSubCategory],
         shares: shares
     )
@@ -176,6 +177,7 @@ func runBuffRankerChecks() throws -> Int {
     try checkDamageMath(counter: &count)
     try checkRankingMath(counter: &count)
     try checkAttackContextGate(counter: &count)
+    try checkAtkAttributeScope(counter: &count)
     try checkStackLadder(counter: &count)
     try checkStackingMath(counter: &count)
     try checkLenientDecoding(counter: &count)
@@ -192,7 +194,277 @@ func runBuffRankerChecks() throws -> Int {
     try checkComposition(skills, counter: &count)
     try checkBuffDataset(buffs, counter: &count)
     try checkRealRanking(skills: skills, buffs: buffs, counter: &count)
+    try checkCrossPlatformCases(skills: skills, buffs: buffs, counter: &count)
+    try checkTwoSidedParity(skills: skills, buffs: buffs, counter: &count)
     return count
+}
+
+// MARK: - 两端口径对齐（逐条对应 windows/tests/ranker.test.mjs 的同名断言）
+
+/// 这一组断言全部是为了**钉住两端同一套口径**：计数点、chip 顺序、徽标与说明文案、
+/// 可检索字段。数值会随数据集修订变化，所以一律写成相对 / 结构性断言。
+private func checkTwoSidedParity(
+    skills: SkillDataIndex, buffs: BuffRankerIndex, counter count: inout Int
+) throws {
+    // ① noDamage 段：真实数据里任何一段标了 noDamage 的，总量必须为 0。
+    //    （本作有 8 段是 noDamage + addBaseAtk，这一关就是拦它们的。）
+    var noDamageSeen = 0
+    var noDamageWithAddBase = 0
+    for skill in skills.dataset.skills {
+        for id in skill.weaponIds {
+            guard let weapon = skills.weaponsByID[id] else { continue }
+            for segment in skills.segments(for: skill, weapon: weapon) where segment.noDamage {
+                noDamageSeen += 1
+                try rankerExpect(
+                    segment.total == 0 && segment.components.isEmpty,
+                    "noDamage 段 #\(segment.atkId) 的相对伤害必须为 0（实际 \(segment.total)）",
+                    counter: &count
+                )
+            }
+            break   // 每条战技取第一把能选出段的武器即可，不必全跑
+        }
+    }
+    for skill in skills.dataset.skills {
+        for hit in skill.hits where hit.noDamage && hit.addBaseAtk { noDamageWithAddBase += 1 }
+    }
+    try rankerExpect(noDamageSeen > 0, "真实数据里应当有 noDamage 段（否则这条口径是空跑）", counter: &count)
+    try rankerExpect(
+        noDamageWithAddBase > 0,
+        "真实数据里应当有 noDamage + addBaseAtk 的段（正是它们会被误算成一整份武器攻击力）",
+        counter: &count
+    )
+
+    // ② 属性／异常限定的计数点：只有「其余各关都过、单单被 spAttribute 拦下」才计入，
+    //    所以它必须**随当前手变化**（右手 ≠ 左手）。计数点一旦挪到「scopeVerdict 返回非 nil
+    //    就算」，被武器槽拦下的条目会全部混进来，这个数就与手无关了。
+    guard let weapon = skills.dataset.weapons.first(where: {
+        $0.skillVariant != nil && skills.skillsByID[$0.swordArtsParamId] != nil
+    }), let skill = skills.skillsByID[weapon.swordArtsParamId] else {
+        throw CheckFailure(description: "增伤排名：找不到用于两端对照的武器")
+    }
+    let composition = SkillDamageMath.composition(
+        of: skills.segments(for: skill, weapon: weapon),
+        selected: SkillDamageMath.defaultSelection(skills.segments(for: skill, weapon: weapon))
+    )
+    let right = buffs.rankResult(
+        context: BuffRankingContext(
+            delivery: .weaponSkill, weaponSlot: 1,
+            subCategories: [BuffRankingContext.skillAttackSubCategory], composition: composition
+        )
+    )
+    let left = buffs.rankResult(
+        context: BuffRankingContext(
+            delivery: .weaponSkill, weaponSlot: 2,
+            subCategories: [BuffRankingContext.skillAttackSubCategory], composition: composition
+        )
+    )
+    try rankerExpect(right.attributeScopedCount > 0, "右手应有被属性限定拦下的条目", counter: &count)
+    try rankerExpect(
+        right.attributeScopedCount != left.attributeScopedCount,
+        "属性／异常限定的计数必须随武器槽变化（右手 \(right.attributeScopedCount)"
+            + " / 左手 \(left.attributeScopedCount)）——相等说明计数点又错位到「拦下就算」了",
+        counter: &count
+    )
+    try rankerExpect(
+        right.attributeScopedCount < buffs.attributeScopedCount,
+        "只被 spAttribute 拦下的条目数必然少于全表的属性限定条目数",
+        counter: &count
+    )
+    // 打开开关后这一类应当清零（它们全部进榜或落到别的关）。
+    let opened = buffs.rankResult(
+        context: BuffRankingContext(
+            delivery: .weaponSkill, weaponSlot: 1,
+            subCategories: [BuffRankingContext.skillAttackSubCategory], composition: composition
+        ),
+        options: BuffRankingOptions(includeAttributeScoped: true)
+    )
+    try rankerExpect(
+        opened.attributeScopedCount == 0,
+        "打开「包含属性／异常限定」后不应再有条目算在这一类里",
+        counter: &count
+    )
+
+    // ③ 作用域不符的总数与分项：两端都要有（Windows 是汇总行的 pill + 分项说明）。
+    try rankerExpect(right.scopeRejectedCount > 0, "应统计出作用域不符的条目数", counter: &count)
+    try rankerExpect(!right.scopeReasons.isEmpty, "作用域不符应给出按原因的分项", counter: &count)
+    let reasonTotal = right.scopeReasons
+        .filter { $0.key != BuffRankerIndex.contextGateReason }
+        .values.reduce(0, +)
+    try rankerExpect(
+        reasonTotal == right.scopeRejectedCount,
+        "分项条数之和应等于作用域不符总数（\(reasonTotal) vs \(right.scopeRejectedCount)）",
+        counter: &count
+    )
+    try rankerExpect(
+        right.scopeReasons[BuffRankerIndex.contextGateReason] == right.contextScopedCount,
+        "情境闸门在分项里的条数应等于 contextScopedCount（与 Windows 端 scopeReasons 同一口径）",
+        counter: &count
+    )
+    try rankerExpect(
+        right.scopeReasons["只作用于右手武器"] == nil,
+        "右手上下文里不该出现「只作用于右手武器」这条排除原因",
+        counter: &count
+    )
+    try rankerExpect(
+        left.scopeReasons["只作用于右手武器"] != nil,
+        "左手上下文里应当出现「只作用于右手武器」这条排除原因",
+        counter: &count
+    )
+    try rankerExpect(
+        right.scopeReasonBreakdown.first?.count ?? 0 >= right.scopeReasonBreakdown.last?.count ?? 0,
+        "排除原因分项应按条数降序",
+        counter: &count
+    )
+
+    // ④ 攻击情境 chip：固定顺序 + 只统计带伤害倍率字段的条目。
+    let chipKeys = buffs.availableAttackContexts.map(\.key)
+    let expectedOrder = chipKeys.sorted { lhs, rhs in
+        let left = BuffRankerIndex.attackContextOrder.firstIndex(of: lhs) ?? BuffRankerIndex.attackContextOrder.count
+        let right = BuffRankerIndex.attackContextOrder.firstIndex(of: rhs) ?? BuffRankerIndex.attackContextOrder.count
+        return left == right ? lhs < rhs : left < right
+    }
+    try rankerExpect(chipKeys == expectedOrder, "情境 chip 应按固定顺序排（不随数据计数重排）", counter: &count)
+    for option in buffs.availableAttackContexts {
+        let expected = buffs.dataset.buffs.enumerated().filter { index, buff in
+            buff.scope.attackContexts.contains(option.key) && buffs.hasRankingRate(at: index)
+        }.count
+        try rankerExpect(
+            option.count == expected,
+            "情境 chip「\(option.zh)」的计数应只统计带伤害倍率字段的条目"
+                + "（实际 \(option.count)，应为 \(expected)）",
+            counter: &count
+        )
+    }
+    let allContextGated = buffs.dataset.buffs.filter { !$0.scope.attackContexts.isEmpty }.count
+    try rankerExpect(
+        buffs.availableAttackContexts.reduce(0) { $0 + $1.count } < allContextGated * 2,
+        "chip 计数不应把没有任何伤害倍率字段的条目也算进去",
+        counter: &count
+    )
+
+    // ⑤ stateInfo 标签格式：中文在前、数字在括号里（「强化致命一击（367）」）。
+    if let sample = buffs.dataset.buffs.first(where: {
+        $0.stacking.stateInfo != 0 && buffs.dataset.stateInfoLabels[$0.stacking.stateInfo] != nil
+    }) {
+        let value = sample.stacking.stateInfo
+        let label = buffs.dataset.stateInfoLabel(value)
+        try rankerExpect(
+            label.hasSuffix("（\(value)）") && !label.hasPrefix("\(value)"),
+            "stateInfo 标签应是「中文（数字）」（实际「\(label)」）",
+            counter: &count
+        )
+    }
+    try rankerExpect(
+        buffs.dataset.stateInfoLabel(-12345) == "-12345",
+        "没有标签的 stateInfo 应退回裸数字",
+        counter: &count
+    )
+
+    // ⑥ 可检索字段：descZh 里的词、来源类型中文名、spEffectId 都必须搜得到，
+    //    来源名超过 6 个时后面的也要搜得到（两端取同一个并集）。
+    if let withDesc = buffs.dataset.buffs.first(where: { ($0.descZh?.count ?? 0) > 6 }),
+       let index = buffs.dataset.buffs.firstIndex(where: { $0.spEffectId == withDesc.spEffectId }) {
+        let key = buffs.searchKey(at: index)
+        let needle = String(withDesc.descZh!.prefix(6)).foldedForSearch
+        try rankerExpect(key.contains(needle), "descZh 里的词应当搜得到", counter: &count)
+        try rankerExpect(
+            key.contains(String(withDesc.spEffectId)),
+            "spEffectId 应当搜得到",
+            counter: &count
+        )
+        try rankerExpect(
+            key.contains(buffs.dataset.sourceKindLabel(withDesc.sourceKinds[0]).foldedForSearch),
+            "来源类型的中文标签应当搜得到",
+            counter: &count
+        )
+    }
+    if let many = buffs.dataset.buffs.firstIndex(where: { $0.sources.count > 6 }) {
+        let key = buffs.searchKey(at: many)
+        let last = buffs.dataset.buffs[many].sources.last!.displayName.foldedForSearch
+        try rankerExpect(
+            last.isEmpty || key.contains(last),
+            "来源超过 6 个时，第 7 个之后的来源名也要搜得到",
+            counter: &count
+        )
+    }
+
+    // ⑦ 底部「本页自己承担的判定」13 条：与 Windows 端逐字同文，条数一律照数据现算。
+    let notes = BuffRankerPageNotes.rules(
+        attributeScoped: buffs.attributeScopedCount,
+        ladders: buffs.ladderCount,
+        selfInflicted: buffs.selfInflictedStatusCount,
+        meleeOnly: buffs.meleeOnlyCount,
+        skillsWithoutDamage: skills.skillsWithoutDamage,
+        spellsWithoutDamage: skills.spellsWithoutDamage,
+        hasAttackContexts: !buffs.availableAttackContexts.isEmpty
+    )
+    try rankerExpect(notes.count == 13, "本页口径应当是 13 条，实际 \(notes.count)", counter: &count)
+    try rankerExpect(notes.allSatisfy { $0.count > 20 }, "每条口径说明都应当有正文", counter: &count)
+    // 锚点表：windows/tests/ranker.test.mjs 里有一份一模一样的。
+    let anchors = [
+        "weapons[].skillVariant → skills[].variants[i].atkIds",
+        "只有法术段忽略 motion",
+        "rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier",
+        "武器槽（scope.weaponSlot）",
+        "scope.spAttribute（只对带某种属性／异常的攻击生效",
+        "叠层阶梯（stackLadder，本版本",
+        "selfInflictedStatus（v5，本版本",
+        "本页额外做了三条数据集没有直接字段的判定",
+        "叠加分组只用数据集算好的 stacking.group",
+        "「推荐组合」用全部命中条目计算",
+        "攻击力加算（attackPowerFlat）是点数",
+        "输出手段列表只收「至少有一段能算出非 0 相对值」的战技与法术",
+        "只在特定攻击情境成立的倍率（scope.attackContexts"
+    ]
+    for (index, anchor) in anchors.enumerated() where notes.indices.contains(index) {
+        try rankerExpect(
+            notes[index].contains(anchor),
+            "第 \(index + 1) 条应包含锚点「\(anchor)」",
+            counter: &count
+        )
+    }
+    // 把数字挖掉之后的正文在两端必须逐字节相同（FNV-1a 32 位）。这个摘要与数据无关
+    //（数字全部归一成 #），数据集改数值不会弄红它；两端任何一句措辞漂移都会立刻分叉。
+    try rankerExpect(
+        pageNotesDigest(notes) == "333839f9",
+        "两端 13 条说明的正文必须逐字相同（实际摘要 \(pageNotesDigest(notes))）",
+        counter: &count
+    )
+    // 条数是现算出来的，不是写死的。
+    try rankerExpect(
+        notes[4].contains("本版本 \(buffs.attributeScopedCount) 条")
+            && notes[7].contains("等 \(buffs.meleeOnlyCount) 条")
+            && notes[11].contains("（\(skills.skillsWithoutDamage) 条）")
+            && notes[11].contains("（\(skills.spellsWithoutDamage) 条）"),
+        "说明里的条数必须照数据现算",
+        counter: &count
+    )
+    try rankerExpect(
+        skills.skillsWithoutDamage > 0 && skills.spellsWithoutDamage > 0,
+        "确实有一批输出手段被挡在列表外（否则这句说明是空话）",
+        counter: &count
+    )
+}
+
+/// 把 13 条说明里的 ASCII 数字归一成 `#` 之后取 FNV-1a 32 位摘要。
+/// 与 windows/tests/ranker.test.mjs 里的同名实现逐位相同。
+private func pageNotesDigest(_ notes: [String]) -> String {
+    var normalized = ""
+    var lastWasDigit = false
+    for character in notes.joined(separator: "\n") {
+        if character.isASCII && character.isNumber {
+            if !lastWasDigit { normalized.append("#") }
+            lastWasDigit = true
+        } else {
+            normalized.append(character)
+            lastWasDigit = false
+        }
+    }
+    var hash: UInt32 = 0x811c_9dc5
+    for byte in Array(normalized.utf8) {
+        hash = (hash ^ UInt32(byte)) &* 0x0100_0193
+    }
+    return String(format: "%08x", hash)
 }
 
 // MARK: - 合成算例：分段伤害换算
@@ -247,6 +519,40 @@ private func checkDamageMath(counter count: inout Int) throws {
     try rankerExpectClose(segments[2].amount(.fire), 110, "addBaseAtk 应额外加一份该属性基础攻击力", counter: &count)
     try rankerExpectClose(segments[2].amount(.standard), 100, "addBaseAtk 对每个属性槽都加一份基础攻击力", counter: &count)
     try rankerExpect(segments[2].isBullet, "isBullet 应原样透出", counter: &count)
+
+    // 第五段：noDamage ＝ 只挂状态，整段归零。
+    try rankerExpectClose(segments[4].total, 0, "noDamage 段的相对伤害必须为 0", counter: &count)
+    try rankerExpect(segments[4].components.isEmpty, "noDamage 段不该有任何伤害构成项", counter: &count)
+    try rankerExpect(!segments[4].hasDamage, "noDamage 段的 hasDamage 必须为假", counter: &count)
+
+    // 回归：`noDamage + addBaseAtk` 的段（本作真实存在 8 段，例如 301705901 癫火突击）
+    // 绝不能因为 addBaseAtk 而算出一整份武器攻击力。与 Windows 端 hitContribution
+    // 第一行的 noDamage 短路同一口径。
+    let noDamageWithBase = try decodeHits("""
+    [{"atkId":901,"labelZh":"只挂状态但带 addBaseAtk","attribute":"Standard","noDamage":true,"addBaseAtk":true,
+      "motion":{"physical":300},"flat":{"fire":120},"source":"n"}]
+    """)
+    let noDamageSegment = SkillDamageMath.segment(for: noDamageWithBase[0], weapon: weapon)
+    try rankerExpectClose(
+        noDamageSegment.total, 0,
+        "noDamage 段即使带 addBaseAtk / motion / flat，总量也必须为 0",
+        counter: &count
+    )
+    try rankerExpect(
+        noDamageSegment.components.isEmpty,
+        "noDamage 段不得因为 addBaseAtk 而渲染出「+基础攻击力」构成项",
+        counter: &count
+    )
+    try rankerExpect(
+        noDamageSegment.physicalChannel == nil,
+        "noDamage 段没有构成，也就没有物理攻击类型可标",
+        counter: &count
+    )
+    try rankerExpect(
+        SkillDamageMath.composition(of: [noDamageSegment], selected: [901]).isEmpty,
+        "就算被勾上，noDamage 段对构成的贡献也必须是 0",
+        counter: &count
+    )
 
     // 默认勾选：排除 noFp 与 noDamage。
     let defaultSelection = SkillDamageMath.defaultSelection(segments)
@@ -402,23 +708,45 @@ private func checkRankingMath(counter count: inout Int) throws {
     let withAttribute = index.rank(context: context, options: BuffRankingOptions(includeAttributeScoped: true))
     try rankerExpect(withAttribute.contains { $0.spEffectId == 22 }, "打开属性限定开关后 spAttribute 条目应出现", counter: &count)
 
-    // 搜索与来源筛选
-    let searched = index.rank(context: context, options: BuffRankingOptions(query: "只加火"))
+    // 搜索与来源筛选：**只影响列表显示**，rank() 的结果与推荐组合一律不受它们影响
+    //（两端同一口径：搜一个词不该把推荐组合的总倍率也改掉）。
+    let searchOptions = BuffRankingOptions(query: "只加火")
+    let searchedAll = index.rank(context: context, options: searchOptions)
+    try rankerExpect(
+        searchedAll.map(\.spEffectId) == rows.map(\.spEffectId),
+        "搜索词不得改变排名本身（它只筛列表）",
+        counter: &count
+    )
+    let searched = index.visibleRows(searchedAll, options: searchOptions)
     try rankerExpect(searched.map(\.spEffectId) == [2], "搜索应按 displayNameZh 命中，实际 \(searched.map(\.spEffectId))", counter: &count)
-    let byKind = index.rank(context: context, options: BuffRankingOptions(sourceKinds: ["goods"]))
+    let kindOptions = BuffRankingOptions(sourceKinds: ["goods"])
+    let byKindAll = index.rank(context: context, options: kindOptions)
+    try rankerExpect(
+        byKindAll.map(\.spEffectId) == rows.map(\.spEffectId),
+        "来源类型筛选不得改变排名本身（它只筛列表）",
+        counter: &count
+    )
+    let byKind = index.visibleRows(byKindAll, options: kindOptions)
     try rankerExpect(byKind.map(\.spEffectId) == [23], "来源类型筛选应只留该类型，实际 \(byKind.map(\.spEffectId))", counter: &count)
+    try rankerExpect(
+        index.stackPlan(rows: byKindAll, options: kindOptions).total
+            == index.stackPlan(rows: rows).total,
+        "推荐组合的总倍率不得随搜索 / 来源筛选变化",
+        counter: &count
+    )
     try rankerExpect(
         index.availableSourceKinds.contains("goods") && index.availableSourceKinds.contains("relicAffix"),
         "筛选器应列出数据集里出现过的来源类型",
         counter: &count
     )
 
-    // 没有勾选任何段时退回「最大通道乘数」，并且不崩
+    // 没有勾选任何段时：算不出有效倍率，列表为空（不退回任何近似值），并且不崩
     let emptyShares = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
     let emptyRows = index.rank(context: skillContext(shares: emptyShares))
-    try rankerExpectClose(
-        emptyRows.first(where: { $0.spEffectId == 1 })?.effectiveMultiplier ?? 0, 1.2,
-        "没有勾选任何段时应退回该 buff 的最大通道乘数", counter: &count
+    try rankerExpect(
+        emptyRows.isEmpty,
+        "没有勾选任何段时不应给出排名（实际 \(emptyRows.count) 条）",
+        counter: &count
     )
 
     // 明细：物理倍率应落在物理通道上
@@ -442,6 +770,63 @@ private func checkRankingMath(counter count: inout Int) throws {
 ///
 /// 这一关必须独立于 activation：情境限定的条目本身全是 passive，
 /// 「包含条件型」开关既不该放行它们，也不该拦住它们。
+/// scope.atkAttribute：只作用于某一个物理攻击类型。
+/// 本版本数据集 0 例，只能用合成用例覆盖——Windows 端 ranker.test.mjs 有逐条对应的同名断言。
+private func checkAtkAttributeScope(counter count: inout Int) throws {
+    let index = try makeSyntheticBuffIndex(buffs: """
+    [
+      \(syntheticBuff(
+        id: 501, name: "只加斩击（atkAttribute=0）",
+        rates: "{\"physicsAttackRate\":1.5}",
+        scope: "{\"atkAttribute\":0}"
+      )),
+      \(syntheticBuff(id: 502, name: "加全部物理", rates: "{\"physicsAttackRate\":1.5}"))
+    ]
+    """)
+
+    // 纯斩击构成：两条都吃得到，倍率一样。
+    var slashOnly = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+    slashOnly[SkillDamageChannel.slash.rawValue] = 1
+    let slashRows = index.rank(context: skillContext(shares: slashOnly))
+    try rankerExpect(slashRows.count == 2, "纯斩击构成下两条都应进榜，实际 \(slashRows.count)", counter: &count)
+    for row in slashRows {
+        try rankerExpectClose(row.effectiveMultiplier, 1.5, "纯斩击构成下两条的有效倍率应当一样", counter: &count)
+    }
+
+    // 纯突刺构成：限定斩击的那条作用域不符，另一条照常吃。
+    var thrustOnly = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+    thrustOnly[SkillDamageChannel.pierce.rawValue] = 1
+    let thrustResult = index.rankResult(context: skillContext(shares: thrustOnly))
+    try rankerExpect(
+        thrustResult.rows.map(\.spEffectId) == [502],
+        "限定斩击的条目在纯突刺构成下不该进榜，实际 \(thrustResult.rows.map(\.spEffectId))",
+        counter: &count
+    )
+    try rankerExpect(
+        thrustResult.scopeReasons["限定物理攻击类型"] == 1,
+        "被 atkAttribute 拦下的条目应计入「限定物理攻击类型」这条分项",
+        counter: &count
+    )
+
+    // 一半斩击一半突刺：限定斩击的那条只在斩击那一半上乘。
+    var mixed = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+    mixed[SkillDamageChannel.slash.rawValue] = 0.5
+    mixed[SkillDamageChannel.pierce.rawValue] = 0.5
+    let mixedRows = index.rank(context: skillContext(shares: mixed))
+    let restricted = mixedRows.first { $0.spEffectId == 501 }
+    let plain = mixedRows.first { $0.spEffectId == 502 }
+    try rankerExpectClose(restricted?.effectiveMultiplier ?? 0, 1.25, "限定斩击：0.5 × 1.5 + 0.5 × 1", counter: &count)
+    try rankerExpectClose(plain?.effectiveMultiplier ?? 0, 1.5, "不限定的条目两半都吃", counter: &count)
+
+    // 没有构成（一段都没勾）时不判这一关。
+    let empty = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+    try rankerExpect(
+        index.rankResult(context: skillContext(shares: empty)).scopeReasons["限定物理攻击类型"] == nil,
+        "没有伤害构成时不该按 atkAttribute 判作用域",
+        counter: &count
+    )
+}
+
 private func checkAttackContextGate(counter count: inout Int) throws {
     let context = skillContext(shares: halfSlashHalfFire())
     let index = try makeSyntheticBuffIndex(buffs: """
@@ -671,6 +1056,32 @@ private func checkStackingMath(counter count: inout Int) throws {
         counter: &count
     )
 
+    // 纯加算行（倍率恒为 1、只有 flat）不得占掉一个叠加组：它在 applyHighest 组里
+    // 完全可能凭更小的 categoryPriority 赢下整组，然后因为不增伤被丢掉，整组一条都不取。
+    // 口径是「先筛后分桶」，`groupCount` 也就等于取用条数（与 Windows 端 recommendCombo 一致）。
+    let flatVsRate = try makeSyntheticBuffIndex(buffs: """
+    [
+      \(syntheticBuff(id: 201, name: "纯加算但优先级更优", rates: "{\"fireAttackPower\":40}", stacking: applyHighestWeak)),
+      \(syntheticBuff(id: 202, name: "真增伤但优先级差", rates: "{\"physicsAttackRate\":1.3}", stacking: applyHighestStrong))
+    ]
+    """)
+    let flatRows = flatVsRate.rank(context: context)
+    try rankerExpect(flatRows.count == 2, "纯加算行也应进榜（flat > 0 就算有用）", counter: &count)
+    let flatPlan = flatVsRate.stackPlan(rows: flatRows)
+    try rankerExpect(flatPlan.picks.count == 1, "同组只取一条", counter: &count)
+    try rankerExpect(
+        flatPlan.picks.first?.spEffectId == 202,
+        "纯加算行不得凭更小的 categoryPriority 赢下整组后被丢弃",
+        counter: &count
+    )
+    try rankerExpect(
+        flatPlan.groupCount == flatPlan.picks.count,
+        "「组数」必须等于取用条目数（与 Windows 端 recommendCombo 的 groups 同一定义）",
+        counter: &count
+    )
+    // 构成是 50% 斩击 + 50% 火，物理倍率只落在斩击那一半上：0.5 × 1.3 + 0.5 × 1 = 1.15。
+    try rankerExpectClose(flatPlan.total, 1.15, "组合总倍率只由真增伤的那一条决定", counter: &count)
+
     // 勾掉一条后重新计算
     let reduced = index.stackPlan(rows: rows, excluded: [102])
     try rankerExpect(reduced.excludedCount == 1, "勾掉的条目数应被记下", counter: &count)
@@ -730,9 +1141,14 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     let skill = index.skillsByID[7]!
     let segments = index.segments(for: skill, weapon: index.weaponsByID[1])
     try rankerExpect(segments.map(\.atkId) == [11], "选段应只取 variant 里的 atkId（noVariant 段永远取不到）", counter: &count)
-    // skillVariant 缺失的武器：按 variants[].weaponIds 兜回同一套
+    // skillVariant 缺失的武器：数据集写明「缺失表示该武器的战技没有任何命中段」，
+    // 所以就是打不出段——不按 weaponIds 回查、也不退回 ctx 逻辑（与 Windows 端 selectHits 同）。
     let fallback = index.segments(for: skill, weapon: index.weaponsByID[2])
-    try rankerExpect(fallback.map(\.atkId) == [11], "skillVariant 缺失时应按 variants[].weaponIds 兜回，实际 \(fallback.map(\.atkId))", counter: &count)
+    try rankerExpect(
+        fallback.isEmpty,
+        "variants 存在但 skillVariant 缺失时应判为打不出段，实际 \(fallback.map(\.atkId))",
+        counter: &count
+    )
 
     // 4. variants 整个缺失 → ctx 单选逻辑（先武器名，再类别名，最后 ctx 缺失那组），不取并集
     let ctxDataset = try SkillDataset.decode(from: Data("""
@@ -747,8 +1163,31 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     }
     """.utf8))
     let ctxIndex = try SkillDataIndex(dataset: ctxDataset)
-    let ctxSegments = ctxIndex.segments(for: ctxIndex.skillsByID[7]!, weapon: ctxIndex.weaponsByID[1])
+    let ctxSkill = ctxIndex.skillsByID[7]!
+    let ctxSegments = ctxIndex.segments(for: ctxSkill, weapon: ctxIndex.weaponsByID[1])
     try rankerExpect(ctxSegments.map(\.atkId) == [1], "variants 缺失时应按 ctx 单选武器名那一套，实际 \(ctxSegments.map(\.atkId))", counter: &count)
+    // 一个 ctx 都对不上时取「ctx 缺失」那组；连那组都没有就是空——绝不退回全部 hits 取并集。
+    let strangerWeapon = SkillWeapon(id: 9, nameZh: "别的武器", nameEn: "Nothing", wepTypeEn: "Bow")
+    try rankerExpect(
+        ctxIndex.hits(for: ctxSkill, weapon: strangerWeapon).map(\.atkId) == [3],
+        "ctx 对不上时应退到「ctx 缺失」那一组",
+        counter: &count
+    )
+    let noSharedIndex = try SkillDataIndex(dataset: try SkillDataset.decode(from: Data("""
+    {
+      "schemaVersion": 2,
+      "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","attackBase":{"physical":10},"swordArtsParamId":7}],
+      "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
+                  "hits":[{"atkId":1,"ctx":"Alpha","motion":{"physical":100},"attribute":"Slash"},
+                          {"atkId":2,"ctx":"Katana","motion":{"physical":100},"attribute":"Slash"}]}],
+      "spells": []
+    }
+    """.utf8)))
+    try rankerExpect(
+        noSharedIndex.hits(for: noSharedIndex.skillsByID[7]!, weapon: strangerWeapon).isEmpty,
+        "ctx 一个都对不上、又没有「ctx 缺失」段时应返回空，不能退回全部 hits",
+        counter: &count
+    )
 
     // 5. 顶层不是对象 / 空数据
     var threwNotAnObject = false
@@ -1249,7 +1688,8 @@ private func checkRealRanking(skills: SkillDataIndex, buffs: BuffRankerIndex, co
         of: segments, selected: SkillDamageMath.defaultSelection(segments)
     )
     let context = BuffRankingContext(
-        delivery: .weaponSkill(slot: 1),
+        delivery: .weaponSkill,
+        weaponSlot: 1,
         subCategories: [BuffRankingContext.skillAttackSubCategory],
         composition: composition
     )
@@ -1359,7 +1799,8 @@ private func checkRealRanking(skills: SkillDataIndex, buffs: BuffRankerIndex, co
     // 左手 / 右手
     let leftHand = buffs.rank(
         context: BuffRankingContext(
-            delivery: .weaponSkill(slot: 2),
+            delivery: .weaponSkill,
+            weaponSlot: 2,
             subCategories: [BuffRankingContext.skillAttackSubCategory],
             composition: composition
         )
@@ -1413,12 +1854,14 @@ private func checkRealRanking(skills: SkillDataIndex, buffs: BuffRankerIndex, co
     if let fireOnly = segments.first(where: { segment in segment.components.contains { $0.channel == .fire && $0.amount > 0 } }),
        let physicalOnly = segments.first(where: { segment in segment.components.contains { $0.channel.isPhysical && $0.amount > 0 } }) {
         let fireContext = BuffRankingContext(
-            delivery: .weaponSkill(slot: 1),
+            delivery: .weaponSkill,
+            weaponSlot: 1,
             subCategories: [BuffRankingContext.skillAttackSubCategory],
             composition: SkillDamageMath.composition(of: segments, selected: [fireOnly.atkId])
         )
         let physicalContext = BuffRankingContext(
-            delivery: .weaponSkill(slot: 1),
+            delivery: .weaponSkill,
+            weaponSlot: 1,
             subCategories: [BuffRankingContext.skillAttackSubCategory],
             composition: SkillDamageMath.composition(of: segments, selected: [physicalOnly.atkId])
         )
@@ -1526,4 +1969,412 @@ private func checkRealRanking(skills: SkillDataIndex, buffs: BuffRankerIndex, co
     // 排名两次结果一致（纯函数，可重复）
     let again = buffs.rank(context: context)
     try rankerExpect(again.map(\.spEffectId) == rows.map(\.spEffectId), "同样输入的排名结果应可重复", counter: &count)
+}
+
+// MARK: - 双端对照用例
+
+// 与 windows/tests/ranker_crosscheck.test.mjs 用的是同一组输入、同一套断言口径。
+// 两端各自把「同一算法的中间量」断言成一致（构成占比、前 10 名及其有效倍率、推荐组合总倍率
+// 都在各自这一侧用一份独立重算的参考实现校对），因此只要两边都绿，两端的数就必然对得上；
+// 数值本身会随数据集修订变化，所以这里一律**不写绝对快照**。
+//
+// 需要人工对拍时：NR_RANKER_DUMP=1 swift run RelicCoreChecks，
+// 与 NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs 的输出逐行比。
+
+private struct CrossCase {
+    let key: String
+    /// 战技 id（法术用例为 nil）。
+    let skillID: Int?
+    /// 法术 id（战技用例为 nil）。
+    let spellID: Int?
+    let weaponID: Int?
+    /// nil = 默认勾选（当前 FP 侧的全部非 noDamage 段）。
+    let onlyAtkIds: Set<Int>?
+}
+
+private let crossCases: [CrossCase] = [
+    // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是无 FP 版。
+    CrossCase(key: "corpse-piler-full", skillID: 1177, spellID: nil, weaponID: 9040000, onlyAtkIds: nil),
+    // 同一把武器只勾最后一段：每段五属性 motion 同值，构成比例必须与全段完全一致。
+    CrossCase(key: "corpse-piler-last", skillID: 1177, spellID: nil, weaponID: 9040000, onlyAtkIds: [303400305]),
+    // 狮子斩 + 大剑：纯物理。
+    CrossCase(key: "lions-claw-greatsword", skillID: 100, spellID: nil, weaponID: 3180000, onlyAtkIds: nil),
+    // 狮子斩 + 火焰大剑：同一战技、同一套段，换一把带火属性的武器。
+    CrossCase(key: "lions-claw-flame-greatsword", skillID: 100, spellID: nil, weaponID: 3180500, onlyAtkIds: nil),
+    // 喷火 + 钢丝火把：带 isBullet 子弹段的战技（子弹段照常乘武器攻击力，不得整段归零）。
+    CrossCase(key: "firebreather", skillID: 223, spellID: nil, weaponID: 24020000, onlyAtkIds: nil),
+    // 死亡雷击：祷告，只用 flat。
+    CrossCase(key: "death-lightning", skillID: nil, spellID: 5040, weaponID: nil, onlyAtkIds: nil),
+    // 帚星：魔法，只用 flat。
+    CrossCase(key: "comet", skillID: nil, spellID: 4021, weaponID: nil, onlyAtkIds: nil)
+]
+
+private struct CrossResult {
+    let key: String
+    let hits: [SkillHit]
+    let selected: [Int]
+    let shares: [Double]
+    let total: Double
+    let weapon: SkillWeapon?
+    let segments: [SkillSegment]
+    let ranking: BuffRankingResult
+    let plan: BuffStackPlan
+}
+
+/// 参考实现：直接从 hits / weapons 的原始字段重算构成，用来校对 SkillDamageMath。
+/// 故意不复用被测代码的任何分支，这样实现跑偏会被这一关拦下。
+private func referenceShares(hits: [SkillHit], weapon: SkillWeapon?, selected: Set<Int>) -> [Double] {
+    var amounts = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+    for hit in hits where selected.contains(hit.atkId) && !hit.noDamage {
+        let physicalChannel = hit.attribute.channel(weapon: weapon)
+        for element in SkillElement.allCases {
+            let base = weapon?.attack(element) ?? 0
+            let motion = weapon == nil ? 0 : (hit.motion[element] ?? 0)
+            let flat = hit.flat[element] ?? 0
+            var amount = base * motion / 100 + flat
+            if hit.addBaseAtk { amount += base }
+            guard amount > 0 else { continue }
+            let channel = element == .physical ? physicalChannel : SkillDamageChannel.channel(for: element)
+            amounts[channel.rawValue] += amount
+        }
+    }
+    let total = amounts.reduce(0, +)
+    guard total > 0 else { return amounts }
+    return amounts.map { $0 / total }
+}
+
+/// 参考实现：直接从 buff 的 rates + rateFields 重算有效倍率。
+private func referenceMultiplier(buff: BuffEntry, dataset: BuffDataset, shares: [Double]) -> Double {
+    var perChannel = Array(repeating: 1.0, count: SkillDamageChannel.allCases.count)
+    for (key, value) in buff.rates {
+        guard let field = dataset.rateField(key), field.countsAsDamage, field.valueKind == .multiplier,
+              value.isFinite, value > 0, value != field.defaultValue else { continue }
+        let channels: [SkillDamageChannel]
+        switch key {
+        case "physicsAttackRate", "physicsAttackPowerRate":
+            channels = SkillDamageChannel.allCases.filter(\.isPhysical)
+        case "magicAttackRate", "magicAttackPowerRate": channels = [.magic]
+        case "fireAttackRate", "fireAttackPowerRate": channels = [.fire]
+        case "thunderAttackRate", "thunderAttackPowerRate": channels = [.lightning]
+        case "darkAttackRate", "darkAttackPowerRate": channels = [.holy]
+        case "slashAttackRate", "slashAttackPowerRate": channels = [.slash]
+        case "blowAttackRate", "blowAttackPowerRate": channels = [.strike]
+        case "thrustAttackRate", "thrustAttackPowerRate": channels = [.pierce]
+        case "neutralAttackRate", "neutralAttackPowerRate": channels = [.standard]
+        default: channels = []
+        }
+        for channel in channels { perChannel[channel.rawValue] *= value }
+    }
+    var sum = 0.0
+    for channel in SkillDamageChannel.allCases {
+        sum += shares[channel.rawValue] * perChannel[channel.rawValue]
+    }
+    return sum
+}
+
+private func runCrossCase(
+    _ item: CrossCase, skills: SkillDataIndex, buffs: BuffRankerIndex
+) throws -> CrossResult {
+    let weapon = item.weaponID.flatMap { skills.weaponsByID[$0] }
+    let hits: [SkillHit]
+    let delivery: BuffDelivery
+    let subCategories: Set<Int>
+    if let skillID = item.skillID {
+        guard let skill = skills.skillsByID[skillID] else {
+            throw CheckFailure(description: "增伤排名：对照用例找不到战技 \(skillID)")
+        }
+        guard weapon != nil else {
+            throw CheckFailure(description: "增伤排名：对照用例找不到武器 \(item.weaponID ?? -1)")
+        }
+        hits = skills.hits(for: skill, weapon: weapon)
+        delivery = .weaponSkill
+        subCategories = [BuffRankingContext.skillAttackSubCategory]
+    } else {
+        guard let spellID = item.spellID, let spell = skills.spellsByID[spellID] else {
+            throw CheckFailure(description: "增伤排名：对照用例找不到法术")
+        }
+        hits = spell.hits
+        delivery = spell.isSorcery ? .sorcery : .incantation
+        subCategories = []
+    }
+    let segments = hits.map { SkillDamageMath.segment(for: $0, weapon: weapon) }
+    let selected: Set<Int> = item.onlyAtkIds ?? SkillDamageMath.defaultSelection(segments)
+    let composition = SkillDamageMath.composition(of: segments, selected: selected)
+    let context = BuffRankingContext(
+        delivery: delivery, weaponSlot: 1, subCategories: subCategories, composition: composition
+    )
+    let options = BuffRankingOptions()
+    let ranking = buffs.rankResult(context: context, options: options)
+    let plan = buffs.stackPlan(rows: ranking.rows, options: options)
+    return CrossResult(
+        key: item.key,
+        hits: hits,
+        selected: segments.map(\.atkId).filter { selected.contains($0) },
+        shares: composition.shares,
+        total: composition.total,
+        weapon: weapon,
+        segments: segments,
+        ranking: ranking,
+        plan: plan
+    )
+}
+
+private func checkCrossPlatformCases(
+    skills: SkillDataIndex, buffs: BuffRankerIndex, counter count: inout Int
+) throws {
+    var results: [String: CrossResult] = [:]
+    var dump: [String] = []
+    let byID = Dictionary(
+        buffs.dataset.buffs.map { ($0.spEffectId, $0) }, uniquingKeysWith: { first, _ in first }
+    )
+
+    // ⓪ 输出手段列表的收录口径：两端必须收进同一批战技与法术。
+    //    判据是「至少有一种选法算得出非 0 相对值」，所以这里逐条验证它真的算得出来。
+    let skillOutputs = skills.outputs.filter { $0.kind == .skill }
+    let spellOutputs = skills.outputs.filter { $0.kind == .spell }
+    for output in skillOutputs {
+        guard let skill = skills.skillsByID[output.entryID] else {
+            throw CheckFailure(description: "增伤排名：输出手段 \(output.displayName) 找不到对应战技")
+        }
+        let playable = skill.weaponIds.contains { id in
+            guard let weapon = skills.weaponsByID[id] else { return false }
+            return skills.segments(for: skill, weapon: weapon).contains { $0.hasDamage }
+        }
+        try rankerExpect(playable, "列表里的战技「\(output.displayName)」必须至少有一把武器算得出构成", counter: &count)
+    }
+    for output in spellOutputs {
+        guard let spell = skills.spellsByID[output.entryID] else {
+            throw CheckFailure(description: "增伤排名：输出手段 \(output.displayName) 找不到对应法术")
+        }
+        try rankerExpect(
+            skills.segments(for: spell).contains { $0.hasDamage },
+            "列表里的法术「\(output.displayName)」必须至少有一段带固定值",
+            counter: &count
+        )
+    }
+    try rankerExpect(
+        skills.skillsWithoutDamage > 0 && skills.spellsWithoutDamage > 0,
+        "应当真的有一批算不出伤害的战技 / 法术被挡在列表外（否则这条口径是空跑）",
+        counter: &count
+    )
+    dump.append("OUTPUTS skills=\(skillOutputs.count) spells=\(spellOutputs.count)")
+
+    for item in crossCases {
+        let result = try runCrossCase(item, skills: skills, buffs: buffs)
+        results[item.key] = result
+        let hitsByID = Dictionary(result.hits.map { ($0.atkId, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // ① 选段
+        try rankerExpect(!result.hits.isEmpty, "\(item.key)：应能选出段", counter: &count)
+        try rankerExpect(
+            Set(result.selected).isSubset(of: Set(result.hits.map(\.atkId))),
+            "\(item.key)：勾选的段必须是选出的段的子集",
+            counter: &count
+        )
+        try rankerExpect(
+            result.selected.allSatisfy { hitsByID[$0]?.noDamage != true },
+            "\(item.key)：noDamage 段不该被勾上",
+            counter: &count
+        )
+        if item.onlyAtkIds == nil {
+            try rankerExpect(
+                result.selected.allSatisfy { hitsByID[$0]?.noFp != true },
+                "\(item.key)：默认勾选只取 FP 侧，无 FP 版不得同时计入",
+                counter: &count
+            )
+        }
+
+        // ② 构成：与参考实现逐通道一致，且占比之和为 1
+        let reference = referenceShares(
+            hits: result.hits, weapon: result.weapon, selected: Set(result.selected)
+        )
+        for channel in SkillDamageChannel.allCases {
+            try rankerExpectClose(
+                result.shares[channel.rawValue], reference[channel.rawValue],
+                "\(item.key)：\(channel.titleZh) 占比应与参考实现一致",
+                tolerance: 0.000000001, counter: &count
+            )
+        }
+        try rankerExpectClose(
+            result.shares.reduce(0, +), 1, "\(item.key)：占比之和应为 1",
+            tolerance: 0.000000001, counter: &count
+        )
+        try rankerExpect(result.total > 0, "\(item.key)：相对伤害总量应为正", counter: &count)
+
+        // ③ 前 10 名：降序 + 每条的有效倍率与参考实现一致
+        let top = Array(result.ranking.rows.prefix(10))
+        try rankerExpect(
+            top.count == min(10, result.ranking.rows.count),
+            "\(item.key)：前 10 名应取满（命中 \(result.ranking.rows.count) 条）",
+            counter: &count
+        )
+        try rankerExpect(
+            zip(top, top.dropFirst()).allSatisfy { $0.effectiveMultiplier >= $1.effectiveMultiplier },
+            "\(item.key)：前 10 名必须按有效倍率降序",
+            counter: &count
+        )
+        for row in top {
+            guard let buff = byID[row.spEffectId] else {
+                throw CheckFailure(description: "增伤排名：\(item.key) 榜上出现了数据集里没有的 #\(row.spEffectId)")
+            }
+            try rankerExpectClose(
+                row.effectiveMultiplier,
+                referenceMultiplier(buff: buff, dataset: buffs.dataset, shares: result.shares),
+                "\(item.key)：#\(row.spEffectId) 的有效倍率应等于 Σ 占比 × 适用倍率连乘",
+                tolerance: 0.000000001, counter: &count
+            )
+        }
+
+        // ④ 推荐组合：总倍率＝入选条目连乘，每个叠加组只出现一次
+        try rankerExpectClose(
+            result.plan.total, result.plan.picks.reduce(1.0) { $0 * $1.effectiveMultiplier },
+            "\(item.key)：组合总倍率应是入选条目的连乘",
+            tolerance: 0.000000001, counter: &count
+        )
+        try rankerExpect(
+            Set(result.plan.picks.map(\.stackGroup)).count == result.plan.picks.count,
+            "\(item.key)：推荐组合里每个叠加组只应出现一次",
+            counter: &count
+        )
+        try rankerExpect(
+            result.plan.picks.allSatisfy { $0.effectiveMultiplier > 1 },
+            "\(item.key)：推荐组合只应含真正增伤的条目",
+            counter: &count
+        )
+        try rankerExpect(
+            result.plan.total >= (result.ranking.rows.first?.effectiveMultiplier ?? 1) - 0.000001,
+            "\(item.key)：组合总倍率不应低于榜首单条",
+            counter: &count
+        )
+
+        // ⑤ 排除条数按原因分类：与 Windows 端同一计数点（属性限定单独一类，不混进作用域分项）
+        try rankerExpect(
+            result.ranking.attributeScopedCount > 0,
+            "\(item.key)：应有被属性／异常限定拦下的条目",
+            counter: &count
+        )
+        let reasonTotal = result.ranking.scopeReasons
+            .filter { $0.key != BuffRankerIndex.contextGateReason }
+            .values.reduce(0, +)
+        try rankerExpect(
+            reasonTotal == result.ranking.scopeRejectedCount,
+            "\(item.key)：分项条数之和应等于『作用域不符』总数",
+            counter: &count
+        )
+        try rankerExpect(
+            (result.ranking.scopeReasons[BuffRankerIndex.contextGateReason] ?? 0)
+                == result.ranking.contextScopedCount,
+            "\(item.key)：情境闸门在分项里的条数应等于『受攻击情境限制』的条数",
+            counter: &count
+        )
+        try rankerExpect(
+            result.ranking.scopeReasons["限定属性／异常攻击"] == nil,
+            "\(item.key)：属性限定不该同时记进作用域分项（否则两端计数点又错位了）",
+            counter: &count
+        )
+        try rankerExpect(
+            result.plan.groupCount == result.plan.picks.count,
+            "\(item.key)：组数必须等于取用条目数",
+            counter: &count
+        )
+
+        let reasons = result.ranking.scopeReasonBreakdown
+            .map { "\($0.reason):\($0.count)" }
+            .joined(separator: "|")
+        dump.append(
+            "CASE \(item.key) selected=\(result.selected.map(String.init).joined(separator: ","))"
+                + " shares=\(result.shares.map { String(format: "%.9f", $0) }.joined(separator: ","))"
+                + " rows=\(result.ranking.rows.count)"
+                + " top10=\(top.map { "\($0.spEffectId):\(String(format: "%.9f", $0.effectiveMultiplier))" }.joined(separator: ","))"
+                + " combo=\(String(format: "%.9f", result.plan.total)) picks=\(result.plan.picks.count)"
+                + " groups=\(result.plan.groupCount)"
+                + " excluded=\(result.ranking.contextScopedCount)/\(result.ranking.attributeScopedCount)"
+                + "/\(result.ranking.scopeRejectedCount)"
+                + " reasons=\(reasons)"
+        )
+    }
+
+    // ⑤ 跨用例关系：同一把武器、每段五属性 motion 同值 → 只勾一段与全勾的构成、排名、组合完全一致
+    if let full = results["corpse-piler-full"], let last = results["corpse-piler-last"] {
+        try rankerExpect(full.selected.count > last.selected.count, "对照：全段应比只勾一段多", counter: &count)
+        for channel in SkillDamageChannel.allCases {
+            try rankerExpectClose(
+                full.shares[channel.rawValue], last.shares[channel.rawValue],
+                "对照：尸横遍野每段五属性 motion 同值，只勾一段的构成应与全段一致",
+                tolerance: 0.000000001, counter: &count
+            )
+        }
+        try rankerExpect(
+            full.ranking.rows.prefix(10).map(\.spEffectId) == last.ranking.rows.prefix(10).map(\.spEffectId),
+            "对照：构成相同 → 前 10 名必须完全相同",
+            counter: &count
+        )
+        try rankerExpectClose(
+            full.plan.total, last.plan.total,
+            "对照：构成相同 → 推荐组合总倍率必须完全相同",
+            tolerance: 0.000000001, counter: &count
+        )
+    }
+
+    // ⑥ 同一战技换一把带火属性的武器：火占比从 0 变正，只加火的条目随之进榜
+    if let plain = results["lions-claw-greatsword"], let flame = results["lions-claw-flame-greatsword"] {
+        try rankerExpectClose(
+            plain.shares[SkillDamageChannel.fire.rawValue], 0,
+            "对照：普通大剑的火占比应为 0", tolerance: 0.000000001, counter: &count
+        )
+        try rankerExpect(
+            flame.shares[SkillDamageChannel.fire.rawValue] > 0,
+            "对照：火焰大剑的火占比应大于 0",
+            counter: &count
+        )
+        try rankerExpect(
+            plain.selected == flame.selected,
+            "对照：同一战技同一套段，换武器不该改变选段",
+            counter: &count
+        )
+        let fireOnly = flame.ranking.rows.filter { row in
+            row.channelFactors.contains { $0.channel == .fire && $0.factor > 1 }
+                && row.channelFactors.allSatisfy { $0.channel == .fire || abs($0.factor - 1) < 0.000001 }
+        }
+        try rankerExpect(!fireOnly.isEmpty, "对照：火焰大剑下应能进来只加火的条目", counter: &count)
+        let plainIDs = Set(plain.ranking.rows.map(\.spEffectId))
+        try rankerExpect(
+            fireOnly.allSatisfy { !plainIDs.contains($0.spEffectId) },
+            "对照：只加火的条目不该出现在纯物理构成的榜上",
+            counter: &count
+        )
+    }
+
+    // ⑦ 带子弹的战技：子弹段照常算伤害（回归「战技子弹段被整段归零」）
+    if let bullet = results["firebreather"] {
+        let bulletSegments = bullet.segments.filter { $0.isBullet }
+        try rankerExpect(!bulletSegments.isEmpty, "对照：喷火应有子弹段", counter: &count)
+        try rankerExpect(
+            bulletSegments.contains { $0.hasDamage },
+            "对照：战技的子弹段挂的是真武器，必须照常按 攻击力 × motion/100 + flat 算出伤害",
+            counter: &count
+        )
+        try rankerExpect(
+            bullet.segments.contains { $0.noDamage },
+            "对照：喷火里应有 noDamage 段（耐力消耗），用来验证它不进构成",
+            counter: &count
+        )
+    }
+
+    // ⑧ 法术：构成只能来自 flat，绝不能把 motion 乘到施法器上造出物理伤害
+    for key in ["death-lightning", "comet"] {
+        guard let spell = results[key] else { continue }
+        for channel in SkillDamageChannel.allCases where channel.isPhysical {
+            try rankerExpectClose(
+                spell.shares[channel.rawValue], 0,
+                "对照：\(key) 是法术，物理占比必须为 0（motion 是占位写法）",
+                tolerance: 0.000000001, counter: &count
+            )
+        }
+        try rankerExpect(spell.plan.total > 1, "对照：\(key) 应能给出理论叠加组合", counter: &count)
+    }
+
+    if ProcessInfo.processInfo.environment["NR_RANKER_DUMP"] == "1" {
+        for line in dump { print(line) }
+    }
 }

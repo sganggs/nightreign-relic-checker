@@ -24,9 +24,9 @@ struct BuffRankerRankingSection: View {
             filters
             summaryLine
 
-            if model.ranking.rows.isEmpty {
-                Text("当前条件下没有可用的增伤手段。可以放宽筛选：打开「包含条件型」「包含队友增益」，"
-                     + "或清空来源类型与搜索词。")
+            if model.pageRows.isEmpty {
+                Text("当前条件下没有可用的增伤手段。可以放宽筛选：打开「包含条件型」「包含队友增益」"
+                     + "「包含属性／异常限定」，或清空来源类型与搜索词。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -73,6 +73,12 @@ struct BuffRankerRankingSection: View {
                     .font(.caption)
                     .help("scope.spAttribute 限定（只对带某种属性或异常的攻击生效）；"
                           + "本页无法判定当前段是否带该属性，默认不计入")
+
+                Toggle("叠层类按满层计算", isOn: $model.useLadderTopRates)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                    .help("stackLadder：数据集只收第 1 层，topRates 才是满层数值。"
+                          + "同一阶梯各层互斥，无论开关怎么拨都只按一层计算")
 
                 Spacer(minLength: 0)
             }
@@ -149,7 +155,9 @@ struct BuffRankerRankingSection: View {
     private var summaryLine: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
-                Text("共 \(model.ranking.rows.count) 条")
+                Text(model.hiddenFromDisplayCount > 0
+                     ? "命中 \(model.ranking.rows.count) 条 · 当前筛选显示 \(model.displayRows.count) 条"
+                     : "共 \(model.ranking.rows.count) 条")
                     .font(.system(size: 12, weight: .semibold))
                 if model.ranking.neutralCount > 0 {
                     Text("另有 \(model.ranking.neutralCount) 条虽然作用于这次攻击，但对当前伤害构成没有增益（例如纯物理构成里的火属性倍率），未列出")
@@ -174,10 +182,40 @@ struct BuffRankerRankingSection: View {
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if model.ranking.attributeScopedCount > 0 {
+                Text("另有 \(model.ranking.attributeScopedCount) 条被 scope.spAttribute 限定"
+                     + "（只对带某种属性／异常的攻击生效）而未计入，打开「包含属性／异常限定」后才会列出")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            // 作用域不符的总数与分项：与 Windows 端 rankBodyHtml 的
+            //「作用域不符 N 条」+ scopeBreakdownHtml 一一对应。
+            //「为什么这些条目没出现」不该藏在一个总数里——数据集没给判据、由本页承担的判定
+            //（只标 130 近战、只作用于法术…）更要逐条列出来。
+            if model.ranking.scopeRejectedCount > 0 {
+                Text("另有 \(model.ranking.scopeRejectedCount) 条作用域不符（武器槽／投掷／法术／攻击子类别）而未计入")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !model.scopeReasonText.isEmpty {
+                Text("排除原因分项：" + model.scopeReasonText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if model.composition.isEmpty {
-                Text("当前没有勾选任何有伤害的段，有效倍率退回「该条 buff 各伤害类型倍率里的最大值」，只能当粗排看。")
+                Text("当前没有勾选任何带伤害的段：没有构成就算不出有效倍率，列表为空。先在上面勾一段。")
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.hiddenFromDisplayCount > 0 {
+                Text("搜索词与来源类型只筛列表：被筛掉的 \(model.hiddenFromDisplayCount) 条仍然计入下面的推荐组合。"
+                     + "要排除某一条，请在列表里勾掉它。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -263,6 +301,22 @@ struct BuffRankerStackSection: View {
                 }
             }
 
+            HStack(spacing: 14) {
+                Toggle("同族效果只取最高档", isOn: $model.mergeFamilies)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                    .help("按 Paramdex 行名词干合并叠加组：[Relic] X / X +1 / X +2 是同一条词条的不同档位，"
+                          + "一枚遗物上只会有一档")
+
+                Toggle("同 stateInfo 视为同一状态", isOn: $model.mergeStates)
+                    .toggleStyle(.switch)
+                    .font(.caption)
+                    .help("stackingRules 第 3 条只说同一 stateInfo「值得怀疑」是同一状态的不同档位，"
+                          + "并不是互斥分组；打开＝按这条交叉参考保守合并，可能把本可共存的效果并成一组")
+
+                Spacer(minLength: 0)
+            }
+
             if model.plan.picks.isEmpty {
                 Text("当前条件下没有可叠加的无条件增伤手段。")
                     .font(.caption)
@@ -281,7 +335,10 @@ struct BuffRankerStackSection: View {
             }
 
             Text("条件型（残血、双手持、叠层、命中触发、技艺发动期间…）默认不计入，"
-                 + "在上面的列表里单独勾选才会纳入这里的连乘。")
+                 + "在上面的列表里单独勾选才会纳入这里的连乘。"
+                 + "组合按「全部命中条目」计算，不受上面的搜索框与来源类型筛选影响。"
+                 + "攻击力加算（点数）没有绝对攻击力就折不成倍率，只在列表里单独展示，不进连乘。"
+                 + "叠层阶梯的各层共用一个叠加组，绝不会有两层同时相乘。")
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -307,7 +364,7 @@ struct BuffRankerStackSection: View {
                     .font(.system(size: 12))
                     .italic(!pick.isPassive)
                 if !pick.isPassive {
-                    Pill(text: pick.activation == "activated" ? "发动期间" : "需触发", color: AppTheme.amber)
+                    Pill(text: pick.activation == "activated" ? "发动期间" : "需满足条件", color: AppTheme.amber)
                 }
                 Spacer(minLength: 8)
                 ForEach(pick.sourceKinds.prefix(2), id: \.self) { kind in
@@ -340,6 +397,7 @@ struct BuffRankerStackSection: View {
 
 struct BuffRankerNotesSection: View {
     @ObservedObject var model: BuffRankerModel
+    @State private var showPageRules = false
     @State private var showCaveats = false
     @State private var showUsage = false
     @State private var showRanking = false
@@ -353,6 +411,14 @@ struct BuffRankerNotesSection: View {
                 subtitle: "数值直接取自游戏参数表，既不是官方公布，也不是木桩实测",
                 symbol: "info.circle"
             )
+
+            // 本页自己承担的判定：与 Windows 端「数据说明与本页口径」同文，两端一起改。
+            RankerDisclosure(
+                title: "本页口径与自己承担的判定（\(model.pageRuleNotes.count) 条）",
+                isOn: $showPageRules
+            ) {
+                bulletList(model.pageRuleNotes)
+            }
 
             if let skills = model.skills {
                 RankerDisclosure(
@@ -378,13 +444,15 @@ struct BuffRankerNotesSection: View {
                             label: "可选战技",
                             value: "\(skills.outputs.filter { $0.kind == .skill }.count) 个"
                                 + "（另有 \(skills.skillsWithoutWeapons) 个战技本作没有任何武器引用、"
-                                + "\(skills.skillsWithoutHits) 个战技没有命中段，未列入）",
+                                + "\(skills.skillsWithoutHits) 个战技没有命中段、"
+                                + "\(skills.skillsWithoutDamage) 个战技每一段都算不出伤害，未列入）",
                             tint: AppTheme.secondaryText
                         )
                         RankerDetailRow(
                             label: "可选法术",
                             value: "\(skills.outputs.filter { $0.kind == .spell }.count) 个"
-                                + "（另有 \(skills.spellsWithoutHits) 个法术是附魔 / 防护 / 回复类，没有命中段）",
+                                + "（另有 \(skills.spellsWithoutHits) 个法术是附魔 / 防护 / 回复类没有命中段、"
+                                + "\(skills.spellsWithoutDamage) 个法术有命中段但一个固定值都没有，未列入）",
                             tint: AppTheme.secondaryText
                         )
                         if let buffs = model.buffs {
@@ -394,6 +462,15 @@ struct BuffRankerNotesSection: View {
                                     + "scope.spAttribute 限定（只对带某种属性 / 异常的攻击生效，默认不计入）、"
                                     + "\(buffs.contextScopedTotal) 条被 scope.attackContexts 限定"
                                     + "（只在某种攻击情境下才生效，默认不计入，需勾选情境）",
+                                tint: AppTheme.secondaryText
+                            )
+                            RankerDetailRow(
+                                label: "v4 / v5 字段",
+                                value: "叠层阶梯 \(buffs.ladderCount) 条（只收第 1 层，topRates 才是满层数值，各层互斥）、"
+                                    + "自伤型异常累积 \(buffs.selfInflictedStatusCount) 条"
+                                    + "（status 组的加算累在玩家自己身上，countsAsDamage 全为 false，"
+                                    + "伤害排名的乘积不受影响；将来做异常累积榜必须整条排除）、"
+                                    + "stateInfo 中文标签 \(buffs.dataset.stateInfoLabelCount) 项",
                                 tint: AppTheme.secondaryText
                             )
                         }
@@ -437,9 +514,13 @@ struct BuffRankerNotesSection: View {
         .appCard()
     }
 
-    /// notes 的展示顺序：先排名算法，再目标 / 条件 / 命名这些取舍说明。
+    /// notes 的展示顺序：先排名算法，再情境 / 叠层 / 倍率用法，最后目标 / 条件 / 命名这些取舍说明。
+    /// 与 Windows 端 NOTE_ORDER 一致。
     private func noteKeys(_ buffs: BuffRankerIndex) -> [String] {
-        let preferred = ["ranking", "attackContext", "howToUseRates", "activation", "target", "conditions", "zh", "displayName", "damageTypeNaming"]
+        let preferred = [
+            "ranking", "attackContext", "stackLadder", "howToUseRates", "activation",
+            "target", "conditions", "displayName", "damageTypeNaming", "zh"
+        ]
         let existing = preferred.filter { buffs.dataset.notes[$0] != nil }
         let rest = buffs.dataset.notes.keys.filter { !preferred.contains($0) }.sorted()
         return existing + rest

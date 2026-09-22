@@ -580,6 +580,13 @@
   color: var(--amber) !important;
 }
 
+/* 叠层阶梯（stackLadder）：第 1 层旁边同时给出满层数值，
+   否则 ×1.007 这种看着像噪音（满 100 层其实是 ×1.40）。 */
+.ranker-buff-ladder {
+  color: var(--amber) !important;
+  font-weight: 700 !important;
+}
+
 .ranker-buff-rates {
   display: flex;
   flex-wrap: wrap;

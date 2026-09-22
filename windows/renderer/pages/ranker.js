@@ -2,11 +2,12 @@
 // 本文件由「增伤排名」功能开发者独占：只改这里与 pages/ranker.css。
 //
 // 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 2）
-//       ctx.getGameData("buffs")  → resources/buffs.json（schemaVersion ≥ 3，v4 只增字段，本页向前兼容）
+//       ctx.getGameData("buffs")  → resources/buffs.json（schemaVersion ≥ 3；v4 / v5 只增字段，本页向前兼容）
 //
 // 算法口径（全部照数据集自带的说明实现，不写死任何具体数值）：
 //   · 选段：usage.选段（必读）——v = skills[i].variants[weapon.skillVariant]，
-//     段 = hits 中 atkId ∈ v.atkIds 的那些；variants 缺失时才退回 ctx 单选逻辑，绝不取并集。
+//     段 = hits 中 atkId ∈ v.atkIds 的那些；variants 缺失时才退回 ctx 单选逻辑，绝不取并集，
+//     一个都对不上就是「这把武器打不出段」（返回空），不退回全表。
 //   · 武器段（含战技的子弹段）：该属性数值 ≈ 武器该属性攻击力 × motion/100 + flat，
 //     addBaseAtk 再加一份武器该属性攻击力。
 //   · 法术段：只用 flat[el]。usage「法术 / 子弹段」的理由是「施法器的 attackBase 只有 physical，
@@ -16,8 +17,22 @@
 //     回 weapons[].atkAttribute / atkAttribute2 取斩 / 打 / 突 / 标准。
 //   · 增伤排名：notes.ranking 的 ①target ②direction ③activation ④scope（v4 起 scope.attackContexts
 //     优先，非空时默认不计入，勾选该情境后才乘）⑤rates ⑥stacking ⑦displayName。
+//     ①②都是**白名单**：target 只取 self（开关放开 ally），direction 只取 increase / mixed，
+//     将来数据集加新取值时不会被静默放行。
+//   · scope.atkAttribute（0…3 = 斩 / 打 / 突 / 标准，本版本 0 例）：倍率只落在那一个物理通道上，
+//     当前构成里该通道占比为 0 时判为作用域不符。与 macOS 端 makeProfile / scopeVerdict 同口径。
+//   · 推荐组合：**先剔掉不增伤的行再分桶**，「组数」＝取用条目数（macOS 端 groupCount 同一定义）；
+//     纯加算行不该占掉一个叠加组。
 //   · 有效倍率 = Σ_type 占比_type × Π(该类型适用的倍率字段)，attackPower 层与 damage 层都乘，
 //     物理子类型倍率只乘对应子类型那一份；countsAsDamage=false 的字段一律不乘。
+//   · v4 stackLadder：数据集只收第 1 层，topRates 才是满层数值；同一阶梯各层互斥、绝不相乘，
+//     所以推荐组合里同一阶梯共用一个组键，另给一个「按满层计算」的可选开关。
+//   · v5 selfInflictedStatus：那 20 条的 status 加算是玩家自伤，countsAsDamage 全为 false，
+//     伤害乘积一个数都不受影响；本页给它们单独打标，将来若开异常累积轴必须整条排除。
+//
+// **两端同一口径**：macOS 版（RelicCore/SkillData.swift + BuffRanker.swift）实现的是同一套算法，
+// 任何取舍改动都要同步改两边，并在 windows/tests/ranker*.test.mjs 与
+// macos/Sources/RelicCoreChecks/BuffRankerChecks.swift 里各自固化同一组对照用例。
 //
 // 本页只做「相对伤害构成」：没有强化等级、能力值补正与 AttackElementCorrectParam，
 // 绝对伤害不在范围内（见 skills 数据集的 usage.本数据集的边界）。
@@ -84,6 +99,18 @@
   // 130＝近战武器攻击，战技命中算不算它数据集没给判据，见 scopeInfo 的注释。
   var SKILL_SUB_CATEGORY = 112;
   var MELEE_SUB_CATEGORY = 130;
+  // 「这条真的增伤吗」的阈值：两端同一个数（macOS 端 BuffRankingRow.isUseful 也是它），
+  // 差在小数第七位的只是加权求和的浮点噪音。
+  var USEFUL_EPSILON = 1.0000001;
+
+  // 攻击情境 chip 的固定顺序（enums.attackContext 的 15 个键；数据集里没出现的不显示）。
+  // 与 macOS 端 BuffRankerIndex.attackContextOrder 逐项相同。
+  var ATTACK_CONTEXT_ORDER = [
+    "criticalHit", "thrustingCounter", "guardCounter", "chainFinisher",
+    "chargedHeavyAttack", "chargedSkill", "chargedSpell",
+    "jumpAttack", "dashAttack", "rollingAttack", "backstepAttack",
+    "initialAttack", "horsebackAttack", "twoHanded", "dualWield"
+  ];
   var PAGE_SIZE = 40;
   var PICKER_LIMIT = 40;
 
@@ -277,6 +304,9 @@
   //    那一类只作用于法术的条目，不能算进武器／战技命中。
   //  · meleeOnly：subCategories 只有 130（近战武器攻击）而没有 112（战技攻击）。战技的近战
   //    命中算不算 130，数据集没有给出判据，本页保守地判为作用域不符并在底部说明里列出。
+  // scope.spAttribute（本版本 356 条、其中 121 条带伤害倍率）是「只对带某个特殊属性／异常的
+  // 攻击生效」：本页拿不到「这一段带不带该属性」的判据，按 macOS 端的更严口径默认不计入，
+  // 由「包含属性／异常限定」开关放开。
   function scopeInfo(buff) {
     var scope = (buff && buff.scope) || {};
     var slot = typeof scope.weaponSlot === "number" ? scope.weaponSlot : 0;
@@ -287,6 +317,11 @@
     // v4 新增；v3 数据里没有这个键，contexts 恒为空数组 → 全部判定保持原样。
     var contexts = Array.isArray(scope.attackContexts) ? scope.attackContexts.slice() : [];
     var subCategories = Array.isArray(scope.subCategories) ? scope.subCategories.slice() : [];
+    // scope.atkAttribute（0…3 = 斩 / 打 / 突 / 标准）：这条倍率只作用于某一个物理攻击类型。
+    // 本版本数据集 0 例，但 macOS 端已按这条实现（倍率只落在那个通道 + 当前构成里该通道
+    // 占比为 0 时判为作用域不符），两端必须同口径，否则数据集补上这个字段就会立刻分叉。
+    var atkAttribute = typeof scope.atkAttribute === "number" ? scope.atkAttribute : null;
+    var restrictedType = (atkAttribute !== null && PHYS_BY_INDEX[atkAttribute]) || null;
     return {
       slot: slot,
       sorcery: sorcery,
@@ -294,6 +329,9 @@
       shaman: shaman,
       thrown: thrown,
       spAttribute: typeof scope.spAttribute === "number" ? scope.spAttribute : null,
+      attributeScoped: typeof scope.spAttribute === "number",
+      atkAttribute: atkAttribute,
+      restrictedType: restrictedType,
       subCategories: subCategories,
       attackContexts: contexts,
       throwOnly: contexts.length ? false : (thrown && !sorcery && !incantation && !shaman),
@@ -303,9 +341,9 @@
     };
   }
 
-  // target = { mode, hand, contexts }
+  // target = { mode, hand, contexts, includeAttributeScoped }
   //   mode     "skill" | "sorcery" | "incantation"
-  //   hand     1 右手 / 2 左手
+  //   hand     1 右手 / 2 左手（法术同样按手判定：施法器也是握在某只手上的武器槽）
   //   contexts {攻击情境键: true}，用户勾选的攻击情境（v4 scope.attackContexts）
   function scopeVerdict(info, target) {
     var mode = target && target.mode;
@@ -321,21 +359,56 @@
     } else if (info.throwOnly) {
       return { ok: false, reason: "只作用于致命一击／投掷攻击" };
     }
-    if ((info.slot === 1 || info.slot === 2) && info.slot !== hand) {
-      return { ok: false, reason: info.slot === 1 ? "只作用于右手武器" : "只作用于左手武器" };
+    // wepParamChange：0（缺失）不限、3（自身）不限，1 / 2 必须对上当前手，
+    // 其余取值（4 踢击）与武器 / 法术命中无关，一律判为作用域不符。
+    if (info.slot !== 0 && info.slot !== 3 && info.slot !== hand) {
+      return {
+        ok: false,
+        reason: info.slot === 1 ? "只作用于右手武器"
+          : (info.slot === 2 ? "只作用于左手武器" : "只作用于别的武器槽（踢击等）")
+      };
+    }
+    // scope.spAttribute：只对带某个特殊属性／异常的攻击生效，本页无从判定当前段带不带，
+    // 默认不计入（与 macOS 端同一口径），由开关放开。
+    if (info.attributeScoped && !(target && target.includeAttributeScoped)) {
+      return { ok: false, reason: "限定属性／异常攻击", attribute: true };
     }
     if (mode === "skill") {
       if (info.spellOnly) return { ok: false, reason: "只作用于魔法／祷告" };
       if (info.meleeOnly) return { ok: false, reason: "只作用于近战武器攻击子类别（130）" };
-      if (info.subCategories.length && info.subCategories.indexOf(SKILL_SUB_CATEGORY) === -1) {
+    } else if (mode === "sorcery" && !info.sorcery) {
+      return { ok: false, reason: "不作用于魔法" };
+    } else if (mode === "incantation" && !info.incantation) {
+      return { ok: false, reason: "不作用于祷告" };
+    }
+    if (info.subCategories.length) {
+      if (mode !== "skill") return { ok: false, reason: "限定法术流派／蓄力，数据集无流派字段" };
+      if (info.subCategories.indexOf(SKILL_SUB_CATEGORY) === -1) {
         return { ok: false, reason: "限定别的攻击子类别" };
       }
-      return { ok: true, reason: "" };
     }
-    if (mode === "sorcery" && !info.sorcery) return { ok: false, reason: "不作用于魔法" };
-    if (mode === "incantation" && !info.incantation) return { ok: false, reason: "不作用于祷告" };
-    if (info.subCategories.length) return { ok: false, reason: "限定法术流派／蓄力，数据集无流派字段" };
+    // scope.atkAttribute：只作用于某一个物理攻击类型。当前构成里那个通道占比为 0 就吃不到。
+    // 没有构成（一段都没勾）时不判，与 macOS 端的 context.hasComposition 同一口径。
+    if (info.restrictedType) {
+      var shares = target && target.shares;
+      var hasComposition = shares && TYPE_KEYS.some(function (key) { return num(shares[key]) > 0; });
+      if (hasComposition && !(num(shares[info.restrictedType]) > 0)) {
+        return { ok: false, reason: "限定物理攻击类型" };
+      }
+    }
     return { ok: true, reason: "" };
+  }
+
+  // scopeVerdict 需要当前伤害构成（scope.atkAttribute 那一关要看对应通道有没有占比），
+  // 但 options 是调用方的对象、不能改写：这里另拼一个只读的判定目标。
+  function verdictTarget(options, shares) {
+    return {
+      mode: options && options.mode,
+      hand: options && options.hand,
+      contexts: (options && options.contexts) || {},
+      includeAttributeScoped: Boolean(options && options.includeAttributeScoped),
+      shares: shares || null
+    };
   }
 
   // ---- 叠加分组（stackingRules）---------------------------------------
@@ -397,23 +470,57 @@
       buff.paramName || ("#" + buff.spEffectId);
   }
 
+  // 把一组 rates 折成「伤害类型 → 倍率」的 9 格表：只有 countsAsDamage 且 valueKind=multiplier
+  // 的字段进乘积，取值必须是有限正数且不等于该字段的默认值（数据集只列非默认值）。
+  // used 非空时顺带记下用到的字段，供详情展开显示。
+  // restrictedType 非空（scope.atkAttribute）时倍率只落在那一个物理通道上，
+  // 与 macOS 端 makeProfile 里的 `restricted` 同一口径。
+  function multiplierMap(rates, plan, used, restrictedType) {
+    var table = emptyTypeMap(1);
+    plan.multiplier.forEach(function (field) {
+      var value = (rates || {})[field.key];
+      if (typeof value !== "number" || !isFinite(value) || value <= 0 || value === field.fallback) return;
+      var types = restrictedType
+        ? field.types.filter(function (type) { return type === restrictedType; })
+        : field.types;
+      if (!types.length) return;
+      if (used) used.push({ key: field.key, zh: field.zh, layer: field.layer, value: value, types: types.slice() });
+      types.forEach(function (type) { table[type] *= value; });
+    });
+    return table;
+  }
+
+  // v4 stackLadder：这条只是一段叠层阶梯的第 1 层，topRates 才是满层数值。
+  // 同一阶梯各层互斥（notes.stackLadder），推荐组合里必须共用一个组键，绝不能相乘。
+  // tierSpEffectIds 按 v5 的口径是「第 2 层起」，这里并上自己再排序，组键取最小 id。
+  function ladderInfo(buff, plan, restrictedType) {
+    var raw = buff && buff.stackLadder;
+    if (!raw || typeof raw !== "object") return null;
+    var ids = (Array.isArray(raw.tierSpEffectIds) ? raw.tierSpEffectIds.slice() : [])
+      .concat([buff.spEffectId])
+      .filter(function (id) { return typeof id === "number"; })
+      .sort(function (a, b) { return a - b; });
+    return {
+      tiers: num(raw.tiers),
+      saved: raw.saved === true,
+      tierSpEffectIds: ids,
+      key: "ladder#" + (ids.length ? ids[0] : buff.spEffectId),
+      multiplier: multiplierMap(raw.topRates, plan, null, restrictedType)
+    };
+  }
+
   // 每条 buff 预先折成「伤害类型 → 倍率 / 加算」两张 9 格表；
   // 之后选段变化只需要 Σ 占比 × 这张表，不再碰 rates。
   function indexBuff(buff, plan) {
     var rates = (buff && buff.rates) || {};
-    var multiplier = emptyTypeMap(1);
+    var info = scopeInfo(buff);
     var flat = emptyTypeMap(0);
     var usedMultiplier = [];
     var usedFlat = [];
-    plan.multiplier.forEach(function (field) {
-      var value = rates[field.key];
-      if (typeof value !== "number" || value === field.fallback) return;
-      usedMultiplier.push({ key: field.key, zh: field.zh, layer: field.layer, value: value, types: field.types });
-      field.types.forEach(function (type) { multiplier[type] *= value; });
-    });
+    var multiplier = multiplierMap(rates, plan, usedMultiplier, info.restrictedType);
     plan.flat.forEach(function (field) {
       var value = rates[field.key];
-      if (typeof value !== "number" || value === field.fallback) return;
+      if (typeof value !== "number" || !isFinite(value) || value === field.fallback) return;
       usedFlat.push({ key: field.key, zh: field.zh, value: value, types: field.types });
       field.types.forEach(function (type) { flat[type] += value; });
     });
@@ -423,7 +530,7 @@
     });
     var hasMultiplier = TYPE_KEYS.some(function (type) { return multiplier[type] !== 1; });
     var hasFlat = TYPE_KEYS.some(function (type) { return flat[type] !== 0; });
-    var info = scopeInfo(buff);
+    var ladder = ladderInfo(buff, plan, info.restrictedType);
     var kinds = sourceKindsOf(buff);
     var inferred = ((buff && buff.sources) || []).some(function (source) { return source && source.inferred === true; });
     return {
@@ -449,29 +556,48 @@
       group: stackingGroupKey(buff),
       state: stateGroupKey(buff),
       family: familyKey(buff),
+      ladder: ladder,
+      // v5 selfInflictedStatus：status 组的加算点数是累在玩家自己身上的自伤。
+      // 那些字段 countsAsDamage 全为 false，伤害乘积不受影响；本页只打标 + 写进说明，
+      // 将来若加「异常累积」轴必须整条排除。
+      selfInflictedStatus: buff && buff.selfInflictedStatus === true,
+      // 可检索字段两端取并集：名称（中英 + displayName）+ paramName + descZh
+      // + 全部来源名 + 来源类型中文标签 + spEffectId。与 macOS 端 makeProfile 的
+      // searchParts 逐项相同，同一个关键词在两端必须命中同一批行。
       searchText: [
         buff.displayNameZh, buff.nameZh, buff.displayNameEn, buff.nameEn,
         buff.paramName, buff.descZh,
-        ((buff.sources || []).map(function (s) { return [s.nameZh, s.nameEn, s.effectNameZh].join(" "); }).join(" "))
+        ((buff.sources || []).map(function (s) { return [s.nameZh, s.nameEn, s.effectNameZh].join(" "); }).join(" ")),
+        kinds.map(sourceKindLabel).join(" "),
+        String(buff.spEffectId)
       ].join(" ").toLowerCase()
     };
   }
 
   // 数据里实际出现过的攻击情境（v4 scope.attackContexts）。v3 没有这个键 → 返回空数组，
   // 对应的整块 UI 不渲染，判定也全部是 no-op。中文名一律取 enums.attackContext[key].zh。
+  //
+  // 两端同一口径：
+  //  · 只统计 countsAsDamage 的条目——这排 chip 是**排名列表的筛选器**，永远进不了榜的
+  //    条目（没有任何伤害倍率字段）不该把数字撑大；
+  //  · 顺序用下面这张固定表，不按计数排——按计数排会让数据集改一个数就把整排 chip 重排。
   function availableContexts(buffsData, entries) {
     var labels = (buffsData && buffsData.enums && buffsData.enums.attackContext) || {};
     var counts = {};
-    var order = [];
     (entries || []).forEach(function (entry) {
       if (!entry.countsAsDamage) return;
       (entry.scope.attackContexts || []).forEach(function (key) {
-        if (!counts[key]) { counts[key] = 0; order.push(key); }
-        counts[key] += 1;
+        counts[key] = (counts[key] || 0) + 1;
       });
     });
-    order.sort(function (a, b) { return counts[b] - counts[a] || (a < b ? -1 : 1); });
-    return order.map(function (key) {
+    return Object.keys(counts).sort(function (a, b) {
+      var left = ATTACK_CONTEXT_ORDER.indexOf(a);
+      var right = ATTACK_CONTEXT_ORDER.indexOf(b);
+      if (left < 0) left = ATTACK_CONTEXT_ORDER.length;
+      if (right < 0) right = ATTACK_CONTEXT_ORDER.length;
+      if (left !== right) return left - right;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    }).map(function (key) {
       var label = labels[key] || {};
       return { key: key, zh: label.zh || key, en: label.en || "", count: counts[key] };
     });
@@ -487,7 +613,11 @@
 
   // 有效倍率 = Σ_type 占比_type × Π(该类型适用的倍率字段)；
   // 加算是点数，没有绝对攻击力就折不成倍率，只按占比加权后单独展示。
-  function effectiveFor(entry, shares) {
+  // useLadderTop＝「叠层类按满层计算」：改用 stackLadder.topRates 折出来的那张表。
+  // 没有勾选任何段（占比全 0）时一律判为「算不出」，不退回任何近似值——
+  // 两端同一口径：排名必须建立在一个真实的伤害构成上。
+  function effectiveFor(entry, shares, useLadderTop) {
+    var table = (useLadderTop && entry.ladder) ? entry.ladder.multiplier : entry.multiplier;
     var multiplier = 0;
     var flat = 0;
     var weight = 0;
@@ -495,28 +625,38 @@
       var share = shares ? num(shares[type]) : 0;
       if (!share) return;
       weight += share;
-      multiplier += share * entry.multiplier[type];
+      multiplier += share * table[type];
       flat += share * entry.flat[type];
     });
     if (weight <= 0) return { multiplier: 1, flat: 0, useful: false };
     var m = multiplier / weight;
     var f = flat / weight;
-    return { multiplier: m, flat: f, useful: m > 1 || f > 0 };
+    return { multiplier: m, flat: f, useful: m > USEFUL_EPSILON || f > 0 };
   }
 
   // 「可用」= target / direction / activation / scope 四关都过。
-  function candidateFilter(entry, options) {
-    if (entry.target === "summon" || entry.target === "enemy") return { ok: false, reason: "target" };
-    if (entry.target === "ally" && !options.includeAlly) return { ok: false, reason: "ally" };
-    if (entry.direction === "decrease") return { ok: false, reason: "direction" };
+  function candidateFilter(entry, options, target) {
+    // notes.ranking ①：**白名单**——self 恒取，ally 看开关，其余取值（summon / enemy，
+    // 以及将来新增的任何取值）一律排除。黑名单写法会在数据集加新取值时静默放行，
+    // 与 macOS 端 passesEntryFilters 的 switch 同一口径。
+    if (entry.target === "ally") {
+      if (!options.includeAlly) return { ok: false, reason: "ally" };
+    } else if (entry.target !== "self") {
+      return { ok: false, reason: "target" };
+    }
+    // notes.ranking ②：只取 increase / mixed，别的取值（decrease 或将来的新值）一律不进。
+    if (entry.direction !== "increase" && entry.direction !== "mixed") {
+      return { ok: false, reason: "direction" };
+    }
     if (!entry.countsAsDamage) return { ok: false, reason: "noDamageRate" };
     if (entry.activation !== "passive" && !options.includeConditional) {
       return { ok: false, reason: "activation" };
     }
-    var verdict = scopeVerdict(entry.scope, options);
+    var verdict = scopeVerdict(entry.scope, target || options);
     if (!verdict.ok) {
-      // 攻击情境限制单独计数：它不是「不适用」，而是「勾选该情境后才计入」。
-      return { ok: false, reason: verdict.context ? "context" : "scope", detail: verdict.reason };
+      // 攻击情境限制与属性限定单独计数：它们不是「不适用」，而是「开关打开后才计入」。
+      var reason = verdict.context ? "context" : (verdict.attribute ? "attribute" : "scope");
+      return { ok: false, reason: reason, detail: verdict.reason };
     }
     return { ok: true, reason: "" };
   }
@@ -527,24 +667,29 @@
     var rows = [];
     var excluded = {
       target: 0, ally: 0, direction: 0, noDamageRate: 0,
-      activation: 0, scope: 0, context: 0, useless: 0, scopeReasons: {}
+      activation: 0, scope: 0, context: 0, attribute: 0, useless: 0, scopeReasons: {}
     };
+    var useLadderTop = options && options.ladderTop === true;
+    var target = verdictTarget(options, shares);
     entries.forEach(function (entry) {
-      var pass = candidateFilter(entry, options);
+      var pass = candidateFilter(entry, options, target);
       if (!pass.ok) {
         excluded[pass.reason] += 1;
-        if ((pass.reason === "scope" || pass.reason === "context") && pass.detail) {
+        if (pass.reason !== "scope" && pass.reason !== "context") return;
+        if (pass.detail) {
           excluded.scopeReasons[pass.detail] = (excluded.scopeReasons[pass.detail] || 0) + 1;
         }
         return;
       }
-      var effective = effectiveFor(entry, shares);
+      var effective = effectiveFor(entry, shares, useLadderTop);
       if (!effective.useful) { excluded.useless += 1; return; }
       rows.push({
         entry: entry,
         id: entry.id,
         multiplier: effective.multiplier,
         flat: effective.flat,
+        // 满层数值始终算出来展示（与「按满层计算」开关无关），否则 ×1.007 看着像噪音。
+        ladderTop: entry.ladder ? effectiveFor(entry, shares, true).multiplier : null,
         conditional: entry.activation !== "passive"
       });
     });
@@ -556,8 +701,31 @@
     return { rows: rows, excluded: excluded };
   }
 
-  // 同组只取一条：以数据集的 stacking.group 为准；打开「同族只取最高档」时再把同族的组
-  // 并起来，打开「同 stateInfo 视为同一状态」时再按 stateInfo 并一次。用并查集做一次合并。
+  // 分组键：一般是数据集算好的 stacking.group；叠层阶梯的各层共用一个键，
+  // 保证同一条阶梯绝不会有两层同时进组合相乘（当前数据集每条阶梯只收第 1 层，
+  // 将来收全层时这一层保护才真正派上用场）。与 macOS 端的 stackKey(for:) 同一口径。
+  function stackKeyFor(entry) {
+    if (entry && entry.ladder && entry.ladder.key) return entry.ladder.key;
+    return entry ? entry.group : "";
+  }
+
+  // 同组内谁留下（stackingRules 第 1／4 条）：两边都是 applyHighest 时先按 categoryPriority
+  // 取数值小的那一份（「同一カテゴリ内での優先度（低い方が優先）」），否则取有效倍率高的，
+  // 再相同就取 spEffectId 小的。与 macOS 端的 prefers(_:over:) 同一口径。
+  function prefersRow(candidate, current) {
+    var a = (candidate.entry.buff && candidate.entry.buff.stacking) || {};
+    var b = (current.entry.buff && current.entry.buff.stacking) || {};
+    if (a.spCategoryBehavior === "applyHighest" && b.spCategoryBehavior === "applyHighest" &&
+      num(a.categoryPriority) !== num(b.categoryPriority)) {
+      return num(a.categoryPriority) < num(b.categoryPriority);
+    }
+    if (candidate.multiplier !== current.multiplier) return candidate.multiplier > current.multiplier;
+    return candidate.id < current.id;
+  }
+
+  // 同组只取一条：以数据集的 stacking.group（叠层阶梯用阶梯键）为准；打开「同族只取最高档」
+  // 时再把同族的组并起来，打开「同 stateInfo 视为同一状态」时再按 stateInfo 并一次。
+  // 用并查集做一次合并。
   function bucketRows(rows, mergeFamilies, mergeStates) {
     var parent = {};
     function find(key) {
@@ -577,9 +745,10 @@
     }
     rows.forEach(function (row) {
       var rowKey = "row#" + row.id;
-      union("grp:" + row.entry.group, rowKey);
-      if (mergeFamilies) union("grp:" + row.entry.group, "fam:" + row.entry.family);
-      if (mergeStates && row.entry.state) union("grp:" + row.entry.group, "st:" + row.entry.state);
+      var group = "grp:" + stackKeyFor(row.entry);
+      union(group, rowKey);
+      if (mergeFamilies) union(group, "fam:" + row.entry.family);
+      if (mergeStates && row.entry.state) union(group, "st:" + row.entry.state);
     });
     var buckets = {};
     rows.forEach(function (row) {
@@ -591,31 +760,38 @@
   }
 
   // 推荐组合：每个叠加组取有效倍率最高的一条，跨组相乘。
+  //
+  // **先筛后分桶**（与 macOS 端 stackPlan 同一口径）：纯加算行（multiplier 恒为 1、只有 flat）
+  // 不该占掉一个叠加组。先分桶再丢弃的写法有两个毛病：① 组数会把「一条都没取到」的桶也算进去，
+  // 两端显示的数字对不上；② prefersRow 在两边都是 applyHighest 时先比 categoryPriority，
+  // 一条 multiplier==1 的行完全可能凭更小的 categoryPriority 赢下同组的倍率行，随后被丢掉，
+  // 整组一条都不取。所以这里先把不增伤的行剔出去，`groups` 也就等于 picks.length。
   function recommendCombo(rows, mergeFamilies, mergeStates) {
-    var buckets = bucketRows(rows, mergeFamilies, mergeStates);
+    var pool = (rows || []).filter(function (row) { return row.multiplier > USEFUL_EPSILON; });
+    var buckets = bucketRows(pool, mergeFamilies, mergeStates);
     var picks = [];
     Object.keys(buckets).forEach(function (key) {
       var members = buckets[key];
       var best = null;
       members.forEach(function (row) {
         if (!best) { best = row; return; }
-        if (row.multiplier > best.multiplier) { best = row; return; }
-        if (row.multiplier === best.multiplier) {
-          var a = num(row.entry.buff.stacking && row.entry.buff.stacking.categoryPriority);
-          var b = num(best.entry.buff.stacking && best.entry.buff.stacking.categoryPriority);
-          if (a < b) best = row;
-        }
+        if (prefersRow(row, best)) best = row;
       });
-      if (best && best.multiplier > 1) picks.push({ row: best, size: members.length });
+      if (best) picks.push({ row: best, size: members.length });
     });
-    picks.sort(function (a, b) { return b.row.multiplier - a.row.multiplier; });
+    // 并列时按 spEffectId 升序，与 macOS 端 stackPlan 的 picks 排序一致
+    //（rankEntries / rankResult 的主排序两端都有这条 tiebreak，组合列表也不能漏）。
+    picks.sort(function (a, b) {
+      if (b.row.multiplier !== a.row.multiplier) return b.row.multiplier - a.row.multiplier;
+      return a.row.id - b.row.id;
+    });
     var product = 1;
     var flat = 0;
     picks.forEach(function (pick) {
       product *= pick.row.multiplier;
       flat += pick.row.flat;
     });
-    return { picks: picks, product: product, flat: flat, groups: Object.keys(buckets).length };
+    return { picks: picks, product: product, flat: flat, groups: picks.length };
   }
 
   // ---- 输出手段列表 ----------------------------------------------------
@@ -670,6 +846,24 @@
     return false;
   }
 
+  // 被输出手段列表挡在外面的条数：有段、有武器，但一段都算不出非 0 相对值的战技；
+  // 有段但一个固定值都没有的法术。底部说明照这里现算，绝不写死具体数字——
+  // 与 macOS 端 SkillDataIndex.skillsWithoutDamage / spellsWithoutDamage 同一口径。
+  function meansWithoutDamage(skillsData) {
+    var skillCount = 0;
+    var spellCount = 0;
+    ((skillsData && skillsData.skills) || []).forEach(function (skill) {
+      if (!Array.isArray(skill.hits) || !skill.hits.length) return;
+      if (!Array.isArray(skill.weaponIds) || !skill.weaponIds.length) return;
+      if (!skillHasDamage(skillsData, skill)) skillCount += 1;
+    });
+    ((skillsData && skillsData.spells) || []).forEach(function (spell) {
+      if (!Array.isArray(spell.hits) || !spell.hits.length) return;
+      if (!hasAnyDamage(spell.hits, null, true)) spellCount += 1;
+    });
+    return { skills: skillCount, spells: spellCount };
+  }
+
   // 战技 + 法术的统一检索条目。
   // 战技必须同时有命中段与引用它的武器：没有武器就拿不到 attackBase，
   // 也就算不出任何构成（这类战技的段在本作根本打不出来）。
@@ -718,6 +912,72 @@
       if (!folded) return true;
       return item.search.indexOf(folded) !== -1;
     });
+  }
+
+  // 「本页自己承担的判定」13 条：与 macOS 端 RelicCore/BuffRanker.swift 的
+  // BuffRankerPageNotes.rules **逐字同文**，任何一句改动都要同时改两边
+  //（两端测试各有一份锚点表 + 正文摘要把顺序与措辞钉住）。
+  // 所有条数一律照数据现算，不写死任何具体数值。抽成纯函数是为了让测试能直接对照。
+  function pageRuleNotes(skillsData, buffsData, index) {
+    var hasContexts = ((index && index.contexts) || []).length > 0;
+    var buffList = (buffsData.buffs || []);
+    var attributeScoped = buffList.filter(function (buff) {
+      return buff.scope && typeof buff.scope.spAttribute === "number";
+    }).length;
+    var ladderCount = buffList.filter(function (buff) { return buff.stackLadder; }).length;
+    var selfInflicted = buffList.filter(function (buff) { return buff.selfInflictedStatus === true; }).length;
+    var meleeOnly = ((index && index.entries) || []).filter(function (entry) {
+      return entry.scope.meleeOnly;
+    }).length;
+    var withoutDamage = meansWithoutDamage(skillsData);
+    return [
+      "选段一律走 weapons[].skillVariant → skills[].variants[i].atkIds，不按 ctx 取并集" +
+        "（usage.选段（必读））；一个都对不上就是这把武器打不出段。",
+      "只有法术段忽略 motion：usage「法术 / 子弹段」的结论是「motion 只在施法器该属性 attackBase 非 0 时" +
+        "才有意义」，而法术在本页走「没有武器」这一路（attackBase 全 0）。战技的子弹段挂的是真武器、" +
+        "motion 是真实动作值，照常按 攻击力 × motion/100 + flat 计算，addBaseAtk 也照常加一份。",
+      "只有 rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier 的字段进入连乘；" +
+        "特攻（weakness）、致命一击（critical）是 conditionalDamage，削韧／异常／special／flag／economy 一律不乘。",
+      "武器槽（scope.weaponSlot）：缺失与 3（自身）视为不限，1／2 必须对上当前选的手，其余取值" +
+        "（4 踢击）判为作用域不符。法术同样按当前手判定——施法器也占左右手之一。",
+      "scope.spAttribute（只对带某种属性／异常的攻击生效，本版本 " + attributeScoped + " 条）默认不计入：" +
+        "本页拿不到「这一段带不带该属性」的判据，要看请打开「包含属性／异常限定」。",
+      "叠层阶梯（stackLadder，本版本 " + ladderCount + " 条）：数据集只收第 1 层，topRates 才是满层数值。" +
+        "行上同时标出第 1 层与满层倍率；同一阶梯的各层互斥（notes.stackLadder），" +
+        "推荐组合里共用一个叠加组，绝不相乘；想按满层看请打开「叠层类按满层计算」。",
+      "selfInflictedStatus（v5，本版本 " + selfInflicted + " 条）标的是「status 组的加算点数累在玩家自己身上」" +
+        "的自伤行。这些字段 countsAsDamage 全为 false，伤害排名的乘积一个数都不受它们影响；" +
+        "本页只在行上打「自伤型异常累积」标，将来若加异常累积轴必须整条排除。",
+      "本页额外做了三条数据集没有直接字段的判定：① affectsThrow 单独为真＝只作用于致命一击／投掷攻击" +
+        "（『强化致命一击』全系都是这个签名，无条件相乘会让它稳居榜首）——" +
+        (hasContexts
+          ? "这条只在该条目没有 scope.attackContexts 时才用，有 attackContexts 就以它为准；"
+          : "数据集给出 scope.attackContexts 后，本页会改以该字段为准；") +
+        "② weaponSlot=3 且只点亮魔法／祷告、没点亮秘术＝只作用于法术（『强化魔法』『强化祷告』）；" +
+        "③ subCategories 只标 130（近战武器攻击）而没有 112（战技攻击）的条目" +
+        "（『提升近战攻击力』等 " + meleeOnly + " 条）在战技模式下判为作用域不符——" +
+        "战技的近战命中算不算 130，数据集没有给出判据，本页取保守口径，" +
+        "排除条数按原因分项列在「增伤排名」的汇总行下方。",
+      "叠加分组只用数据集算好的 stacking.group（叠层阶梯的各层共用一个阶梯键）；stateInfo 默认不参与分组" +
+        "（stackingRules 第 3 条：它「并不是互斥分组」，实测同一个 stateInfo 下挂着几十条互不相干的效果）。" +
+        "需要保守口径时可在「推荐组合」里打开「同 stateInfo 视为同一状态」。" +
+        "同组留哪一条：两边都是 applyHighest 时按 categoryPriority 取数值小的那一份" +
+        "（stackingRules 第 4 条「低い方が優先」），否则取有效倍率高的。",
+      "「推荐组合」用全部命中条目计算，不受排名列表的搜索框与来源类型筛选影响——那两个是视图筛选；" +
+        "要排除某一条请在列表里勾掉它，会即时回退到同组次高的那一条。",
+      "攻击力加算（attackPowerFlat）是点数，必须先加进攻击力再乘倍率；本页没有绝对攻击力，" +
+        "所以只按占比加权展示，不折成倍率、不进连乘。",
+      "输出手段列表只收「至少有一段能算出非 0 相对值」的战技与法术：战技还要求至少有一把武器引用它" +
+        "（没有武器就没有 attackBase），法术要求至少有一段带固定值。纯增益的战技（" + withoutDamage.skills +
+        " 条）与恢复／庇佑类法术（" + withoutDamage.spells + " 条）选中后构成恒为 0，是死路，所以不进列表。",
+      hasContexts
+        ? "只在特定攻击情境成立的倍率（scope.attackContexts：突刺反击／防御反击／跳跃攻击…）" +
+          "按 notes.ranking 第④步默认不计入，在「增伤排名」里勾选对应情境后才参与乘算。"
+        : "有些增益的生效条件写在攻击本身而不是 SpEffect 的 scope 里（例如『强化突刺反击』这类反击时机）。" +
+          "当前数据版本还没有 scope.attackContexts，数据集把它们标成 activation=passive、" +
+          "activationSource=noEvidence，本页没有依据把它们排除，看到明显只在特定时机成立的条目请自行勾掉；" +
+          "数据集补上 attackContexts 后本页会自动按情境分区。"
+    ];
   }
 
   // ---- 格式化 ----------------------------------------------------------
@@ -784,6 +1044,8 @@
     kindOff: {},          // sourceKind → true 表示筛掉
     includeConditional: false,
     includeAlly: false,
+    includeAttributeScoped: false,  // scope.spAttribute 限定，默认不计入
+    ladderTop: false,               // 叠层阶梯（stackLadder）按满层计算
     mergeFamilies: true,
     mergeStates: false,   // stackingRules 第 3 条的交叉参考，默认按原始口径不合并
     contexts: {},         // 用户勾选的攻击情境（v4 scope.attackContexts）
@@ -863,6 +1125,8 @@
       hand: state.hand,
       includeAlly: state.includeAlly,
       includeConditional: state.includeConditional,
+      includeAttributeScoped: state.includeAttributeScoped,
+      ladderTop: state.ladderTop,
       contexts: state.contexts
     };
   }
@@ -976,6 +1240,25 @@
       "</dl>";
   }
 
+  // 武器槽（手）选择：法术也要给——scope.weaponSlot 对施法器同样区分左右手，
+  // 两端统一按「当前手」判定（macOS 端同此）。
+  function handButtonsHtml() {
+    return [
+      { key: 1, label: "右手" },
+      { key: 2, label: "左手" }
+    ].map(function (option) {
+      var active = state.hand === option.key ? " is-active" : "";
+      return "<button class='segment-button" + active + "' type='button' data-ranker-hand='" +
+        option.key + "'>" + esc(option.label) + "</button>";
+    }).join("");
+  }
+
+  function handControlHtml() {
+    return "<div class='ranker-control'><span class='ranker-field-label'>武器槽</span>" +
+      "<div class='segmented-control ranker-hand' role='radiogroup' aria-label='武器槽' " +
+      "data-testid='ranker-hand'>" + handButtonsHtml() + "</div></div>";
+  }
+
   function weaponPickerHtml() {
     if (!state.selection) {
       return "<p class='ranker-note' data-testid='ranker-selection'>尚未选择输出手段。</p>";
@@ -989,8 +1272,10 @@
         "<span class='ranker-means-en'>" + esc(spell.nameEn) + "</span></div>" +
         "<div class='ranker-selection-pills'>" + pill(spell.kindZh || "法术", spell.kind === "incantation" ? "amber" : "blue") +
         pill("FP " + spell.mp, "gray") + pill("法术段只用固定值", "gray") + "</div>" +
+        "<div class='ranker-picker-row'>" + handControlHtml() + "</div>" +
         "<p class='ranker-note'>法术没有武器动作套：按 usage「法术 / 子弹段」只取每段的固定伤害值（flat），" +
-        "不把 motion 乘到施法器攻击力上。</p></div>";
+        "不把 motion 乘到施法器攻击力上。武器槽用于匹配 scope.weaponSlot——" +
+        "施法器同样占左右手之一，只作用于另一只手的增益不计入。</p></div>";
     }
     var skill = currentSkill();
     if (!skill) return "<p class='ranker-note'>找不到这个战技。</p>";
@@ -1004,14 +1289,6 @@
       }).join("") + "</optgroup>";
     }).join("");
     var weapon = currentWeapon();
-    var handButtons = [
-      { key: 1, label: "右手" },
-      { key: 2, label: "左手" }
-    ].map(function (option) {
-      var active = state.hand === option.key ? " is-active" : "";
-      return "<button class='segment-button" + active + "' type='button' data-ranker-hand='" +
-        option.key + "'>" + esc(option.label) + "</button>";
-    }).join("");
 
     return "<div class='ranker-selection' data-testid='ranker-selection'>" +
       "<div class='ranker-selection-name'>" + esc(skill.nameZh || skill.nameEn) +
@@ -1023,9 +1300,7 @@
       "<label class='select-field ranker-weapon-field'><span class='ranker-field-label'>武器</span>" +
       "<select data-testid='ranker-weapon'" + (options ? "" : " disabled") + ">" +
       (options || "<option>这个战技没有可用武器</option>") + "</select></label>" +
-      "<div class='ranker-control'><span class='ranker-field-label'>武器槽</span>" +
-      "<div class='segmented-control ranker-hand' role='radiogroup' aria-label='武器槽' " +
-      "data-testid='ranker-hand'>" + handButtons + "</div></div>" +
+      handControlHtml() +
       "</div>" + weaponStatsHtml(weapon) + "</div>";
   }
 
@@ -1083,9 +1358,11 @@
       var disabled = hit.noDamage === true;
       var on = hitEnabled(hit);
       var marks = [];
-      if (hit.noFp) marks.push(pill("无FP版", "gray"));
+      // 段级徽标与 macOS 端 RankerSegmentRow 同文同色：「无 FP 版」「只挂状态」。
+      // 「只挂状态」比「无伤害」更准确——这些段仍会挂上异常，只是不产生伤害数值。
+      if (hit.noFp) marks.push(pill("无 FP 版", "amber"));
       if (hit.isBullet) marks.push(pill("子弹", "blue"));
-      if (hit.noDamage) marks.push(pill("无伤害", "amber"));
+      if (hit.noDamage) marks.push(pill("只挂状态", "gray"));
       if (hit.addBaseAtk) marks.push(pill("额外加一份攻击力", "purple"));
       if (hit.overrideAecId) marks.push(pill("改用补正表 " + hit.overrideAecId, "gray"));
       return "<label class='ranker-hit-row" + (on ? " is-on" : "") + (disabled ? " is-disabled" : "") + "'>" +
@@ -1101,14 +1378,14 @@
 
     var toolbar = "<div class='ranker-hits-toolbar'>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='all' " +
-      "title='只勾当前 FP 侧的段：FP 版与无FP 版互为替代，两边一起勾会把同一击算两遍'>" +
+      "title='只勾当前 FP 侧的段：FP 版与无 FP 版互为替代，两边一起勾会把同一击算两遍'>" +
       "全选（当前 FP 侧）</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='none'>全不选</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='reset'>恢复默认</button>" +
       (hasNoFp
         ? "<label class='switch-control ranker-nofp'><input type='checkbox' data-testid='ranker-nofp'" +
           (state.noFp ? " checked" : "") + "><span class='switch-track'></span>" +
-          "<span>用无FP版本（与 FP 版互斥）</span></label>"
+          "<span>用无 FP 版（与 FP 版互斥）</span></label>"
         : "") +
       "<span class='ranker-hits-count' data-testid='ranker-hits-count'>已勾选 " + onCount +
       " / " + hits.length + " 段</span></div>";
@@ -1210,10 +1487,12 @@
     return (labels[key] && labels[key].zh) || key;
   }
 
+  // 两端同一个格式：中文在前、数字在括号里（「强化致命一击（367）」）。
+  // 与 macOS 端 BuffDataset.stateInfoLabel 逐字符相同。
   function stateInfoLabel(value) {
     var labels = (state.buffsData && state.buffsData.enums && state.buffsData.enums.stateInfo) || {};
     var one = labels[String(value)];
-    return one && one.zh ? value + "（" + one.zh + "）" : String(value);
+    return one && one.zh ? one.zh + "（" + value + "）" : String(value);
   }
 
   function buffRowHtml(row, rank) {
@@ -1228,9 +1507,18 @@
     if (entry.inferred) badges += pill("来源为推断", "gray");
     if (entry.activation === "conditional") badges += pill("需满足条件", "amber");
     if (entry.activation === "activated") badges += pill("发动期间", "amber");
+    if (entry.ladder) {
+      badges += pill("叠层 1/" + entry.ladder.tiers + (entry.ladder.saved ? " · 存档保留" : ""), "amber");
+    }
+    // v5：status 组的加算是玩家自伤，不是「攻击附带累积」；不打标用户会当成增益。
+    if (entry.selfInflictedStatus) badges += pill("自伤型异常累积", "gray");
 
     var stacking = entry.buff.stacking || {};
     var checked = rowPicked(row) ? " checked" : "";
+    var ladderValue = entry.ladder && typeof row.ladderTop === "number"
+      ? "<span class='ranker-buff-ladder'>满 " + entry.ladder.tiers + " 层 " +
+        fmtMultiplier(row.ladderTop) + "</span>"
+      : "";
 
     return "<div class='ranker-buff-row" + (row.conditional ? " is-conditional" : "") + "' " +
       "data-ranker-buff-row='" + entry.id + "'>" +
@@ -1246,6 +1534,7 @@
       "<strong>" + fmtMultiplier(row.multiplier) + "</strong>" +
       "<span>" + fmtGain(row.multiplier) + "</span>" +
       (row.flat ? "<span class='ranker-buff-flat'>攻击力 +" + fmtNumber(row.flat, 1) + "</span>" : "") +
+      ladderValue +
       "</div>" +
       "<div class='ranker-buff-rates'>" + buffDetailHtml(entry) + "</div>" +
       "<div class='ranker-buff-meta'>" +
@@ -1288,7 +1577,12 @@
   // 不该藏在一个总数里。
   function scopeBreakdownHtml(excluded) {
     var reasons = excluded.scopeReasons || {};
-    var keys = Object.keys(reasons).sort(function (a, b) { return reasons[b] - reasons[a]; });
+    // 条数降序、同数按原因串排（与 macOS 端 scopeReasonBreakdown 同一顺序，
+    // 没有 tiebreak 的话两端的分项顺序会随各自的 key 遍历顺序漂移）。
+    var keys = Object.keys(reasons).sort(function (a, b) {
+      if (reasons[b] !== reasons[a]) return reasons[b] - reasons[a];
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
     if (!keys.length) return "";
     return "<p class='ranker-note ranker-note--muted' data-testid='ranker-scope-breakdown'>" +
       "作用域不符的分项：" + keys.map(function (key) {
@@ -1316,6 +1610,9 @@
       pill("作用域不符 " + excluded.scope + " 条", "gray") +
       pill("对当前构成无收益 " + excluded.useless + " 条", "gray") +
       (excluded.context ? pill("受攻击情境限制 " + excluded.context + " 条未计入", "amber") : "") +
+      (state.includeAttributeScoped || !excluded.attribute
+        ? ""
+        : pill("属性／异常限定 " + excluded.attribute + " 条未计入", "amber")) +
       (state.includeConditional ? "" : pill("条件／发动型 " + excluded.activation + " 条未计入", "amber")) +
       (state.includeAlly ? "" : pill("队友增益 " + excluded.ally + " 条未计入", "amber")) +
       "</div>" + scopeBreakdownHtml(excluded);
@@ -1338,6 +1635,16 @@
       "<label class='switch-control'><input type='checkbox' data-testid='ranker-ally'" +
       (state.includeAlly ? " checked" : "") + "><span class='switch-track'></span>" +
       "<span>包含队友给的增益</span></label>" +
+      "<label class='switch-control' title='scope.spAttribute 限定：只对带某种属性／异常的攻击生效。" +
+      "本页拿不到「这一段带不带该属性」的判据，默认不计入'>" +
+      "<input type='checkbox' data-testid='ranker-attribute'" +
+      (state.includeAttributeScoped ? " checked" : "") + "><span class='switch-track'></span>" +
+      "<span>包含属性／异常限定</span></label>" +
+      "<label class='switch-control' title='stackLadder：数据集只收第 1 层，topRates 才是满层数值。" +
+      "同一阶梯各层互斥，永远只按一层计算'>" +
+      "<input type='checkbox' data-testid='ranker-ladder-top'" +
+      (state.ladderTop ? " checked" : "") + "><span class='switch-track'></span>" +
+      "<span>叠层类按满层计算</span></label>" +
       "</div>" +
       "<div class='ranker-chip-row' data-testid='ranker-kinds'>" + kindFilterHtml() + "</div>" +
       contextFilterHtml();
@@ -1414,41 +1721,7 @@
 
   function caveatsHtml() {
     var list = Array.isArray(state.skillsData.caveats) ? state.skillsData.caveats : [];
-    var hasContexts = ((state.index && state.index.contexts) || []).length > 0;
-    var pageNotes = [
-      "选段一律走 weapons[].skillVariant → skills[].variants[i].atkIds，不按 ctx 取并集（usage.选段（必读)）。",
-      "只有法术段忽略 motion：usage「法术 / 子弹段」的结论是「motion 只在施法器该属性 attackBase 非 0 时" +
-        "才有意义」，而法术在本页走 weapon=null（attackBase 全 0）。战技的子弹段挂的是真武器、" +
-        "motion 是真实动作值，照常按 攻击力 × motion/100 + flat 计算，addBaseAtk 也照常加一份。",
-      "只有 rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier 的字段进入连乘；" +
-        "特攻（weakness）、致命一击（critical）是 conditionalDamage，削韧／异常／special／flag／economy 一律不乘。",
-      "本页额外做了三条数据集没有直接字段的判定：① affectsThrow 单独为真＝只作用于致命一击／投掷攻击" +
-        "（『强化致命一击』全系都是这个签名，无条件相乘会让它稳居榜首）——" +
-        (hasContexts
-          ? "这条只在该条目没有 scope.attackContexts 时才用，有 attackContexts 就以它为准；"
-          : "数据集给出 scope.attackContexts 后，本页会改以该字段为准；") +
-        "② weaponSlot=3 且只点亮魔法／祷告、没点亮秘术＝只作用于法术（『强化魔法』『强化祷告』）；" +
-        "③ subCategories 只标 130（近战武器攻击）而没有 112（战技攻击）的条目（『提升近战攻击力』等 4 条）" +
-        "在战技模式下判为作用域不符——战技的近战命中算不算 130，数据集没有给出判据，本页取保守口径，" +
-        "排除条数按原因分项列在「增伤排名」的汇总行下方。",
-      "叠加分组只用数据集算好的 stacking.group；stateInfo 默认不参与分组" +
-        "（stackingRules 第 3 条：它「并不是互斥分组」，实测同一个 stateInfo 下挂着几十条互不相干的效果）。" +
-        "需要保守口径时可在「推荐组合」里打开「同 stateInfo 视为同一状态」。",
-      "「推荐组合」用全部命中条目计算，不受排名列表的搜索框与来源类型筛选影响——那两个是视图筛选；" +
-        "要排除某一条请在列表里勾掉它，会即时回退到同组次高的那一条。",
-      "攻击力加算（attackPowerFlat）是点数，必须先加进攻击力再乘倍率；本页没有绝对攻击力，" +
-        "所以只按占比加权展示，不折成倍率、不进连乘。",
-      "输出手段列表只收「至少有一段能算出非 0 相对值」的战技与法术：战技还要求至少有一把武器引用它" +
-        "（没有武器就没有 attackBase），法术要求至少有一段带固定值。纯增益的战技（6 条）与" +
-        "恢复／庇佑类法术（18 条）选中后构成恒为 0，是死路，所以不进列表。",
-      hasContexts
-        ? "只在特定攻击情境成立的倍率（scope.attackContexts：突刺反击／防御反击／跳跃攻击…）" +
-          "按 notes.ranking 第④步默认不计入，在「增伤排名」里勾选对应情境后才参与乘算。"
-        : "有些增益的生效条件写在攻击本身而不是 SpEffect 的 scope 里（例如『强化突刺反击』这类反击时机）。" +
-          "当前数据版本还没有 scope.attackContexts，数据集把它们标成 activation=passive、" +
-          "activationSource=noEvidence，本页没有依据把它们排除，看到明显只在特定时机成立的条目请自行勾掉；" +
-          "数据集补上 attackContexts 后本页会自动按情境分区。"
-    ];
+    var pageNotes = pageRuleNotes(state.skillsData, state.buffsData, state.index);
     return "<details class='card ranker-details' data-testid='ranker-caveats'>" +
       "<summary><span class='ranker-summary-title'>数据说明与本页口径</span>" +
       pill((list.length + pageNotes.length) + " 条", "amber") + "</summary>" +
@@ -1480,18 +1753,48 @@
       "<div><dt>buffs</dt><dd>schemaVersion " + esc(buffs.schemaVersion) + " · 增益 " +
       esc(buffCounts.buffs) + " 条 · 倍率字段 " +
       esc((buffs.rateFields || []).length) + " 个</dd></div>" +
+      "<div><dt>v4 / v5 字段</dt><dd>攻击情境 " + esc(buffCounts.buffsWithAttackContext) +
+      " 条 · 叠层阶梯 " + esc(buffCounts.buffsWithStackLadder) +
+      " 条 · 自伤型异常累积 " + esc(buffCounts.buffsWithSelfInflictedStatus) +
+      " 条 · stateInfo 标签 " + esc(buffCounts.stateInfoLabels) + " 项</dd></div>" +
       "<div><dt>生成时间</dt><dd>" + esc(skills.generatedAt || "—") + " / " +
       esc(buffs.generatedAt || "—") + "</dd></div>" +
       "</dl></div></details>";
   }
 
-  function footerHtml() {
+  // 底部原文折叠的顺序与 macOS 端的 noteKeys 一致：先排名算法，再情境 / 叠层 / 倍率用法，
+  // 最后是目标、条件、命名这些取舍说明。数据集新增的 notes 键会自动排在后面，不会漏掉。
+  var NOTE_ORDER = [
+    { key: "ranking", zh: "排名步骤" },
+    { key: "attackContext", zh: "攻击情境（与发动条件正交）" },
+    { key: "stackLadder", zh: "叠层阶梯的字段口径" },
+    { key: "howToUseRates", zh: "倍率怎么用" },
+    { key: "activation", zh: "发动条件" },
+    { key: "target", zh: "作用目标" },
+    { key: "conditions", zh: "条件字段" },
+    { key: "displayName", zh: "显示名" },
+    { key: "damageTypeNaming", zh: "伤害类型命名" },
+    { key: "zh", zh: "数据集总说明" }
+  ];
+
+  function noteBlocksHtml() {
     var notes = state.buffsData.notes || {};
+    var shown = {};
+    var blocks = NOTE_ORDER.map(function (item) {
+      shown[item.key] = true;
+      return textBlock(item.zh + "（buffs notes." + item.key + "）", notes[item.key],
+        "ranker-notes-" + item.key, "purple");
+    });
+    Object.keys(notes).sort().forEach(function (key) {
+      if (shown[key]) return;
+      blocks.push(textBlock("buffs notes." + key, notes[key], "ranker-notes-" + key, "purple"));
+    });
+    return blocks.join("");
+  }
+
+  function footerHtml() {
     var stackingRules = state.buffsData.stackingRules || {};
-    return caveatsHtml() +
-      textBlock("排名步骤（buffs notes.ranking）", notes.ranking, "ranker-notes-ranking", "purple") +
-      textBlock("倍率怎么用（buffs notes.howToUseRates）", notes.howToUseRates, "ranker-notes-rates", "purple") +
-      textBlock("发动条件（buffs notes.activation）", notes.activation, "ranker-notes-activation", "purple") +
+    return caveatsHtml() + noteBlocksHtml() +
       textBlock("叠加规则（buffs stackingRules）", stackingRules.zh, "ranker-stacking-rules", "amber") +
       versionHtml();
   }
@@ -1689,6 +1992,18 @@
         renderRankBody();
         return;
       }
+      if (target.matches("[data-testid='ranker-attribute']")) {
+        state.includeAttributeScoped = Boolean(target.checked);
+        state.limit = PAGE_SIZE;
+        renderRankBody();
+        return;
+      }
+      if (target.matches("[data-testid='ranker-ladder-top']")) {
+        state.ladderTop = Boolean(target.checked);
+        state.limit = PAGE_SIZE;
+        renderRankBody();
+        return;
+      }
       if (target.matches("[data-testid='ranker-merge']")) {
         state.mergeFamilies = Boolean(target.checked);
         renderRankBody();
@@ -1800,6 +2115,8 @@
       TYPE_INFO: TYPE_INFO,
       TYPES_BY_ELEMENT: TYPES_BY_ELEMENT,
       ELEMENTS: ELEMENTS,
+      ATTACK_CONTEXT_ORDER: ATTACK_CONTEXT_ORDER,
+      USEFUL_EPSILON: USEFUL_EPSILON,
       SOURCE_KINDS: SOURCE_KINDS,
       SKILL_SUB_CATEGORY: SKILL_SUB_CATEGORY,
       MELEE_SUB_CATEGORY: MELEE_SUB_CATEGORY,
@@ -1814,9 +2131,13 @@
       hitStamina: hitStamina,
       parseRateFieldKey: parseRateFieldKey,
       rateFieldPlan: rateFieldPlan,
+      multiplierMap: multiplierMap,
+      ladderInfo: ladderInfo,
       scopeInfo: scopeInfo,
       scopeVerdict: scopeVerdict,
       stackingGroupKey: stackingGroupKey,
+      stackKeyFor: stackKeyFor,
+      prefersRow: prefersRow,
       stateGroupKey: stateGroupKey,
       familyKey: familyKey,
       sourceKindsOf: sourceKindsOf,
@@ -1834,6 +2155,8 @@
       hasAnyDamage: hasAnyDamage,
       skillHasDamage: skillHasDamage,
       buildMeansItems: buildMeansItems,
+      meansWithoutDamage: meansWithoutDamage,
+      pageRuleNotes: pageRuleNotes,
       filterMeans: filterMeans,
       fmtMultiplier: fmtMultiplier,
       fmtPercent: fmtPercent,

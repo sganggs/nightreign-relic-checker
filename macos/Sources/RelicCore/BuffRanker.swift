@@ -1,6 +1,7 @@
 import Foundation
 
-// 「增伤排名」页下半部分：增伤手段（buffs.json，schemaVersion 4）的解码与排名引擎。
+// 「增伤排名」页下半部分：增伤手段（buffs.json，schemaVersion ≥ 3（当前 5）；v4 / v5 只增字段，
+// 本页向前兼容）的解码与排名引擎。与 Windows 端 renderer/pages/ranker.js 同一套口径。
 //
 // 算法严格按数据集自带的 notes.ranking / notes.attackContext / notes.howToUseRates / stackingRules：
 //   ① 先按 target 过滤：只保留 self（「包含队友给的增益」打开时再加 ally），
@@ -18,6 +19,12 @@ import Foundation
 //      special / flag / economy 一律不进乘积；
 //   ⑥ 用 stacking.group 分组去重（同组按 spCategoryBehavior 处理）后跨组相乘；
 //   ⑦ 列表一律显示 displayNameZh。
+//
+// v4 新增并已实现：scope.attackContexts（④）、stackLadder（同一阶梯共用一个叠加组键，
+//   另给「按满层计算」开关）、enums.stateInfo（叠加组标签）。
+// v5 新增并已实现：selfInflictedStatus（20 条自伤型异常累积，只打标 + 写进说明；那些字段
+//   countsAsDamage 全为 false，伤害乘积一个数都不受影响）、43 条 target self→enemy
+//   （被第①步的 target 白名单挡下）、notes.stackLadder（底部原文）。
 //
 // 有效倍率 = Σ_通道 占比_通道 × Π(作用于该通道的倍率字段)。
 // 每条 buff 的「各通道乘数」只跟它自己的 rates + scope 有关，与勾选的段无关，
@@ -316,6 +323,32 @@ public struct BuffScope: Sendable, Hashable, Decodable {
 
     /// 只在某种攻击情境下才吃得到（默认不计入通用排名）。
     public var isContextGated: Bool { !attackContexts.isEmpty }
+
+    /// scope.spAttribute 限定：只对带某种属性 / 异常的攻击生效，本页无从判定，默认不计入。
+    public var isAttributeScoped: Bool { spAttribute != nil }
+
+    // 下面三条是**页面自己承担的判定**（数据集没有直接字段），两端同一套：
+    //
+    //  · throwOnly：affectsThrow 单独为真＝只作用于「投げ」攻击，也就是致命一击 / 背刺 / 处决
+    //    （『强化致命一击』全系都是这个签名）。无条件相乘会让它稳居榜首。
+    //    **只在没有 attackContexts 时才用这条推断**：v4 起 attackContexts 给出了机读依据
+    //    （criticalHit 等），有它就以它为准。
+    //  · spellOnly：weaponSlot=3 且只点亮魔法／祷告、没点亮秘术＝『强化魔法』『强化祷告』
+    //    那一类只作用于法术的条目，不能算进武器／战技命中。
+    //  · meleeOnly：subCategories 只有 130（近战武器攻击）而没有 112（战技攻击）。战技的近战
+    //    命中算不算 130，数据集没有给出判据，两端都保守地判为作用域不符并在说明里列出。
+    public var isThrowOnly: Bool {
+        attackContexts.isEmpty && affectsThrow && !affectsSorcery && !affectsIncantation && !affectsShaman
+    }
+
+    public var isSpellOnly: Bool {
+        weaponSlot == 3 && (affectsSorcery || affectsIncantation) && !affectsShaman
+    }
+
+    public var isMeleeOnly: Bool {
+        subCategories.contains(BuffRankingContext.meleeAttackSubCategory)
+            && !subCategories.contains(BuffRankingContext.skillAttackSubCategory)
+    }
 }
 
 /// v4 新增：这条 buff 是一段叠层阶梯的第 1 层，数据集只收录了第 1 层。
@@ -417,6 +450,10 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
     public let triggered: [String: Double]
     /// nameZh 借用了同族词条的名字（同一条词条的不同档位）。
     public let inferredName: Bool
+    /// v5：这一行 rates 里 group="status" 的加算点数是**累在玩家自己身上的自伤**，
+    /// 不是「让玩家的攻击多附带累积」。那些字段 countsAsDamage 全为 false，伤害乘积不受影响；
+    /// 做异常累积榜时必须整条排除（notes.target / diagnostics.selfInflictedStatus）。
+    public let selfInflictedStatus: Bool
     public let statusLabelsZh: [String]
     public let sourcesTruncated: Int?
 
@@ -467,6 +504,7 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         conditions = container.buffNumberDictionary(.conditions)
         triggered = container.buffNumberDictionary(.triggered)
         inferredName = container.buffBool(.inferredName)
+        selfInflictedStatus = container.buffBool(.selfInflictedStatus)
         statusLabelsZh = container.buffStringArray(.statusLabelsZh)
         sourcesTruncated = container.buffOptionalInt(.sourcesTruncated)
     }
@@ -475,7 +513,94 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         case spEffectId, nameZh, nameEn, displayNameZh, displayNameEn, paramName
         case sources, rates, rateGroups, direction, scope, stacking, stackLadder
         case duration, permanent, target, targetSource, activation, activationSource
-        case descZh, conditions, triggered, inferredName, statusLabelsZh, sourcesTruncated
+        case descZh, conditions, triggered, inferredName, selfInflictedStatus
+        case statusLabelsZh, sourcesTruncated
+    }
+
+    /// 同族＝Paramdex 行名去掉档位后缀后相同（`[Item - Level 3] X` → `[Item] X`、
+    /// `[Weapon] X - Potency 2` → `[Weapon] X`、`[Relic] X +3` → `[Relic] X`）。
+    /// 数据集自己就用「同族」概念统一 displayName 的限定词，这里复用同一口径；
+    /// 与 Windows 端 familyKey 逐条对应。
+    public var familyKey: String {
+        guard let paramName, !paramName.isEmpty else { return "id#\(spEffectId)" }
+        let stem = Self.familyStem(paramName)
+        return stem.isEmpty ? "id#\(spEffectId)" : stem
+    }
+
+    /// `[Item - Level 3] X` → `[Item] X`、`[Weapon] X - Potency 2` → `[Weapon] X`、
+    /// `[Relic] X +3` → `[Relic] X`。逐条对应 Windows 端 familyKey 里的三条正则
+    /// （`^\[([^\]]*)\]\s*(.*)$`、`\s*-\s*(?:Potency|Level|Tier)\s*\d+\s*$`、`\s*\+\d+\s*$`）。
+    static func familyStem(_ raw: String) -> String {
+        var text = raw
+        if text.hasPrefix("["), let close = text.firstIndex(of: "]") {
+            let inside = String(text[text.index(after: text.startIndex)..<close])
+            var rest = String(text[text.index(after: close)...])
+            while let first = rest.first, first.isWhitespace { rest.removeFirst() }
+            let head = (inside.components(separatedBy: " - ").first ?? inside)
+                .trimmingCharacters(in: .whitespaces)
+            text = "[" + head + "] " + rest
+        }
+        text = stripTierSuffix(text)
+        text = stripPlusSuffix(text)
+        return text.trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func isAsciiDigit(_ character: Character) -> Bool {
+        character.isASCII && character.isNumber
+    }
+
+    /// `\s*-\s*(?:Potency|Level|Tier)\s*\d+\s*$`
+    private static func stripTierSuffix(_ text: String) -> String {
+        let chars = Array(text)
+        var index = chars.count
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        var digits = 0
+        while index > 0, isAsciiDigit(chars[index - 1]) {
+            index -= 1
+            digits += 1
+        }
+        guard digits > 0 else { return text }
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        var matched = false
+        for keyword in ["potency", "level", "tier"] where index >= keyword.count {
+            if String(chars[(index - keyword.count)..<index]).lowercased() == keyword {
+                index -= keyword.count
+                matched = true
+                break
+            }
+        }
+        guard matched else { return text }
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        guard index > 0, chars[index - 1] == "-" else { return text }
+        index -= 1
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        return String(chars[0..<index])
+    }
+
+    /// `\s*\+\d+\s*$`
+    private static func stripPlusSuffix(_ text: String) -> String {
+        let chars = Array(text)
+        var index = chars.count
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        var digits = 0
+        while index > 0, isAsciiDigit(chars[index - 1]) {
+            index -= 1
+            digits += 1
+        }
+        guard digits > 0, index > 0, chars[index - 1] == "+" else { return text }
+        index -= 1
+        while index > 0, chars[index - 1].isWhitespace { index -= 1 }
+        return String(chars[0..<index])
+    }
+
+    /// stackingRules 第 3 条的「交叉参考」键：behavior 本身就互斥的组不需要它，
+    /// stateInfo 为 0 的（绝大多数）也没有判定力。默认关闭，由页面开关打开。
+    public var stateCrossReferenceKey: String? {
+        guard stacking.spCategoryBehavior == "none" || stacking.spCategoryBehavior == "stackSelf" else {
+            return nil
+        }
+        guard stacking.stateInfo != 0 else { return nil }
+        return "state#\(stacking.stateInfo)"
     }
 }
 
@@ -525,6 +650,9 @@ public struct BuffDataset: Sendable {
     public func attackContextLabel(_ key: String) -> String {
         attackContextLabels[key] ?? key
     }
+
+    /// `enums.stateInfo` 的标签条数（v5 起 counts.stateInfoLabels 也有同一个数）。
+    public var stateInfoLabelCount: Int { stateInfoLabels.count }
 
     /// 叠加组 stateInfo 的中文名；缺标签时退回裸数字（「强化致命一击（367）」）。
     public func stateInfoLabel(_ value: Int) -> String {
@@ -690,39 +818,48 @@ extension KeyedDecodingContainer {
 
 // MARK: - 排名上下文
 
-/// 当前的输出手段（决定 scope 过滤怎么走）。
+/// 当前的输出手段（决定 scope 过滤怎么走）。武器槽单独放在 `BuffRankingContext.weaponSlot`：
+/// 法术也握在左右手之一，scope.weaponSlot 同样要对上（两端同一口径）。
 public enum BuffDelivery: Sendable, Hashable {
-    /// 武器战技命中：槽位 1 右手 / 2 左手。
-    case weaponSkill(slot: Int)
+    /// 武器战技命中。
+    case weaponSkill
     case sorcery
     case incantation
 
-    public var slot: Int? {
-        if case .weaponSkill(let slot) = self { return slot }
-        return nil
-    }
+    public var isSpell: Bool { self != .weaponSkill }
 }
 
 public struct BuffRankingContext: Sendable, Hashable {
     public var delivery: BuffDelivery
+    /// 当前武器槽：1 右手 / 2 左手。scope.weaponSlot 为 0（缺失）或 3（自身）时不限。
+    public var weaponSlot: Int
     /// 这次攻击属于哪些攻击子类别（战技命中 = 112 战技攻击；普通法术 = 空）。
     public var subCategories: Set<Int>
     /// 按 `SkillDamageChannel.rawValue` 索引的伤害占比（和为 1；全 0 表示没有勾选任何段）。
     public var shares: [Double]
 
-    public init(delivery: BuffDelivery, subCategories: Set<Int>, shares: [Double]) {
+    public init(delivery: BuffDelivery, weaponSlot: Int = 1, subCategories: Set<Int>, shares: [Double]) {
         self.delivery = delivery
+        self.weaponSlot = weaponSlot == 2 ? 2 : 1
         self.subCategories = subCategories
         self.shares = shares
     }
 
-    public init(delivery: BuffDelivery, subCategories: Set<Int>, composition: SkillDamageComposition) {
-        self.init(delivery: delivery, subCategories: subCategories, shares: composition.shares)
+    public init(
+        delivery: BuffDelivery, weaponSlot: Int = 1,
+        subCategories: Set<Int>, composition: SkillDamageComposition
+    ) {
+        self.init(
+            delivery: delivery, weaponSlot: weaponSlot,
+            subCategories: subCategories, shares: composition.shares
+        )
     }
 
     /// 战技命中：子类别固定为 112（本作没有独立的「战技伤害 +x%」字段，
     /// 所谓强化战技都是普通 AttackRate + magicSubCategoryChange = 112）。
     public static let skillAttackSubCategory = 112
+    /// 130 近战武器攻击：战技的近战命中算不算它，数据集没有给出判据，两端都保守排除。
+    public static let meleeAttackSubCategory = 130
 
     public var hasComposition: Bool { shares.contains { $0 > 0 } }
 }
@@ -741,8 +878,15 @@ public struct BuffRankingOptions: Sendable, Hashable {
     /// 就参与乘算」——数据集里 attackContexts 是一组并列情境（例如「翻滚攻击／后跳攻击」
     /// 两种都吃得到），本来就是「或」的关系。
     public var includedAttackContexts: Set<String>
-    /// 来源类型多选；空集合 = 不过滤。
+    /// 叠层阶梯（stackLadder）按满层数值计算：默认关，按数据集收录的第 1 层计。
+    public var useLadderTopRates: Bool
+    /// 同族效果只取最高档（按 Paramdex 行名词干合并叠加组）：默认开。
+    public var mergeFamilies: Bool
+    /// 同 stateInfo 视为同一状态（stackingRules 第 3 条的交叉参考，偏保守）：默认关。
+    public var mergeStates: Bool
+    /// 来源类型多选；空集合 = 不过滤。**只影响列表显示，不影响推荐组合**。
     public var sourceKinds: Set<String>
+    /// 搜索词。**只影响列表显示，不影响推荐组合**（否则搜一个词总倍率就变了）。
     public var query: String
 
     public init(
@@ -750,6 +894,9 @@ public struct BuffRankingOptions: Sendable, Hashable {
         includeAllies: Bool = false,
         includeAttributeScoped: Bool = false,
         includedAttackContexts: Set<String> = [],
+        useLadderTopRates: Bool = false,
+        mergeFamilies: Bool = true,
+        mergeStates: Bool = false,
         sourceKinds: Set<String> = [],
         query: String = ""
     ) {
@@ -757,6 +904,9 @@ public struct BuffRankingOptions: Sendable, Hashable {
         self.includeAllies = includeAllies
         self.includeAttributeScoped = includeAttributeScoped
         self.includedAttackContexts = includedAttackContexts
+        self.useLadderTopRates = useLadderTopRates
+        self.mergeFamilies = mergeFamilies
+        self.mergeStates = mergeStates
         self.sourceKinds = sourceKinds
         self.query = query
     }
@@ -850,6 +1000,10 @@ public struct BuffRankingRow: Sendable, Hashable, Identifiable {
     public let sourceNames: [String]
     public let isInferredSource: Bool
     public let stackGroup: String
+    /// 同族键（Paramdex 行名词干）：打开「同族只取最高档」时用它把叠加组并起来。
+    public let familyKey: String
+    /// stateInfo 交叉参考键（stackingRules 第 3 条）；不适用时为 nil。
+    public let stateCrossReferenceKey: String?
     public let stackBehavior: String
     public let stackPriority: Int
     public let stateInfo: Int
@@ -867,19 +1021,39 @@ public struct BuffRankingRow: Sendable, Hashable, Identifiable {
     public let scopeNotes: [String]
     public let conditionNotes: [String]
     public let descZh: String?
+    /// v5：status 组的加算是玩家自伤（不是「攻击附带累积」）。伤害乘积不受影响，只打标。
+    public let selfInflictedStatus: Bool
+    /// 列表搜索用的折叠串；搜索是**显示层**过滤，不参与排名与推荐组合。
+    public let searchKey: String
 
     public var id: Int { spEffectId }
 
     /// 只在某种攻击情境下生效（默认不进通用排名，勾选情境后才出现）。
     public var isContextGated: Bool { !attackContexts.isEmpty }
 
-    /// 有效倍率没有意义（只有加算 / 只在别的轴上生效）时为 false。
-    public var hasMultiplier: Bool { effectiveMultiplier > 1.0000001 || effectiveMultiplier < 0.9999999 }
+    /// 对当前伤害构成真有增益：倍率大于 1，或有正的攻击力加算。
+    /// 与 Windows 端 effectiveFor().useful 同一口径——「增伤排名」不列 ×0.9 这种反向条目。
+    public var isUseful: Bool { effectiveMultiplier > 1.0000001 || weightedFlat > 0 }
+
+    /// 有效倍率本身有意义（> 1）。
+    public var hasMultiplier: Bool { effectiveMultiplier > 1.0000001 }
 
     public var durationText: String {
         if permanent || duration < 0 { return "永久" }
         if duration == 0 { return "瞬间" }
         return BuffFormat.trim(duration) + " 秒"
+    }
+}
+
+/// 作用域判定不通过的原因。`isAttributeScoped` 表示「其余各关都过了、单单被
+/// scope.spAttribute 拦下」——页面把这一类单独计数（打开开关后就会进榜）。
+public struct BuffScopeRejection: Sendable, Hashable {
+    public let reason: String
+    public let isAttributeScoped: Bool
+
+    public init(reason: String, isAttributeScoped: Bool = false) {
+        self.reason = reason
+        self.isAttributeScoped = isAttributeScoped
     }
 }
 
@@ -893,21 +1067,43 @@ public struct BuffRankingResult: Sendable, Hashable {
     /// 其它各关都过了、只因为 `scope.attackContexts` 限定（致命一击 / 突刺反击 / 蓄力…）
     /// 而被拦下的条目数——勾选对应情境后它们才会进榜，页面在汇总行说明。
     public let contextScopedCount: Int
+    /// 其它各关都过了、只因为 `scope.spAttribute` 限定（只对带某种属性 / 异常的攻击生效）
+    /// 而被拦下的条目数——打开「包含属性／异常限定」后才会进榜。
+    public let attributeScopedCount: Int
+    /// 作用域不符（武器槽 / 投掷 / 法术 / 攻击子类别 / 物理攻击类型）而未计入的条目数。
+    /// 不含情境限定与属性限定那两类——它们是「开关打开后才计入」，另外计数。
+    public let scopeRejectedCount: Int
+    /// 排除原因的分项：原因串 → 条数。页面照它在汇总行下方展开，
+    /// 与 Windows 端 excluded.scopeReasons 同一口径（含情境限定那一条）。
+    public let scopeReasons: [String: Int]
 
     public init(
         rows: [BuffRankingRow],
         candidateCount: Int,
         neutralCount: Int,
-        contextScopedCount: Int = 0
+        contextScopedCount: Int = 0,
+        attributeScopedCount: Int = 0,
+        scopeRejectedCount: Int = 0,
+        scopeReasons: [String: Int] = [:]
     ) {
         self.rows = rows
         self.candidateCount = candidateCount
         self.neutralCount = neutralCount
         self.contextScopedCount = contextScopedCount
+        self.attributeScopedCount = attributeScopedCount
+        self.scopeRejectedCount = scopeRejectedCount
+        self.scopeReasons = scopeReasons
+    }
+
+    /// 分项按条数降序（同数按原因串排），供页面直接展示。
+    public var scopeReasonBreakdown: [(reason: String, count: Int)] {
+        scopeReasons
+            .map { (reason: $0.key, count: $0.value) }
+            .sorted { $0.count == $1.count ? $0.reason < $1.reason : $0.count > $1.count }
     }
 
     public static let empty = BuffRankingResult(
-        rows: [], candidateCount: 0, neutralCount: 0, contextScopedCount: 0
+        rows: [], candidateCount: 0, neutralCount: 0, contextScopedCount: 0, attributeScopedCount: 0
     )
 }
 
@@ -976,6 +1172,9 @@ public struct BuffRankerIndex: Sendable {
         let attackContextLabels: [String]
         /// 叠层阶梯满层时的通道乘数（与选段无关，同样建索引时算好）。
         let ladderChannelMultiplier: [Double]?
+        /// 同族键与 stateInfo 交叉参考键（推荐组合的可选合并用）。
+        let familyKey: String
+        let stateCrossReferenceKey: String?
     }
 
     public let dataset: BuffDataset
@@ -988,6 +1187,13 @@ public struct BuffRankerIndex: Sendable {
     public let availableAttackContexts: [BuffAttackContextOption]
     /// 被 scope.attackContexts 限定、默认不计入通用排名的条目总数（页面底部说明用）。
     public let contextScopedTotal: Int
+    /// 带 stackLadder（叠层阶梯第 1 层）的条目数。
+    public let ladderCount: Int
+    /// v5 selfInflictedStatus（自伤型异常累积）的条目数。
+    public let selfInflictedStatusCount: Int
+    /// 只标 130（近战武器攻击）而没有 112（战技攻击）的条目数（页面底部说明用；
+    /// 与 Windows 端照 scopeInfo(...).meleeOnly 现算的同一个数）。
+    public let meleeOnlyCount: Int
 
     public init(dataset: BuffDataset) throws {
         guard !dataset.buffs.isEmpty else { throw BuffDataError.empty }
@@ -1003,13 +1209,17 @@ public struct BuffRankerIndex: Sendable {
         var contextScoped = 0
 
         for buff in dataset.buffs {
-            profiles.append(Self.makeProfile(for: buff, fields: fieldByKey, dataset: dataset))
+            let profile = Self.makeProfile(for: buff, fields: fieldByKey, dataset: dataset)
+            profiles.append(profile)
             for kind in buff.sourceKinds where seenKinds.insert(kind).inserted {
                 kinds.append(kind)
             }
             if buff.scope.spAttribute != nil { attributeScoped += 1 }
             if buff.scope.isContextGated {
                 contextScoped += 1
+                // chip 上的数字只统计**带伤害倍率字段**的条目：这排 chip 是排名列表的筛选器，
+                // 永远进不了榜的条目不该把数字撑大。与 Windows 端 availableContexts 同一口径。
+                guard profile.hasRankingRate else { continue }
                 for context in buff.scope.attackContexts { contextCounts[context, default: 0] += 1 }
             }
         }
@@ -1022,6 +1232,9 @@ public struct BuffRankerIndex: Sendable {
         }
         attributeScopedCount = attributeScoped
         contextScopedTotal = contextScoped
+        ladderCount = dataset.buffs.reduce(0) { $0 + ($1.stackLadder == nil ? 0 : 1) }
+        selfInflictedStatusCount = dataset.buffs.reduce(0) { $0 + ($1.selfInflictedStatus ? 1 : 0) }
+        meleeOnlyCount = dataset.buffs.reduce(0) { $0 + ($1.scope.isMeleeOnly ? 1 : 0) }
         availableAttackContexts = contextCounts
             .map { key, count in
                 BuffAttackContextOption(key: key, zh: dataset.attackContextLabel(key), count: count)
@@ -1034,7 +1247,8 @@ public struct BuffRankerIndex: Sendable {
     }
 
     /// 情境多选的固定顺序（enums.attackContext 的 15 个键；数据集里没出现的不显示）。
-    static let attackContextOrder = [
+    /// 与 Windows 端 ATTACK_CONTEXT_ORDER 逐项相同。
+    public static let attackContextOrder = [
         "criticalHit", "thrustingCounter", "guardCounter", "chainFinisher",
         "chargedHeavyAttack", "chargedSkill", "chargedSpell",
         "jumpAttack", "dashAttack", "rollingAttack", "backstepAttack",
@@ -1043,6 +1257,16 @@ public struct BuffRankerIndex: Sendable {
 
     public init(data: Data) throws {
         try self.init(dataset: BuffDataset.decode(from: data))
+    }
+
+    /// 第 `index` 条 buff 有没有 countsAsDamage 的倍率／加算字段（自检用）。
+    public func hasRankingRate(at index: Int) -> Bool {
+        profiles.indices.contains(index) ? profiles[index].hasRankingRate : false
+    }
+
+    /// 第 `index` 条 buff 的可检索字符串（自检用；两端取同一个字段并集）。
+    public func searchKey(at index: Int) -> String {
+        profiles.indices.contains(index) ? profiles[index].searchKey : ""
     }
 
     /// 筛选器里来源类型的固定顺序（数据集里没出现的排在最后）。
@@ -1177,19 +1401,34 @@ public struct BuffRankerIndex: Sendable {
         }
 
         let kinds = buff.sourceKinds
+        // 展示用的来源名只取前 6 个（行上放不下更多）。
         var names: [String] = []
         var seenNames: Set<String> = []
         for source in buff.sources.prefix(6) where seenNames.insert(source.displayName).inserted {
             names.append(source.displayName)
         }
+        // 可检索的来源名要**全部**收进来：搜索框按前 6 个截断会让第 7 个来源搜不到，
+        // 与 Windows 端（收全部来源的 nameZh / nameEn / effectNameZh）对不上。
+        var searchableNames: [String] = []
+        var seenSearchable: Set<String> = []
+        for source in buff.sources {
+            for name in [source.nameZh, source.nameEn, source.effectNameZh] {
+                guard let name, !name.isEmpty, seenSearchable.insert(name).inserted else { continue }
+                searchableNames.append(name)
+            }
+        }
 
+        // 可检索字段两端取并集：名称（中英 + displayName）+ paramName + descZh
+        // + 全部来源名 + 来源类型中文标签 + spEffectId。
+        // 与 Windows 端 indexBuff 的 searchText 逐项相同——同一个关键词必须在两端命中同一批行。
         let searchParts = [
             buff.displayName,
             buff.nameZh ?? "",
             buff.nameEn ?? "",
             buff.displayNameEn ?? "",
             buff.paramName ?? "",
-            names.joined(separator: " "),
+            buff.descZh ?? "",
+            searchableNames.joined(separator: " "),
             kinds.map { dataset.sourceKindLabel($0) }.joined(separator: " "),
             String(buff.spEffectId)
         ]
@@ -1207,7 +1446,9 @@ public struct BuffRankerIndex: Sendable {
             scopeNotes: scopeNotes,
             conditionNotes: conditionNotes,
             attackContextLabels: attackContextLabels,
-            ladderChannelMultiplier: ladderChannelMultiplier
+            ladderChannelMultiplier: ladderChannelMultiplier,
+            familyKey: buff.familyKey,
+            stateCrossReferenceKey: buff.stateCrossReferenceKey
         )
     }
 
@@ -1230,6 +1471,9 @@ public struct BuffRankerIndex: Sendable {
     // MARK: 过滤
 
     /// notes.ranking ①②③⑤：与当前选段无关的那几步。
+    ///
+    /// **不含搜索词与来源类型**：那两个是列表的显示筛选（`matchesDisplayFilters`），
+    /// 放进这里会让「搜一个词」把推荐组合的总倍率也改掉。
     func passesEntryFilters(_ buff: BuffEntry, _ profile: Profile, _ options: BuffRankingOptions) -> Bool {
         // ① target：self 恒取；ally 由开关控制；summon / enemy 一律排除。
         switch buff.target {
@@ -1243,10 +1487,23 @@ public struct BuffRankerIndex: Sendable {
         if !buff.isPassive && !options.includeConditional { return false }
         // ⑤ 必须至少有一个 countsAsDamage 的倍率或加算字段。
         guard profile.hasRankingRate else { return false }
-        if !options.sourceKinds.isEmpty && profile.sourceKinds.allSatisfy({ !options.sourceKinds.contains($0) }) {
+        return true
+    }
+
+    /// 列表的显示筛选：搜索词 + 来源类型。与排名、推荐组合无关。
+    func matchesDisplayFilters(_ row: BuffRankingRow, _ options: BuffRankingOptions) -> Bool {
+        if !options.sourceKinds.isEmpty && row.sourceKinds.allSatisfy({ !options.sourceKinds.contains($0) }) {
             return false
         }
+        let needle = options.query.foldedForSearch
+        if !needle.isEmpty && !row.searchKey.contains(needle) { return false }
         return true
+    }
+
+    /// 排名列表里当前可见的那些行（推荐组合仍然用全部行）。
+    public func visibleRows(_ rows: [BuffRankingRow], options: BuffRankingOptions) -> [BuffRankingRow] {
+        guard !options.sourceKinds.isEmpty || !options.query.isEmpty else { return rows }
+        return rows.filter { matchesDisplayFilters($0, options) }
     }
 
     /// notes.ranking ④ 的第一小步：攻击情境闸门。
@@ -1266,48 +1523,85 @@ public struct BuffRankerIndex: Sendable {
             && scopeMatchesIgnoringAttackContexts(buff, context: context, options: options)
     }
 
-    /// scope 的其余各项（武器槽 / 魔法 / 祷告 / 攻击子类别 / 属性限定 / 物理子类型）。
+    /// scope 的其余各项（投掷限定 / 武器槽 / 属性限定 / 魔法 / 祷告 / 攻击子类别 / 物理子类型）。
+    /// 顺序与 Windows 端 scopeVerdict 一致，分项原因也一一对应。
     func scopeMatchesIgnoringAttackContexts(
         _ buff: BuffEntry, context: BuffRankingContext, options: BuffRankingOptions
     ) -> Bool {
+        scopeVerdict(buff, context: context, options: options) == nil
+    }
+
+    /// 不适用的原因（nil = 作用域匹配）。页面把它按原因分项展示。
+    ///
+    /// **计数点**：`isAttributeScoped` 只在「其余各关都过、单单被 scope.spAttribute 拦下」时为真。
+    /// 页面把这一类单独计数（打开「包含属性／异常限定」后它们就会进榜），其余一律算作用域不符。
+    /// 与 Windows 端 candidateFilter 里 `verdict.attribute` / `"scope"` 的分支同一口径——
+    /// 只要把计数挪到「返回非 nil 就算」的位置，被武器槽 / 投掷 / 子类别拦下的条目就会混进来，
+    /// 两端的「属性／异常限定 N 条未计入」立刻对不上（右手 33 vs 45）。
+    func scopeVerdict(
+        _ buff: BuffEntry, context: BuffRankingContext, options: BuffRankingOptions
+    ) -> BuffScopeRejection? {
         let scope = buff.scope
+        // 页面自担判定①：只点亮 affectsThrow ＝ 只作用于致命一击 / 投掷（没有 attackContexts 时才用）。
+        if scope.isThrowOnly { return BuffScopeRejection(reason: "只作用于致命一击／投掷攻击") }
+        // wepParamChange：0（缺失）与 3（自身）不限，1 / 2 必须对上当前手，其余（4 踢击）不适用。
+        if let weaponSlot = scope.weaponSlot, weaponSlot != 0, weaponSlot != 3,
+           weaponSlot != context.weaponSlot {
+            switch weaponSlot {
+            case 1: return BuffScopeRejection(reason: "只作用于右手武器")
+            case 2: return BuffScopeRejection(reason: "只作用于左手武器")
+            default: return BuffScopeRejection(reason: "只作用于别的武器槽（踢击等）")
+            }
+        }
+        // scope.spAttribute：只对带某种属性 / 异常的攻击生效，默认不计入。
+        if scope.isAttributeScoped && !options.includeAttributeScoped {
+            return BuffScopeRejection(reason: "限定属性／异常攻击", isAttributeScoped: true)
+        }
         switch context.delivery {
-        case .weaponSkill(let slot):
-            // 缺失（0 不限）与 3（自身）视为作用于任何武器；1 / 2 必须对上当前槽位。
-            if let weaponSlot = scope.weaponSlot, weaponSlot != slot, weaponSlot != 3 { return false }
+        case .weaponSkill:
+            // 页面自担判定②③：只作用于法术的条目、以及只标 130 没标 112 的近战条目。
+            if scope.isSpellOnly { return BuffScopeRejection(reason: "只作用于魔法／祷告") }
+            if scope.isMeleeOnly { return BuffScopeRejection(reason: "只作用于近战武器攻击子类别（130）") }
         case .sorcery:
-            guard scope.affectsSorcery else { return false }
+            guard scope.affectsSorcery else { return BuffScopeRejection(reason: "不作用于魔法") }
         case .incantation:
-            guard scope.affectsIncantation else { return false }
+            guard scope.affectsIncantation else { return BuffScopeRejection(reason: "不作用于祷告") }
         }
         if !scope.subCategories.isEmpty {
             guard !context.subCategories.isEmpty,
-                  scope.subCategories.contains(where: { context.subCategories.contains($0) }) else { return false }
+                  scope.subCategories.contains(where: { context.subCategories.contains($0) })
+            else {
+                return BuffScopeRejection(
+                    reason: context.delivery == .weaponSkill
+                        ? "限定别的攻击子类别"
+                        : "限定法术流派／蓄力，数据集无流派字段"
+                )
+            }
         }
-        if scope.spAttribute != nil && !options.includeAttributeScoped { return false }
         if let attribute = scope.atkAttribute, (0...3).contains(attribute), context.hasComposition {
             let channel = SkillDamageChannel.physical(code: attribute)
             guard context.shares.indices.contains(channel.rawValue), context.shares[channel.rawValue] > 0 else {
-                return false
+                return BuffScopeRejection(reason: "限定物理攻击类型")
             }
         }
-        return true
+        return nil
     }
 
     // MARK: 计算
 
     /// 有效倍率 = Σ_通道 占比 × Π(作用于该通道的倍率)。
-    /// 没有勾选任何段时（占比全 0）退回「各通道乘数的最大值」，页面会提示这一点。
-    func effectiveMultiplier(_ profile: Profile, shares: [Double]) -> Double {
-        Self.effectiveMultiplier(
-            channelMultiplier: profile.channelMultiplier,
-            shares: shares,
-            fallback: profile.maxMultiplier
-        )
+    ///
+    /// 没有勾选任何段（占比全 0）时一律返回 1，也就是「算不出」——排名必须建立在一个真实的
+    /// 伤害构成上，退回「各通道乘数的最大值」会让纯物理构成里的火属性增伤看起来也有收益。
+    /// 与 Windows 端 effectiveFor 同一口径。
+    /// `useLadderTop` = 叠层阶梯按满层数值计算。
+    func effectiveMultiplier(_ profile: Profile, shares: [Double], useLadderTop: Bool = false) -> Double {
+        let table = (useLadderTop ? profile.ladderChannelMultiplier : nil) ?? profile.channelMultiplier
+        return Self.effectiveMultiplier(channelMultiplier: table, shares: shares, fallback: 1)
     }
 
     static func effectiveMultiplier(
-        channelMultiplier: [Double], shares: [Double], fallback: Double
+        channelMultiplier: [Double], shares: [Double], fallback: Double = 1
     ) -> Double {
         var total = 0.0
         var weight = 0.0
@@ -1336,11 +1630,12 @@ public struct BuffRankerIndex: Sendable {
             total += elementShare * profile.elementFlat[position]
             weight += elementShare
         }
-        guard weight > 0 else { return profile.elementFlat.max() ?? 0 }
+        // 没有构成就折不出加权点数（与 Windows 端一致，返回 0 而不是最大值）。
+        guard weight > 0 else { return 0 }
         return total / weight
     }
 
-    func makeRow(index: Int, context: BuffRankingContext) -> BuffRankingRow {
+    func makeRow(index: Int, context: BuffRankingContext, options: BuffRankingOptions) -> BuffRankingRow {
         let buff = dataset.buffs[index]
         let profile = profiles[index]
         let shares = context.shares
@@ -1356,11 +1651,7 @@ public struct BuffRankerIndex: Sendable {
             guard let multipliers = profile.ladderChannelMultiplier else { return nil }
             return BuffLadderInfo(
                 tiers: info.tiers,
-                topMultiplier: Self.effectiveMultiplier(
-                    channelMultiplier: multipliers,
-                    shares: shares,
-                    fallback: multipliers.max() ?? 1
-                ),
+                topMultiplier: Self.effectiveMultiplier(channelMultiplier: multipliers, shares: shares),
                 saved: info.saved,
                 tierSpEffectIds: ([buff.spEffectId] + info.tierSpEffectIds).sorted()
             )
@@ -1369,7 +1660,9 @@ public struct BuffRankerIndex: Sendable {
             spEffectId: buff.spEffectId,
             displayName: buff.displayName,
             paramName: buff.paramName,
-            effectiveMultiplier: effectiveMultiplier(profile, shares: shares),
+            effectiveMultiplier: effectiveMultiplier(
+                profile, shares: shares, useLadderTop: options.useLadderTopRates
+            ),
             weightedFlat: weightedFlat(profile, shares: shares),
             activation: buff.activation,
             isPassive: buff.isPassive,
@@ -1381,6 +1674,8 @@ public struct BuffRankerIndex: Sendable {
             sourceNames: profile.sourceNames,
             isInferredSource: buff.isInferredSource,
             stackGroup: buff.stacking.group,
+            familyKey: profile.familyKey,
+            stateCrossReferenceKey: profile.stateCrossReferenceKey,
             stackBehavior: buff.stacking.spCategoryBehavior,
             stackPriority: buff.stacking.categoryPriority,
             stateInfo: buff.stacking.stateInfo,
@@ -1393,7 +1688,9 @@ public struct BuffRankerIndex: Sendable {
             rateValues: profile.rateValues,
             scopeNotes: profile.scopeNotes,
             conditionNotes: profile.conditionNotes,
-            descZh: buff.descZh
+            descZh: buff.descZh,
+            selfInflictedStatus: buff.selfInflictedStatus,
+            searchKey: profile.searchKey
         )
     }
 
@@ -1408,26 +1705,39 @@ public struct BuffRankerIndex: Sendable {
         context: BuffRankingContext,
         options: BuffRankingOptions = BuffRankingOptions()
     ) -> BuffRankingResult {
-        let needle = options.query.foldedForSearch
         var rows: [BuffRankingRow] = []
         rows.reserveCapacity(128)
         var candidates = 0
         var neutral = 0
         var contextScoped = 0
+        var attributeScoped = 0
+        var scopeRejected = 0
+        var scopeReasons: [String: Int] = [:]
         for index in dataset.buffs.indices {
             let buff = dataset.buffs[index]
             let profile = profiles[index]
             guard passesEntryFilters(buff, profile, options) else { continue }
-            guard scopeMatchesIgnoringAttackContexts(buff, context: context, options: options) else { continue }
-            if !needle.isEmpty && !profile.searchKey.contains(needle) { continue }
-            // notes.ranking ④：情境限定的条目默认不进通用排名，单独计数供页面说明。
+            // notes.ranking ④：情境限定的条目默认不进通用排名，单独计数供页面说明
+            //（顺序与 Windows 端一致：情境闸门在其余 scope 判定之前）。
             guard attackContextAllowed(buff, options: options) else {
                 contextScoped += 1
+                scopeReasons[Self.contextGateReason, default: 0] += 1
+                continue
+            }
+            if let rejection = scopeVerdict(buff, context: context, options: options) {
+                // 属性／异常限定单独计数：它不是「不适用」，而是「打开开关后才计入」，
+                // 所以**只有 scopeVerdict 明确判成这一类**才记在它头上（与 Windows 同一判定点）。
+                if rejection.isAttributeScoped {
+                    attributeScoped += 1
+                } else {
+                    scopeRejected += 1
+                    scopeReasons[rejection.reason, default: 0] += 1
+                }
                 continue
             }
             candidates += 1
-            let row = makeRow(index: index, context: context)
-            guard row.hasMultiplier || row.weightedFlat != 0 else {
+            let row = makeRow(index: index, context: context, options: options)
+            guard row.isUseful else {
                 neutral += 1
                 continue
             }
@@ -1444,9 +1754,15 @@ public struct BuffRankerIndex: Sendable {
             rows: rows,
             candidateCount: candidates,
             neutralCount: neutral,
-            contextScopedCount: contextScoped
+            contextScopedCount: contextScoped,
+            attributeScopedCount: attributeScoped,
+            scopeRejectedCount: scopeRejected,
+            scopeReasons: scopeReasons
         )
     }
+
+    /// 情境闸门在分项里的原因串，与 Windows 端 scopeVerdict 返回的同一个字符串。
+    public static let contextGateReason = "只在特定攻击情境成立"
 
     public func rank(
         context: BuffRankingContext,
@@ -1469,12 +1785,11 @@ public struct BuffRankerIndex: Sendable {
     public func stackPlan(
         rows: [BuffRankingRow],
         excluded: Set<Int> = [],
-        includedConditional: Set<Int> = []
+        includedConditional: Set<Int> = [],
+        options: BuffRankingOptions = BuffRankingOptions()
     ) -> BuffStackPlan {
-        var best: [String: BuffRankingRow] = [:]
-        var dropped = 0
+        var pool: [BuffRankingRow] = []
         var excludedCount = 0
-
         for row in rows {
             if excluded.contains(row.spEffectId) {
                 excludedCount += 1
@@ -1483,13 +1798,23 @@ public struct BuffRankerIndex: Sendable {
             // 只有 passive 才默认进组合；条件型必须由用户单独勾选纳入。
             guard row.isPassive || includedConditional.contains(row.spEffectId) else { continue }
             guard row.effectiveMultiplier > 1.0000001 else { continue }
-            let key = Self.stackKey(for: row)
-            guard let current = best[key] else {
-                best[key] = row
-                continue
+            pool.append(row)
+        }
+
+        let buckets = Self.bucketRows(pool, mergeFamilies: options.mergeFamilies, mergeStates: options.mergeStates)
+        var best: [String: BuffRankingRow] = [:]
+        var dropped = 0
+        for (key, members) in buckets {
+            var champion: BuffRankingRow?
+            for row in members {
+                guard let current = champion else {
+                    champion = row
+                    continue
+                }
+                dropped += 1
+                if Self.prefers(row, over: current) { champion = row }
             }
-            dropped += 1
-            if Self.prefers(row, over: current) { best[key] = row }
+            best[key] = champion
         }
 
         let picks = best.values.sorted { lhs, rhs in
@@ -1509,10 +1834,52 @@ public struct BuffRankerIndex: Sendable {
 
     /// 去重用的分组键：一般是 `stacking.group`；叠层阶梯的各层共用一个键，
     /// 保证同一条阶梯**绝不会有两层同时进组合相乘**（当前数据集每条阶梯只收第 1 层，
-    /// 将来收全层时这一层保护才会真正派上用场）。
+    /// 将来收全层时这一层保护才会真正派上用场）。与 Windows 端 stackKeyFor 同一口径。
     static func stackKey(for row: BuffRankingRow) -> String {
         guard let ladder = row.ladder, let first = ladder.tierSpEffectIds.first else { return row.stackGroup }
         return "ladder#\(first)"
+    }
+
+    /// 并查集分桶：先按 stackKey 分组，打开「同族只取最高档」时再把同族的组并起来，
+    /// 打开「同 stateInfo 视为同一状态」时再按 stateInfo 并一次。
+    /// 与 Windows 端 bucketRows 同一口径（同一套键名、同一个合并顺序）。
+    static func bucketRows(
+        _ rows: [BuffRankingRow], mergeFamilies: Bool, mergeStates: Bool
+    ) -> [String: [BuffRankingRow]] {
+        var parent: [String: String] = [:]
+
+        func find(_ key: String) -> String {
+            var root = key
+            while let next = parent[root], next != root { root = next }
+            var current = key
+            while let next = parent[current], next != current {
+                parent[current] = root
+                current = next
+            }
+            parent[key] = root
+            return root
+        }
+
+        func union(_ lhs: String, _ rhs: String) {
+            if parent[lhs] == nil { parent[lhs] = lhs }
+            if parent[rhs] == nil { parent[rhs] = rhs }
+            let left = find(lhs)
+            let right = find(rhs)
+            if left != right { parent[right] = left }
+        }
+
+        for row in rows {
+            let group = "grp:" + stackKey(for: row)
+            union(group, "row#\(row.spEffectId)")
+            if mergeFamilies { union(group, "fam:" + row.familyKey) }
+            if mergeStates, let state = row.stateCrossReferenceKey { union(group, "st:" + state) }
+        }
+
+        var buckets: [String: [BuffRankingRow]] = [:]
+        for row in rows {
+            buckets[find("row#\(row.spEffectId)"), default: []].append(row)
+        }
+        return buckets
     }
 
     /// 同组内谁留下：applyHighest 取 categoryPriority 数值小的，其余取倍率高的。
@@ -1532,5 +1899,76 @@ public struct BuffRankerIndex: Sendable {
         let total = dataset.buffs.count
         let passive = dataset.buffs.filter(\.isPassive).count
         return "\(total) 条增伤手段 · 其中 \(passive) 条无条件生效"
+    }
+}
+
+// MARK: - 页面底部「本页自己承担的判定」
+
+/// 「增伤排名」页底部那 13 条口径说明。
+///
+/// 放在 RelicCore 而不是视图层，是为了让自检能直接拿到它，与 Windows 端
+/// `ranker.js` 的 `pageRuleNotes` **逐字同文**——任何一句改动都要同时改两边，
+/// 两端各有一份锚点断言把顺序与措辞钉住。**所有条数一律由调用方照数据现算**，
+/// 这里不写死任何具体数值。
+public enum BuffRankerPageNotes {
+    public static func rules(
+        attributeScoped: Int,
+        ladders: Int,
+        selfInflicted: Int,
+        meleeOnly: Int,
+        skillsWithoutDamage: Int,
+        spellsWithoutDamage: Int,
+        hasAttackContexts: Bool
+    ) -> [String] {
+        let hasContexts = hasAttackContexts
+        return [
+            "选段一律走 weapons[].skillVariant → skills[].variants[i].atkIds，不按 ctx 取并集"
+                + "（usage.选段（必读））；一个都对不上就是这把武器打不出段。",
+            "只有法术段忽略 motion：usage「法术 / 子弹段」的结论是「motion 只在施法器该属性 attackBase 非 0 时"
+                + "才有意义」，而法术在本页走「没有武器」这一路（attackBase 全 0）。战技的子弹段挂的是真武器、"
+                + "motion 是真实动作值，照常按 攻击力 × motion/100 + flat 计算，addBaseAtk 也照常加一份。",
+            "只有 rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier 的字段进入连乘；"
+                + "特攻（weakness）、致命一击（critical）是 conditionalDamage，削韧／异常／special／flag／economy 一律不乘。",
+            "武器槽（scope.weaponSlot）：缺失与 3（自身）视为不限，1／2 必须对上当前选的手，其余取值"
+                + "（4 踢击）判为作用域不符。法术同样按当前手判定——施法器也占左右手之一。",
+            "scope.spAttribute（只对带某种属性／异常的攻击生效，本版本 \(attributeScoped) 条）默认不计入："
+                + "本页拿不到「这一段带不带该属性」的判据，要看请打开「包含属性／异常限定」。",
+            "叠层阶梯（stackLadder，本版本 \(ladders) 条）：数据集只收第 1 层，topRates 才是满层数值。"
+                + "行上同时标出第 1 层与满层倍率；同一阶梯的各层互斥（notes.stackLadder），"
+                + "推荐组合里共用一个叠加组，绝不相乘；想按满层看请打开「叠层类按满层计算」。",
+            "selfInflictedStatus（v5，本版本 \(selfInflicted) 条）标的是「status 组的加算点数累在玩家自己身上」"
+                + "的自伤行。这些字段 countsAsDamage 全为 false，伤害排名的乘积一个数都不受它们影响；"
+                + "本页只在行上打「自伤型异常累积」标，将来若加异常累积轴必须整条排除。",
+            "本页额外做了三条数据集没有直接字段的判定：① affectsThrow 单独为真＝只作用于致命一击／投掷攻击"
+                + "（『强化致命一击』全系都是这个签名，无条件相乘会让它稳居榜首）——"
+                + (hasContexts
+                    ? "这条只在该条目没有 scope.attackContexts 时才用，有 attackContexts 就以它为准；"
+                    : "数据集给出 scope.attackContexts 后，本页会改以该字段为准；")
+                + "② weaponSlot=3 且只点亮魔法／祷告、没点亮秘术＝只作用于法术（『强化魔法』『强化祷告』）；"
+                + "③ subCategories 只标 130（近战武器攻击）而没有 112（战技攻击）的条目"
+                + "（『提升近战攻击力』等 \(meleeOnly) 条）在战技模式下判为作用域不符——"
+                + "战技的近战命中算不算 130，数据集没有给出判据，本页取保守口径，"
+                + "排除条数按原因分项列在「增伤排名」的汇总行下方。",
+            "叠加分组只用数据集算好的 stacking.group（叠层阶梯的各层共用一个阶梯键）；stateInfo 默认不参与分组"
+                + "（stackingRules 第 3 条：它「并不是互斥分组」，实测同一个 stateInfo 下挂着几十条互不相干的效果）。"
+                + "需要保守口径时可在「推荐组合」里打开「同 stateInfo 视为同一状态」。"
+                + "同组留哪一条：两边都是 applyHighest 时按 categoryPriority 取数值小的那一份"
+                + "（stackingRules 第 4 条「低い方が優先」），否则取有效倍率高的。",
+            "「推荐组合」用全部命中条目计算，不受排名列表的搜索框与来源类型筛选影响——那两个是视图筛选；"
+                + "要排除某一条请在列表里勾掉它，会即时回退到同组次高的那一条。",
+            "攻击力加算（attackPowerFlat）是点数，必须先加进攻击力再乘倍率；本页没有绝对攻击力，"
+                + "所以只按占比加权展示，不折成倍率、不进连乘。",
+            "输出手段列表只收「至少有一段能算出非 0 相对值」的战技与法术：战技还要求至少有一把武器引用它"
+                + "（没有武器就没有 attackBase），法术要求至少有一段带固定值。纯增益的战技"
+                + "（\(skillsWithoutDamage) 条）与恢复／庇佑类法术（\(spellsWithoutDamage) 条）"
+                + "选中后构成恒为 0，是死路，所以不进列表。",
+            hasContexts
+                ? "只在特定攻击情境成立的倍率（scope.attackContexts：突刺反击／防御反击／跳跃攻击…）"
+                    + "按 notes.ranking 第④步默认不计入，在「增伤排名」里勾选对应情境后才参与乘算。"
+                : "有些增益的生效条件写在攻击本身而不是 SpEffect 的 scope 里（例如『强化突刺反击』这类反击时机）。"
+                    + "当前数据版本还没有 scope.attackContexts，数据集把它们标成 activation=passive、"
+                    + "activationSource=noEvidence，本页没有依据把它们排除，看到明显只在特定时机成立的条目请自行勾掉；"
+                    + "数据集补上 attackContexts 后本页会自动按情境分区。"
+        ]
     }
 }

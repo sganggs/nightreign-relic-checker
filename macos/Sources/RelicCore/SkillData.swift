@@ -648,11 +648,17 @@ public enum SkillDamageMath {
     ///
     /// - 近战武器段：amount[el] = 攻击力[el] × motion[el] / 100 + flat[el]（addBaseAtk 再加一份攻击力[el]）；
     /// - 法术 / 子弹段：法术的 motion 是「照抄武器攻击力 100%」的占位写法，只用 flat。
+    ///
+    /// `hit.noDamage`（数据集标出来的「只挂状态、不产生伤害」的段）一律**短路**：构成为空、
+    /// total 为 0，motion / flat / addBaseAtk 一个都不累加。与 Windows 端 hitContribution
+    /// 第一行的 `if (!hit || hit.noDamage) return out;` 同一口径——本作有 8 段是
+    /// `noDamage + addBaseAtk`（癫火突击、灭洛斯的狂嚎…），照 addBaseAtk 累加会凭空造出
+    /// 一整份武器攻击力，勾进构成后占比、排名与推荐组合全部偏掉。
     public static func segment(for hit: SkillHit, weapon: SkillWeapon?) -> SkillSegment {
         let physicalChannel = hit.attribute.channel(weapon: weapon)
         var byChannel: [SkillDamageChannel: SkillSegmentComponent] = [:]
 
-        for element in SkillElement.allCases {
+        for element in SkillElement.allCases where !hit.noDamage {
             let motion = hit.motion[element]
             let flat = hit.flat[element]
             let base = weapon?.attack(element) ?? 0
@@ -710,20 +716,19 @@ public enum SkillDamageMath {
         )
     }
 
-    /// 默认勾选：有伤害、非 noDamage、非 noFp 的段。
+    /// 默认勾选：当前 FP 侧、非 noDamage 的段（默认在 FP 侧）。
     public static func defaultSelection(_ segments: [SkillSegment]) -> Set<Int> {
-        let normal = segments.filter { !$0.noFp && !$0.noDamage && $0.hasDamage }
-        if !normal.isEmpty { return Set(normal.map(\.atkId)) }
-        // 整套都是 No FP 版（或全是挂状态段）时退而求其次，至少别给一个空构成。
-        let fallback = segments.filter { !$0.noDamage && $0.hasDamage }
-        return Set(fallback.map(\.atkId))
+        selection(segments, useNoFp: false)
     }
 
-    /// 「无 FP 版」与「FP 版」互斥切换：把当前勾选整体换到另一侧。
+    /// 「无 FP 版」与「FP 版」互斥切换：只勾这一侧的段。
+    ///
+    /// 两侧互为替代，一起勾会把同一击算两遍，相对值合计直接翻倍、构成与排名权重跟着失真，
+    /// 所以这里不做「这一侧为空就退回另一侧」的兜底（本版本数据里也不存在整套只有无 FP 版的动作套）。
+    /// 与 Windows 端 hitEnabled / hitOverridesFor 同一口径：数值为 0 但没标 noDamage 的段照样勾上，
+    /// 它对构成的贡献本来就是 0。
     public static func selection(_ segments: [SkillSegment], useNoFp: Bool) -> Set<Int> {
-        let side = segments.filter { $0.noFp == useNoFp && !$0.noDamage && $0.hasDamage }
-        if side.isEmpty { return defaultSelection(segments) }
-        return Set(side.map(\.atkId))
+        Set(segments.filter { $0.noFp == useNoFp && !$0.noDamage }.map(\.atkId))
     }
 
     /// 汇总勾选的段：各通道相对伤害量 → 占比。
@@ -784,13 +789,19 @@ public struct SkillDataIndex: Sendable {
     public let weaponsByID: [Int: SkillWeapon]
     public let skillsByID: [Int: SkillEntry]
     public let spellsByID: [Int: SpellEntry]
-    /// 可选的输出手段（战技需要至少一把武器 + 至少一段命中；法术需要至少一段命中）。
+    /// 可选的输出手段。收录条件与 Windows 端 buildMeansItems 一致：
+    /// 战技要有命中段 + 至少一把引用它的武器 + 至少一种选法算得出非 0 相对值；
+    /// 法术要有命中段且至少一段带固定值。
     public let outputs: [SkillOutput]
     /// 有命中段但本作没有任何武器引用的战技数量（页面底部说明用）。
     public let skillsWithoutWeapons: Int
     /// 完全没有命中段的战技 / 法术数量（纯增益、格挡、附魔一类）。
     public let skillsWithoutHits: Int
     public let spellsWithoutHits: Int
+    /// 有命中段、也有武器，但每一段都算不出伤害（全是 noDamage / 纯挂状态）的战技数。
+    public let skillsWithoutDamage: Int
+    /// 有命中段但一段固定值都没有的法术数（恢复／庇佑／附魔类）。
+    public let spellsWithoutDamage: Int
 
     public init(dataset: SkillDataset) throws {
         self.dataset = dataset
@@ -801,6 +812,7 @@ public struct SkillDataIndex: Sendable {
         var outputs: [SkillOutput] = []
         var withoutWeapons = 0
         var skillsNoHits = 0
+        var skillsNoDamage = 0
         for skill in dataset.skills {
             if skill.hits.isEmpty {
                 skillsNoHits += 1
@@ -808,6 +820,11 @@ public struct SkillDataIndex: Sendable {
             }
             if skill.weaponIds.isEmpty {
                 withoutWeapons += 1
+                continue
+            }
+            // 一段都算不出非 0 相对值的战技（纯增益 / 只挂异常状态）选中后构成恒为 0，是死路。
+            guard Self.skillHasDamage(skill, weaponsByID: weaponsByID) else {
+                skillsNoDamage += 1
                 continue
             }
             let weapons = skill.weaponIds.count
@@ -826,9 +843,15 @@ public struct SkillDataIndex: Sendable {
         }
 
         var spellsNoHits = 0
+        var spellsNoDamage = 0
         for spell in dataset.spells {
             if spell.hits.isEmpty {
                 spellsNoHits += 1
+                continue
+            }
+            // 法术没有武器，构成只来自 flat；一个 flat 都没有的（冰雾、各种恢复／庇佑／防护）排除。
+            guard spell.hits.contains(where: { SkillDamageMath.segment(for: $0, weapon: nil).hasDamage }) else {
+                spellsNoDamage += 1
                 continue
             }
             let kindZh = spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh
@@ -851,6 +874,28 @@ public struct SkillDataIndex: Sendable {
         skillsWithoutWeapons = withoutWeapons
         skillsWithoutHits = skillsNoHits
         spellsWithoutHits = spellsNoHits
+        skillsWithoutDamage = skillsNoDamage
+        spellsWithoutDamage = spellsNoDamage
+    }
+
+    /// 至少有一把引用它的武器能打出非 0 相对值（与 Windows 端 skillHasDamage 同一口径）。
+    static func skillHasDamage(_ skill: SkillEntry, weaponsByID: [Int: SkillWeapon]) -> Bool {
+        for id in skill.weaponIds {
+            guard let weapon = weaponsByID[id] else { continue }
+            let hits: [SkillHit]
+            if skill.variants.isEmpty {
+                hits = fallbackHits(for: skill, weapon: weapon)
+            } else if let index = weapon.skillVariant, skill.variants.indices.contains(index) {
+                let ids = Set(skill.variants[index].atkIds)
+                hits = skill.hits.filter { ids.contains($0.atkId) }
+            } else {
+                continue
+            }
+            if hits.contains(where: { SkillDamageMath.segment(for: $0, weapon: weapon).hasDamage }) {
+                return true
+            }
+        }
+        return false
     }
 
     public init(data: Data) throws {
@@ -889,24 +934,24 @@ public struct SkillDataIndex: Sendable {
     // MARK: 选段
 
     /// 这把武器打出的段（usage.选段（必读））：
-    /// `variants[weapon.skillVariant].atkIds`；variants 缺失时退回 ctx 单选逻辑。
+    /// `variants[weapon.skillVariant].atkIds`；variants 缺失时才退回 ctx 单选逻辑。
+    ///
+    /// **variants 存在时一律以 skillVariant 为准**：数据集写明「skillVariant 缺失表示该武器的
+    /// 战技没有任何命中段」，所以缺失 / 越界就是「打不出段」，不按 weaponIds 回查、也不退回
+    /// ctx 逻辑——那样会把数据问题盖掉。与 Windows 端 selectHits 同一口径。
     public func hits(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillHit] {
-        if let weapon, let index = weapon.skillVariant, skill.variants.indices.contains(index) {
+        if !skill.variants.isEmpty {
+            guard let weapon, let index = weapon.skillVariant,
+                  skill.variants.indices.contains(index) else { return [] }
             let ids = Set(skill.variants[index].atkIds)
             return skill.hits.filter { ids.contains($0.atkId) }
-        }
-        if !skill.variants.isEmpty, let weapon {
-            // skillVariant 缺失 / 越界：按 weaponIds 找回它属于哪一套，仍然是单选。
-            if let variant = skill.variants.first(where: { $0.weaponIds.contains(weapon.id) }) {
-                let ids = Set(variant.atkIds)
-                return skill.hits.filter { ids.contains($0.atkId) }
-            }
         }
         return Self.fallbackHits(for: skill, weapon: weapon)
     }
 
     /// variants 缺失时的退回逻辑：先 ctx == 武器 nameEn，再 ctx == wepTypeEn，
-    /// 最后 ctx 缺失的那组 —— **单选，不取并集**。
+    /// 最后 ctx 缺失的那组 —— **单选，不取并集**；一个都对不上就是打不出段。
+    /// 按 ctx 取并集会把通用战技（战吼 290 段、野蛮咆哮 358 段）重复统计几十遍。
     static func fallbackHits(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillHit] {
         if let weapon, !weapon.nameEn.isEmpty {
             let byName = skill.hits.filter { $0.ctx == weapon.nameEn }
@@ -916,9 +961,7 @@ public struct SkillDataIndex: Sendable {
             let byType = skill.hits.filter { $0.ctx == weapon.wepTypeEn }
             if !byType.isEmpty { return byType }
         }
-        let shared = skill.hits.filter { $0.ctx == nil }
-        if !shared.isEmpty { return shared }
-        return skill.hits
+        return skill.hits.filter { $0.ctx == nil }
     }
 
     public func segments(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillSegment] {

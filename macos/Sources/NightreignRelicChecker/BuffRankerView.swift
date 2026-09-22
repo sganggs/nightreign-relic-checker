@@ -232,10 +232,19 @@ struct BuffRankerOutputSection: View {
             if model.skill != nil {
                 weaponPicker
             } else if let spell = model.spell {
-                HStack(spacing: 10) {
-                    Pill(text: spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh, color: AppTheme.green)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Pill(
+                            text: spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh,
+                            color: AppTheme.green
+                        )
+                        Spacer(minLength: 0)
+                        // 施法器同样占左右手之一，scope.weaponSlot 要对上（与 Windows 端一致）。
+                        handPicker
+                    }
                     Text("法术段只用固定伤害（flat）做配比：参数表里的 motion 是「照抄武器攻击力 100%」的占位写法，"
-                         + "乘到辉石魔杖 / 圣印记的物理攻击力上会凭空造出物理伤害。")
+                         + "乘到辉石魔杖 / 圣印记的物理攻击力上会凭空造出物理伤害。"
+                         + "武器槽用于匹配 scope.weaponSlot —— 只作用于另一只手的增益不计入。")
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -248,6 +257,18 @@ struct BuffRankerOutputSection: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.03))
         )
+    }
+
+    /// 武器槽（左右手）：战技与法术都要，scope.weaponSlot 按它匹配。
+    private var handPicker: some View {
+        Picker("武器槽", selection: $model.weaponSlot) {
+            Text("右手").tag(1)
+            Text("左手").tag(2)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 124)
+        .help("增伤 buff 的 scope.weaponSlot 会区分左右手（缺失与「自身」视为不限），默认按右手计算")
     }
 
     private var weaponPicker: some View {
@@ -281,14 +302,7 @@ struct BuffRankerOutputSection: View {
 
                 Spacer(minLength: 0)
 
-                Picker("武器槽", selection: $model.weaponSlot) {
-                    Text("右手").tag(1)
-                    Text("左手").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 124)
-                .help("增伤 buff 的 scope.weaponSlot 会区分左右手，默认按右手计算")
+                handPicker
             }
 
             if let weapon = model.weapon {
@@ -405,7 +419,7 @@ struct BuffRankerCompositionSection: View {
             )
 
             if model.composition.isEmpty {
-                Text("还没有勾选任何有伤害的段，下面的排名会退回「各属性倍率的最大值」。")
+                Text("当前没有勾选任何带伤害的段，无法计算构成——排名与推荐组合都要先有一个真实的伤害构成。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.amber)
             } else {
