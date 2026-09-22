@@ -12,6 +12,7 @@ private let gameDataChecks: [(name: String, run: () throws -> Int)] = [
     ("新页面数据资源存在且是合法 JSON", checkGameDataResourcesArePresent),
     ("GameDataLoader 能定位已构建的资源包", checkGameDataLoaderResolvesBundledResources),
     ("首领数据字段完整性", checkBossData),
+    ("词条反查", runAffixLookupChecks),
     // ("技能 / 增益数据字段完整性", checkSkillAndBuffData),
 ]
 
