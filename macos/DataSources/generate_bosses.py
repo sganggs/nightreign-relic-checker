@@ -64,7 +64,11 @@ schemaVersion 3 新增（只增不删）：
          SpEffectSetParam「Set: Deep Night Mutation - VFX + Scaling」→
          spEffectId1 = 红光 VFX 档位（4480..4483 / 4485），spEffectId2 = 数值档位
          （7200/7210/7215/7220/7230/7240/7241，最高 2 倍血 2 倍伤害 2 倍卢恩）。
-      三者 spCategory 互不相同（深度 0 / 常驻 0 / 变异 203 / 人数 140），互不覆盖，倍率连乘。
+      四类缩放的 spCategory：深度 0、常驻威胁档位 0、[Deep of Night Everdark Scaling] 20（个别
+      100）、[DLC Deep of Night Scaling] 0、变异 203、人数 140。**0 不是一个分类**（Paramdex：
+      spCategory 决定「互相覆盖」的行为，0 表示不参与覆盖），所以同为 0 的几类仍然各自生效、
+      倍率连乘；真正需要担心覆盖的只有非 0 的分类，生成时逐行断言过没有冲突。
+      详见 notes.deepOfNightAudit。
 
 用法：
   cd macos/DataSources && python3 generate_bosses.py [--raw raw] [--out ../../data/nightreign-bosses-v1.03.5.json]
@@ -78,6 +82,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 SCHEMA_VERSION = 3
@@ -414,7 +419,14 @@ DEPTHS = (1, 2, 3, 4, 5)
 FIELD_THREAT = range(7740, 7750)
 NIGHT_THREAT = range(7750, 7760)
 
-CAVEATS = [
+def build_caveats(m: dict) -> list[str]:
+    """页面底部原样展示的中文说明。
+
+    带数字的几条**不写死**：m 里是生成时从产物本身实测出来的统计（各夜王的深度出现权重、
+    deepOfNightTiers 的档位/数值表个数、nameZh 为空 / nameZhFallback 的条数等），
+    caveats 用 f-string 把实测值拼进去，避免数据变了而文字没跟着变。
+    """
+    return [
     "hp 是 1 人时玩家真正要打掉的血量 = hpBase（NpcParam.hp 原始字段）× hpMultiplier。"
     "hpMultiplier 是该行 spEffectID0..31 上所有无条件常驻 SpEffect 的 maxHpRate 连乘，"
     "也就是「Enemy Scaling: Field/Night/Final Boss Threat」这类威胁档位缩放（如最终 Boss ×3.54），"
@@ -455,28 +467,51 @@ CAVEATS = [
     "NightBossMenuParam 的 ID 100「深夜」没有 bossNameId（不是一个夜王，是深度模式入口），已跳过。",
     "守夜/野外 Boss 的中文名按 NpcParam.nameId → chrId 对照 NpcName 文本取得；"
     "个别条目游戏文本里没有对应词条，nameSource 会标成 chrid-fallback"
-    "（连英文名都没有，用 chrId 兜底）或 english-only（只有英文）；"
+    "（连 Paramdex 英文名都没有，英文名是用 chrId 拼的「Unknown Enemy (cXXXX)」）"
+    "或 english-only（只有英文名）；两种情况下 nameZh 都是空串。"
     "nameInferred = true 表示名字是按 ID 结构推断的。"
-    "（v2 还有一种 manual = 按《艾尔登法环》官方简中手工补的译名，schemaVersion 3 起不再产出，"
-    "取值保留只为兼容旧数据，详见下面【名字】几条。）",
+    "**schemaVersion 3 的产物里不存在 nameSource = manual 的条目**"
+    "（v2 那种按《艾尔登法环》官方简中手工补的译名已全部移出 nameZh，"
+    f"本次产物 manual 条数 = {m['manualCount']}）；"
+    "两端只是为了读旧数据才保留这个取值的分支，写新代码不用考虑它。详见下面【名字】几条。",
     "nightBosses 的主键是 id（形如 \"Flying Dragon@4500\"），nameEn 会重复"
     "（chr 4500「丘陵飞龙」与 chr 4505「飞龙」的 Paramdex 基础名都是 Flying Dragon），不要拿它当 key。",
 
     # ---------------- schemaVersion 3 新增 ----------------
     "【名字】schemaVersion 3 起，简中名只来自游戏自带文本（item/NpcName、menu/CL_MenuText 等 FMG），"
-    "不再有按《艾尔登法环》官方简中手工补的译名。v2 里 14 条 manual 译名逐条在全部 FMG 里"
-    "检索过「完全一致的字符串」，一条都没有，已全部删除；找不到文本的组 nameZh 留空、只给 nameEn。"
+    "不再有按《艾尔登法环》官方简中手工补的译名，也不再有生成器拼出来的占位名。"
+    f"v2 里的 {m['manualPresent']} 条 manual 译名逐条在全部 FMG 里检索过「完全一致的字符串」，"
+    "一条都没有，已全部移出 nameZh"
+    f"（生成器的删除清单 REMOVED_MANUAL_ZH 共 {m['removedManualTotal']} 条，"
+    f"多出的 {m['removedManualTotal'] - m['manualPresent']} 条在 v2 / v3 里都不单独成组，不产生条目）；"
+    f"找不到文本的组 nameZh 留空、只给 nameEn —— 本产物共 {m['zhEmpty']} 组 nameZh 为空"
+    f"（{m['englishOnly']} 组 english-only、{m['community']} 组 community/community-npcname、"
+    f"{m['chridFallback']} 组 chrid-fallback）。"
     "变更明细在 notes.nameChanges。nameSource 合法取值：npcparam-nameid、npcname、"
     "npcname-global、npcname-relaxed、npcname-chr-only、npcname-alias、npcname-alias-chr、"
     "community-npcname、community、english-only、chrid-fallback"
     "（manual 已不再产出，保留取值只为兼容旧数据；npcname-relaxed / npcname-chr-only "
     "目前数据里也没有条目——解析出来的那 4 条都因为下面的「同名去重」退回了 english-only，"
     "页面对未知取值按 english-only 优雅降级即可）。",
-    "【名字】nameZhFallback 收下全部 14 条被移出 nameZh 的手工译名（《艾尔登法环》官方简中），"
+    "【名字】nameZhFallback 收下被移出 nameZh 的手工译名（《艾尔登法环》官方简中），"
     "**不是本作的游戏内文本**，nameZhFallbackNote 里写清了这一点。"
-    "只要这一组现在的 nameZh 不等于旧译名就会写（nameZh 为空的 14 条都有）。"
+    "只要这一组现在的 nameZh 不等于旧译名就会写。"
+    f"本产物里 nameZhFallback 非空的共 {m['fallbackCount']} 组，全部落在 nameZh 为空的组上；"
+    f"反过来 nameZh 为空的 {m['zhEmpty']} 组里只有 {m['fallbackCount']} 组拿得到旧译名，"
+    f"剩下 {m['zhEmptyNoFallback']} 组（{m['zhEmptyNoFallbackNames']}）连旧译名都没有 —— "
+    f"其中 {m['displayFallbackCount']} 组有下一条说的 displayFallbackZh 占位名，"
+    f"另 {m['zhEmptyNoFallback'] - m['displayFallbackCount']} 组只能显示英文名。"
     "页面在 nameZh 为空时可以用它兜底显示，但要和游戏文本名区分开（例如加「非官方译名」标记）；"
     "判断「这个名字是不是游戏里的」请只看 nameZh 与 nameSource。",
+    "【名字】displayFallbackZh 是**另一个**兜底字段，和 nameZhFallback 不是一回事："
+    "nameZhFallback 是《艾尔登法环》的官方简中旧译名（至少是个真译名），"
+    "displayFallbackZh 只是生成器用 chrId 拼出来的占位串「未知敌人 cXXXX」，"
+    "既不是游戏文本也不是译名，纯粹为了页面不至于只能显示 \"Unknown Enemy (c7931)\"。"
+    f"本产物里只有 {m['displayFallbackCount']} 组有它（{m['displayFallbackNames']}）——"
+    "连游戏文本带社区资料都认不出是谁的那几组。"
+    "v3 首版把这个串写在 nameZh 里，与「简中名只来自游戏文本」自相矛盾，现已挪出来。"
+    "页面取显示名的推荐顺序：nameZh（游戏文本，可信）→ nameZhFallback（标「非官方译名」）"
+    "→ displayFallbackZh（标「无游戏内名称」）→ nameEn。",
     "【名字】nameEvidence 给出这个简中名的出处（fmg 文件名 + 文本 ID + 该条的英文/简中原文），"
     "nameApprox = true 表示不是逐字命中：可能是借了中心词（Large Wormface → "
     "NpcName 904580600「Wormface / 蚯蚓脸」），或英文是单复数差异。"
@@ -494,7 +529,8 @@ CAVEATS = [
     "【名字】nameSource = community / community-npcname 的条目，身份判断来自社区资料"
     "（4laric/nightreign-enemy-rando 的 data/nr_enemy_roster.json 与 nr_enemy_tags.json，"
     "URL 在 nameSourceUrl），中文仍然只从游戏文本取；社区也认不出来的两组"
-    "（c7931 / c7932）保留「未知敌人 cXXXX」，判断写在 nameNote 里。",
+    "（c7931 / c7932）nameSource 仍是 chrid-fallback、nameZh 为空，"
+    "占位显示名「未知敌人 cXXXX」在 displayFallbackZh 里，判断写在 nameNote 里。",
     "【名字】hidden = true 表示这一组明显不是「首领」，页面默认可以不展示。判据是结构性的："
     "整组不掉任何奖励（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全是 0 或 -1），"
     "并且要么不吃削韧（superArmorDurability ≤ 0，典型的投射物/部件实体），"
@@ -536,8 +572,15 @@ CAVEATS = [
     "野外首领（类别 120）与封印监牢首领（类别 160）在深度 1 都是 0，"
     "也就是深度 1 不会遇到变异的野外首领；深度 4 起据点首领（类别 110）的变异数量再上一档。",
     "【深夜】夜王在各深度的出现权重在 nightlords[].depthChanceWeights（NightBossMenuParam "
-    "depth1..5ChanceWeight）：本体夜王 1000/800/650/500/500，永夜之王与救世旗手 "
-    "0/200/350/500/500 —— 深度 1 不会出永夜形态。守夜/野外 Boss **没有**对应的按深度出现权重表，"
+    f"depth1..5ChanceWeight）。**权重不是每个夜王都一样的**，{m['weightRows']} 条里有 "
+    f"{m['weightShapes']} 种不同的数列，请直接读每条自己的 depthChanceWeights，不要按下面的举例套用。"
+    "实测（本次生成时从产物里逐条拼出）：\n" + m["weightLines"] +
+    "\n规律：本体形态走「深度越深权重越低」的形状（相对值 1000/800/650/500/500），"
+    "永夜之王与救世旗手走「深度 1 为 0、之后递增」的形状（0/200/350/500/500），"
+    "但整条数列会按夜王各自的基数缩放——玛利斯是上述形状的一半，哈尔莫妮亚是 1.6 倍，"
+    "DLC 的史柴格斯与布德奇冥则是**五个深度同一个值**（不随深度变化）。"
+    "唯一对所有夜王都成立的结论是：**深度 1 打不到永夜之王/救世旗手**（depth1 权重恒为 0）。"
+    "守夜/野外 Boss **没有**对应的按深度出现权重表，"
     "参数里只有上面那张变异数量表，所以本数据集不提供它们的深度出现概率。",
     "【深夜】ChaosMatchingMutationEnemyTableParam（3067 行）是按地图刷新点组织的"
     "（categoryId + smallBaseId → SmallBaseMapVariationParam），没法直接对到某一行 NpcParam，"
@@ -553,7 +596,8 @@ CAVEATS = [
     "永夜之王格拉狄乌斯 17,558 / 35,116 / 52,674、艾德雷 13,140 / 26,280 / 39,420 完全一致；"
     "卡莉果 Fextralife 记 12,007 / 24,014 / 36,021 而本数据集是 12,008 / 24,016 / 36,024，"
     "差别只在 3392 × 3.54 = 12007.68 的取整（本数据集四舍五入，Fextralife 截断），不是算法分歧。"
-    "个别条目与第三方 wiki 差 1–3 点血都属于这一类，不必当成错误。",
+    "个别条目与第三方 wiki 差 1–3 点血都属于这一类，不必当成错误。"
+    "本数据集的取整规则见下面【取整】那条（ROUND_HALF_UP，且先把倍率量化到 6 位小数）。",
     "【多人】MultiPlayCorrectionParam 的 client3SpEffectId（4 人）整表都是 -1，"
     "对应游戏最多 3 人，fullEffects.quad 恒为 null。",
     "【常驻缩放】schemaVersion 3 起，常驻 SpEffect 的判定多看了攻击力（五种 *AttackPowerRate）"
@@ -589,7 +633,38 @@ CAVEATS = [
     "attackRateBase / attackRatesBase / staminaAttackRateBase / depthSpEffectId 展开了一遍，"
     "与 scaling 在每条记录里重复展开是同类取舍（换页面零查表）。"
     "嫌大可以只用 depthStats[N].hp，其余倍率按 chaosCorrectId 去 deepOfNightTiers 查"
-    "（整表只有 22 档），两者数值一致。",
+    f"（整表只有 {m['depthIds']} 个 chaosCorrectId），两者数值一致。",
+
+    # ---------------- 第二版复核补充 ----------------
+    f"【深夜】deepOfNightTiers 的键是 **chaosCorrectId**（ChaosMatchingCorrectParam 行号），"
+    f"不是「档位」——本产物有 {m['depthIds']} 个键，但它们只对应 {m['depthLabels']} 种档位名"
+    f"（tierLabel），再往下只对应 {m['depthTables']} 张互不相同的数值表。"
+    f"tier 是 Paramdex 在 SpEffect 行名里写的正式 Tier 段（{m['depthNamedLabels']}），"
+    f"有 {m['depthUnnamedCount']} 个键的行名里压根没有 Tier 段（{m['depthUnnamedLabels']}，"
+    "联机突袭行），它们的 tier 是 **null**。"
+    "为了页面不用处理 null，新增了 **tierLabel（恒非空）**：有 Tier 段就是 Tier 名，"
+    "没有就退到 ChaosMatchingCorrectParam 的行名；tierSource 说明这个标题是哪来的"
+    "（tierName / rowName / chaosCorrectId）。"
+    "另外注意「档位名不同」不等于「数值不同」：Tier 3b / 3d / 3f 的五个深度倍率完全一致，"
+    "Tier 5a / 5b / 5c 与 Night Invader 也完全一致（差别在别的、本数据集没有收录的字段上）。"
+    "要判断两行深夜表现是否相同，请比 depths 里的数值，别比 tier 名。",
+
+    "【取整】所有整数血量（hp、deepOfNight.hp、depthStats[N].hp）都是 "
+    "**hpBase × 同一条记录里公布的那个 hpMultiplier，再四舍五入（ROUND_HALF_UP）**。"
+    "两点约定请照抄，否则会差 1 点：①倍率先量化到 6 位小数再乘（JSON 里写的就是 6 位），"
+    "不要拿「常驻倍率 × 深度倍率」的未量化乘积去算；②恰好落在 .5 时**进位**，"
+    "不是 Python / IEEE 默认的「银行家舍入」（.5 进偶数）。"
+    "v3 首版直接用浮点 round()，三条恰好落在 .5 的行取整方向不一致"
+    "（Great Wyrm 49110010 深度 1 的 2950 × 3.51、Gaping Dragon 77000000 的 2950 × 1.83、"
+    "Godskin Noble 35700000 的 2055 × 2.7），本版统一成 ROUND_HALF_UP，"
+    "后两条各 +1（5398 → 5399、5548 → 5549），全表其余数值零变化。"
+    "与第三方 wiki 差 1–3 点血仍然只是取整口径差异（对方截断），不是缩放逻辑分歧。",
+
+    "【多人】" + SCALING_FIELD_UNIT_NOTE +
+    " fieldUnits 只列出该档位真正出现过的列；生成时会断言 fields 里的每一列都在量纲表里，"
+    "出现新列会直接报错而不是静默漏说明。"
+    "顶层 scaling.duo / scaling.trio 里的字段则**已经全部折算成倍率**，可以直接连乘，"
+    "不需要再查 fieldUnits。",
 ]
 
 # ---------------------------------------------------------------- 工具函数
@@ -619,6 +694,32 @@ def num(text: str):
     """CSV 文本 → int / float（尽量保持整数形态，便于 JSON 体积）。"""
     f = float(text)
     return int(f) if f == int(f) else round(f, 6)
+
+
+# 血量倍率在 JSON 里一律保留 6 位小数（num / round(..., 6)），血量本身是整数。
+MULT_PLACES = 6
+
+
+def hp_from(hp_base, hp_mult) -> int:
+    """整数血量 = hpBase × **公布出去的那个 hpMultiplier**，四舍五入（ROUND_HALF_UP）。
+
+    这里刻意做两件事，保证「页面拿 hpBase × hpMultiplier 自己算」能逐位复现本数据集：
+
+    1. **先把倍率量化到 6 位小数，再乘**。倍率是多层连乘出来的（常驻档位 × 深夜修正 ×
+       深度倍率），JSON 里写的是 round(乘积, 6)；如果血量用未量化的乘积去算，两者会在
+       恰好落在 .5 的行上差 1 点。
+    2. **用 Decimal 而不是 float，取整规则是 ROUND_HALF_UP（四舍五入）**，不是 Python
+       内建 round() 的「银行家舍入」（.5 进偶数）。v3 首版直接用 round(float × float)，
+       结果同样落在 .5 的三行取整方向不一致：
+         Great Wyrm 49110010  2950 × 3.51 = 10354.5 → 10355（float 噪声把它推到 .5 以上）
+         Gaping Dragon 77000000 2950 × 1.83 = 5398.5 → 5398（银行家舍入进偶数）
+         Godskin Noble 35700000 2055 × 2.70 = 5548.5 → 5548（同上）
+       统一成 ROUND_HALF_UP 后，后两行各 +1（10355 / 5399 / 5549），其余全表零变化。
+       与 Fextralife 的差异仍然只是「本数据集四舍五入、对方截断」，见 caveats 与
+       notes.multiplayerScalingAudit。
+    """
+    return int((Decimal(str(hp_base)) * Decimal(str(hp_mult)))
+               .quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
 def is_template(row: dict) -> bool:
@@ -773,6 +874,76 @@ def attack_rate(e: dict) -> float:
     return rates.pop()
 
 
+# fullEffects.fields 里每个字段的**量纲**。这一列是原样搬的 SpEffectParam 列值，
+# 同一个 fields 对象里混着三种完全不同的量纲，只看数字会读错一个数量级：
+#   multiplier  倍率，默认 1（maxHpRate 1.1 = 血量 ×1.1）
+#   percent     整数百分比，默认 100（bloodDamageRate 98 = ×0.98；顶层 scaling.*
+#               里的 ailmentDamageRate / poisonRate 就是它 ÷ 100 之后的值）
+#   flag        作用目标标记位，0/1，不是数值（全部 136 条人数缩放行上恒为 1）
+#   enum        枚举/状态号，不是数值（spCategory 140 = 人数缩放分类；stateInfo 282）
+# 生成时会断言 fields 里出现的每个列名都在这张表里，出现新列会直接失败而不是静默漏说明。
+SCALING_FIELD_UNITS = {
+    # 倍率（默认 1）
+    "maxHpRate": "multiplier",
+    "maxStaminaRate": "multiplier",
+    "saReceiveDamageRate": "multiplier",
+    "changeSaRecoveryVelocity": "multiplier",
+    "staminaAttackRate": "multiplier",
+    "haveSoulRate": "multiplier",
+    "itemDropRate": "multiplier",
+    "physicsAttackPowerRate": "multiplier",
+    "magicAttackPowerRate": "multiplier",
+    "fireAttackPowerRate": "multiplier",
+    "thunderAttackPowerRate": "multiplier",
+    "darkAttackPowerRate": "multiplier",
+    "physicsDiffenceRate": "multiplier",
+    "magicDiffenceRate": "multiplier",
+    "fireDiffenceRate": "multiplier",
+    "thunderDiffenceRate": "multiplier",
+    "darkDiffenceRate": "multiplier",
+    "poisonDefDamageRate": "multiplier",
+    "diseaseDefDamageRate": "multiplier",
+    "bloodDefDamageRate": "multiplier",
+    "curseDefDamageRate": "multiplier",
+    "freezeDefDamageRate": "multiplier",
+    "sleepDefDamageRate": "multiplier",
+    "madnessDefDamageRate": "multiplier",
+    # 整数百分比（默认 100）
+    "poisonDamageRate": "percent",
+    "diseaseDamageRate": "percent",
+    "bloodDamageRate": "percent",
+    "curseDamageRate": "percent",
+    "freezeDamageRate": "percent",
+    "sleepDamageRate": "percent",
+    "madnessDamageRate": "percent",
+    # 标记位（0/1，不是倍率）
+    "effectTargetSelfTarget": "flag",
+    "effectTargetFriendlyTarget": "flag",
+    "effectTargetOpposeTarget": "flag",
+    "effectTargetFriend": "flag",
+    "effectTargetEnemy": "flag",
+    "magParamChange": "flag",
+    "miracleParamChange": "flag",
+    # 枚举 / 状态号（不是数值）
+    "spCategory": "enum",
+    "categoryPriority": "enum",
+    "stateInfo": "enum",
+    "invocationConditionsStateChange1": "enum",
+    "invocationConditionsStateChange2": "enum",
+    "invocationConditionsStateChange3": "enum",
+}
+
+SCALING_FIELD_UNIT_NOTE = (
+    "fullEffects.*.fields 是 SpEffectParam 原样的列值，一个对象里混着四种量纲，"
+    "fieldUnits 逐列给出：multiplier = 倍率（默认 1，如 maxHpRate 1.1 = 血量 ×1.1）；"
+    "percent = 整数百分比（默认 100，如 bloodDamageRate 98 = ×0.98，"
+    "顶层 scaling.*.ailmentDamageRate / poisonRate 就是它 ÷100 之后的值）；"
+    "flag = 作用目标标记位（0/1，不是数值，人数缩放行上恒为 1）；"
+    "enum = 枚举或状态号（spCategory 140 是「人数缩放」这个分类，stateInfo 282 是状态号，"
+    "都不参与任何乘算）。**不要把 percent 和 multiplier 放进同一次连乘**。"
+)
+
+
 class Scaling:
     """multiPlayCorrectionParamId → 双人/三人倍率。"""
 
@@ -838,18 +1009,28 @@ class Scaling:
         if mid == 0 or mpc_id not in self.mpc:
             return None, None
         row = self.mpc[mpc_id]
+        full = {
+            "duo": self._full(row["client1SpEffectId"]),
+            "trio": self._full(row["client2SpEffectId"]),
+            # 4 人档位在 NIGHTREIGN 里整表都是 -1（游戏最多 3 人）
+            "quad": self._full(row.get("client3SpEffectId", "-1")),
+            "overrideType": num(row["bOverrideSpEffect"]) if row.get("bOverrideSpEffect") else None,
+        }
+        # 本档位真正出现过的列 → 量纲。fields 里混着倍率/百分数/标记位/枚举，
+        # 没有这张表没法安全地用（见 SCALING_FIELD_UNIT_NOTE）。
+        seen: set[str] = set()
+        for side in ("duo", "trio", "quad"):
+            if full[side]:
+                seen |= set(full[side]["fields"])
+        missing = sorted(seen - set(SCALING_FIELD_UNITS))
+        assert not missing, f"人数缩放行出现未登记量纲的列：{missing}（请补 SCALING_FIELD_UNITS）"
+        full["fieldUnits"] = {k: SCALING_FIELD_UNITS[k] for k in sorted(seen)}
         entry = {
             "group": row["Name"] or None,
             "duo": self._tier(self.sp.get(row["client1SpEffectId"])),
             "trio": self._tier(self.sp.get(row["client2SpEffectId"])),
             # schemaVersion 3 新增：两档人数缩放 SpEffect 的全部非默认字段 + 行号
-            "fullEffects": {
-                "duo": self._full(row["client1SpEffectId"]),
-                "trio": self._full(row["client2SpEffectId"]),
-                # 4 人档位在 NIGHTREIGN 里整表都是 -1（游戏最多 3 人）
-                "quad": self._full(row.get("client3SpEffectId", "-1")),
-                "overrideType": num(row["bOverrideSpEffect"]) if row.get("bOverrideSpEffect") else None,
-            },
+            "fullEffects": full,
         }
         self.used[mid] = entry
         return mid, {"duo": entry["duo"], "trio": entry["trio"]}
@@ -1071,10 +1252,18 @@ class DepthScaling:
         if not depths:
             return None, None
         cid = int(chaos_id)
+        group = row["Name"] or None
+        # 行名形如「[Deep Night Scaling] Tier 3b, Depth 1」，档位名取 Tier 那段
+        tier = _depth_tier_name(depths["1"]["nameEn"])
         self.used[cid] = {
-            "group": row["Name"] or None,
-            # 行名形如「[Deep Night Scaling] Tier 3b, Depth 1」，档位名取 Tier 那段
-            "tier": _depth_tier_name(depths["1"]["nameEn"]),
+            "group": group,
+            "tier": tier,
+            # tier 为 null 的两条（98810 / 98815）是联机突袭行：它们的 SpEffect 行名
+            # 就叫「[Gladius Raid] Depth 1」，Paramdex 根本没给它们 Tier 段。tierLabel
+            # 保证**恒非空**，页面直接拿它当档位标题即可；想知道标题是不是 Paramdex
+            # 的正式 Tier 名，看 tierSource。
+            "tierLabel": tier or group or f"chaosCorrectId {cid}",
+            "tierSource": "tierName" if tier else ("rowName" if group else "chaosCorrectId"),
             "depths": depths,
         }
         return cid, depths
@@ -1083,6 +1272,29 @@ class DepthScaling:
 def _depth_tier_name(name: str | None) -> str | None:
     m = re.match(r"^\[(?:Deep Night Scaling|.+?)\]\s*(.*?),?\s*Depth \d+$", name or "")
     return (m.group(1).strip() or None) if m else (name or None)
+
+
+def depth_tier_stats(tiers: dict[int, dict]) -> dict:
+    """deepOfNightTiers 的实测统计，供 caveats / notes 直接引用（不写死数字）。"""
+    labels: dict[str, list[int]] = defaultdict(list)
+    tables: dict[str, list[int]] = defaultdict(list)
+    for cid, t in sorted(tiers.items()):
+        labels[t["tierLabel"]].append(cid)
+        sig = json.dumps({d: {k: v for k, v in dv.items() if k not in ("spEffectId", "nameEn")}
+                          for d, dv in t["depths"].items()}, sort_keys=True, ensure_ascii=False)
+        tables[sig].append(cid)
+    named = sorted(l for l, _ in labels.items()
+                   if any(tiers[c]["tierSource"] == "tierName" for c in labels[l]))
+    unnamed = sorted(l for l in labels if l not in named)
+    return {
+        "ids": len(tiers),
+        "labels": len(labels),
+        "namedLabels": named,
+        "unnamedLabels": unnamed,
+        "tables": len(tables),
+        # 每张数值表对应哪些 chaosCorrectId（同表的档位名可能不同，见下面的说明）
+        "tableGroups": [sorted(v) for v in tables.values()],
+    }
 
 
 class Mutations:
@@ -1147,7 +1359,7 @@ def fight_stats(row: dict, scaling: Scaling, perm: PermScaling,
     deep = None
     if p["deep"]:
         deep = {
-            "hp": round(hp_base * p["deep"]["hpMultiplier"]),
+            "hp": hp_from(hp_base, p["deep"]["hpMultiplier"]),
             "hpMultiplier": p["deep"]["hpMultiplier"],
             "poiseTakenBase": p["deep"]["poiseTakenBase"],
             "poiseRecoverMultiplier": p["deep"]["poiseRecoverMultiplier"],
@@ -1170,9 +1382,11 @@ def fight_stats(row: dict, scaling: Scaling, perm: PermScaling,
     if depth_tiers:
         depth_stats = {}
         for k, d in depth_tiers.items():
+            # hp 先量化倍率再乘（见 hp_from）：页面用 hpBase × hpMultiplier 能逐位复现
+            hp_mult = round(deep_hp_mult * d["hp"], MULT_PLACES)
             depth_stats[k] = {
-                "hp": round(hp_base * deep_hp_mult * d["hp"]),
-                "hpMultiplier": round(deep_hp_mult * d["hp"], 6),
+                "hp": hp_from(hp_base, hp_mult),
+                "hpMultiplier": hp_mult,
                 "poiseTakenBase": round(deep_poise * d["poiseTaken"], 6),
                 "attackRatesBase": {k: round(v * d["attackRate"], 6)
                                     for k, v in deep_atk.items()},
@@ -1185,7 +1399,7 @@ def fight_stats(row: dict, scaling: Scaling, perm: PermScaling,
 
     return {
         # hp 是玩家真正要打掉的 1 人血量；hpBase 才是 NpcParam.hp 原始字段
-        "hp": round(hp_base * p["hpMultiplier"]),
+        "hp": hp_from(hp_base, p["hpMultiplier"]),
         "hpBase": hp_base,
         "hpMultiplier": p["hpMultiplier"],
         "poise": num(row["superArmorDurability"]),
@@ -1372,7 +1586,7 @@ def build_nightlords(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: Pe
                 "npcId": npc_id,
                 "name": r["Name"] or None,
                 "chrId": npc_id // 10000,
-                "hp": round(num(r["hp"]) * p["hpMultiplier"]),
+                "hp": hp_from(num(r["hp"]), p["hpMultiplier"]),
                 "hpBase": num(r["hp"]),
                 "scalingId": int(r["multiPlayCorrectionParamId"]),
                 "reason": "multiPlayCorrectionParamId 属于最终 Boss 档位，但 chrId 不属于任何夜王",
@@ -1660,7 +1874,9 @@ def resolve_name_collisions(entries: list[dict], report: dict) -> None:
             e["npcNameId"] = None            # 这里的类型是 int|null，不能写成空串
             e["nameEvidence"] = None
             e["nameApprox"] = False
-            report["unmatchedNames"].append({"nameEn": e["nameEn"], "chrId": e["chrIds"][0]})
+            # 这一条**不进 unmatchedNames**：它在游戏文本里是匹配上了的，只是因为
+            # 同名去重让出了 nameZh。两类混在一起会让「查无此名」的条数虚高 4 条，
+            # 页面也没法区分「没有文本」和「有文本但让给了别人」。明细只进 nameCollisions。
             report["nameCollisions"].append({
                 "nameZh": zh,
                 "keptBy": f"{keeper['nameEn']}@{keeper['chrIds'][0]}" if keeper else None,
@@ -1754,8 +1970,14 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
         name_zh, name_en = res["nameZh"], res["nameEn"]
         source, name_id = res["nameSource"], res["npcNameId"]
         note, source_url = res["note"], res["sourceUrl"]
+        # 【名字】「未知敌人 cXXXX」是生成器拼出来的占位串，游戏文本里没有这个词条，
+        # 所以它**不能进 nameZh**（nameZh 的契约是「只来自游戏自带文本」）。
+        # 放进 displayFallbackZh：页面在 nameZh 为空时可以拿它当显示名，但要清楚
+        # 这不是游戏里的名字（nameSource = chrid-fallback，两端的「无游戏内名称」徽标会挂上）。
+        display_fallback_zh = ""
         if base.startswith("Unknown Enemy (c") and source == "english-only":
-            name_zh, source = f"未知敌人 c{chr_id}", "chrid-fallback"
+            name_zh, source = "", "chrid-fallback"
+            display_fallback_zh = f"未知敌人 c{chr_id}"
             if comm:
                 note = note or comm.get("note", "")
                 source_url = source_url or COMMUNITY_SOURCE_URL
@@ -1834,6 +2056,9 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
             "nameSourceUrl": source_url,
             "nameZhFallback": "",
             "nameZhFallbackNote": "",
+            # schemaVersion 3：nameZh 为空时的纯显示用占位名（生成器拼的「未知敌人 cXXXX」），
+            # **不是游戏文本、也不是译名**，与 nameZhFallback（《艾尔登法环》旧译名）分开放。
+            "displayFallbackZh": display_fallback_zh,
             # schemaVersion 3：被「同名去重」挡下来的候选词条（见 resolve_name_collisions）
             "nameZhRejected": None,
             "hidden": hidden,
@@ -1860,6 +2085,7 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
         cur["nameEvidence"] = cur["nameEvidence"] or e["nameEvidence"]
         cur["nameZhFallback"] = cur["nameZhFallback"] or e["nameZhFallback"]
         cur["nameZhFallbackNote"] = cur["nameZhFallbackNote"] or e["nameZhFallbackNote"]
+        cur["displayFallbackZh"] = cur["displayFallbackZh"] or e["displayFallbackZh"]
         cur["nameZhRejected"] = cur["nameZhRejected"] or e["nameZhRejected"]
         cur["variants"].extend(e["variants"])
     out = list(merged.values())
@@ -1951,7 +2177,11 @@ def name_changes(night_bosses: list[dict]) -> list[dict]:
             "oldNameEn": f"Unknown Enemy (c{chr_id})", "newNameEn": hit["nameEn"],
             "oldNameZh": f"未知敌人 c{chr_id}", "newNameZh": hit["nameZh"],
             "oldNameSource": "chrid-fallback", "newNameSource": hit["nameSource"],
-            "reason": (("名字本身没有变（社区资料也认不出这是谁），本次新增的是 hidden 标记与判断说明："
+            "displayFallbackZh": hit["displayFallbackZh"],
+            "reason": (("社区资料也认不出这是谁，身份仍然未知；本次的变化是 nameZh 清空 —— "
+                        f"「未知敌人 c{chr_id}」是生成器拼出来的占位串、不是游戏文本，"
+                        "按「nameZh 只来自游戏自带文本」的规则移到 displayFallbackZh（纯显示兜底），"
+                        "另外新增了 hidden 标记与判断说明："
                         if not comm.get("nameEn") else "") + comm["note"]),
             "confidence": comm["confidence"],
             "hidden": hit["hidden"],
@@ -1976,16 +2206,24 @@ def name_changes(night_bosses: list[dict]) -> list[dict]:
     return out
 
 
-MULTIPLAYER_SCALING_AUDIT = [
+def build_multiplayer_audit(m: dict) -> list[str]:
+    """notes.multiplayerScalingAudit。带条数的几句由 m 里的实测值拼出。"""
+    return [
     "结论：多人**不是**简单地「血量乘人数」。把 MultiPlayCorrectionParam 每一行的 "
     "client1（双人）/ client2（三人）指向的 SpEffect 整行摊开（scalingTiers.*.fullEffects.fields "
     "里是全部非默认字段），一共只动这几类：maxHpRate（血量）、saReceiveDamageRate（承受削韧）、"
     "changeSaRecoveryVelocity（削韧恢复速度）、七种 *DefDamageRate（异常累积量）、"
     "四种 *DamageRate（异常发动伤害）、以及少数档位的五种 *AttackPowerRate（敌人攻击力）。"
-    "另有四个非数值的作用目标标记位在全部 136 条缩放行上恒为 1："
-    "effectTargetFriendlyTarget / effectTargetOpposeTarget / magParamChange / miracleParamChange，"
-    "再加上 spCategory = 140 与 stateInfo = 282 两个标记——这些都不是倍率，"
-    "fullEffects.fields 里原样带着。"
+    f"**另有 6 个非倍率的列在全部 {m['mpRows']} 条人数缩放 SpEffect 上都是非默认值**，"
+    "fullEffects.fields 里原样带着，千万不要当成倍率乘进去："
+    "作用目标标记位 effectTargetFriendlyTarget / effectTargetOpposeTarget / "
+    "magParamChange / miracleParamChange **四项恒为 1**（0/1 的开关位，"
+    "意思是「这条效果对友方/敌方生效、会被魔法与祷告的参数变化影响」，不是 ×1 的倍率）；"
+    f"再加上 spCategory 恒为 {m['mpSpCategory']}（「人数缩放」这个互相覆盖分类的编号）"
+    f"与 stateInfo 恒为 {m['mpStateInfo']}（状态号）两个枚举。"
+    "每个 fullEffects 都带了 fieldUnits，逐列给出 multiplier / percent / flag / enum 四种量纲——"
+    "同一个 fields 对象里 maxHpRate = 1.1 是倍率、bloodDamageRate = 98 是百分数，"
+    "不查 fieldUnits 会直接读错一个数量级。"
     "全表另有 Spirit Creatures（7770–7779）用的 45696/45697 两行带 "
     "invocationConditionsStateChange1 = 413，这几个档位本数据集一行都没用到，不在 scalingTiers 里。",
     "血量倍率按档位差别很大，并不都是 ×2 / ×3：最终 Boss（7760–7769）与部分守夜档确实是 "
@@ -2010,7 +2248,9 @@ MULTIPLAYER_SCALING_AUDIT = [
     "spCategory = 0，变异个体是 203 —— Paramdex 的 paramdef 说明 spCategory 是"
     "「决定特殊效果互相覆盖行为的分类」、categoryPriority 是「同一分类内的优先级」，"
     "分类不同就不会互相覆盖，各自的 maxHpRate 等倍率连乘。同一分类里才会按优先级只留一个"
-    "（双人/三人两行都是 140，正好保证同时只有一档生效）。",
+    "（双人/三人两行都是 140，正好保证同时只有一档生效）。"
+    "注意 **0 不是一个分类**（表示不参与覆盖），所以同为 0 的常驻档位、深度行与 "
+    "[DLC Deep of Night Scaling] 行仍然各自生效，见 notes.deepOfNightAudit。",
     "实测核对（Fextralife 各 Boss 页，2026-09）：格拉狄乌斯 11,328 / 22,656 / 33,984、"
     "永夜之王格拉狄乌斯 17,558 / 35,116 / 52,674、艾德雷 13,140 / 26,280 / 39,420 —— "
     "与本数据集逐位一致；卡莉果 Fextralife 记 12,007 / 24,014 / 36,021，本数据集 "
@@ -2021,27 +2261,36 @@ MULTIPLAYER_SCALING_AUDIT = [
     "对应游戏最多 3 人；fullEffects.quad 因此恒为 null。",
 ]
 
-DEEP_OF_NIGHT_AUDIT = [
+def build_deep_of_night_audit(m: dict) -> list[str]:
+    """notes.deepOfNightAudit。带条数/权重的几句由 m 里的实测值拼出。"""
+    return [
     "深夜（The Deep of Night，CL_MenuText 131150）的「深度」（Depth，131011）1–5 "
     "是通过 NpcParam.chaosMatchingCorrectParamId → ChaosMatchingCorrectParam 生效的："
     "该表的 spEffect00..spEffect04 就是深度 1..5 的 SpEffect 行，Paramdex 行名形如"
-    "「[Deep Night Scaling] Tier 3b, Depth 4」。整表 90 行里 ID 0 那行 spEffect00..04 全是 -1"
-    "（没有任何深度效果），其余 89 行按 spEffect00 的 Paramdex 行名归并成 **25 组**档位："
-    "Tier 1 / 2a / 2b / 2c / 2d / 3a / 3b / 3c / 3d / 3e / 3f / 3g / 4a / 5a / 5b / 5c、"
-    "Night Invader、[Gladius Raid]、[Harmonia Raid]、[Caligo Raid]、[Lightning Ball]、"
-    "[Skill - Revenant] Helen / Frederick / Sebastian、[Ultimate - Executor] Beast。"
-    "deepOfNightTiers 只收录数据集实际用到的 22 档，与 22 个不同的 chaosCorrectId 一一对应，"
-    "没有悬空引用。",
-    "深度缩放行自身 stateInfo = 2287，也就是「进入深夜」这个状态是它们打上去的；"
+    f"「[Deep Night Scaling] Tier 3b, Depth 4」。整表 {m['chaosRows']} 行里 "
+    f"{m['chaosEmptyRows']} 行（ID {m['chaosEmptyIds']}）的 spEffect00..04 全是 -1"
+    f"（没有任何深度效果），其余 {m['chaosRows'] - m['chaosEmptyRows']} 行按 spEffect00 的 "
+    f"Paramdex 行名归并成 **{m['chaosGroups']} 组**（以上都是生成时逐行数出来的）："
+    + "、".join(m["chaosGroupNames"]) + "。"
+    f"deepOfNightTiers 只收录数据集实际用到的 {m['depthIds']} 个 chaosCorrectId，没有悬空引用；"
+    f"它们只对应 {m['depthLabels']} 种档位名（tierLabel）与 {m['depthTables']} 张互不相同的数值表，"
+    "所以「22 档」这种说法是错的——键是 chaosCorrectId，不是档位。"
+    f"其中 {m['depthUnnamedCount']} 个键（{m['depthUnnamedLabels']}）的 SpEffect 行名里没有 Tier 段，"
+    "tier 为 null，请改用恒非空的 tierLabel（来源见 tierSource）。",
+    "深度缩放行自身 stateInfo = 2287，也就是「进入深夜」这个状态是它们打上去的"
+    "（敌人用的那 85 行全是 2287；只有玩家技能那 4 行 99000–99002 / 99010 是 0，"
+    "本数据集一行都没用到）；"
     "NpcParam 上那些 invocationConditionsStateChange1 = 2287 的"
     "「[Deep of Night Everdark Scaling] / [DLC Deep of Night Scaling]」行随之点亮，"
     "作用是把永夜之王/DLC 的加成压回去（例如格拉狄乌斯 ×0.677）。"
-    "三者的 spCategory 各不相同：深度行是 0，[Deep of Night Everdark Scaling]"
-    "（7330–7348/7355/7356）是 20、其中 7342/7344/7355/7356 是 100，"
-    "[DLC Deep of Night Scaling]（7395–7398）是 0。"
-    "分类不同就不互相覆盖，所以它们与常驻威胁档位一起连乘"
-    "（把数据集用到的全部 NpcParam 行逐行扫过，没有任何一行出现两条非中性效果"
-    "共用同一个非 0 spCategory，所以 hpMultiplier 这类连乘是安全的）。",
+    "**spCategory 并不是「三者各不相同」（v3 首版这句话是错的）**，实测逐行是："
+    "深度缩放行 = 0；[Deep of Night Everdark Scaling]（7330–7348、7355/7356 共 19 行）= 20，"
+    "其中 7342 / 7344 / 7355 / 7356 这 4 行 = 100；"
+    "[DLC Deep of Night Scaling]（7395–7398 共 4 行）**也是 0**，与深度行同值。"
+    "同为 0 并不构成冲突：Paramdex 的 paramdef 说 spCategory 是「决定特殊效果互相覆盖行为的分类」，"
+    "**0 表示不参与覆盖**，所以它们与常驻威胁档位一起连乘是安全的。"
+    "真正需要检查的是非 0 的分类——把数据集用到的全部 NpcParam 行逐行扫过，"
+    "没有任何一行出现两条非中性效果共用同一个非 0 spCategory，hpMultiplier 这类连乘因此成立。",
     "所以 depthStats[N].hp = NpcParam.hp × 常驻档位倍率 × 深夜修正（有才乘）× 深度 N 的 maxHpRate。"
     "v2 的 deepOfNight 字段只算到「深夜修正」为止，没有乘深度倍率，"
     "现在 deepOfNight 保留原义（= 深夜基准，等价于深度倍率为 1 时的值），深度值在 depthStats 里。",
@@ -2083,9 +2332,18 @@ DEEP_OF_NIGHT_AUDIT = [
     "它按刷新点而不是按 NpcParam 行组织，没法直接对到某只 Boss，本数据集没有收录；"
     "能确定的只有类别层面的数量，见 mutationCategories。",
     "每个夜王在各深度的出现权重来自 NightBossMenuParam 的 depth1..5ChanceWeight，"
-    "已写进每个 nightlords 条目的 depthChanceWeights。本体夜王是「深度越深权重越低」"
-    "（1000 → 800 → 650 → 500 → 500），永夜之王/救世旗手则是深度 1 为 0、之后 "
-    "200 → 350 → 500 → 500 —— 深度 1 打不到永夜形态。"
+    "已写进每个 nightlords 条目的 depthChanceWeights。"
+    "**v3 首版把它概括成「本体 1000/800/650/500/500、永夜 0/200/350/500/500」是错的**："
+    f"{m['weightRows']} 条里只有 {m['weightRows'] - m['weightOffShape']} 条对得上，"
+    f"另外 {m['weightOffShape']} 条（{m['weightOffShapeNames']}）完全不是这两串数。"
+    "本次生成时逐条实测的结果：\n" + m["weightLines"] +
+    "\n可以概括的只有「形状」而不是具体数字：本体形态是深度越深权重越低"
+    "（相对 1000 : 800 : 650 : 500 : 500），永夜之王/救世旗手是深度 1 为 0、之后递增"
+    "（相对 0 : 200 : 350 : 500 : 500），但每个夜王会按自己的基数整条缩放"
+    "（玛利斯 ×0.5、哈尔莫妮亚 ×1.6），而 DLC 的史柴格斯（1120）与布德奇冥（700）"
+    "**五个深度同一个值**，根本不走上面的形状。"
+    "对全部 18 条都成立的只有一句：**深度 1 打不到永夜之王/救世旗手**（depth1 恒为 0）。"
+    "页面要展示权重请直接读 depthChanceWeights，不要套用任何范例数列。"
     "守夜/野外 Boss 没有对应的按深度出现权重表（参数里只有变异数量），已写进 caveats。",
 ]
 
@@ -2143,6 +2401,177 @@ def build_depth_overview(raw: Path) -> tuple[dict, list[dict], dict]:
     return depths, cats, text
 
 
+# ---------------------------------------------------------------- 实测统计
+
+
+# v3 首版写死在 caveats / notes 里的两串「范例」权重。留着只为算出「有几条对不上」。
+CANONICAL_DEPTH_WEIGHTS = ((1000, 800, 650, 500, 500), (0, 200, 350, 500, 500))
+
+
+def measure(nightlords: list[dict], night_bosses: list[dict], scaling: "Scaling",
+            depth: "DepthScaling", speffects: dict[str, dict]) -> dict:
+    """从**刚生成出来的产物本身**数出 caveats / notes 里要引用的每一个数字。
+
+    第二版复核报出的问题里有一半是「文字里的统计数字和数据本身对不上」
+    （夜王深度权重 18 条错 6 条、deepOfNightTiers 被说成 22 档、nameZhFallback 的条数……）。
+    根治办法不是把数字改对一次，而是**不写死**：这里实测一遍，文案用 f-string 拼。
+    """
+    m: dict = {}
+
+    # ---- 夜王各深度出现权重（caveats / deepOfNightAudit）
+    lines, shapes, off = [], set(), []
+    for e in nightlords:
+        w = tuple(e["depthChanceWeights"][str(d)] for d in DEPTHS)
+        shapes.add(w)
+        title = f"{e['nameZh']}（{e['variantNameZh']}）" if e["variantNameZh"] else e["nameZh"]
+        lines.append(f"  {title}：" + " / ".join(str(x) for x in w))
+        if w not in CANONICAL_DEPTH_WEIGHTS:
+            off.append(title)
+    m["weightRows"] = len(nightlords)
+    m["weightShapes"] = len(shapes)
+    m["weightLines"] = "\n".join(lines)
+    m["weightOffShape"] = len(off)
+    m["weightOffShapeNames"] = "、".join(off)
+
+    # ---- deepOfNightTiers（caveats / deepOfNightAudit）
+    ds = depth_tier_stats(depth.used)
+    m["depthIds"] = ds["ids"]
+    m["depthLabels"] = ds["labels"]
+    m["depthTables"] = ds["tables"]
+    m["depthNamedLabels"] = " / ".join(ds["namedLabels"])
+    m["depthUnnamedCount"] = len(ds["unnamedLabels"])
+    m["depthUnnamedLabels"] = " / ".join(ds["unnamedLabels"])
+
+    # ---- ChaosMatchingCorrectParam 整表（deepOfNightAudit 第 1 条）
+    empty, groups = [], defaultdict(list)
+    for rid, row in depth.rows.items():
+        eids = [row[f"spEffect0{i}"] for i in range(5)]
+        if all(e in ("-1", "") for e in eids):
+            empty.append(rid)
+            continue
+        name = (speffects.get(eids[0]) or {}).get("Name") or ""
+        groups[re.sub(r",?\s*Depth \d+$", "", name)].append(rid)
+    m["chaosRows"] = len(depth.rows)
+    m["chaosEmptyRows"] = len(empty)
+    m["chaosEmptyIds"] = "、".join(sorted(empty, key=int))
+    m["chaosGroups"] = len(groups)
+    # 展示时去掉共同前缀，可读性和 v3 首版手写的那串一致
+    m["chaosGroupNames"] = [g.replace("[Deep Night Scaling] ", "") or "（无行名）"
+                            for g in sorted(groups)]
+
+    # ---- 人数缩放 SpEffect 整表（multiplayerScalingAudit 第 1 条）
+    mp_ids = {v for r in scaling.mpc.values()
+              for k in ("client1SpEffectId", "client2SpEffectId", "client3SpEffectId")
+              for v in [r.get(k, "-1")] if v not in ("-1", "", "0")}
+    m["mpRows"] = len(mp_ids)
+    for col, key in (("spCategory", "mpSpCategory"), ("stateInfo", "mpStateInfo")):
+        vals = {speffects[i][col] for i in mp_ids}
+        assert len(vals) == 1, f"人数缩放行的 {col} 不唯一：{sorted(vals)}"
+        m[key] = num(vals.pop())
+    for col in ("effectTargetFriendlyTarget", "effectTargetOpposeTarget",
+                "magParamChange", "miracleParamChange"):
+        vals = {speffects[i][col] for i in mp_ids}
+        assert vals == {"1"}, f"标记位 {col} 不是全表恒为 1：{sorted(vals)}"
+
+    # ---- 名字相关条数（caveats【名字】几条）
+    zh_empty = [e for e in night_bosses if not e["nameZh"]]
+    no_fb = [e for e in zh_empty if not e["nameZhFallback"]]
+    disp_fb = [e for e in night_bosses if e["displayFallbackZh"]]
+    present = {e["nameEn"] for e in night_bosses} & set(REMOVED_MANUAL_ZH)
+    m["manualCount"] = sum(1 for e in night_bosses if e["nameSource"] == "manual")
+    m["removedManualTotal"] = len(REMOVED_MANUAL_ZH)
+    m["manualPresent"] = len(present)
+    m["zhEmpty"] = len(zh_empty)
+    m["englishOnly"] = sum(1 for e in zh_empty if e["nameSource"] == "english-only")
+    m["community"] = sum(1 for e in zh_empty if e["nameSource"].startswith("community"))
+    m["chridFallback"] = sum(1 for e in zh_empty if e["nameSource"] == "chrid-fallback")
+    m["fallbackCount"] = sum(1 for e in night_bosses if e["nameZhFallback"])
+    m["zhEmptyNoFallback"] = len(no_fb)
+    m["zhEmptyNoFallbackNames"] = "、".join(sorted(e["nameEn"] for e in no_fb))
+    m["displayFallbackCount"] = len(disp_fb)
+    m["displayFallbackNames"] = "、".join(sorted(e["displayFallbackZh"] for e in disp_fb))
+    assert m["manualCount"] == 0, "schemaVersion 3 不应再产出 nameSource = manual"
+    assert all(e["nameZh"] == "" for e in disp_fb), "displayFallbackZh 只在 nameZh 为空时才给"
+    return m
+
+
+# ---------------------------------------------------------------- 生成时自检
+
+
+def self_check(payload: dict) -> int:
+    """写文件前跑一遍契约自检，违反即抛 AssertionError（与 buffs / heroes 同一约定）。
+
+    只钉「两端页面会直接依赖、且出错时很难被肉眼发现」的不变量。
+    """
+    n = 0
+
+    def ok(cond, msg):
+        nonlocal n
+        assert cond, f"self_check 失败：{msg}"
+        n += 1
+
+    rows = [(f"夜王 {e['nameZh']}", f) for e in payload["nightlords"] for f in e["fights"]]
+    rows += [(b["id"], v) for b in payload["nightBosses"] for v in b["variants"]]
+    ok(rows, "至少要有一条战斗行")
+
+    # ① 整数血量必须能由「hpBase × 同一条记录里公布的 hpMultiplier」逐位复现（见 hp_from）
+    for tag, v in rows:
+        ok(v["hp"] == hp_from(v["hpBase"], v["hpMultiplier"]),
+           f"{tag} npcId {v['npcId']} 的 hp 与公布的 hpMultiplier 对不上")
+        if v.get("deepOfNight"):
+            d = v["deepOfNight"]
+            ok(d["hp"] == hp_from(v["hpBase"], d["hpMultiplier"]),
+               f"{tag} npcId {v['npcId']} 的 deepOfNight.hp 与 hpMultiplier 对不上")
+        for k, d in (v.get("depthStats") or {}).items():
+            ok(d["hp"] == hp_from(v["hpBase"], d["hpMultiplier"]),
+               f"{tag} npcId {v['npcId']} 深度 {k} 的 hp 与 hpMultiplier 对不上")
+
+    # ② 名字契约：nameZh 只来自游戏文本；兜底串各归各位
+    zh_seen: dict[str, str] = {}
+    for e in payload["nightBosses"]:
+        ok(e["nameSource"] != "manual", f"{e['id']} 不应再产出 nameSource = manual")
+        if e["nameZh"]:
+            ok(e["nameZh"] not in zh_seen,
+               f"简中名「{e['nameZh']}」同时挂在 {zh_seen.get(e['nameZh'])} 与 {e['id']} 上")
+            zh_seen[e["nameZh"]] = e["id"]
+            ok(not e["displayFallbackZh"], f"{e['id']} 有 nameZh 就不该再给 displayFallbackZh")
+        if e["displayFallbackZh"]:
+            ok(e["nameSource"] == "chrid-fallback",
+               f"{e['id']} 的 displayFallbackZh 只应出现在 chrid-fallback 上")
+        ok(not (e["nameZh"] and e["nameZh"] == e["nameZhFallback"]),
+           f"{e['id']} 的 nameZhFallback 与 nameZh 重复")
+
+    # ③ notes.unmatchedNames（查无此名）与 notes.nameCollisions（有文本但让出）不许重叠
+    unmatched = {(u["nameEn"], u["chrId"]) for u in payload["notes"]["unmatchedNames"]}
+    for c in payload["notes"]["nameCollisions"]:
+        key = (c["releasedBy"].rsplit("@", 1)[0], c["chrIds"][0])
+        ok(key not in unmatched,
+           f"{c['releasedBy']} 是「匹配到了但让出」，不该同时记进 unmatchedNames")
+
+    # ④ deepOfNightTiers：tier 允许为 null，tierLabel 必须恒非空
+    for cid, t in payload["deepOfNightTiers"].items():
+        ok(bool(t["tierLabel"]), f"deepOfNightTiers {cid} 的 tierLabel 为空")
+        ok(t["tierSource"] in ("tierName", "rowName", "chaosCorrectId"),
+           f"deepOfNightTiers {cid} 的 tierSource 取值非法：{t['tierSource']}")
+        ok(len(t["depths"]) == len(DEPTHS), f"deepOfNightTiers {cid} 的深度不全")
+
+    # ⑤ scalingTiers：fullEffects 的每一列都要有量纲说明
+    for sid, tier in payload["scalingTiers"].items():
+        full = tier["fullEffects"]
+        units = full["fieldUnits"]
+        for side in ("duo", "trio", "quad"):
+            if not full[side]:
+                continue
+            miss = sorted(set(full[side]["fields"]) - set(units))
+            ok(not miss, f"scalingTiers {sid} 的 {side} 有未标量纲的列：{miss}")
+        ok(set(units.values()) <= {"multiplier", "percent", "flag", "enum"},
+           f"scalingTiers {sid} 的 fieldUnits 出现未知量纲")
+
+    # ⑥ 每条 caveat 都是非空字符串（页面直接整条渲染）
+    ok(all(isinstance(c, str) and c.strip() for c in payload["caveats"]), "caveats 有空条目")
+    return n
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -2171,6 +2600,8 @@ def main() -> None:
     report["skippedRows"].sort(key=lambda s: s["npcId"])
     report["unmatchedNames"].sort(key=lambda u: (u["chrId"], u["nameEn"]))
     report["unassignedFinalBossRows"].sort(key=lambda s: s["npcId"])
+    # caveats / notes 里所有带数字的句子都从产物实测拼出，不写死（见 measure 的 docstring）
+    stats = measure(nightlords, night_bosses, scaling, depth, speffects)
 
     out = {
         "bossesSchemaVersion": SCHEMA_VERSION,
@@ -2233,7 +2664,7 @@ def main() -> None:
         "deepOfNightTiers": {str(k): v for k, v in sorted(depth.used.items())},
         "mutations": {str(k): v for k, v in sorted(mutations.used.items())},
         "mutationCategories": mutation_categories,
-        "caveats": CAVEATS,
+        "caveats": build_caveats(stats),
         "nightlords": nightlords,
         "nightBosses": night_bosses,
         "notes": {
@@ -2243,10 +2674,12 @@ def main() -> None:
             "unassignedFinalBossRows": report["unassignedFinalBossRows"],
             "nameChanges": name_changes(night_bosses),
             "nameCollisions": report["nameCollisions"],
-            "multiplayerScalingAudit": MULTIPLAYER_SCALING_AUDIT,
-            "deepOfNightAudit": DEEP_OF_NIGHT_AUDIT,
+            "multiplayerScalingAudit": build_multiplayer_audit(stats),
+            "deepOfNightAudit": build_deep_of_night_audit(stats),
         },
     }
+
+    checks = self_check(out)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")) + "\n",
@@ -2261,6 +2694,7 @@ def main() -> None:
         f"缩放档位 {len(scaling.used)} 个 → {args.out}"
         f"（{args.out.stat().st_size // 1024} KB）"
     )
+    print(f"  self_check：{checks} 项断言全过")
     if report["unmatchedNames"]:
         print("  未匹配到中文名：" + "、".join(u["nameEn"] for u in report["unmatchedNames"]))
     for s in report["skippedMenuRows"]:

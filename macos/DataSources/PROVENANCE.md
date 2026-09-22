@@ -606,3 +606,15 @@ inventorySummary 守夜 51→50、数值行 384→394）。
 彻底解决需要两端代表行排序在同 hp 时优先取 paramdexName 非空或 noReward = false 的行，
 本轮未动页面代码，已在 caveats 里点名。另外 4 组让出 nameZh 后不再能用中文搜到
 （搜索串不索引 nameZhFallback），同属页面侧待办。
+
+#### 第二版核验修订（bosses，schemaVersion 3 仍为纯增量）
+
+第二轮交叉核验报出 8 处问题全部成立并修复；生成器新增 `measure()`（caveats / notes 引用的统计数字改为生成时从产物实测拼出）与 `self_check()`（2960 项，写文件前运行）。
+
+1. **整数血量取整统一**（唯一数值变化）：原 `round(float × float)` 在恰好 .5 时方向不一致；现统一为「倍率量化到 6 位小数（即公布的 hpMultiplier）后 Decimal ROUND_HALF_UP」，保证页面用 `hpBase × hpMultiplier` 能逐位复现。影响 4 条记录各 +1（大口龙三个变体 5398→5399、神皮贵族 5548→5549），其余零变化。
+2. `notes.unmatchedNames` 只留游戏文本里查无此名的 12 条；4 条「匹配到但因重名让出」的只记在 `nameCollisions`。
+3. 占位串「未知敌人 cXXXX」移出 `nameZh`，新增 `displayFallbackZh`（仅 c7931/c7932）；显示名推荐顺序：`nameZh` → `nameZhFallback`（标非本作文本）→ `displayFallbackZh`（标无游戏内名称）→ `nameEn`。实测：`nameZh` 为空 21 组（16 english-only / 3 community / 2 chrid-fallback），`nameZhFallback` 14 组，`manual` 0 条。
+4. `deepOfNightTiers` 新增恒非空的 `tierLabel` 与 `tierSource`：22 个 chaosCorrectId → 13 个档位名 → 只有 7 张互不相同的数值表；98810/98815 两条行名无 Tier 段，`tier` 保持 null。
+5. `scalingTiers.*.fullEffects` 新增 `fieldUnits`（multiplier / percent / flag / enum），生成时断言每列都已登记。
+6. 事实性更正：夜王各深度出现权重 18 条逐条实测（玛利斯 500/400/325/250/250、哈尔莫妮亚 1600/1280/1040/800/800、史柴格斯 1120×5、布德奇冥 700×5 等），唯一普适结论是永夜/救世旗手形态深度 1 权重恒为 0；深夜修正行 spCategory = 20（少数 100）、DLC 深夜修正与深度行 = 0（0 表示不参与覆盖，连乘成立）；ChaosMatchingCorrectParam 90 行 → 89 行归并 25 组；人数缩放 136 条上恒为 1 的 4 个字段是 0/1 开关位而非倍率。
+7. 两端数据断言同步（只改断言）：Windows bosses.test.mjs 的名字回退口径、macOS BossDataChecks 的 unmatchedNames 12 与 chrid-fallback 显示名。

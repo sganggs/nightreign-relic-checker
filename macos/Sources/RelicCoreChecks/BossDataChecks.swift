@@ -288,14 +288,17 @@ func checkBossData() throws -> Int {
     try bossExpect(dataset.title(for: .standard) == BossDamageKind.standard.titleZh, "物理属性没有 affinity 码，应退回内置文案", counter: &count)
 
     // 9f. notes.unmatchedNames 要能取到（页面底部「数据说明」要展示）
-    //     schemaVersion 3：2 → 16 条。v2 里那 14 条按《艾尔登法环》官方简中手工补的译名
-    //     （nameSource = manual）全部移出 nameZh，其中 12 条在游戏文本里查无此名 →
-    //     english-only；另外 4 条（雪花石之王 / 缟玛瑙之王 / 大型黄金河马 / 废弃物蚯蚓脸）
-    //     的候选词条会和别的首领撞同一个中文名，按 notes.nameCollisions 让出 → 也是 english-only。
-    //     旧译名都在 nameZhFallback 里。
+    //     schemaVersion 3 第二轮核验：16 → 12 条。两类原本混在一起，现在拆开：
+    //     - unmatchedNames = **游戏文本里查无此名**的组（12 条，Putrid Flesh /
+    //       Giant Skeleton Torso / 四个 Fire Knight …），页面可以说「游戏里没有这个名字」；
+    //     - nameCollisions = **匹配到了文本、但因为两张卡会顶同一个中文名而让出**的组
+    //       （4 条：雪花石之王 / 缟玛瑙之王 / 大型黄金河马 / 废弃物蚯蚓脸），
+    //       它们的候选词条与裁决理由完整记在 notes.nameCollisions 里。
+    //     两者都退回 nameSource = english-only，旧译名都在 nameZhFallback 里，
+    //     但「查无此名」和「有名字但让出」是两回事，不该合并计数。
     try bossExpect(
-        (dataset.notes?.unmatchedNames.count ?? 0) == 16,
-        "notes.unmatchedNames 应有 16 条（Putrid Flesh / Giant Skeleton Torso 等只剩英文名的组）",
+        (dataset.notes?.unmatchedNames.count ?? 0) == 12,
+        "notes.unmatchedNames 应有 12 条（Putrid Flesh / Giant Skeleton Torso 等游戏文本里查无此名的组）",
         counter: &count
     )
 
@@ -388,10 +391,20 @@ func checkBossData() throws -> Int {
     let chrFallback = try cardForBoss("Unknown Enemy (c7931)@7931")
     try bossExpect(
         chrFallback.nameBadge == .noGameName && chrFallback.nameBadge?.text == "无游戏内名称",
-        "chrid-fallback 应挂「无游戏内名称」徽标（它的 nameZh 是生成器兜底的「未知敌人 cXXXX」）",
+        "chrid-fallback 应挂「无游戏内名称」徽标",
         counter: &count
     )
-    try bossExpect(chrFallback.displayName == "未知敌人 c7931", "chrid-fallback 的显示名应是「未知敌人 c7931」", counter: &count)
+    // schemaVersion 3 第二轮核验：「未知敌人 cXXXX」是生成器用 chrId 拼出来的占位串，
+    // 不是游戏文本，留在 nameZh 里与数据集自己的「简中名只来自游戏文本」相矛盾，
+    // 已挪到新字段 displayFallbackZh（与 nameZhFallback 的「旧译名」是两回事，见 caveats）。
+    // 因此 nameZh 为空、displayName 落到英文名那一支；徽标看的是 nameSource，没变。
+    // 页面侧把 displayFallbackZh 接进显示名之后，这里的期望值再改回「未知敌人 c7931」。
+    try bossExpect(chrFallback.nameZh.isEmpty, "chrid-fallback 的 nameZh 应为空（占位名不进 nameZh）", counter: &count)
+    try bossExpect(
+        chrFallback.displayName == "Unknown Enemy (c7931)",
+        "nameZh 为空时显示名回退到英文名",
+        counter: &count
+    )
     // schemaVersion 3：nameSource = manual 不再产出。Cemetery Shade 的手工译名「墓地幽魂」
     // 已移出 nameZh（进 nameZhFallback），徽标从「名称手工补录」变成「仅英文名」——
     // nameZh 为空的分支优先于 nameInferred，徽标优先级仍然在这里验。

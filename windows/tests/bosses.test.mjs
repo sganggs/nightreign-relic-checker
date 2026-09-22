@@ -137,10 +137,19 @@ test("名字缺失时的显示口径与灰色徽标", () => {
   assert.equal(infoEn.fallback, true);
   assert.deepEqual(B.nameBadge(infoEn, englishOnly.nameSource), { text: "仅英文名", kind: "gray" });
 
+  // 数据侧口径变更：schemaVersion 3 的第二轮核验里，「未知敌人 cXXXX」这个由生成器
+  // 拼出来的占位串从 nameZh 移到了新字段 displayFallbackZh —— 它不是游戏文本，留在
+  // nameZh 里与数据集自己的「简中名只来自游戏文本」相矛盾（见 caveats 的【名字】几条）。
+  // 因此 chrid-fallback 的组现在 nameZh 为空，displayName 落到英文名那一支；
+  // 徽标仍然是「无游戏内名称」（nameBadge 看的是 nameSource，没变）。
+  // 待页面侧把 displayFallbackZh 接进 displayName 后，primary 会重新变回「未知敌人 cXXXX」。
   const fallback = data.nightBosses.find((boss) => boss.nameSource === "chrid-fallback");
   assert.ok(fallback, "数据集里应存在 chrid-fallback 的 Boss");
+  assert.equal(fallback.nameZh, "", "chrid-fallback 的 nameZh 应为空（占位名不进 nameZh）");
+  assert.match(fallback.displayFallbackZh, /^未知敌人 c\d+$/,
+    "占位显示名应在 displayFallbackZh 里");
   const infoZh = B.displayName(fallback);
-  assert.match(infoZh.primary, /^未知敌人 c\d+$/);
+  assert.equal(infoZh.primary, fallback.nameEn);
   assert.equal(infoZh.fallback, true);
   assert.deepEqual(B.nameBadge(infoZh, fallback.nameSource), { text: "无游戏内名称", kind: "gray" });
 
