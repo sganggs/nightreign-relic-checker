@@ -15,8 +15,11 @@ public struct AuditedSave: Sendable {
         public var isDeep: Bool { info?.deep == true }
         public var displayName: String { relicDisplayName(id: relic.itemID, info: info) }
         public var kindLabel: String { relicKindLabel(id: relic.itemID, info: info) }
-        /// 颜色文案；遗物表里查不到这件遗物时为 nil。
-        public var colorLabel: String? { info.map { relicColorLabel($0.color) } }
+        /// 颜色文案；遗物表里查不到这件遗物时写「颜色未知」。
+        ///
+        /// 遗物卡、TXT 报告、CSV 统一用这一份写法（「红色」/「颜色未知」），
+        /// 与 Windows 端 app.js 的 reportLookup().colorText 一致。
+        public var colorText: String { info.map { relicColorLabel($0.color) + "色" } ?? "颜色未知" }
 
         /// 「非法 / 警告 / 合法」三态文案（页面与报告统一用这一份口径）。
         public var statusLabel: String {
@@ -40,7 +43,8 @@ public struct AuditedSave: Sendable {
 
         public var id: Int { slot }
 
-        public var displayName: String { "槽位 \(slot + 1) · \(name)" }
+        /// 「槽位 N · 角色名」；名字读不出来时写「未命名」（与 Windows 端一致）。
+        public var displayName: String { "槽位 \(slot + 1) · \(name.isEmpty ? "未命名" : name)" }
 
         public var invalidCount: Int { relics.filter { $0.result.status == .invalid }.count }
 
@@ -81,6 +85,9 @@ public struct AuditedSave: Sendable {
     public var relicCount: Int { characters.reduce(0) { $0 + $1.relics.count } }
 
     public var invalidCount: Int { characters.reduce(0) { $0 + $1.invalidCount } }
+
+    /// 「警告」件数。当前 `RelicAuditor` 不产出警告，恒为 0；报告据此省略该字段。
+    public var warningCount: Int { characters.reduce(0) { $0 + $1.warningCount } }
 
     public func affixName(_ id: Int) -> String {
         if let name = affixNames[id], !name.isEmpty { return name }

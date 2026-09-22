@@ -3,16 +3,34 @@ import RelicCore
 
 /// 存档对比结果面板（对比逻辑在 RelicCore/SaveCompare.swift，这里只负责展示）。
 ///
-/// 口径：以当前载入的存档为基准，另一份存档多出的遗物记为「新增」，
-/// 少掉的记为「减少」；身份 = 遗物 ID + 三行「正面词条 / 负面词条」配对。
+/// 口径：以当前载入的存档为准，另一份存档多出的遗物记为「新增」，
+/// 少掉的记为「减少」；身份 = 遗物 ID + 三条正面词条 + 三条诅咒（都按存档顺序）。
+/// 文案与 Windows 端 app.js 的对比卡一致。
 struct SaveCompareSection: View {
     let result: SaveCompareResult
     let report: SaveScanReport
     let onClose: () -> Void
 
     @State private var query = ""
-    /// 只看有差异的槽位（默认开，避免一次铺开十个槽位）。
-    @State private var differencesOnly = true
+    /// 差异方向筛选（与 Windows 端的「全部 / 只看新增 / 只看减少」同一组控件）。
+    @State private var direction: Direction = .all
+
+    /// 差异方向。没有差异的槽位两端都不展示，所以不再单独给「只看有差异」开关。
+    enum Direction: String, CaseIterable, Identifiable {
+        case all
+        case added
+        case removed
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return "全部"
+            case .added: return "只看新增"
+            case .removed: return "只看减少"
+            }
+        }
+    }
 
     /// 一个槽位 + 它在当前搜索条件下的增减条目。
     ///
@@ -32,7 +50,7 @@ struct SaveCompareSection: View {
             HStack(alignment: .top, spacing: 12) {
                 SectionHeading(
                     title: "存档对比",
-                    subtitle: "基准：\(result.baseFileName)（当前载入）　对比：\(result.otherFileName)",
+                    subtitle: "当前：\(result.baseFileName)　对比：\(result.otherFileName)",
                     symbol: "arrow.left.arrow.right"
                 )
                 Button("关闭对比", action: onClose)
@@ -40,20 +58,31 @@ struct SaveCompareSection: View {
             }
 
             HStack(spacing: 8) {
+                Pill(text: "当前共 \(result.totalBase) 件", color: AppTheme.purpleSoft, symbol: "shippingbox")
+                Pill(text: "对比共 \(result.totalOther) 件", color: AppTheme.purpleSoft, symbol: "shippingbox")
                 Pill(text: "新增 \(result.totalAdded) 件", color: AppTheme.green, symbol: "plus.circle")
                 Pill(text: "减少 \(result.totalRemoved) 件", color: AppTheme.red, symbol: "minus.circle")
-                Pill(text: "角色槽位 \(result.characters.count)", color: AppTheme.purpleSoft, symbol: "person.2")
+                Pill(text: "有差异角色 \(result.changedCharacters)", color: AppTheme.purpleSoft, symbol: "person.2")
                 if result.hasUnreliableSlots {
                     Pill(
-                        text: "\(result.unreliableCharacters.count) 个槽位解析失败",
+                        text: "无法对比槽位 \(result.unreliableCharacters.count)",
                         color: AppTheme.amber,
                         symbol: "exclamationmark.triangle"
                     )
                 }
                 Spacer(minLength: 0)
-                Toggle("只看有差异的角色", isOn: $differencesOnly)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
+            }
+
+            HStack(spacing: 10) {
+                Picker("差异方向", selection: $direction) {
+                    ForEach(Direction.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 260)
+                Spacer(minLength: 0)
             }
 
             HStack(spacing: 8) {
@@ -68,13 +97,13 @@ struct SaveCompareSection: View {
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.border, lineWidth: 1))
 
             if !result.hasDifferences {
-                Text("两份存档的遗物完全一致（按遗物 ID 与三条正面 / 三条负面词条比较）。")
+                Text("两份存档的遗物完全一致。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
             }
 
             if result.hasUnreliableSlots {
-                Text("有槽位在某一侧解析失败，该槽位读不出遗物；它的增减数字不可信，也没有计入上面的总数。")
+                Text("有槽位在某一侧解析失败，该槽位读不出遗物；只作提示，不计入上面的增减。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.amber)
                     .fixedSize(horizontal: false, vertical: true)
@@ -85,13 +114,14 @@ struct SaveCompareSection: View {
             }
 
             if blocks.isEmpty {
-                Text(query.isEmpty ? "没有需要显示的角色槽位。" : "没有匹配搜索条件的遗物。")
+                Text(result.hasDifferences ? "没有符合筛选条件的差异" : "两份存档的遗物完全一致")
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             }
 
-            Text("身份口径：遗物 ID 相同，且三行「正面词条 / 同行负面词条」完全相同即视为同一件；"
-                + "行与行的先后顺序不计入差异。词条被改动过的遗物会同时出现在「减少」与「新增」里。")
+            Text("对比以「遗物 ID + 三条正面词条 + 三条诅咒」为一件遗物的身份（都按存档里的顺序，"
+                + "顺序本身会影响合法性判定），按角色槽位分别统计；任一边解析失败的槽位只提示、不计入增减。"
+                + "新增/减少遗物的合法性状态由当前词条库判定，取自该遗物所在存档的整体检查结果。")
                 .font(.caption2)
                 .foregroundStyle(AppTheme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -104,11 +134,15 @@ struct SaveCompareSection: View {
         let needle = query.foldedForSearch
         var blocks: [CharacterBlock] = []
         for character in result.characters {
-            // 「只看有差异」也要放行改名与解析失败这两类提示。
-            if differencesOnly && !character.hasAnyDifference { continue }
-            let added = filtered(character.added, needle: needle)
-            let removed = filtered(character.removed, needle: needle)
-            if !needle.isEmpty && added.isEmpty && removed.isEmpty { continue }
+            // 没有任何差异的槽位不展示；改名与解析失败这两类提示要放行。
+            guard character.hasAnyDifference else { continue }
+            let added = direction == .removed ? [] : filtered(character.added, needle: needle)
+            let removed = direction == .added ? [] : filtered(character.removed, needle: needle)
+            // 搜索/方向把这个槽位的条目滤空了就不再展示；改名（isIdentical）与
+            // 解析失败这两类只有提示、本来就没有条目的槽位要留下。
+            if !character.hasParseError && !character.isIdentical && added.isEmpty && removed.isEmpty {
+                continue
+            }
             blocks.append(CharacterBlock(character: character, added: added, removed: removed))
         }
         return blocks
@@ -121,24 +155,26 @@ struct SaveCompareSection: View {
             HStack(spacing: 8) {
                 Text(character.displayName)
                     .font(.subheadline.weight(.semibold))
-                Pill(
-                    text: "遗物 \(character.baseTotal) → \(character.otherTotal)",
-                    color: AppTheme.purpleSoft,
-                    symbol: "shippingbox"
-                )
-                if character.addedCount > 0 {
-                    Pill(text: "新增 \(character.addedCount)", color: AppTheme.green, symbol: "plus")
-                }
-                if character.removedCount > 0 {
-                    Pill(text: "减少 \(character.removedCount)", color: AppTheme.red, symbol: "minus")
-                }
+                Pill(text: "当前 \(character.baseTotal)", color: AppTheme.purpleSoft, symbol: "shippingbox")
+                Pill(text: "对比 \(character.otherTotal)", color: AppTheme.purpleSoft, symbol: "shippingbox")
                 if character.hasParseError {
-                    Pill(text: "数字不可信", color: AppTheme.amber, symbol: "exclamationmark.triangle")
+                    Pill(text: "无法对比", color: AppTheme.amber, symbol: "exclamationmark.triangle")
+                } else {
+                    Pill(
+                        text: "新增 \(character.addedCount)",
+                        color: character.addedCount > 0 ? AppTheme.green : AppTheme.secondaryText,
+                        symbol: "plus"
+                    )
+                    Pill(
+                        text: "减少 \(character.removedCount)",
+                        color: character.removedCount > 0 ? AppTheme.red : AppTheme.secondaryText,
+                        symbol: "minus"
+                    )
                 }
                 Spacer(minLength: 0)
             }
 
-            // 解析失败优先于任何增减数字展示：那不是真实差异。
+            // 解析失败的槽位只提示：它的遗物读不出来，不是真实差异。
             if let note = character.parseNote {
                 Text(note)
                     .font(.caption)
@@ -153,20 +189,20 @@ struct SaveCompareSection: View {
             }
 
             if character.isIdentical {
-                if !character.hasParseError {
-                    Text("该角色的遗物与基准存档一致。")
+                if !character.hasParseError && character.presenceNote == nil {
+                    Text("该角色的遗物与当前存档一致。")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
             } else {
                 entryGroup(
-                    title: "新增（对比存档多出）",
+                    title: "对比存档中新增",
                     color: AppTheme.green,
                     symbol: "plus.circle",
                     entries: block.added
                 )
                 entryGroup(
-                    title: "减少（对比存档中已不存在）",
+                    title: "对比存档中减少",
                     color: AppTheme.red,
                     symbol: "minus.circle",
                     entries: block.removed
@@ -187,7 +223,7 @@ struct SaveCompareSection: View {
                     Image(systemName: symbol)
                         .font(.caption2)
                         .foregroundStyle(color)
-                    Text("\(title) · \(entries.reduce(0) { $0 + $1.count }) 件")
+                    Text("\(title)（\(entries.reduce(0) { $0 + $1.count })）")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(color)
                     Spacer(minLength: 0)

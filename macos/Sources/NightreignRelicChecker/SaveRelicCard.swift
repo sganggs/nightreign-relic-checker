@@ -22,7 +22,8 @@ struct SaveRelicCard: View {
 
     private var colorPill: (text: String, color: Color)? {
         guard let info = relic.info else { return nil }
-        let label = relicColorLabel(info.color)
+        // 「红色」而不是「红」：与遗物卡 / 报告 / CSV 同一份颜色文案。
+        let label = relic.colorText
         switch info.color {
         case 0: return (label, AppTheme.red)
         case 1: return (label, Color(red: 0.38, green: 0.60, blue: 0.98))
@@ -98,7 +99,7 @@ struct SaveRelicCard: View {
 
             if let ordered = relic.result.orderedEffects {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("正确的保存顺序")
+                    Text("正确的词条顺序")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(AppTheme.purpleSoft)
                     ForEach(Array(ordered.enumerated()), id: \.offset) { index, effectID in
@@ -127,75 +128,73 @@ struct SaveRelicCard: View {
 
 /// 一行词条：正面词条 ｜ 同一行的负面词条。
 ///
-/// 词条库里有说明（`explanation`）时右侧出现 ⓘ：悬停看浮层，点开在行下展开全文；
-/// 没有说明就不显示，也不占位。
+/// 展示方式与 Windows 端一致：词条库里有说明（`explanation`）的词条，名字后面
+/// 跟一个 ⓘ——悬停看浮层，点开在行下展开这一条的全文；没有说明的词条不显示
+/// 入口，也不占位。展开状态按「哪一条词条」单独记，点开正面词条不会把同一行
+/// 的诅咒一起撑开。
 private struct SaveAffixRow: View {
     let report: SaveScanReport
     let effect: Int
     let curse: Int
 
-    @State private var expanded = false
+    /// 本行展开了说明的词条 ID（正面 / 诅咒各自独立）。
+    @State private var expanded: Set<Int> = []
 
     private static let curseText = Color(red: 0.55, green: 0.64, blue: 0.82)
-
-    /// 本行可展示的说明：[(词条名, 说明)]。
-    private var explanations: [(name: String, text: String)] {
-        [effect, curse]
-            .filter { $0 != -1 }
-            .compactMap { id in
-                guard let text = report.affixExplanation(id) else { return nil }
-                return (report.affixName(id), text)
-            }
-    }
-
-    private var tooltip: String {
-        explanations.map { "\($0.name)：\($0.text)" }.joined(separator: "\n\n")
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .top, spacing: 0) {
-                Text(effect == -1 ? "（空）" : report.affixName(effect))
-                    .font(.system(size: 12))
-                    .fixedSize(horizontal: false, vertical: true)
+                affixText(effect, isCurse: false)
                 if curse != -1 {
-                    Text("｜" + report.affixName(curse))
+                    Text("｜")
                         .font(.system(size: 12))
                         .foregroundStyle(Self.curseText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    affixText(curse, isCurse: true)
                 }
                 Spacer(minLength: 6)
-                if !explanations.isEmpty {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.14)) { expanded.toggle() }
-                    } label: {
-                        Image(systemName: expanded ? "info.circle.fill" : "info.circle")
-                            .font(.system(size: 11))
-                            .foregroundStyle(AppTheme.purpleSoft.opacity(expanded ? 1 : 0.7))
-                    }
-                    .buttonStyle(.plain)
-                    .help(tooltip)
-                    .accessibilityLabel("词条说明")
-                }
             }
 
-            if expanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(explanations, id: \.name) { item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.name)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(AppTheme.purpleSoft)
-                            Text(item.text)
-                                .font(.caption2)
-                                .foregroundStyle(AppTheme.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+            ForEach(expandedNotes, id: \.id) { note in
+                Text(note.text)
+                    .font(.caption2)
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
+            }
+        }
+    }
+
+    /// 已展开的说明，按「正面在前、诅咒在后」的行内顺序。
+    private var expandedNotes: [(id: Int, text: String)] {
+        [effect, curse]
+            .filter { $0 != -1 && expanded.contains($0) }
+            .compactMap { id in report.affixExplanation(id).map { (id: id, text: $0) } }
+    }
+
+    @ViewBuilder
+    private func affixText(_ id: Int, isCurse: Bool) -> some View {
+        let name = id == -1 ? "（空）" : report.affixName(id)
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(name)
+                .font(.system(size: 12))
+                .foregroundStyle(isCurse ? Self.curseText : Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            if id != -1, let explanation = report.affixExplanation(id) {
+                Button {
+                    withAnimation(.easeOut(duration: 0.14)) {
+                        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
                     }
+                } label: {
+                    Image(systemName: expanded.contains(id) ? "info.circle.fill" : "info.circle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.purpleSoft.opacity(expanded.contains(id) ? 1 : 0.7))
                 }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(AppTheme.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 7))
+                .buttonStyle(.plain)
+                .help(explanation)
+                .accessibilityLabel("\(name) 的词条说明")
             }
         }
     }

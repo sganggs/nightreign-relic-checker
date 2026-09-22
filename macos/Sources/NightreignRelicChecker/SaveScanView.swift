@@ -165,7 +165,7 @@ struct SaveScanView: View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeading(
                 title: "自动查找到的存档",
-                subtitle: "扫描范围：\(SaveLocator.displayBottlesPath)/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/",
+                subtitle: "扫描范围：\(SaveLocator.scanRange)",
                 symbol: "folder.badge.questionmark"
             )
 
@@ -437,7 +437,16 @@ struct SaveScanView: View {
         panel.allowedContentTypes = [format == .csv ? .commaSeparatedText : .plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
-        let body = SaveReportBuilder.content(for: report, format: format, generatedAt: now)
+        let body = SaveReportBuilder.content(
+            for: report,
+            format: format,
+            generatedAt: now,
+            catalog: SaveReportCatalogInfo(
+                origin: model.catalogOrigin,
+                gameVersion: model.catalog.gameVersion,
+                dataVersion: model.catalog.dataVersion
+            )
+        )
         // CSV 前置 BOM，表格软件才会按 UTF-8 打开中文。
         let content = format == .csv ? "\u{FEFF}" + body : body
         do {

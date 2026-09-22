@@ -1,11 +1,14 @@
 import Foundation
 
-/// 遗物身份：`itemId` + 三行「正面词条 / 负面词条」配对。
+/// 遗物身份：`itemId` + 三条正面词条 + 三条诅咒，都按存档里的顺序。
 ///
-/// 存档里同一件遗物可能在不同存档中落在不同的物品序号上，所以身份只由
-/// 内容决定。三行按 (正面, 负面) 升序归一化后参与比较：行与行的先后顺序
-/// 不算差异（同样内容只是保存顺序不同的遗物视为同一件），行内的正负配对
-/// 关系仍然保留（换了诅咒就是另一件）。
+/// 存档里同一件遗物在不同存档中可能落在不同的物品序号上，所以身份只由内容
+/// 决定，不含 `index`。三条正面与三条诅咒各自保持存档顺序参与比较：
+/// 词条顺序本身会影响合法性判定（`RelicAuditor` 会报「词条顺序错误」），
+/// 换序后的遗物可能一件合法一件非法，把它们当成同一件会让对比显示「没有差异」
+/// 而状态其实变了。行内的正负配对关系同样保留（换了诅咒就是另一件）。
+///
+/// 与 Windows 端 `renderer/savediff.js` 的 `relicIdentity` 同一口径。
 public struct SaveRelicIdentity: Hashable, Sendable, Comparable {
     /// 一行：正面词条与同一行的负面词条（空为 -1）。
     public struct Row: Hashable, Comparable, Sendable {
@@ -23,14 +26,14 @@ public struct SaveRelicIdentity: Hashable, Sendable, Comparable {
     }
 
     public let itemID: Int
-    /// 固定 3 行，已按 `Row` 升序排列。
+    /// 固定 3 行，按存档里的顺序（不排序）。
     public let rows: [Row]
 
     public init(_ relic: SaveRelic) {
         let effects = Self.normalized(relic.effects)
         let curses = Self.normalized(relic.curses)
         itemID = relic.itemID
-        rows = (0..<3).map { Row(effect: effects[$0], curse: curses[$0]) }.sorted()
+        rows = (0..<3).map { Row(effect: effects[$0], curse: curses[$0]) }
     }
 
     /// 稳定的字符串键（`Identifiable` 与报告里用）。
@@ -73,19 +76,20 @@ public struct SaveCompareEntry: Identifiable, Sendable {
 /// 一个角色槽位的对比结果。
 public struct SaveCompareCharacter: Identifiable, Sendable {
     public let slot: Int
-    /// 基准存档里的角色名；该槽位在基准存档中不存在时为 nil。
+    /// 当前存档里的角色名；该槽位在当前存档中不存在时为 nil。
     public let baseName: String?
     /// 对比存档里的角色名；该槽位在对比存档中不存在时为 nil。
     public let otherName: String?
-    /// 基准存档里该槽位的解析错误（解密失败时遗物列表为空但槽位并非真的空）。
+    /// 当前存档里该槽位的解析错误（解密失败时遗物列表为空但槽位并非真的空）。
     public let baseParseError: String?
     /// 对比存档里该槽位的解析错误。
     public let otherParseError: String?
     public let baseTotal: Int
     public let otherTotal: Int
-    /// 对比存档多出的遗物。
+    /// 对比存档多出的遗物。任一侧解析失败时恒为空：那个槽位读不出遗物，
+    /// 拿空列表去比会把「读不出来」报成「一件不剩」。
     public let added: [SaveCompareEntry]
-    /// 对比存档少掉的遗物。
+    /// 对比存档少掉的遗物。任一侧解析失败时恒为空，理由同 `added`。
     public let removed: [SaveCompareEntry]
 
     public var id: Int { slot }
@@ -94,10 +98,14 @@ public struct SaveCompareCharacter: Identifiable, Sendable {
 
     public var removedCount: Int { removed.reduce(0) { $0 + $1.count } }
 
-    /// 只看遗物多重集：两侧完全相同。
+    /// 只看遗物多重集：两侧完全相同（解析失败的槽位不产出增减，也算「相同」，
+    /// 展示层用 `hasParseError` 区分）。
     public var isIdentical: Bool { added.isEmpty && removed.isEmpty }
 
-    /// 至少有一侧解析失败：该槽位读不出遗物，增减数字不可信。
+    /// 这个槽位是否算「有差异的角色」（解析失败不算，它只是读不出来）。
+    public var isChanged: Bool { !hasParseError && !isIdentical }
+
+    /// 至少有一侧解析失败：该槽位读不出遗物，只提示、不产出增减。
     public var hasParseError: Bool { baseParseError != nil || otherParseError != nil }
 
     /// 这个槽位是否有任何值得展示的差异（遗物增减 / 角色名变化 / 解析失败）。
@@ -114,20 +122,20 @@ public struct SaveCompareCharacter: Identifiable, Sendable {
     /// 只在一侧存在，或两侧角色名不同时的提示；无异常时为 nil。
     public var presenceNote: String? {
         if baseName == nil { return "该槽位只在对比存档中存在" }
-        if otherName == nil { return "该槽位只在基准存档中存在" }
+        if otherName == nil { return "该槽位只在当前存档中存在" }
         if let base = baseName, let other = otherName, base != other {
             return "两份存档的同一槽位角色名不同：\(base) → \(other)"
         }
         return nil
     }
 
-    /// 解析失败提示；该槽位的增减数字不可信，应优先于数字展示。
+    /// 解析失败提示；该槽位读不出遗物，只提示、不产出增减。
     public var parseNote: String? {
         var sides: [String] = []
-        if let baseParseError { sides.append("基准存档：\(baseParseError)") }
+        if let baseParseError { sides.append("当前存档：\(baseParseError)") }
         if let otherParseError { sides.append("对比存档：\(otherParseError)") }
         guard !sides.isEmpty else { return nil }
-        return "该槽位解析失败，增减数字不可信（" + sides.joined(separator: "；") + "）"
+        return "该槽位解析失败，无法对比（" + sides.joined(separator: "；") + "）"
     }
 
     public init(
@@ -166,15 +174,20 @@ public struct SaveCompareResult: Sendable {
         self.characters = characters
     }
 
-    /// 新增总数；解析失败的槽位不计入（那里的数字不可信）。
-    public var totalAdded: Int {
-        characters.reduce(0) { $0 + ($1.hasParseError ? 0 : $1.addedCount) }
-    }
+    /// 新增总数；解析失败的槽位不产出增减，自然也不计入。
+    public var totalAdded: Int { characters.reduce(0) { $0 + $1.addedCount } }
 
-    /// 减少总数；解析失败的槽位不计入。
-    public var totalRemoved: Int {
-        characters.reduce(0) { $0 + ($1.hasParseError ? 0 : $1.removedCount) }
-    }
+    /// 减少总数；解析失败的槽位不产出增减，自然也不计入。
+    public var totalRemoved: Int { characters.reduce(0) { $0 + $1.removedCount } }
+
+    /// 当前存档的遗物总件数（解析失败的槽位读出来就是 0 件）。
+    public var totalBase: Int { characters.reduce(0) { $0 + $1.baseTotal } }
+
+    /// 对比存档的遗物总件数。
+    public var totalOther: Int { characters.reduce(0) { $0 + $1.otherTotal } }
+
+    /// 有遗物增减的角色数（解析失败的槽位不算）。
+    public var changedCharacters: Int { characters.filter(\.isChanged).count }
 
     /// 有槽位在某一侧解析失败：这些槽位的遗物读不出来，不能当成真实差异。
     public var unreliableCharacters: [SaveCompareCharacter] { characters.filter(\.hasParseError) }
@@ -197,6 +210,10 @@ public struct SaveCompareResult: Sendable {
 public enum SaveComparator {
     /// `base` 是当前载入的存档，`other` 是选来对比的另一份：
     /// `other` 相对 `base` 多出的记为「新增」，少掉的记为「减少」。
+    ///
+    /// 任一侧槽位解析失败（`parseError != nil`）时不产出增减：解析失败的槽位在
+    /// `SaveFileParser` 里 relics 就是空数组，拿它去比会把「读不出来」报成
+    /// 「遗物被删光」。与 Windows 端 `savediff.js` 的 `unreadable` 处理一致。
     public static func compare(base: AuditedSave, other: AuditedSave) -> SaveCompareResult {
         let baseBySlot = Dictionary(base.characters.map { ($0.slot, $0) }, uniquingKeysWith: { first, _ in first })
         let otherBySlot = Dictionary(other.characters.map { ($0.slot, $0) }, uniquingKeysWith: { first, _ in first })
@@ -212,7 +229,8 @@ public enum SaveComparator {
 
             var added: [SaveCompareEntry] = []
             var removed: [SaveCompareEntry] = []
-            for identity in Set(baseGroups.keys).union(otherGroups.keys).sorted() {
+            let unreadable = baseCharacter?.parseError != nil || otherCharacter?.parseError != nil
+            for identity in Set(baseGroups.keys).union(otherGroups.keys).sorted() where !unreadable {
                 let baseItems = baseGroups[identity] ?? []
                 let otherItems = otherGroups[identity] ?? []
                 if otherItems.count > baseItems.count, let sample = otherItems.first {

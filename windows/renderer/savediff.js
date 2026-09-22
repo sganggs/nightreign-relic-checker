@@ -22,8 +22,10 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
+  // 空词条的所有写法归一为 -1：0 / 负值 / 0xFFFFFFFF / 缺字段。
+  // 与 macOS 端 SaveRelicIdentity.normalized 同一条规则，两端身份键才等价。
   function normalizeEffectId(value) {
-    return value == null || value === 0 || value === -1 || value === 0xFFFFFFFF ? -1 : value;
+    return value == null || value <= 0 || value === 0xFFFFFFFF ? -1 : value;
   }
 
   function normalizeTriple(values) {

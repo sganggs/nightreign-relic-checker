@@ -374,14 +374,16 @@ dialog::backdrop { background: rgba(4, 3, 8, .76); backdrop-filter: blur(3px); }
 .save-content.is-dragover { outline: 2px dashed var(--purple-soft); outline-offset: -10px; border-radius: 14px; }
 
 .save-locate { margin-top: 14px; }
+.save-locate-range { margin: 0 0 8px; color: var(--text-secondary); font-size: 11.5px; word-break: break-all; }
 .save-locate-empty { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); }
 .save-locate-empty strong { display: block; font-size: 12.5px; }
 .save-locate-empty p { margin: 5px 0 0; color: var(--text-secondary); font-size: 11.5px; line-height: 1.6; }
 .save-locate-list { display: flex; flex-direction: column; gap: 8px; }
 .save-locate-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); }
 .save-locate-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.save-locate-name { display: flex; align-items: center; gap: 7px; }
 .save-locate-copy strong { font-size: 12.5px; }
-.save-locate-copy span { color: var(--text-secondary); font-size: 11px; }
+.save-locate-copy > span { color: var(--text-secondary); font-size: 11px; }
 .save-locate-copy code { overflow: hidden; color: var(--text-tertiary); font: 10px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; user-select: text; }
 .save-locate-row .button { flex: 0 0 auto; }
 

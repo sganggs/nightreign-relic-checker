@@ -9,6 +9,8 @@
 
   // 存档对比模块（renderer/savediff.js）。缺失时只影响「对比另一份存档」。
   var Diff = window.NightreignSaveDiff || null;
+  // 存档报告模块（renderer/savereport.js）。缺失时只影响「导出报告 / 导出 CSV」。
+  var Report = window.NightreignSaveReport || null;
 
   // 新页面（首领数据 / 词条反查 / 增伤排名）可用的游戏数据文件。
   var GAME_DATA_NAMES = ["bosses", "skills", "buffs"];
@@ -578,10 +580,19 @@
     return Core.foldForSearch(parts.join(" "));
   }
 
+  // 状态三态：文案与 renderer/savereport.js 的 statusLabel 同一份口径
+  // （「非法 / 警告 / 合法」），这里只额外带出配色与筛选用的 key。
+  var STATUS_META = {
+    "非法": { key: "invalid", pill: "red" },
+    "警告": { key: "warning", pill: "amber" },
+    "合法": { key: "valid", pill: "green" }
+  };
+
   function relicStatusMeta(audit) {
-    if (audit.status === "invalid") return { key: "invalid", label: "非法", pill: "red" };
-    if ((audit.warnings || []).length > 0) return { key: "warning", label: "警告", pill: "amber" };
-    return { key: "valid", label: "合法", pill: "green" };
+    var label = Report ? Report.statusLabel(audit)
+      : (audit.status === "invalid" ? "非法" : ((audit.warnings || []).length > 0 ? "警告" : "合法"));
+    var meta = STATUS_META[label];
+    return { key: meta.key, label: label, pill: meta.pill };
   }
 
   function saveRelicCard(relic, audit, meta, cardKey) {
@@ -758,30 +769,49 @@
       " " + pad(date.getHours()) + ":" + pad(date.getMinutes());
   }
 
+  // 自动查找的扫描范围与找不到时的路径规则。四段结构（标题 / 路径规则 /
+  // 无缝联机 / 手动兜底）与 macOS 端 SaveLocator.pathHint 保持一致，只有中间
+  // 那行路径按平台不同。
+  var SAVE_SCAN_RANGE = "%APPDATA%\\Nightreign\\<Steam ID>\\";
+  var SAVE_PATH_HINT = [
+    "没有找到存档文件。",
+    "路径规则：%APPDATA%\\Nightreign\\<Steam ID>\\NR0000.sl2",
+    "无缝联机存档（.co2）在同一个目录下。",
+    "其它情况（游戏装在别的 Windows 账号下、存档拷到了别处）请用「选择存档文件」手动打开，也可以直接把存档文件拖进来。"
+  ];
+
+  // 自动查找结果里也不放搜索框：一台机器上通常只有几个 Steam 账号目录，
+  // 结果条数是个位数（macOS 端同理，两端保持一致）。
   function renderSaveLocations() {
     var container = test("save-locate");
     var locations = state.save.locations;
     if (!locations) { container.hidden = true; container.innerHTML = ""; return; }
     container.hidden = false;
+    var scanRange = "<p class='save-locate-range' data-testid='save-locate-range'>扫描范围：" +
+      esc(SAVE_SCAN_RANGE) + "</p>";
     if (!locations.length) {
-      container.innerHTML = "<div class='save-locate-empty' data-testid='save-locate-empty'>" +
-        "<strong>没有找到存档文件</strong>" +
-        "<p>存档一般在 %APPDATA%\\Nightreign\\&lt;Steam ID&gt;\\NR0000.sl2（备份为 NR0000.co2）。" +
-        "如果游戏装在别的账号下，或存档放在其它位置，请用「选择存档文件」手动打开，也可以直接把文件拖进来。</p></div>";
+      container.innerHTML = scanRange + "<div class='save-locate-empty' data-testid='save-locate-empty'>" +
+        "<strong>" + esc(SAVE_PATH_HINT[0]) + "</strong>" +
+        SAVE_PATH_HINT.slice(1).map(function (line) { return "<p>" + esc(line) + "</p>"; }).join("") +
+        "</div>";
       return;
     }
     var rows = locations.map(function (location, index) {
       var meta = [location.steamId ? "Steam ID " + location.steamId : "Nightreign 根目录"];
       if (formatFileSize(location.size)) meta.push(formatFileSize(location.size));
       if (formatDateTime(location.modifiedAt)) meta.push("修改于 " + formatDateTime(location.modifiedAt));
+      var coop = /\.co2$/i.test(location.fileName || "")
+        ? pill("无缝联机", "amber")
+        : "";
       return "<div class='save-locate-row' data-testid='save-locate-row'>" +
-        "<div class='save-locate-copy'><strong>" + esc(location.fileName) + "</strong>" +
+        "<div class='save-locate-copy'>" +
+        "<div class='save-locate-name'><strong>" + esc(location.fileName) + "</strong>" + coop + "</div>" +
         "<span>" + esc(meta.join(" · ")) + "</span>" +
         "<code>" + esc(location.path) + "</code></div>" +
         "<button class='button button--secondary' type='button' data-locate-index='" + index +
         "' data-save-busy data-testid='save-locate-open'>打开</button></div>";
     }).join("");
-    container.innerHTML = "<div class='save-locate-list'>" + rows + "</div>";
+    container.innerHTML = scanRange + "<div class='save-locate-list'>" + rows + "</div>";
     if (state.save.busy) setSaveBusy(true); // 新渲染出来的按钮同步当前忙碌状态
   }
 
@@ -928,160 +958,52 @@
 
   // ---- 导出报告 ----
 
-  function reportTimestamp() {
-    var now = new Date();
-    var pad = function (part) { return String(part).padStart(2, "0"); };
-    return now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes());
-  }
-
-  function characterLabel(character, index) {
-    return "槽位 " + ((character && Number.isSafeInteger(character.slot) ? character.slot : index) + 1) +
-      " · " + ((character && character.name) || "未命名");
-  }
-
-  function relicAffixLine(relic, line) {
-    var effectId = normId((relic.effects || [])[line]);
-    var curseId = normId((relic.curses || [])[line]);
-    var text = effectId === -1 ? "（空）" : saveAffixName(effectId) + "（" + effectId + "）";
-    if (curseId !== -1) text += "｜诅咒：" + saveAffixName(curseId) + "（" + curseId + "）";
-    return text;
-  }
-
-  // 颜色文案统一口径：遗物卡、TXT 报告、CSV 都写「红色」/「颜色未知」，
-  // 不再一处写「红色」一处写「红」。
-  function relicColorText(meta) {
-    return meta ? Core.relicColorLabel(meta.color) + "色" : "颜色未知";
-  }
-
-  function issueSummary(audit) {
-    return (audit.issues || []).concat(audit.warnings || []).map(function (issue) {
-      return issue.title + "：" + issue.detail;
-    });
-  }
-
-  function saveReportText() {
-    var payload = state.save.payload;
-    var lines = [];
-    var totals = { total: 0, invalid: 0, warning: 0 };
-    payload.characters.forEach(function (character, index) {
-      (state.save.audits[index] || []).forEach(function (audit) {
-        totals.total += 1;
-        var key = relicStatusMeta(audit).key;
-        if (key === "invalid") totals.invalid += 1;
-        if (key === "warning") totals.warning += 1;
-      });
-    });
-
-    lines.push("夜幕验物 · 存档检查报告");
-    lines.push("存档文件：" + (payload.fileName || "未知"));
-    lines.push("生成时间：" + formatDateTime(new Date()));
-    lines.push("角色数：" + payload.characters.length + " · 遗物合计 " + totals.total +
-      " · 非法 " + totals.invalid + " · 警告 " + totals.warning);
-    lines.push("存档校验和：" + (payload.checksumOk === false ? "异常（结果仅供参考）" : "通过"));
-    var catalog = state.catalog || {};
-    lines.push("词条库：" + originLabel(state.origin) + " · " + (catalog.gameVersion || "未知版本") +
-      (catalog.dataVersion ? "（数据 " + catalog.dataVersion + "）" : ""));
-    // 顶部的「校验口径」只作用于词条组合检查页；存档页的判定走 Core.auditRelic
-    // （不接受 mode），所以报告里不写口径，免得让人以为换个口径重跑会有别的结论。
-    lines.push("说明：本报告由离线社区工具生成，不构成官方判定。");
-    lines.push("");
-
-    payload.characters.forEach(function (character, index) {
-      var audits = state.save.audits[index] || [];
-      var relics = character.relics || [];
-      lines.push("────────────────────────────");
-      lines.push(characterLabel(character, index));
-      if (character.parseError) {
-        lines.push("  该槽位解析失败：" + character.parseError);
-        lines.push("");
-        return;
+  // 报告正文全部由 renderer/savereport.js 生成（与 macOS 端
+  // RelicCore/SaveReport.swift 逐行同口径）；这里只准备名称查询与落盘。
+  function reportLookup() {
+    return {
+      affixName: saveAffixName,
+      relicName: function (itemId) {
+        return relicDisplayName(itemId, state.save.index.relicsById.get(itemId));
+      },
+      kindLabel: function (itemId) {
+        return Core.relicKindLabel(itemId, state.save.index.relicsById.get(itemId));
+      },
+      // 颜色文案统一口径：遗物卡、TXT 报告、CSV 都写「红色」/「颜色未知」，
+      // 不再一处写「红色」一处写「红」。
+      colorText: function (itemId) {
+        var meta = state.save.index.relicsById.get(itemId);
+        return meta ? Core.relicColorLabel(meta.color) + "色" : "颜色未知";
       }
-      var invalid = [];
-      var warned = [];
-      relics.forEach(function (relic, relicIndex) {
-        var audit = audits[relicIndex];
-        if (!audit) return;
-        var key = relicStatusMeta(audit).key;
-        if (key === "invalid") invalid.push({ relic: relic, audit: audit });
-        else if (key === "warning") warned.push({ relic: relic, audit: audit });
-      });
-      lines.push("  遗物 " + relics.length + " · 非法 " + invalid.length + " · 警告 " + warned.length);
-
-      var writeGroup = function (title, items) {
-        if (!items.length) return;
-        lines.push("  " + title + "：");
-        items.forEach(function (item, position) {
-          var meta = state.save.index.relicsById.get(item.relic.itemId);
-          lines.push("   " + (position + 1) + ". " + relicDisplayName(item.relic.itemId, meta) +
-            "（ID " + item.relic.itemId + "）· " + Core.relicKindLabel(item.relic.itemId, meta) +
-            " · " + relicColorText(meta) +
-            " · 存档内第 " + (Number(item.relic.index) + 1) + " 件");
-          for (var line = 0; line < 3; line += 1) {
-            lines.push("      词条" + (line + 1) + "：" + relicAffixLine(item.relic, line));
-          }
-          issueSummary(item.audit).forEach(function (text) { lines.push("      问题：" + text); });
-        });
-      };
-      writeGroup("非法遗物", invalid);
-      writeGroup("需要留意（警告）", warned);
-      if (!invalid.length && !warned.length) lines.push("  未发现不合法遗物。");
-      lines.push("");
-    });
-
-    return lines.join("\n");
+    };
   }
 
-  // 角色名、遗物名都来自别人的存档，完全可控；导出的 CSV 又特意带了 UTF-8 BOM
-  // 好让 Excel 双击直接打开，所以以 = + - @ 开头的值要先转义成文本，
-  // 否则一个叫 =HYPERLINK(...) 的角色名会在对方的 Excel 里变成活公式。
-  function csvCell(value) {
-    var text = String(value == null ? "" : value);
-    if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = "'" + text;
-    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-  }
-
-  function saveReportCsv() {
-    var payload = state.save.payload;
-    var rows = [[
-      "角色", "槽位", "遗物名", "遗物ID", "种类", "颜色", "状态",
-      "词条1", "词条2", "词条3", "诅咒1", "诅咒2", "诅咒3", "问题摘要"
-    ]];
-    payload.characters.forEach(function (character, index) {
-      var audits = state.save.audits[index] || [];
-      (character.relics || []).forEach(function (relic, relicIndex) {
-        var audit = audits[relicIndex];
-        if (!audit) return;
-        var meta = state.save.index.relicsById.get(relic.itemId);
-        var status = relicStatusMeta(audit);
-        var affixText = function (values, line) {
-          var effectId = normId((values || [])[line]);
-          return effectId === -1 ? "" : saveAffixName(effectId) + "(" + effectId + ")";
-        };
-        rows.push([
-          character.name || "未命名",
-          (Number.isSafeInteger(character.slot) ? character.slot : index) + 1,
-          relicDisplayName(relic.itemId, meta),
-          relic.itemId,
-          Core.relicKindLabel(relic.itemId, meta),
-          relicColorText(meta),
-          status.label,
-          affixText(relic.effects, 0), affixText(relic.effects, 1), affixText(relic.effects, 2),
-          affixText(relic.curses, 0), affixText(relic.curses, 1), affixText(relic.curses, 2),
-          issueSummary(audit).join("；")
-        ]);
-      });
-    });
-    return rows.map(function (row) { return row.map(csvCell).join(","); }).join("\n") + "\n";
+  function reportOptions(generatedAt) {
+    var catalog = state.catalog || {};
+    return {
+      payload: state.save.payload,
+      audits: state.save.audits,
+      lookup: reportLookup(),
+      catalog: {
+        origin: originLabel(state.origin),
+        gameVersion: catalog.gameVersion,
+        dataVersion: catalog.dataVersion
+      },
+      generatedAt: generatedAt
+    };
   }
 
   async function exportSaveReport(kind) {
     if (!state.save.payload) return;
     if (browserPreview) { setSaveMessage("导出报告仅在桌面应用中可用"); showToast("此功能在桌面应用中可用"); return; }
+    if (!Report) { showToast("报告模块未载入", true); return; }
     var isCsv = kind === "csv";
-    var name = "nightreign-save-report-" + reportTimestamp() + (isCsv ? ".csv" : ".txt");
+    var now = new Date();
+    var name = Report.suggestedFileName(state.save.payload.fileName, isCsv ? "csv" : "text", now);
     setSaveBusy(true);
     try {
-      var content = isCsv ? saveReportCsv() : saveReportText();
+      var options = reportOptions(now);
+      var content = isCsv ? Report.csv(options) : Report.text(options);
       var output = await api.exportText(name, content);
       if (output && !output.canceled) {
         setSaveMessage("已导出：" + (output.filePath || name));
@@ -1151,14 +1073,20 @@
     return relicSearchText(entry.relic, meta).indexOf(needle) !== -1;
   }
 
+  // 槽位层面的提示（只在一侧存在 / 两侧角色名不同）。文案与 macOS 端
+  // SaveCompareCharacter.presenceNote 逐字一致。
+  function comparePresenceNote(entry) {
+    if (!entry.inBase) return "该槽位只在对比存档中存在";
+    if (!entry.inOther) return "该槽位只在当前存档中存在";
+    if (entry.baseName && entry.otherName && entry.baseName !== entry.otherName) {
+      return "两份存档的同一槽位角色名不同：" + entry.baseName + " → " + entry.otherName;
+    }
+    return "";
+  }
+
   function compareCharacterHead(entry) {
     var name = entry.baseName || entry.otherName || "未命名";
-    var note = "";
-    if (!entry.inBase) note = "（仅存在于对比存档）";
-    else if (!entry.inOther) note = "（仅存在于当前存档）";
-    else if (entry.baseName && entry.otherName && entry.baseName !== entry.otherName) {
-      note = "（对比存档中名为 " + entry.otherName + "）";
-    }
+    var note = comparePresenceNote(entry);
     var counts = pill("当前 " + entry.base, "purple") + pill("对比 " + entry.other, "blue");
     counts += entry.unreadable
       ? pill("无法对比", "amber")
@@ -1186,7 +1114,13 @@
         "<span class='issue-symbol'>△</span><div><strong>该槽位解析失败，无法对比</strong><p>" +
         esc(reasons.join("；")) + "</p></div></div>");
     }
-    if (!entry.changed) return "";
+    // 只改了角色名（或槽位只在一侧存在但两侧都没遗物）的槽位：遗物没变，
+    // 但提示不能被吞掉——与 macOS 端一致。
+    if (!entry.changed) {
+      return comparePresenceNote(entry)
+        ? section("<p class='save-diff-same'>该角色的遗物与当前存档一致。</p>")
+        : "";
+    }
 
     var added = ctx.direction === "removed" ? [] : entry.added.filter(function (item) {
       return compareEntryMatches(item, ctx.needle);
@@ -1202,7 +1136,8 @@
       ctx.left -= shown.length;
       ctx.skipped += entries.length - shown.length;
       if (!shown.length) return "";
-      return "<div class='save-diff-group'><h4>" + title + "（" + entries.length + "）</h4>" +
+      var total = entries.reduce(function (sum, item) { return sum + item.count; }, 0);
+      return "<div class='save-diff-group'><h4>" + title + "（" + total + "）</h4>" +
         shown.map(function (item) { return compareRelicRow(item, direction, audits); }).join("") + "</div>";
     };
 
@@ -1278,9 +1213,9 @@
       "</div>" +
       compareToolsHtml() +
       "<div class='save-diff-body' data-testid='save-diff-body'></div>" +
-      "<p class='data-hint'>对比以「遗物 ID + 三条正面词条 + 三条诅咒」为一件遗物的身份，按角色槽位分别统计；" +
-      "任一边解析失败的槽位只提示、不计入增减。新增/减少遗物的合法性状态由当前词条库判定，" +
-      "取自该遗物所在存档的整体检查结果（同款多件时显示最严重的一件）。</p>" +
+      "<p class='data-hint'>对比以「遗物 ID + 三条正面词条 + 三条诅咒」为一件遗物的身份（都按存档里的顺序，" +
+      "顺序本身会影响合法性判定），按角色槽位分别统计；任一边解析失败的槽位只提示、不计入增减。" +
+      "新增/减少遗物的合法性状态由当前词条库判定，取自该遗物所在存档的整体检查结果。</p>" +
       "</article>";
     renderSaveCompareList();
   }

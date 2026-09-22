@@ -1,7 +1,14 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+
+    /// 存档页自己有一层 `.onDrop`（`SaveScanView`），落在它上面的拖拽由它接手；
+    /// 这里只在**不在存档页**时注册，接住落点不对的存档文件并给出提示，
+    /// 免得用户以为拖拽功能坏了。传空类型数组等于不注册，保证在存档页上这一层
+    /// 永远不会和页面自己的拖拽抢落点。
+    private var strayDropTypes: [UTType] { model.page == .saveScan ? [] : [.fileURL] }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +29,12 @@ struct RootView: View {
         }
         .background(AppTheme.background.ignoresSafeArea())
         .tint(AppTheme.purpleSoft)
+        .onDrop(of: strayDropTypes, isTargeted: nil, perform: handleStrayDrop)
+        .overlay(alignment: .top) {
+            if !model.strayDropHint.isEmpty {
+                StrayDropBanner(text: model.strayDropHint)
+            }
+        }
         .overlay {
             if let error = model.loadError {
                 EmptyStateView(title: "词条库载入失败", symbol: "exclamationmark.triangle", detail: error)
@@ -29,6 +42,38 @@ struct RootView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
             }
         }
+    }
+
+    /// 落点不在存档页：只提示，不偷偷替用户切页载入（与 Windows 端一致）。
+    private func handleStrayDrop(_ providers: [NSItemProvider]) -> Bool {
+        let identifier = UTType.fileURL.identifier
+        guard providers.contains(where: { $0.hasItemConformingToTypeIdentifier(identifier) }) else {
+            return false
+        }
+        model.strayDropHint = "请切到「存档检查」页，再把存档文件松开"
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_200_000_000)
+            model.strayDropHint = ""
+        }
+        return false
+    }
+}
+
+/// 落点提示条（Windows 端是 toast，这里用顶部浮条，几秒后自己消失）。
+private struct StrayDropBanner: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppTheme.amber.opacity(0.45), lineWidth: 1))
+            .shadow(color: .black.opacity(0.35), radius: 14, y: 6)
+            .padding(.top, 78)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .allowsHitTesting(false)
     }
 }
 

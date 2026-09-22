@@ -60,12 +60,20 @@ public enum SaveLocator {
     /// 展示用的根目录写法。
     public static var displayBottlesPath: String { "~/" + bottlesRelativePath }
 
+    /// 自动查找的扫描范围（展示在结果卡的副标题里）。
+    public static var scanRange: String {
+        "\(displayBottlesPath)/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/"
+    }
+
     /// 找不到存档时展示的路径规则说明。
+    ///
+    /// 四段结构（标题 / 路径规则 / 无缝联机 / 手动兜底）与 Windows 端
+    /// app.js 的 SAVE_PATH_HINT 一致，只有中间那行路径按平台不同。
     public static let pathHint = """
-        没有在 CrossOver 的 bottle 里找到存档。路径规则：
-        \(displayBottlesPath)/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/NR0000.sl2
+        没有找到存档文件。
+        路径规则：\(displayBottlesPath)/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/NR0000.sl2
         无缝联机存档（.co2）在同一个目录下。
-        其它运行方式（Whisky、Parallels、从 Windows 机器拷来的存档）请用「选择存档文件」手动指定。
+        其它情况（Whisky、Parallels、从 Windows 机器拷来的存档）请用「选择存档文件」手动打开，也可以直接把存档文件拖进来。
         """
 
     /// 本机默认的 bottles 根目录。

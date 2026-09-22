@@ -16,10 +16,12 @@ const relic = (itemId, effects = [], curses = [], index = 0) => ({
 const payload = (fileName, characters) => ({ fileName, checksumOk: true, characters });
 const character = (slot, name, relics) => ({ slot, name, parseError: null, relics });
 
-test("relicIdentity: 空词条的三种写法等价", () => {
+test("relicIdentity: 空词条的几种写法等价（与 macOS 端同一条归一规则）", () => {
   const a = Diff.relicIdentity({ itemId: 202, effects: [7000000, 0, 0xFFFFFFFF], curses: [0, -1, null] });
   const b = Diff.relicIdentity({ itemId: 202, effects: [7000000, -1, -1], curses: [-1, -1, -1] });
   assert.equal(a, b);
+  // 负值也算空：Swift 端 SaveRelicIdentity.normalized 用的是 <= 0
+  assert.equal(Diff.relicIdentity({ itemId: 202, effects: [7000000, -5, -1], curses: [] }), b);
 });
 
 test("relicIdentity: itemId / 词条 / 诅咒 / 顺序任一不同即不同遗物", () => {

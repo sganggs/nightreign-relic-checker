@@ -80,6 +80,11 @@ final class AppModel: ObservableObject {
     @Published var saveFilter: SaveFilter = .all
     @Published var saveQuery = ""
     @Published var saveSelectedSlot: Int?
+    /// 存档文件被拖到存档页以外的地方时的提示（与 Windows 端的全局兜底同一句话）。
+    ///
+    /// macOS 上落点不对不会像 WebView2 那样导航到 .sl2，但会「什么都不发生」，
+    /// 用户以为拖拽功能坏了；这里给一句和 Windows 一样的提示。
+    @Published var strayDropHint = ""
 
     let checker = LegalityChecker()
     private(set) var relicData: RelicCatalog?
