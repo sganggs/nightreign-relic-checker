@@ -1,7 +1,10 @@
 // 首领数据页（renderer/pages/bosses.js）纯计算层测试。
-// 口径以 data/nightreign-bosses-v1.03.5.json 的字段说明为准：
-//   hp 已含常驻缩放；多人血量 = hp × scaling.<duo|trio>.hp；
-//   有效韧性 = poise / (poiseTakenBase × scaling.<tier>.poiseTaken)。
+// 口径以 bossesSchemaVersion 3 的字段说明为准：
+//   常规：hp 已含常驻缩放；多人血量 = hp × scaling.<duo|trio>.hp；
+//   深夜：血量 = depthStats[N].hp × scaling.<tier>.hp（depthStats 已含常驻 × 深夜修正 × 深度倍率）；
+//   有效韧性 = poise / (poiseTakenBase × scaling.<tier>.poiseTaken)，深夜用 depthStats[N].poiseTakenBase；
+//   攻击力 = attackRateBase × scaling.<tier>.attackRate，变异个体的三个倍率再乘一层。
+// 「双端对照表」那一节与 macos/Sources/RelicCoreChecks/BossDataChecks.swift 是同一组输入与期望值。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -89,22 +92,163 @@ test("削韧恢复 / 异常发动伤害 / 异常累积按人数叠乘", () => {
   assert.equal(B.computeStats(entry, 1, false).buildupRate, 1, "1 人时异常累积倍率为 1");
 });
 
-test("深夜：有 deepOfNight 时换用深夜数值，没有时回落常规值", () => {
-  assert.equal(B.hasDeepData(data), true);
-  assert.equal(B.hasDeepData({ nightlords: [], nightBosses: [] }), false);
+test("深夜：模式换成深度 1–5，血量直接取 depthStats[N].hp", () => {
+  assert.equal(B.hasDepthData(data), true);
+  assert.equal(B.hasDepthData({ nightlords: [], nightBosses: [] }), false);
 
+  // depthValue 把下拉里的一切取值归一化成 0–5，别让 depthStats["true"] 这种取法蒙混过关。
+  assert.equal(B.depthValue(0), 0);
+  assert.equal(B.depthValue(3), 3);
+  assert.equal(B.depthValue("4"), 4);
+  assert.equal(B.depthValue(true), 0, "布尔不再是合法模式（原来的深夜开关已经换成下拉）");
+  assert.equal(B.depthValue(null), 0);
+  assert.equal(B.depthValue(9), 5);
+  assert.equal(B.depthValue(-1), 0);
+
+  // schemaVersion 3：394 条数值行全都有 depthStats（深度 1–5 各一组）。
+  assert.equal(allEntries.every((entry) => entry.depthStats), true);
+  for (const entry of allEntries) {
+    for (const depth of [1, 2, 3, 4, 5]) {
+      const stats = B.computeStats(entry, 1, depth, null);
+      assert.equal(stats.depth, depth);
+      assert.equal(stats.hasDepth, true);
+      assert.equal(stats.hp, entry.depthStats[String(depth)].hp, `npcId ${entry.npcId} 深度 ${depth}`);
+      assert.equal(stats.attackRate, entry.depthStats[String(depth)].attackRateBase);
+    }
+  }
+
+  // v2 的 deepOfNight 只算到「深夜修正」，缺了深度倍率那一乘——现在 depthStats 已经含齐。
   const deepEntry = allEntries.find((item) => item.deepOfNight);
-  const normal = B.computeStats(deepEntry, 1, false);
-  const deep = B.computeStats(deepEntry, 1, true);
-  assert.equal(deep.isDeep, true);
-  assert.equal(normal.isDeep, false);
-  assert.equal(deep.hp, deepEntry.deepOfNight.hp);
-  assert.notEqual(deep.hp, normal.hp);
+  assert.ok(B.computeStats(deepEntry, 1, 1, null).hp > deepEntry.deepOfNight.hp,
+    "深度 1 的血量应比只算深夜修正的旧值高");
 
-  const plainEntry = allEntries.find((item) => !item.deepOfNight);
-  const plain = B.computeStats(plainEntry, 2, true);
-  assert.equal(plain.isDeep, false);
-  assert.equal(plain.hp, B.computeStats(plainEntry, 2, false).hp);
+  // 没有 depthStats 的行（当前数据里没有，页面仍要优雅降级）回落到常规值并标记 hasDepth = false。
+  const bare = { hp: 1000, hpBase: 1000, hpMultiplier: 1, poise: 100, poiseTakenBase: 1 };
+  const bareStats = B.computeStats(bare, 1, 4, null);
+  assert.equal(bareStats.hasDepth, false);
+  assert.equal(bareStats.hp, 1000);
+  assert.equal(B.depthRows(bare, 1, null), null, "无 depthStats 时深度小表为 null（页面写「该行无深夜数值」）");
+});
+
+test("深夜：深度换算后再乘人数，有效韧性分母换成 depthStats[N].poiseTakenBase", () => {
+  const gladius = allEntries.find((entry) => entry.npcId === 75000020);
+  const depth5 = gladius.depthStats["5"];
+
+  const solo = B.computeStats(gladius, 1, 5, null);
+  const trio = B.computeStats(gladius, 3, 5, null);
+  assert.equal(solo.hp, depth5.hp);
+  assert.equal(trio.hp, depth5.hp * gladius.scaling.trio.hp, "深度血量再乘人数缩放");
+  assert.equal(trio.hp, 73404);
+  assert.equal(trio.hpSingle, 24468);
+  assert.ok(Math.abs(solo.effectivePoise - gladius.poise / depth5.poiseTakenBase) < 1e-9);
+  assert.ok(
+    Math.abs(trio.effectivePoise - gladius.poise / (depth5.poiseTakenBase * gladius.scaling.trio.poiseTaken)) < 1e-9
+  );
+  assert.equal(trio.attackRate, depth5.attackRateBase, "格拉狄乌斯档位多人不加攻击力");
+
+  // 攻击力涨得比血量快：深度 5 的伤害是深度 1 的 2.27 倍，血量只有 1.32 倍。
+  const d1 = B.computeStats(gladius, 1, 1, null);
+  assert.ok(solo.attackRate / d1.attackRate > 2.2);
+  assert.ok(solo.hp / d1.hp < 1.8);
+
+  // 常规模式仍然是 depth = 0、走 hp 字段。
+  const normal = B.computeStats(gladius, 1, 0, null);
+  assert.equal(normal.depth, 0);
+  assert.equal(normal.hasDepth, false);
+  assert.equal(normal.hp, gladius.hp);
+  assert.equal(normal.attackRate, gladius.attackRateBase);
+});
+
+test("深夜各深度小表：五行都按当前人数换算，当前深度可高亮", () => {
+  const bird = allEntries.find((entry) => entry.npcId === 49800030);
+  const rows = B.depthRows(bird, 2, null);
+  assert.equal(rows.length, 5);
+  rows.forEach((row, index) => {
+    assert.equal(row.depth, index + 1);
+    assert.equal(row.hp, B.computeStats(bird, 2, row.depth, null).hp);
+    assert.equal(row.attackRate, bird.depthStats[String(row.depth)].attackRateBase * bird.scaling.duo.attackRate);
+    assert.equal(row.poiseTaken, bird.depthStats[String(row.depth)].poiseTakenBase * bird.scaling.duo.poiseTaken);
+  });
+  // 血量与攻击倍率都随深度单调上升
+  for (let i = 1; i < rows.length; i += 1) {
+    assert.ok(rows[i].hp >= rows[i - 1].hp);
+    assert.ok(rows[i].attackRate > rows[i - 1].attackRate);
+  }
+});
+
+test("变异个体：选中档位后在其它缩放之上再乘一层", () => {
+  // 链路：NpcParam.chaosMatchingSpEffectSetParamId → mutationSetId / mutationPool → mutations[id]。
+  assert.ok(Object.keys(data.mutations).length > 0);
+  const withPool = allEntries.filter((entry) => Array.isArray(entry.mutationPool) && entry.mutationPool.length);
+  assert.equal(withPool.length, 327, "327 条数值行能变异");
+  for (const entry of withPool) {
+    for (const id of entry.mutationPool) {
+      assert.ok(data.mutations[String(id)], `mutations 缺少档位 ${id}`);
+    }
+  }
+
+  const bird = allEntries.find((entry) => entry.npcId === 49800030);
+  const mutation = data.mutations["113340"];
+  assert.deepEqual(
+    [mutation.hp, mutation.attackRate, mutation.runeRate],
+    [1.15, 1.15, 1.35]
+  );
+
+  const plain = B.computeStats(bird, 2, 3, null);
+  const mutated = B.computeStats(bird, 2, 3, mutation);
+  assert.equal(plain.hasMutation, false);
+  assert.equal(mutated.hasMutation, true);
+  // 变异倍率是乘在「深度 × 人数」之上的第四层，不是替换
+  assert.equal(mutated.hp, Math.round(bird.depthStats["3"].hp * bird.scaling.duo.hp * mutation.hp));
+  assert.equal(mutated.hp, 5770);
+  assert.equal(mutated.attackRate, plain.attackRate * mutation.attackRate);
+  assert.equal(mutated.runeRate, 1.35);
+  assert.equal(plain.runeRate, 1, "没选变异时卢恩倍率是 1");
+  // 韧性 / 异常相关不受变异影响（mutations 只有 hp / attackRate / runeRate 三个倍率）
+  assert.equal(mutated.effectivePoise, plain.effectivePoise);
+  assert.equal(mutated.buildupRate, plain.buildupRate);
+
+  assert.equal(B.mutationFor(data, 113340), mutation);
+  assert.equal(B.mutationFor(data, "113340"), mutation);
+  assert.equal(B.mutationFor(data, ""), null);
+  assert.equal(B.mutationFor(data, 999999), null);
+  assert.match(B.mutationOptionLabel(113340, mutation), /血量 ×1\.15 · 攻击 ×1\.15 · 卢恩 ×1\.35（档位 113340）/);
+});
+
+test("隐藏实体：默认不显示，开关打开后才出现", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  const hidden = items.filter((item) => item.hidden);
+  assert.deepEqual(
+    hidden.map((item) => item.uid).sort(),
+    [
+      "nb:Centipede Grub@7711",
+      "nb:Lord of Blood Spear@4801",
+      "nb:Unknown Enemy (c7931)@7931",
+      "nb:Unknown Enemy (c7932)@7932",
+    ],
+    "4 组召唤物 / 投射物实体"
+  );
+  // 四组都在守夜分组
+  const night = B.filterItems(items, "night", "", Core.foldForSearch);
+  const nightAll = B.filterItems(items, "night", "", Core.foldForSearch, true);
+  assert.equal(night.length, 46);
+  assert.equal(nightAll.length, 50);
+  assert.equal(nightAll.length - night.length, 4);
+  // 野外分组一个隐藏实体都没有，开关不影响条数
+  assert.equal(
+    B.filterItems(items, "field", "", Core.foldForSearch).length,
+    B.filterItems(items, "field", "", Core.foldForSearch, true).length
+  );
+  // 搜索也搜不到隐藏实体，除非开关打开
+  assert.equal(B.filterItems(items, "night", "7931", Core.foldForSearch).length, 0);
+  assert.equal(B.filterItems(items, "night", "7931", Core.foldForSearch, true).length, 1);
+
+  // noReward 不等于 hidden：蚯蚓脸 / Storm King / 巨大骷髅躯干不掉奖励但照常显示
+  const noRewardVisible = items.filter((item) => item.noReward && !item.hidden);
+  assert.deepEqual(
+    noRewardVisible.map((item) => item.uid).sort(),
+    ["nb:Dreg Wormface@7660", "nb:Giant Skeleton Torso@4960", "nb:Storm King@7910"]
+  );
 });
 
 test("承伤倍率分类：>1 弱点、<1 抗性、=1 正常", () => {
@@ -129,32 +273,108 @@ test("异常抗性 999 判为免疫，并与 immune 列表一致", () => {
   }
 });
 
-test("名字缺失时的显示口径与灰色徽标", () => {
-  const englishOnly = data.nightBosses.find((boss) => boss.nameSource === "english-only");
-  assert.ok(englishOnly, "数据集里应存在 english-only 的 Boss");
-  const infoEn = B.displayName(englishOnly);
-  assert.equal(infoEn.primary, englishOnly.nameEn);
-  assert.equal(infoEn.fallback, true);
-  assert.deepEqual(B.nameBadge(infoEn, englishOnly.nameSource), { text: "仅英文名", kind: "gray" });
+test("名字四级回退：nameZh → nameEn（+ 参考译名副标题）→ 参考译名 → 未知敌人", () => {
+  // 1. 有游戏内简中名：主标题中文、副标题英文
+  const zhNamed = data.nightBosses.find((boss) => boss.nameZh && boss.nameSource === "npcname");
+  const zhInfo = B.displayName(zhNamed);
+  assert.equal(zhInfo.primary, zhNamed.nameZh);
+  assert.equal(zhInfo.secondary, zhNamed.nameEn);
+  assert.equal(zhInfo.usesFallback, false);
+  assert.deepEqual(B.nameBadges(zhInfo, zhNamed), [], "游戏文本名不挂任何名称徽标");
 
-  // 数据侧口径变更：schemaVersion 3 的第二轮核验里，「未知敌人 cXXXX」这个由生成器
-  // 拼出来的占位串从 nameZh 移到了新字段 displayFallbackZh —— 它不是游戏文本，留在
-  // nameZh 里与数据集自己的「简中名只来自游戏文本」相矛盾（见 caveats 的【名字】几条）。
-  // 因此 chrid-fallback 的组现在 nameZh 为空，displayName 落到英文名那一支；
-  // 徽标仍然是「无游戏内名称」（nameBadge 看的是 nameSource，没变）。
-  // 待页面侧把 displayFallbackZh 接进 displayName 后，primary 会重新变回「未知敌人 cXXXX」。
-  const fallback = data.nightBosses.find((boss) => boss.nameSource === "chrid-fallback");
-  assert.ok(fallback, "数据集里应存在 chrid-fallback 的 Boss");
-  assert.equal(fallback.nameZh, "", "chrid-fallback 的 nameZh 应为空（占位名不进 nameZh）");
-  assert.match(fallback.displayFallbackZh, /^未知敌人 c\d+$/,
-    "占位显示名应在 displayFallbackZh 里");
-  const infoZh = B.displayName(fallback);
-  assert.equal(infoZh.primary, fallback.nameEn);
-  assert.equal(infoZh.fallback, true);
-  assert.deepEqual(B.nameBadge(infoZh, fallback.nameSource), { text: "无游戏内名称", kind: "gray" });
+  // 2. nameZh 为空但有 nameZhFallback：主标题英文、副标题旧译名 + 「参考译名」徽标
+  const hippo = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
+  assert.equal(hippo.nameZh, "");
+  assert.equal(hippo.nameZhFallback, "大型黄金河马");
+  const hippoInfo = B.displayName(hippo);
+  assert.equal(hippoInfo.primary, "Large Golden Hippopotamus");
+  assert.equal(hippoInfo.secondary, "大型黄金河马");
+  assert.equal(hippoInfo.usesFallback, true);
+  assert.deepEqual(B.nameBadges(hippoInfo, hippo), [
+    { text: "仅英文名", kind: "gray" },
+    { text: "参考译名 · 非本作游戏文本", kind: "gray" },
+  ]);
 
-  const normal = data.nightBosses.find((boss) => boss.nameSource === "npcname" && !boss.nameInferred);
-  assert.equal(B.nameBadge(B.displayName(normal), normal.nameSource), null);
+  // 3. 只剩参考译名（数据里没有这种，构造一条守住这一支）
+  const onlyFallback = B.displayName({ nameZh: "", nameEn: "", nameZhFallback: "山妖", chrIds: [4600] });
+  assert.equal(onlyFallback.primary, "山妖");
+  assert.equal(onlyFallback.usesFallback, true);
+  assert.equal(onlyFallback.unknown, false);
+
+  // 4. 三者都没有才轮到「未知敌人 cXXXX」，而且用 chrId 而不是光秃秃的「未知敌人」
+  const blank = B.displayName({ nameZh: "", nameEn: "", nameZhFallback: "", chrIds: [7931] });
+  assert.equal(blank.primary, "未知敌人 c7931");
+  assert.equal(blank.unknown, true);
+  assert.equal(B.displayName({ chrIds: [] }).primary, "未知敌人");
+
+  // 英文名不再被「未知敌人」顶掉：Elder Dragon Greyoll 的 nameZh 是空的，但它有英文名
+  const greyoll = data.nightBosses.find((boss) => boss.id === "Elder Dragon Greyoll@4504");
+  assert.equal(greyoll.nameZh, "");
+  assert.equal(B.displayName(greyoll).primary, "Elder Dragon Greyoll");
+  assert.equal(B.displayName(greyoll).unknown, false);
+
+  // 数据里 chrid-fallback 的两组本来就把「未知敌人 c7931」写进 nameZh，走第一支
+  const fallbackNamed = data.nightBosses.find((boss) => boss.nameSource === "chrid-fallback");
+  assert.match(B.displayName(fallbackNamed).primary, /^未知敌人 c\d+$/);
+  assert.deepEqual(B.nameBadges(B.displayName(fallbackNamed), fallbackNamed), [
+    { text: "无游戏内名称", kind: "gray" },
+  ]);
+});
+
+test("名称徽标：四档旧文案照旧，community 新增「社区资料」，近似匹配单独一枚", () => {
+  assert.equal(B.NAME_SOURCE_BADGES["english-only"], "仅英文名");
+  assert.equal(B.NAME_SOURCE_BADGES["chrid-fallback"], "无游戏内名称");
+  assert.equal(B.NAME_SOURCE_BADGES["manual"], "名称手工补录");
+  assert.equal(B.NAME_SOURCE_BADGES["community"], "社区资料");
+  assert.equal(B.NAME_SOURCE_BADGES["community-npcname"], "社区资料");
+
+  const community = data.nightBosses.find((boss) => boss.id === "Storm King@7910");
+  assert.equal(community.nameSource, "community");
+  assert.deepEqual(B.nameBadges(B.displayName(community), community), [{ text: "社区资料", kind: "gray" }]);
+
+  // community-npcname：身份来自社区 roster，名字本身是游戏文本
+  const troll = data.nightBosses.find((boss) => boss.id === "Stonedigger Troll@4603");
+  assert.equal(troll.nameZh, "挖石山妖");
+  assert.deepEqual(B.nameBadges(B.displayName(troll), troll), [{ text: "社区资料", kind: "gray" }]);
+
+  // nameApprox（非逐字命中）另挂「近似匹配」，依据写在 nameNote / nameEvidence 里
+  const approx = data.nightBosses.filter((boss) => boss.nameApprox);
+  assert.equal(approx.length, 7);
+  const dragon = data.nightBosses.find((boss) => boss.id === "Flying Dragon@4500");
+  assert.equal(dragon.nameApprox, true);
+  assert.deepEqual(B.nameBadges(B.displayName(dragon), dragon), [{ text: "近似匹配", kind: "gray" }]);
+  assert.ok(dragon.nameEvidence && dragon.nameEvidence.id, "近似匹配的行要能给出游戏文本依据");
+
+  // nameInferred 仍走旧文案（nameSource 已有徽标时不重复挂）
+  assert.deepEqual(
+    B.nameBadges(B.displayName({ nameZh: "某某", nameInferred: true }), { nameSource: "npcname", nameInferred: true }),
+    [{ text: "名称按 ID 推断", kind: "gray" }]
+  );
+
+  // 卡片上的徽标就是这一组
+  const items = B.buildItems(data, Core.foldForSearch);
+  const hippoCard = items.find((item) => item.uid === "nb:Large Golden Hippopotamus@5010");
+  assert.deepEqual(hippoCard.nameBadges.map((badge) => badge.text), ["仅英文名", "参考译名 · 非本作游戏文本"]);
+  assert.equal(hippoCard.name, "Large Golden Hippopotamus");
+  assert.equal(hippoCard.nameEn, "大型黄金河马");
+  assert.ok(hippoCard.nameNote.length > 0, "让出 nameZh 的原因要能显示在展开区");
+});
+
+test("搜索索引收进 nameZhFallback：搜「河马」仍能搜到让出中文名的那一组", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  const hits = B.filterItems(items, "field", "河马", Core.foldForSearch);
+  assert.ok(
+    hits.some((item) => item.uid === "nb:Large Golden Hippopotamus@5010"),
+    "nameZh 被让出后，旧译名必须仍然可搜"
+  );
+  // 其余 13 组参考译名同样可搜
+  const withFallback = data.nightBosses.filter((boss) => boss.nameZhFallback);
+  assert.equal(withFallback.length, 14);
+  for (const boss of withFallback) {
+    const group = (boss.tiers || [boss.tier])[0];
+    const found = B.filterItems(items, group, boss.nameZhFallback, Core.foldForSearch, true);
+    assert.ok(found.some((item) => item.uid === "nb:" + boss.id), `搜不到参考译名：${boss.nameZhFallback}`);
+  }
 });
 
 test("buildItems：夜王 / 守夜 / 野外三组齐全，主键用 id 而不是 nameEn", () => {
@@ -298,8 +518,8 @@ test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡�
   }).map((item) => item.uid);
   assert.deepEqual(
     misjudged.sort(),
-    ["nb:Dreg Wormface@7660", "nl:18"],
-    "哈尔莫妮亚·救世旗手与废弃物蚯蚓脸靠扫描全部行才判得对"
+    ["nb:Curseblade@5040", "nb:Death Knight@5070", "nb:Dreg Wormface@7660", "nl:18"],
+    "这四张卡靠扫描全部行才判得对（咒剑士与死骑士的深夜行是被 noReward 排除掉的模板行）"
   );
   assert.equal(
     items.filter((item) => B.deepCoverage(item) !== "none").length, 22,
@@ -328,8 +548,9 @@ test("分组按 tiers 判定：同属守夜与野外的 Boss 两个分组都能�
   assert.equal(dual.length, 6, "数据里有 6 组 tiers 同时含 field 与 night");
 
   const items = B.buildItems(data, Core.foldForSearch);
-  const night = B.filterItems(items, "night", "", Core.foldForSearch);
-  const field = B.filterItems(items, "field", "", Core.foldForSearch);
+  // 分组条数一律按「显示隐藏实体」打开时算，否则 4 组隐藏实体会让守夜少 4 条。
+  const night = B.filterItems(items, "night", "", Core.foldForSearch, true);
+  const field = B.filterItems(items, "field", "", Core.foldForSearch, true);
   assert.equal(night.length, data.nightBosses.filter((b) => (b.tiers || [b.tier]).includes("night")).length);
   assert.equal(field.length, data.nightBosses.filter((b) => (b.tiers || [b.tier]).includes("field")).length);
   assert.equal(night.length + field.length, data.nightBosses.length + dual.length);
@@ -424,7 +645,9 @@ test("守夜 / 野外卡片的代表行随分组切换，不再恒取 variants[0
 
   const night = B.representativeEntry(apostle.variants, "night");
   const field = B.representativeEntry(apostle.variants, "field");
-  assert.equal(night.npcId, 35600900);
+  // 35600900「基准（行 35600900）」血量最高（7347）却 noReward = true，是模板行，不该抢代表位。
+  assert.equal(apostle.variants.find((v) => v.npcId === 35600900).noReward, true);
+  assert.equal(night.npcId, 35600110);
   assert.equal(field.npcId, 35600020, "野外分组要取「封印监牢」，不是血量更高的守夜行");
   assert.equal(field.threat, "field");
   assert.ok(night.hp > field.hp, "守夜行血量更高，正是它会盖掉野外数值");
@@ -435,15 +658,59 @@ test("守夜 / 野外卡片的代表行随分组切换，不再恒取 variants[0
     assert.equal(B.representativeEntry(boss.variants, "field").threat, "field", boss.id);
   }
 
-  // 只有一种档位的组不受影响：按分组取出来的仍是血量最高的那行。
-  const single = data.nightBosses.find((boss) => (boss.tiers || [boss.tier]).length === 1 && boss.variants.length > 2);
+  // 只有一种档位、且没有无奖励行的组不受影响：按分组取出来的仍是血量最高的那行。
+  const single = data.nightBosses.find((boss) => (boss.tiers || [boss.tier]).length === 1 &&
+    boss.variants.length > 2 && boss.variants.every((v) => !v.noReward));
   const rep = B.representativeEntry(single.variants, single.tier);
   assert.equal(rep.hp, Math.max(...single.variants.map((v) => v.hp)));
 
-  // 候选行：夜王收敛到 isMain，守夜 / 野外收敛到该档位。
-  assert.equal(B.candidateEntries(apostle.variants, "field").length, 4);
-  assert.equal(B.candidateEntries(apostle.variants, "nightlords").length, apostle.variants.length);
+  // 候选行：夜王收敛到 isMain，守夜 / 野外收敛到该档位，最后都排掉无奖励行。
+  assert.equal(B.candidateEntries(apostle.variants, "field").length, 3, "4 条野外行里 35600060 是无奖励行");
+  assert.equal(B.candidateEntries(apostle.variants, "nightlords").length, apostle.variants.length - 2);
   assert.equal(B.candidateEntries(data.nightlords.find((l) => l.menuId === 13).fights, "nightlords").length, 2);
+});
+
+test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一顺序）", () => {
+  // 约定的顺序：分组过滤（threat）→ isMain 收敛 → 排除 noReward（池内全是 noReward
+  // 就不排除）→ 血量最高（同血量取 npcId 小者），每一步没有候选就原样放行。
+  //
+  // 为什么 noReward 必须在 isMain 之后：夜王的主战行几乎都是 noReward = true
+  //（奖励挂在远征结算上，不在 NpcParam 的 getSoul / 掉落表里）。提到 isMain 之前
+  // 会把整组主战行踢掉，下面三条断言就是守着这件事。
+  const gladius = data.nightlords.find((lord) => lord.menuId === 0);
+  const gladiusMain = B.representativeEntry(gladius.fights, "nightlords");
+  assert.equal(gladiusMain.npcId, 75000020, "格拉狄乌斯代表行不能被 noReward 挤成 75000000");
+  assert.equal(gladiusMain.noReward, true, "它自己就是 noReward 行，靠「整组都 noReward 则不排除」留住");
+  assert.equal(gladiusMain.hp, 11328);
+
+  const maris = data.nightlords.find((lord) => lord.menuId === 3);
+  assert.equal(B.representativeEntry(maris.fights, "nightlords").hp, 12687, "玛利斯不能掉到一阶段的 3045");
+
+  // 反过来，模板 / 血条实体 / 教程行确实要被排掉。
+  const morgott = data.nightBosses.find((boss) => boss.id === "Morgott@2130");
+  const tutorial = morgott.variants.find((v) => v.npcId === 21300520);
+  assert.equal(tutorial.hp, 9920);
+  assert.equal(tutorial.noReward, true, "「教程」行不掉奖励");
+  assert.equal(B.representativeEntry(morgott.variants, "night").npcId, 21300030, "代表行要让给真正的实战行");
+
+  const chariot = data.nightBosses.find((boss) => boss.id === "Flame Chariot@4460");
+  assert.equal(chariot.variants.find((v) => v.npcId === 44600015).noReward, true, "「血条实体」行不掉奖励");
+  assert.equal(B.representativeEntry(chariot.variants, "field").npcId, 44600010);
+
+  // 整组都 noReward 时不排除（否则候选池会空）。
+  const allNoReward = [
+    { hp: 100, npcId: 2, noReward: true },
+    { hp: 300, npcId: 1, noReward: true },
+  ];
+  assert.equal(B.representativeEntry(allNoReward, null).npcId, 1);
+  assert.equal(B.candidateEntries(allNoReward, null).length, 2);
+
+  // 18 位夜王的代表行没有一条因为这一步而改变（macOS 端同样的断言）。
+  for (const lord of data.nightlords) {
+    const rep = B.representativeEntry(lord.fights, "nightlords");
+    const mains = lord.fights.filter((f) => f.isMain);
+    assert.ok(mains.some((f) => f.npcId === rep.npcId), `${lord.nameZh} 的代表行仍必须是主战行`);
+  }
 });
 
 test("搜索：纯数字按行号前缀匹配，文本串不含分组名与内部枚举值", () => {
@@ -480,24 +747,31 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
   const rows = new Map(allEntries.map((entry) => [entry.npcId, entry]));
   assert.equal(rows.size, allEntries.length, "npcId 在全量行里唯一，对照表才能按它定位");
 
+  // [标题, npcId, 人数, 深度, 变异档位, 血量, 有效韧性, 削韧槽语义, 削韧恢复, 异常发动伤害, 异常累积, 攻击力倍率]
   const cases = [
-    ["格拉狄乌斯 · 远征首领 / 1 人", 75000020, 1, false, 11328, 120, "value", 0.058, 0.5, 1],
-    ["格拉狄乌斯 · 远征首领 / 2 人", 75000020, 2, false, 22656, 218.181818, "value", 0.0319, 0.375, 0.85],
-    ["格拉狄乌斯 · 远征首领 / 3 人", 75000020, 3, false, 33984, 400, "value", 0.0174, 0.25, 0.7],
-    ["玛利斯 · 永夜之王 · 二阶段 / 2 人", 75410000, 2, false, 58906, 1090.909091, "value", 0, 0.375, 0.85],
-    ["史柴格斯 · 远征首领 / 3 人 · 深夜", 76100010, 3, true, 34665, 500.160051, "value", 0.0174, 0.25, 0.7],
-    ["神皮使徒 · 守夜代表行 / 2 人", 35600900, 2, false, 9551, 145.454545, "value", 0.1595, 0.46, 0.955],
-    ["神皮使徒 · 野外代表行 / 2 人", 35600020, 2, false, 6535, 106.666667, "value", 0.2175, 0.82, 0.889],
-    ["大型黄金河马 · 守夜代表行 / 3 人", 50100010, 3, false, 17747, 266.666667, "value", 0.087, 0.315, 0.778],
-    ["大型黄金河马 · 野外代表行 / 3 人", 50100000, 3, false, 5606, 160, "value", 0.145, 0.95, 0.97],
-    ["未知敌人 c7931（poise = 0）/ 2 人", 79310000, 2, false, 6851, null, "zero", 0.1595, 0.46, 0.955],
-    ["鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", 48010010, 2, false, 674, null, "none", 0.0319, 0.375, 0.85],
+    ["格拉狄乌斯 · 远征首领 / 1 人", 75000020, 1, 0, null, 11328, 120, "value", 0.058, 0.5, 1, 3.36],
+    ["格拉狄乌斯 · 远征首领 / 2 人", 75000020, 2, 0, null, 22656, 218.181818, "value", 0.0319, 0.375, 0.85, 3.36],
+    ["格拉狄乌斯 · 远征首领 / 3 人", 75000020, 3, 0, null, 33984, 400, "value", 0.0174, 0.25, 0.7, 3.36],
+    // 双端对照输入 ①：格拉狄乌斯 3 人深度 5
+    ["格拉狄乌斯 · 远征首领 / 3 人 · 深度 5", 75000020, 3, 5, null, 73404, 476.190476, "value", 0.0174, 0.25, 0.7, 11.1216],
+    ["格拉狄乌斯 · 远征首领 / 1 人 · 深度 1", 75000020, 1, 1, null, 14160, 136.363636, "value", 0.058, 0.5, 1, 4.2],
+    ["玛利斯 · 永夜之王 · 二阶段 / 2 人", 75410000, 2, 0, null, 58906, 1090.909091, "value", 0, 0.375, 0.85, 3.864],
+    ["史柴格斯 · 远征首领 / 3 人 · 深度 3", 76100010, 3, 3, null, 54423, 581.58132, "value", 0.0174, 0.25, 0.7, 6.4512],
+    ["神皮使徒 · 守夜代表行 / 2 人", 35600110, 2, 0, null, 7687, 145.454545, "value", 0.1595, 0.41, 0.889, 3.3],
+    ["神皮使徒 · 野外代表行 / 2 人", 35600020, 2, 0, null, 6535, 106.666667, "value", 0.2175, 0.82, 0.889, 2.97],
+    // 双端对照输入 ②：死亡仪式鸟（野外代表行）2 人深度 3 变异档位 113340
+    ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3", 49800030, 2, 3, null, 5017, 186.046512, "value", 0.2175, 0.98, 0.985, 2.7615],
+    ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3 · 变异 113340", 49800030, 2, 3, 113340, 5770, 186.046512, "value", 0.2175, 0.98, 0.985, 3.175725],
+    ["大型黄金河马 · 守夜代表行 / 3 人", 50100010, 3, 0, null, 17747, 266.666667, "value", 0.087, 0.315, 0.778, 3.672],
+    ["大型黄金河马 · 野外代表行 / 3 人", 50100000, 3, 0, null, 5606, 160, "value", 0.145, 0.95, 0.97, 1.5],
+    ["未知敌人 c7931（poise = 0）/ 2 人", 79310000, 2, 0, null, 6851, null, "zero", 0.1595, 0.46, 0.955, 1.75],
+    ["鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", 48010010, 2, 0, null, 674, null, "none", 0.0319, 0.375, 0.85, 3.64],
   ];
 
-  for (const [title, npcId, party, deep, hp, poise, kind, recover, ailment, buildup] of cases) {
+  for (const [title, npcId, party, depth, mutationId, hp, poise, kind, recover, ailment, buildup, attack] of cases) {
     const entry = rows.get(npcId);
     assert.ok(entry, `对照表找不到 npcId ${npcId}（${title}）`);
-    const stats = B.computeStats(entry, party, deep);
+    const stats = B.computeStats(entry, party, depth, mutationId ? data.mutations[String(mutationId)] : null);
     assert.equal(stats.hp, hp, `${title}：血量`);
     assert.equal(stats.poiseKind, kind, `${title}：削韧槽语义`);
     if (poise === null) {
@@ -508,6 +782,7 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
     assert.ok(Math.abs(stats.poiseRecover - recover) < 1e-6, `${title}：削韧恢复 ${stats.poiseRecover}`);
     assert.ok(Math.abs(stats.ailmentDamageRate - ailment) < 1e-6, `${title}：异常发动伤害 ${stats.ailmentDamageRate}`);
     assert.ok(Math.abs(stats.buildupRate - buildup) < 1e-6, `${title}：异常累积 ${stats.buildupRate}`);
+    assert.ok(Math.abs(stats.attackRate - attack) < 1e-6, `${title}：攻击力倍率 ${stats.attackRate}`);
   }
 
   // 对照表里的代表行必须就是折叠态会选中的那一行。
@@ -515,6 +790,21 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
   assert.equal(B.representativeEntry(hippo.variants, "night").npcId, 50100010);
   assert.equal(B.representativeEntry(hippo.variants, "field").npcId, 50100000);
   assert.equal(B.representativeEntry(data.nightlords.find((l) => l.menuId === 0).fights, "nightlords").npcId, 75000020);
+  const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
+  assert.equal(B.representativeEntry(apostle.variants, "night").npcId, 35600110);
+  assert.equal(B.representativeEntry(apostle.variants, "field").npcId, 35600020);
+  const bird = data.nightBosses.find((boss) => boss.id === "Death Rite Bird@4980");
+  assert.equal(B.representativeEntry(bird.variants, "field").npcId, 49800030);
+
+  // 双端对照输入 ③：隐藏开关前后的条数
+  const items = B.buildItems(data, Core.foldForSearch);
+  assert.deepEqual(
+    ["nightlords", "night", "field"].map((group) => [
+      B.filterItems(items, group, "", Core.foldForSearch).length,
+      B.filterItems(items, group, "", Core.foldForSearch, true).length,
+    ]),
+    [[18, 18], [46, 50], [72, 72]]
+  );
 });
 
 test("收录统计与 macOS 的 inventorySummary 是同一组数字", () => {
@@ -611,12 +901,24 @@ test("行内徽标 / 卡头计数文案与 macOS 逐字一致", () => {
   assert.ok(!badges.includes("标签存疑"), "旧文案「标签存疑」不该再出现");
 
   const deepEntry = allEntries.find((entry) => entry.deepOfNight);
-  const deepBadges = B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, true));
-  assert.ok(deepBadges.includes("深夜数值"), `实际徽标：${deepBadges.join(" / ")}`);
+  const deepBadges = B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, 4, null));
+  assert.ok(deepBadges.includes("深夜 4"), `实际徽标：${deepBadges.join(" / ")}`);
   assert.equal(
-    B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, false)).includes("深夜数值"),
+    B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, 0, null))
+      .some((text) => text.startsWith("深夜")),
     false,
-    "深夜开关关着时不挂深夜徽标"
+    "常规模式下不挂深夜徽标"
+  );
+
+  // 选了变异档位的行另挂一枚「变异个体」（游戏内正式叫法）。
+  const mutable = allEntries.find((entry) => entry.mutationPool && entry.mutationPool.length);
+  const mutation = data.mutations[String(mutable.mutationPool[0])];
+  assert.ok(
+    B.entryBadgeTexts({ kind: "boss" }, mutable, B.computeStats(mutable, 1, 0, mutation)).includes("变异个体")
+  );
+  assert.equal(
+    B.entryBadgeTexts({ kind: "boss" }, mutable, B.computeStats(mutable, 1, 0, null)).includes("变异个体"),
+    false
   );
 
   // 守夜 / 野外的威胁短名仍是「守夜 / 野外」（macOS 的 threatTitle）
@@ -744,4 +1046,169 @@ test("numberOr：只在缺字段 / null / 空串 / 非有限时回落，真实�
   const nullStats = B.computeStats(nulled, 2, false);
   assert.equal(nullStats.poiseTakenTotal, 1, "poiseTakenBase / tier.poiseTaken 为 null 时回落到 1");
   assert.equal(nullStats.hp, 1000, "hpMultiplier / tier.hp 为 null 时回落到 1");
+});
+
+// ------------------------------------------------ schemaVersion 3 的新展示面
+
+test("多人缩放明细多一列「攻击力」：1 时写「不变」，四个档位真会上浮", () => {
+  assert.equal(B.fmtAttackRate(1), "不变");
+  assert.equal(B.fmtAttackRate(1.1), "×1.1");
+  assert.equal(B.fmtAttackRate(1.2), "×1.2");
+  assert.equal(B.fmtAttackRate(null), "—");
+  assert.equal(B.fmtAttackRate("abc"), "—");
+
+  // 只有 7744 / 7753 / 7754 / 7758 四档的 attackRate 不是 1（双人 1.1 / 三人 1.2）。
+  const raised = Object.keys(data.scalingTiers)
+    .filter((key) => data.scalingTiers[key].duo && data.scalingTiers[key].duo.attackRate !== 1)
+    .map(Number)
+    .sort((a, b) => a - b);
+  assert.deepEqual(raised, [7744, 7753, 7754, 7758]);
+  for (const key of raised) {
+    assert.equal(data.scalingTiers[String(key)].duo.attackRate, 1.1);
+    assert.equal(data.scalingTiers[String(key)].trio.attackRate, 1.2);
+  }
+  // staminaAttackRate 在所有人数缩放行里都是 1，页面不单独展示
+  for (const tier of Object.values(data.scalingTiers)) {
+    for (const which of ["duo", "trio"]) {
+      if (tier[which]) assert.equal(tier[which].staminaAttackRate, 1);
+    }
+  }
+
+  // 卡片上「多人攻击 ×1.1」的判据就是 stats.partyAttackRate。
+  const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
+  const night = B.representativeEntry(apostle.variants, "night");
+  assert.equal(night.scalingId, 7754);
+  assert.equal(B.computeStats(night, 1, 0, null).partyAttackRate, 1);
+  assert.equal(B.computeStats(night, 2, 0, null).partyAttackRate, 1.1);
+  assert.equal(B.computeStats(night, 3, 0, null).partyAttackRate, 1.2);
+  assert.equal(
+    B.computeStats(night, 3, 0, null).attackRate,
+    night.attackRateBase * 1.2,
+    "多人攻击力倍率乘在常驻攻击倍率之上"
+  );
+  // 格拉狄乌斯所在的最终 Boss 档不加攻击力，血量却 ×2 / ×3——「多人不是简单乘倍」的两头
+  const gladius = allEntries.find((entry) => entry.npcId === 75000020);
+  assert.equal(B.computeStats(gladius, 3, 0, null).partyAttackRate, 1);
+  assert.equal(data.scalingTiers["7740"].duo.hp, 1.1, "野外常见档只加 10% 血");
+  assert.equal(data.scalingTiers["98810"].duo.hp, 1, "突袭档完全不加血");
+});
+
+test("底部人数缩放说明带上 notes.multiplayerScalingAudit 的核实结论", () => {
+  const audit = data.notes.multiplayerScalingAudit;
+  assert.ok(Array.isArray(audit) && audit.length === 9, "9 条中文结论");
+  assert.ok(audit[0].includes("不是"), "第一条就是「多人不是简单乘倍」的结论");
+  assert.ok(audit.some((line) => line.includes("攻击力上浮")));
+  assert.ok(audit.some((line) => line.includes("防御")));
+  assert.ok(audit.some((line) => line.includes("阈值")));
+  // 页面把这 9 条原样列在底部折叠区，不做删改
+  assert.ok(audit.every((line) => typeof line === "string" && line.length > 0));
+});
+
+test("深夜 / 深度 / 变异个体的中文一律取游戏文本", () => {
+  assert.equal(B.deepText(data, "deepOfNight"), "深夜");
+  assert.equal(B.deepText(data, "depth"), "深度");
+  assert.equal(data.deepOfNightText.deepOfNight.textId, 131150);
+  assert.equal(data.deepOfNightText.depth.textId, 131011);
+  assert.equal(data.deepOfNightText.mutation.textId, 338806);
+  assert.ok(data.deepOfNightText.description.zh.includes("深夜"));
+
+  assert.equal(B.depthLabel(data, 0), "常规");
+  assert.equal(B.depthLabel(data, 3), "深夜 · 深度 3");
+  // 数据缺失时才用兜底串，不会渲染出 undefined
+  assert.equal(B.deepText(null, "depth"), "深度");
+  assert.equal(B.depthLabel(null, 5), "深夜 · 深度 5");
+});
+
+test("底部：深夜各深度概览与变异个体出现只数（是只数不是概率）", () => {
+  const depths = data.deepOfNightDepths;
+  assert.deepEqual(Object.keys(depths).sort(), ["1", "2", "3", "4", "5"]);
+  for (const key of Object.keys(depths)) {
+    const row = depths[key];
+    assert.equal(row.rankId, Number(key));
+    assert.equal(typeof row.cursedUncommonRate, "number");
+    assert.equal(typeof row.cursedRareRate, "number");
+    assert.equal(typeof row.mapChallengeWeight.map, "number");
+    assert.equal(typeof row.cataclysmWeight["2"], "number");
+  }
+  // 深度 3 起地图挑战权重才从 0/0/100 变成 10/10/80
+  assert.deepEqual(depths["1"].mapChallengeWeight, { map: 0, nightlord: 0, none: 100 });
+  assert.deepEqual(depths["3"].mapChallengeWeight, { map: 10, nightlord: 10, none: 80 });
+  // 这张表里没有任何血量 / 攻击倍率——倍率在每行的 depthStats 里
+  for (const row of Object.values(depths)) {
+    assert.equal("hp" in row, false);
+    assert.equal("attackRate" in row, false);
+  }
+
+  const categories = data.mutationCategories;
+  assert.equal(categories.length, 46);
+  const fieldBoss = categories.filter((row) => row.categoryId === 120);
+  assert.ok(fieldBoss.length > 0);
+  for (const row of fieldBoss) {
+    assert.equal(row.mutatedCount["1"], 0, "深度 1 不会遇到变异的野外首领");
+    assert.ok(row.mutatedCount["2"] > 0);
+  }
+  const gaol = categories.filter((row) => row.categoryId === 160);
+  assert.ok(gaol.every((row) => row.mutatedCount["1"] === 0), "封印监牢首领深度 1 同样是 0");
+  // 全是整数「只数」，不是 0–100 的百分比
+  for (const row of categories) {
+    for (const depth of B.DEPTHS) {
+      const value = row.mutatedCount[String(depth)];
+      assert.equal(Number.isInteger(value), true);
+      assert.ok(value >= 0);
+    }
+  }
+});
+
+test("夜王卡片带各深度出现权重，0 表示该深度不会出现", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  for (const lord of data.nightlords) {
+    const card = items.find((item) => item.uid === "nl:" + lord.menuId);
+    assert.deepEqual(card.depthChanceWeights, lord.depthChanceWeights);
+  }
+  // 守夜 / 野外 Boss 没有这个参数表，页面不能凭空画一张
+  assert.ok(items.filter((item) => item.kind === "boss").every((item) => item.depthChanceWeights === null));
+
+  const gladius = data.nightlords.find((lord) => lord.menuId === 0);
+  assert.deepEqual(gladius.depthChanceWeights, { 1: 1000, 2: 800, 3: 650, 4: 500, 5: 500 });
+
+  // 永夜之王与救世旗手深度 1 权重 0 = 深度 1 打不到永夜形态
+  const everdark = data.nightlords.filter((lord) => lord.variantKey !== "normal");
+  assert.ok(everdark.length > 0);
+  for (const lord of everdark) {
+    assert.equal(lord.depthChanceWeights["1"], 0, `${lord.nameZh} 深度 1 不该出现`);
+  }
+  assert.ok(data.nightlords.filter((lord) => lord.variantKey === "normal")
+    .every((lord) => lord.depthChanceWeights["1"] > 0));
+});
+
+test("buildItems 带齐 schemaVersion 3 的展示字段", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  assert.equal(items.length, data.nightlords.length + data.nightBosses.length);
+  for (const item of items) {
+    assert.equal(typeof item.hidden, "boolean");
+    assert.equal(typeof item.noReward, "boolean");
+    assert.equal(typeof item.nameNote, "string");
+    assert.equal(typeof item.nameFallback, "string");
+    assert.equal(typeof item.nameSourceUrl, "string");
+    assert.ok(Array.isArray(item.nameBadges));
+  }
+  // hidden 的四组都带判据说明，展开区才有话可说
+  const hidden = items.filter((item) => item.hidden);
+  assert.equal(hidden.length, 4);
+  assert.ok(hidden.filter((item) => item.nameNote).length >= 3);
+  // 社区来源的组要把链接带出来
+  const storm = items.find((item) => item.uid === "nb:Storm King@7910");
+  assert.ok(storm.nameSourceUrl.startsWith("https://"));
+  // 夜王没有这些字段，一律给稳定的空值
+  const lord = items.find((item) => item.kind === "nightlord");
+  assert.deepEqual(lord.nameBadges, []);
+  assert.equal(lord.hidden, false);
+});
+
+test("深度覆盖：394 条数值行全有 depthStats，卡片一律判 all", () => {
+  const items = B.buildItems(data, Core.foldForSearch);
+  assert.equal(items.every((item) => B.depthCoverage(item) === "all"), true);
+  assert.equal(B.depthCoverage({ entries: [] }), "none");
+  assert.equal(B.depthCoverage({ entries: [{ depthStats: {} }, {}] }), "some");
+  assert.equal(B.depthCoverage({ entries: [{}, {}] }), "none");
 });

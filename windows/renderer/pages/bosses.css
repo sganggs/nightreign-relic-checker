@@ -65,7 +65,21 @@
   flex: 0 1 340px;
 }
 
-.bosses-deep {
+/* 「常规 / 深夜·深度 1…5」六选一，比布尔开关宽一些才放得下游戏文本。 */
+.bosses-mode {
+  flex: 0 0 auto;
+  min-width: 152px;
+}
+
+.bosses-mode.is-disabled {
+  opacity: .55;
+}
+
+.bosses-mode.is-disabled select {
+  cursor: not-allowed;
+}
+
+.bosses-hidden-switch {
   height: 38px;
   padding: 0 11px;
   border: 1px solid var(--border);
@@ -74,9 +88,29 @@
   font-size: 11px;
 }
 
-.bosses-deep.is-disabled {
-  opacity: .55;
-  cursor: not-allowed;
+/* 深夜 / 深度 / 变异个体的顶部说明：整段都是游戏内文本，正文用 pre-line 保留换行。 */
+.bosses-deep-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field-soft);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.bosses-deep-intro strong {
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.bosses-deep-intro span {
+  white-space: pre-line;
 }
 
 .bosses-count {
@@ -99,6 +133,12 @@
   flex-direction: column;
   gap: 9px;
   padding: 13px 15px 15px;
+}
+
+/* 隐藏实体（召唤物 / 投射物等非首领）：开关放出来之后也要一眼看出它不是常规首领。 */
+.bosses-card.is-hidden-entity {
+  border-style: dashed;
+  opacity: .88;
 }
 
 .bosses-card.is-expanded {
@@ -325,9 +365,37 @@
   line-height: 1.55;
 }
 
-/* 「该行没有深夜专属缩放」这类对照说明，语气要弱于真正有深夜数值的提示。 */
+/* 「该行无深夜数值」这类对照说明，语气要弱于真正有深夜数值的提示。 */
 .bosses-note--muted {
   color: var(--text-tertiary);
+}
+
+/* 折叠区开头那句结论（多人不是简单乘倍 / 只数不是概率），要比表格先被读到。 */
+.bosses-note--lead {
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field-soft);
+  font-size: 10.5px;
+}
+
+.bosses-note--lead strong {
+  color: var(--amber);
+}
+
+/* 卡片级的名称与收录说明（近似匹配依据、参考译名来历、隐藏判据）。 */
+.bosses-name-note {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field-soft);
+}
+
+.bosses-name-note .bosses-note {
+  word-break: break-word;
 }
 
 /* ------------------------------------------------------------------- 小表格 */
@@ -371,6 +439,10 @@
 .bosses-resist--immune strong { color: var(--purple-soft); }
 .bosses-resist--immune { background: var(--purple-faint); }
 
+/* 「深夜各深度」「出现权重」「变异只数」三张新表沿用小表格的字号与配色。 */
+.bosses-depth-table th[scope="row"],
+.bosses-depth-overview th[scope="row"],
+.bosses-mutation-tier-table th[scope="row"],
 .bosses-scaling-table th[scope="row"],
 .bosses-tier-table th[scope="row"] {
   color: var(--text-secondary);
@@ -387,16 +459,50 @@
   font-weight: 600;
 }
 
+.bosses-depth-table td,
+.bosses-depth-overview td,
+.bosses-chance-table td,
+.bosses-mutation-table td,
+.bosses-mutation-tier-table td,
 .bosses-scaling-table td,
 .bosses-tier-table td {
   color: var(--text);
   font: 10.5px Consolas, "Microsoft YaHei UI", monospace;
 }
 
+.bosses-depth-table tr.is-active td,
+.bosses-depth-table tr.is-active th,
 .bosses-scaling-table tr.is-active td,
 .bosses-scaling-table tr.is-active th {
   color: var(--purple-soft);
   background: var(--purple-faint);
+}
+
+/* 权重 0 / 变异只数 0：弱化显示，「该深度不会出现」要能一眼扫出来。 */
+.bosses-zero {
+  color: var(--text-tertiary);
+}
+
+/* 变异只数表左边两列是文字（地图 / 类别），不要等宽挤成一团。 */
+.bosses-mutation-table {
+  table-layout: auto;
+}
+
+.bosses-mutation-table td:first-child,
+.bosses-mutation-table td:nth-child(2) {
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 10px;
+  text-align: left;
+}
+
+.bosses-mutation-tier-table td:last-child,
+.bosses-depth-overview td {
+  font-size: 9.5px;
+}
+
+.bosses-mutation-field {
+  max-width: 320px;
 }
 
 .bosses-chips {
@@ -557,6 +663,7 @@
   .bosses-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .bosses-card-badges { max-width: 62%; }
   .bosses-group { flex: 0 1 300px; grid-template-columns: repeat(3, minmax(76px, 1fr)); }
+  .bosses-mode { min-width: 132px; }
   .bosses-entry { padding: 10px; }
   .bosses-mini-table th, .bosses-mini-table td { padding: 5px 2px; }
 }

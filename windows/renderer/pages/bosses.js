@@ -1,12 +1,17 @@
 // 首领数据页。页面模块契约见 renderer/pages/README.md。
 // 本文件由「首领数据」功能开发者独占：只改这里与 pages/bosses.css。
 //
-// 数据：ctx.getGameData("bosses") → resources/bosses.json（bossesSchemaVersion 2）。
+// 数据：ctx.getGameData("bosses") → resources/bosses.json（bossesSchemaVersion 3）。
 // 数值口径（务必与数据集说明一致）：
 //   · hp 已经含常驻缩放（= hpBase × hpMultiplier），多人血量 = hp × scaling.<duo|trio>.hp
+//   · 深夜深度 N 的血量直接用 depthStats[N].hp（已含常驻缩放 × 深夜修正 × 深度倍率），
+//     再乘人数缩放；有效韧性的分母换成 depthStats[N].poiseTakenBase
 //   · 有效韧性 = poise / (poiseTakenBase × scaling.<tier>.poiseTaken)
 //   · 削韧恢复 = poiseRecover × poiseRecoverMultiplier × scaling.<tier>.poiseRecover
 //   · 异常发动伤害 = ailmentDamageRateBase × scaling.<tier>.ailmentDamageRate
+//   · 敌人攻击力 = attackRateBase × scaling.<tier>.attackRate（深夜取 depthStats[N].attackRateBase）
+//   · 变异个体（游戏内正式叫法，社区俗称「红化」）的倍率 spCategory = 203，与常驻(0)/深度(0)/
+//     人数(140) 分类都不同 → 不互相覆盖，是在其它缩放**之上再乘一层**（按参数结构推断）
 //   · buildupRate 是 Boss 承受的异常累积量倍率（越小越难打出异常），resist 是累积阈值
 //   · nightBosses 的主键是 id；永夜之王等变体用 variantKey / variantNameZh
 (function (root) {
@@ -56,9 +61,21 @@
   var TIER_NO_SCALING = "无缩放档位";
 
   // 行内徽标 / 卡头计数的统一文案，两端逐字相同（macOS 端 BossFightRowView
-  // 与 BossCardView 用同样的三串）。
+  // 与 BossCardView 用同样的几串）。
   var BADGE_LABEL_UNCERTAIN = "标签为社区推测";
-  var BADGE_DEEP_ROW = "深夜数值";
+  var BADGE_MUTATION = "变异个体";
+  var BADGE_HIDDEN = "隐藏实体";
+
+  // 深夜 / 深度 / 变异个体的中文一律用游戏内文本（CL_MenuText 131150 / 131011 /
+  // 338806），数据集里放在 deepOfNightText。取不到时才用这里的兜底串。
+  var DEEP_TEXT_FALLBACK = {
+    deepOfNight: "深夜",
+    depth: "深度",
+    mutation: "变异个体"
+  };
+
+  // 深度只有 1–5 五档（ChaosMatchingRankControlParam 就 5 行）。
+  var DEPTHS = [1, 2, 3, 4, 5];
 
   // 分组名两端一致（macOS 端 BossCard.Group.title）：顶部筛选、卡头徽标都用它。
   // 行内的威胁档位徽标另用短名「守夜 / 野外」，与 macOS 的 threatTitle 对应。
@@ -86,6 +103,22 @@
     unknown: { text: "未知变体", kind: "gray" }
   };
 
+  // 名称来源徽标：前四档沿用上一版的文案，schemaVersion 3 新增的 community /
+  // community-npcname 合并成「社区资料」（名字或身份来自社区 roster，不是游戏文本）。
+  // 表里没有的取值（npcname / npcname-alias / npcparam-nameid…）说明名字直接来自
+  // 游戏文本，不挂徽标。
+  var NAME_SOURCE_BADGES = {
+    "english-only": "仅英文名",
+    "chrid-fallback": "无游戏内名称",
+    "manual": "名称手工补录",
+    "community": "社区资料",
+    "community-npcname": "社区资料"
+  };
+
+  var BADGE_NAME_INFERRED = "名称按 ID 推断";
+  var BADGE_NAME_APPROX = "近似匹配";
+  var BADGE_NAME_FALLBACK = "参考译名 · 非本作游戏文本";
+
   // -------------------------------------------------------------- 纯计算层
   // 以下函数不碰 DOM，windows/tests/bosses.test.mjs 直接 require 本文件测试。
 
@@ -93,6 +126,16 @@
     if (party === 2) return "duo";
     if (party === 3) return "trio";
     return null;
+  }
+
+  // 顶部「模式」下拉的取值：0 = 常规，1–5 = 深夜的对应深度。
+  // 其它一切（null / true / "3" / 9）都归一化，避免 depthStats["true"] 这种取法。
+  function depthValue(value) {
+    // 布尔要先排掉：Number(true) === 1 会让旧的「深夜」开关静悄悄变成「深度 1」。
+    if (value === true || value === false) return 0;
+    var number = Math.floor(Number(value));
+    if (!isFinite(number) || number < 1) return 0;
+    return number > 5 ? 5 : number;
   }
 
   // 档位分组的中文名。group 缺失（数据里的 4 个 group = null 档位）时写
@@ -123,6 +166,19 @@
     return count + " 条数值行";
   }
 
+  // 深夜模式的显示名，全部取游戏文本：「深夜 · 深度 3」。
+  function deepText(data, key) {
+    var table = data && data.deepOfNightText ? data.deepOfNightText : null;
+    var item = table ? table[key] : null;
+    var zh = item && item.zh ? String(item.zh) : "";
+    return zh || DEEP_TEXT_FALLBACK[key] || "";
+  }
+
+  function depthLabel(data, depth) {
+    if (!depth) return "常规";
+    return deepText(data, "deepOfNight") + " · " + deepText(data, "depth") + " " + depth;
+  }
+
   // 一条数值行的徽标文案（不含 DOM）：顺序即渲染顺序。
   function entryBadgeTexts(item, entry, stats) {
     var out = [];
@@ -131,7 +187,10 @@
       out.push(entry.threat === "night" ? "守夜" : "野外");
     }
     if (entry && entry.labelUncertain) out.push(BADGE_LABEL_UNCERTAIN);
-    if (stats && stats.isDeep) out.push(BADGE_DEEP_ROW);
+    // 只在这一行真的换了深度数值时挂徽标：没有 depthStats 的行在深度模式下显示的
+    // 仍是常规值，挂「深夜 N」会骗人（展开区另写「该行无深夜数值」）。
+    if (stats && stats.depth && stats.hasDepth) out.push("深夜 " + stats.depth);
+    if (stats && stats.hasMutation) out.push(BADGE_MUTATION);
     return out;
   }
 
@@ -149,18 +208,39 @@
     return isFinite(number) ? number : fallback;
   }
 
-  // 深夜模式下换用 deepOfNight 里的同一组数值；没有深夜专属缩放时回落到常规值。
-  function numbersFor(entry, deep) {
-    var deepNums = deep && entry && entry.deepOfNight ? entry.deepOfNight : null;
-    var source = deepNums || entry || {};
+  // 深度 N 的那一行 depthStats；depth = 0（常规）或该行没有深夜数值时为 null。
+  function depthStatsFor(entry, depth) {
+    var level = depthValue(depth);
+    if (!level) return null;
+    var table = entry && entry.depthStats;
+    if (!table || typeof table !== "object") return null;
+    return table[String(level)] || null;
+  }
+
+  // 深度模式下换用 depthStats[N] 的那一组数值。
+  // depthStats 只给 hp / hpMultiplier / poiseTakenBase / attackRateBase（已含
+  // 常驻缩放 × 深夜修正 × 深度倍率），削韧恢复与异常发动伤害没有深度专属字段，
+  // 仍从 deepOfNight（深夜修正，非 null 时）取，没有就用常规值。
+  function numbersFor(entry, depth) {
+    var level = depthValue(depth);
+    var depthRow = depthStatsFor(entry, level);
+    var deepNums = level && entry && entry.deepOfNight ? entry.deepOfNight : null;
+    var soft = deepNums || entry || {};
+    var hard = depthRow || soft;
     return {
-      isDeep: Boolean(deepNums),
-      hp: numberOr(source.hp, 0),
-      hpMultiplier: numberOr(source.hpMultiplier, 1),
-      poiseTakenBase: numberOr(source.poiseTakenBase, 1),
-      poiseRecoverMultiplier: numberOr(source.poiseRecoverMultiplier, 1),
-      ailmentDamageRateBase: numberOr(source.ailmentDamageRateBase, 0),
-      permScalingIds: Array.isArray(source.permScalingIds) ? source.permScalingIds : []
+      depth: level,
+      // 本行在当前模式下是否真的换了数值：深度模式且查得到 depthStats。
+      hasDepth: Boolean(depthRow),
+      // 该行有没有「深夜专属修正」（2287 条件效果），与深度无关。
+      isDeep: Boolean(entry && entry.deepOfNight),
+      hp: numberOr(hard.hp, 0),
+      hpMultiplier: numberOr(hard.hpMultiplier, 1),
+      poiseTakenBase: numberOr(hard.poiseTakenBase, 1),
+      attackRateBase: numberOr(hard.attackRateBase, numberOr(entry && entry.attackRateBase, 1)),
+      poiseRecoverMultiplier: numberOr(soft.poiseRecoverMultiplier, 1),
+      ailmentDamageRateBase: numberOr(soft.ailmentDamageRateBase, 0),
+      permScalingIds: Array.isArray(soft.permScalingIds) ? soft.permScalingIds : [],
+      depthSpEffectId: depthRow && depthRow.depthSpEffectId !== undefined ? depthRow.depthSpEffectId : null
     };
   }
 
@@ -171,15 +251,31 @@
     return scaling && scaling[key] ? scaling[key] : null;
   }
 
-  // 一条 fight / variant 在给定人数、深夜开关下的最终数值。
-  function computeStats(entry, party, deep) {
-    var nums = numbersFor(entry, deep);
+  // 某个变异档位（mutations[id]）。id 为空 / 查不到时返回 null，页面按「无」处理。
+  function mutationFor(data, id) {
+    if (id === null || id === undefined || id === "") return null;
+    var table = data && data.mutations && typeof data.mutations === "object" ? data.mutations : null;
+    if (!table) return null;
+    return table[String(id)] || null;
+  }
+
+  // 一条 fight / variant 在给定人数、深度、变异档位下的最终数值。
+  // 四层缩放互不覆盖，一律连乘：常驻(已在 hp 里) × 深度 × 人数 × 变异。
+  function computeStats(entry, party, depth, mutation) {
+    var nums = numbersFor(entry, depth);
     var tier = scalingFor(entry, party);
     var hpMul = tier ? numberOr(tier.hp, 1) : 1;
     var poiseTakenMul = tier ? numberOr(tier.poiseTaken, 1) : 1;
     var poiseRecoverMul = tier ? numberOr(tier.poiseRecover, 1) : 1;
     var buildupMul = tier ? numberOr(tier.buildupRate, 1) : 1;
     var ailmentMul = tier ? numberOr(tier.ailmentDamageRate, 1) : 1;
+    // 人数缩放的攻击力倍率：只有 7744 / 7753 / 7754 / 7758 四档不是 1
+    //（双人 ×1.1、三人 ×1.2，见 notes.multiplayerScalingAudit）。
+    var attackMul = tier ? numberOr(tier.attackRate, 1) : 1;
+    var mut = mutation && typeof mutation === "object" ? mutation : null;
+    var mutHp = mut ? numberOr(mut.hp, 1) : 1;
+    var mutAttack = mut ? numberOr(mut.attackRate, 1) : 1;
+    var mutRune = mut ? numberOr(mut.runeRate, 1) : 1;
     var poiseTakenTotal = nums.poiseTakenBase * poiseTakenMul;
     var poise = Number(entry && entry.poise);
     // poise < 0（数据集 caveat 3：一般是子弹/投射物实体）= 不吃削韧；
@@ -187,14 +283,16 @@
     var poiseKind = !isFinite(poise) || poise < 0 ? "none" : (poise === 0 ? "zero" : "value");
     var noPoise = poiseKind !== "value";
     // 分母必须是正的有限数，否则算不出有效韧性（口径与 macOS 端
-    // BossFight.effectivePoise(for:deepOfNight:) 的 `factor > 0, factor.isFinite` 一致）。
+    // BossFight.effectivePoise(for:depth:) 的 `factor > 0, factor.isFinite` 一致）。
     var poiseTakenOk = isFinite(poiseTakenTotal) && poiseTakenTotal > 0;
     return {
+      depth: nums.depth,
+      hasDepth: nums.hasDepth,
       isDeep: nums.isDeep,
       tier: tier,
       tierKey: tierKey(party),
-      hp: Math.round(nums.hp * hpMul),
-      hpSingle: nums.hp,
+      hp: Math.round(nums.hp * hpMul * mutHp),
+      hpSingle: Math.round(nums.hp * mutHp),
       hpBase: Number(entry && entry.hpBase) || 0,
       hpMultiplier: nums.hpMultiplier,
       poise: noPoise ? null : poise,
@@ -209,8 +307,35 @@
       ailmentDamageRate: nums.ailmentDamageRateBase * ailmentMul,
       buildupRate: buildupMul,
       poisonRate: tier ? numberOr(tier.poisonRate, 1) : 1,
-      permScalingIds: nums.permScalingIds
+      attackRate: nums.attackRateBase * attackMul * mutAttack,
+      attackRateBase: nums.attackRateBase,
+      partyAttackRate: attackMul,
+      hasMutation: Boolean(mut),
+      mutationHp: mutHp,
+      mutationAttack: mutAttack,
+      runeRate: mutRune,
+      permScalingIds: nums.permScalingIds,
+      depthSpEffectId: nums.depthSpEffectId
     };
+  }
+
+  // 展开态「深夜各深度」小表的五行：血量 / 攻击倍率 / 承受削韧，都按当前人数
+  //（与当前选中的变异档位）换算。没有 depthStats 的行返回 null，页面写
+  //「该行无深夜数值」。
+  function depthRows(entry, party, mutation) {
+    if (!entry || !entry.depthStats || typeof entry.depthStats !== "object") return null;
+    var rows = [];
+    DEPTHS.forEach(function (depth) {
+      if (!entry.depthStats[String(depth)]) return;
+      var stats = computeStats(entry, party, depth, mutation);
+      rows.push({
+        depth: depth,
+        hp: stats.hp,
+        attackRate: stats.attackRate,
+        poiseTaken: stats.poiseTakenTotal
+      });
+    });
+    return rows.length ? rows : null;
   }
 
   // 承伤倍率：> 1 多吃伤害（弱点），< 1 抗性，= 1 正常。
@@ -231,35 +356,71 @@
     return Number(value) >= 999;
   }
 
-  // 名字缺失（english-only / chrid-fallback）时的显示口径。
-  function displayName(boss) {
-    var zh = boss && boss.nameZh ? String(boss.nameZh) : "";
-    var en = boss && boss.nameEn ? String(boss.nameEn) : "";
-    var source = boss && boss.nameSource ? String(boss.nameSource) : "";
-    if (zh) {
-      return {
-        primary: zh,
-        secondary: en && en !== zh ? en : "",
-        fallback: source === "chrid-fallback",
-        inferred: Boolean(boss && boss.nameInferred)
-      };
-    }
-    return {
-      primary: en || "未知敌人",
-      secondary: "",
-      fallback: true,
-      inferred: Boolean(boss && boss.nameInferred)
-    };
+  // 字符串化：null / undefined 一律给空串。名字相关字段在数据里可能缺，
+  // 页面又要拿它们判空，不能让 "undefined" 渲染出去。
+  // 叫 asText 而不是 text：本文件里好几处把局部变量 / 参数命名成 text，重名会踩坑。
+  function asText(value) {
+    return value === null || value === undefined ? "" : String(value);
   }
 
-  function nameBadge(info, nameSource) {
-    if (info.fallback) {
-      if (nameSource === "english-only") return { text: "仅英文名", kind: "gray" };
-      return { text: "无游戏内名称", kind: "gray" };
+  // 名字的显示口径（schemaVersion 3）：
+  //   nameZh 非空            → 主标题 nameZh，副标题 nameEn；
+  //   nameZh 空、有 nameEn   → 主标题 nameEn，副标题 nameZhFallback（旧手工译名）；
+  //   只剩 nameZhFallback    → 主标题就用它；
+  //   三者都没有             → 才轮到「未知敌人 cXXXX」。
+  // 关键点：「未知敌人」不再由页面顶掉英文名。数据里 chrid-fallback 的两组本来就把
+  // 「未知敌人 c7931」写在 nameZh 里，走第一支；页面只在真的一个名字都没有时自己拼。
+  function displayName(boss) {
+    var zh = asText(boss && boss.nameZh);
+    var en = asText(boss && boss.nameEn);
+    var fallback = asText(boss && boss.nameZhFallback);
+    var chrIds = boss && Array.isArray(boss.chrIds) ? boss.chrIds : [];
+    var source = asText(boss && boss.nameSource);
+    var info = {
+      primary: "",
+      secondary: "",
+      // usesFallback：副标题（或主标题）用的是 nameZhFallback，要挂「参考译名」徽标。
+      usesFallback: false,
+      // fallbackName：无论有没有用上，都保留原串给搜索索引与展开区说明。
+      fallbackName: fallback,
+      // gameTextName：名字直接来自本作游戏文本（nameZh 非空且不是 chrid 兜底）。
+      gameTextName: Boolean(zh) && source !== "chrid-fallback",
+      approx: Boolean(boss && boss.nameApprox),
+      inferred: Boolean(boss && boss.nameInferred),
+      unknown: false
+    };
+    if (zh) {
+      info.primary = zh;
+      info.secondary = en && en !== zh ? en : "";
+      return info;
     }
-    if (nameSource === "manual") return { text: "名称手工补录", kind: "gray" };
-    if (info.inferred) return { text: "名称按 ID 推断", kind: "gray" };
-    return null;
+    if (en) {
+      info.primary = en;
+      info.secondary = fallback;
+      info.usesFallback = Boolean(fallback);
+      return info;
+    }
+    if (fallback) {
+      info.primary = fallback;
+      info.usesFallback = true;
+      return info;
+    }
+    info.primary = chrIds.length ? "未知敌人 c" + chrIds[0] : "未知敌人";
+    info.unknown = true;
+    return info;
+  }
+
+  // 名字相关徽标（顺序即渲染顺序）。全部灰色：它们说明「这名字的可信度」，
+  // 不是首领属性，不能和分组 / 变体徽标抢颜色。
+  function nameBadges(info, boss) {
+    var out = [];
+    var source = asText(boss && boss.nameSource);
+    var sourceText = NAME_SOURCE_BADGES[source];
+    if (sourceText) out.push({ text: sourceText, kind: "gray" });
+    else if (info.inferred) out.push({ text: BADGE_NAME_INFERRED, kind: "gray" });
+    if (info.approx) out.push({ text: BADGE_NAME_APPROX, kind: "gray" });
+    if (info.usesFallback) out.push({ text: BADGE_NAME_FALLBACK, kind: "gray" });
+    return out;
   }
 
   function entryLabel(entry, index) {
@@ -269,10 +430,19 @@
     return "变体 " + (index + 1);
   }
 
-  // 某个分组下参与「代表行」评选的候选行。两步过滤，任一步没有候选就原样放行：
+  // 某个分组下参与「代表行」评选的候选行。三步过滤，任一步没有候选就原样放行：
   //   1. 守夜 / 野外分组先按 threat 过滤——同一组首领可能两种档位都有（数据里 6 组），
   //      在「野外」分组下就该看野外那几行，而不是血量更高的守夜行；
-  //   2. 再收敛到 isMain（夜王的主战行**不唯一**，多阶段 / 多体有 2～5 条）。
+  //   2. 再收敛到 isMain（夜王的主战行**不唯一**，多阶段 / 多体有 2～5 条）；
+  //   3. 最后排除 noReward = true 的行（整组都 noReward 就不排除）。
+  //
+  // 第 3 步的位置是两端约定好的：**必须在 isMain 之后**。夜王的主战行几乎都是
+  // noReward = true（奖励挂在远征结算上，不在 NpcParam 的 getSoul/掉落表里），
+  // 把这一步提到 isMain 之前会把整组主战行踢掉——玛利斯的代表行会从 12,687 掉到
+  // 3,045、格拉狄乌斯会从 npcId 75000020 变成 75000000。放在 isMain 之后，18 位
+  // 夜王的代表行一条不变，只修掉真正抢位的模板/无奖励行：恶兆妖鬼的「教程」行
+  //（21300520，hp 9920）→ 21300030、神皮使徒守夜的「基准」行（35600900）→
+  // 35600110、火焰战车的「血条实体」（44600015，hp 8009）→ 44600010 等 16 组。
   function candidateEntries(entries, group) {
     var pool = Array.isArray(entries) ? entries.filter(Boolean) : [];
     if (group === "night" || group === "field") {
@@ -280,11 +450,13 @@
       if (byThreat.length) pool = byThreat;
     }
     var mains = pool.filter(function (entry) { return entry.isMain; });
-    return mains.length ? mains : pool;
+    if (mains.length) pool = mains;
+    var rewarding = pool.filter(function (entry) { return !entry.noReward; });
+    return rewarding.length ? rewarding : pool;
   }
 
-  // 候选行里血量最高的一条（同血量取 npcId 较小者）。排序用 1 人基准血量，
-  // 与当前人数 / 深夜开关无关，保证头条行不会跟着设置跳。
+  // 候选行里血量最高的一条（同血量取 npcId 较小者）。排序用 1 人常规血量，
+  // 与当前人数 / 深度 / 变异设置无关，保证头条行不会跟着设置跳。
   function representativeEntry(entries, group) {
     var pool = candidateEntries(entries, group);
     var best = null;
@@ -365,13 +537,25 @@
     return out;
   }
 
-  // 整张卡片的深夜覆盖情况：all = 每条数值行都有深夜专属缩放，some = 部分行有，none = 都没有。
-  // 只看代表行会把「格诺斯塔·永夜之王」这类首条 isMain 无深夜值、其余行有的卡片判错。
+  // 整张卡片的「深夜专属修正」覆盖情况：all = 每条数值行都有 deepOfNight，
+  // some = 部分行有，none = 都没有。深度倍率（depthStats）几乎每行都有，
+  // 所以这里说的是 2287 条件效果那一层，展开区的说明按它写。
   function deepCoverage(item) {
     var entries = item && Array.isArray(item.entries) ? item.entries : [];
     if (!entries.length) return "none";
     var hit = 0;
     entries.forEach(function (entry) { if (entry && entry.deepOfNight) hit += 1; });
+    if (!hit) return "none";
+    return hit === entries.length ? "all" : "some";
+  }
+
+  // 整张卡片有没有深度数值（depthStats）。一条都没有的卡在深度模式下
+  // 要直说「该行无深夜数值」，不能默默显示常规值。
+  function depthCoverage(item) {
+    var entries = item && Array.isArray(item.entries) ? item.entries : [];
+    if (!entries.length) return "none";
+    var hit = 0;
+    entries.forEach(function (entry) { if (entry && entry.depthStats) hit += 1; });
     if (!hit) return "none";
     return hit === entries.length ? "all" : "some";
   }
@@ -395,7 +579,17 @@
         expedition: lord.expeditionZh || lord.expeditionEn || "",
         variantName: lord.variantNameZh || "",
         variantPill: lord.variantKey && lord.variantKey !== "normal" ? variant : null,
-        nameBadge: null,
+        nameBadges: [],
+        nameNote: "",
+        nameEvidence: null,
+        nameFallback: "",
+        nameFallbackNote: "",
+        nameSourceUrl: "",
+        hidden: false,
+        noReward: false,
+        depthChanceWeights: lord.depthChanceWeights && typeof lord.depthChanceWeights === "object"
+          ? lord.depthChanceWeights
+          : null,
         weakness: Array.isArray(lord.weakness) ? lord.weakness : [],
         description: lord.descriptionZh || "",
         entries: entries,
@@ -427,7 +621,19 @@
         expedition: "",
         variantName: "",
         variantPill: null,
-        nameBadge: nameBadge(info, boss.nameSource),
+        nameBadges: nameBadges(info, boss),
+        nameNote: asText(boss.nameNote),
+        nameEvidence: boss.nameEvidence && typeof boss.nameEvidence === "object" ? boss.nameEvidence : null,
+        nameFallback: info.fallbackName,
+        nameFallbackNote: asText(boss.nameZhFallbackNote),
+        nameSourceUrl: asText(boss.nameSourceUrl),
+        // hidden：整组不掉奖励且（不吃削韧 ∪ 名字连社区都认不出 ∪ 社区标为杂兵）的
+        // 召唤物 / 投射物实体。默认不显示，由工具条的「显示隐藏实体」开关放出来。
+        hidden: Boolean(boss.hidden),
+        // noReward 只作展开区小字，不影响显示：Storm King / 蚯蚓脸这类也不掉奖励，
+        // 但它们是玩家真会遇到的首领。
+        noReward: Boolean(boss.noReward),
+        depthChanceWeights: null,
         // weakness 只存在于 NightBossMenuParam（数据集 caveat 8），守夜 / 野外 Boss 根本没有这个字段。
         // 这里必须是 null（= 没有官方标注）而不是 []（= 官方标注为空），否则页面会凭空给出否定结论。
         weakness: null,
@@ -436,10 +642,12 @@
         // 卡片自身主分组下的代表行；渲染时按当前分组重新取（见 representativeEntry）。
         main: representativeEntry(entries, groups[0]),
         idText: "chr " + (Array.isArray(boss.chrIds) ? boss.chrIds.join(" / ") : "?"),
-        // nameSource 是内部枚举（npcname / manual / chrid-fallback…），不进全文搜索串；
+        // nameSource 是内部枚举（npcname / community / chrid-fallback…），不进全文搜索串；
         // chrId / npcId 这类行号进 numbers，按前缀匹配。
+        // nameZhFallback 必须进搜索串：schemaVersion 3 把「大型黄金河马」这类旧译名
+        // 移出了 nameZh，不收进索引的话用户搜「河马」就再也搜不到这张卡。
         search: folder(joinSearch([
-          boss.nameZh, boss.nameEn
+          boss.nameZh, boss.nameEn, boss.nameZhFallback
         ].concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); })))),
         numbers: numberKeys(
           entryNumbers(entries)
@@ -467,21 +675,23 @@
     return item.search.indexOf(needle) !== -1;
   }
 
-  function filterItems(items, group, query, fold) {
+  // showHidden 缺省为 false：hidden = true 的组（召唤物 / 投射物等非首领实体）默认不出现。
+  function filterItems(items, group, query, fold, showHidden) {
     var folder = typeof fold === "function" ? fold : defaultFold;
     var needle = folder(String(query == null ? "" : query).trim());
     return items.filter(function (item) {
+      if (!showHidden && item.hidden) return false;
       if (group && !itemInGroup(item, group)) return false;
       return itemMatches(item, needle);
     });
   }
 
-  // 数据集里是否存在深夜专属数值；没有的话顶部「深夜」开关禁用。
-  function hasDeepData(data) {
+  // 数据集里是否存在深度数值；没有的话顶部「模式」下拉只留「常规」。
+  function hasDepthData(data) {
     if (!data) return false;
     var found = false;
     var scan = function (entries) {
-      (entries || []).forEach(function (entry) { if (entry && entry.deepOfNight) found = true; });
+      (entries || []).forEach(function (entry) { if (entry && entry.depthStats) found = true; });
     };
     (Array.isArray(data.nightlords) ? data.nightlords : []).forEach(function (lord) { scan(lord.fights); });
     (Array.isArray(data.nightBosses) ? data.nightBosses : []).forEach(function (boss) { scan(boss.variants); });
@@ -514,6 +724,17 @@
     return "×" + fmtNumber(value, digits === undefined ? 3 : digits);
   }
 
+  // 人数缩放明细表里的「攻击力」列：绝大多数档位是 1，写「不变」比写「×1」
+  // 更直接地回答用户的问题「多人是不是只是血更厚」。
+  function fmtAttackRate(value) {
+    // 与 fmtMul 同一条缺值口径：null / undefined / 空串都是「没有这个数」，
+    // 不能走 Number(null) === 0 那条路写成「×0」。
+    if (value === null || value === undefined || value === "") return "—";
+    var number = Number(value);
+    if (!isFinite(number)) return "—";
+    return number === 1 ? "不变" : fmtMul(number, 3);
+  }
+
   // kind 来自 computeStats().poiseKind，与 macOS 端 BossPoiseKind.placeholder 同表：
   //   none = poise < 0（不吃削韧）、zero = poise === 0（没有削韧槽）、
   //   value = poise > 0 但承受削韧倍率为 0 / 非有限（数据异常）——此时不能写
@@ -529,11 +750,10 @@
 
   // 展开态「有效韧性」下面的小字，四支全部与 macOS 端
   // BossRowText.poiseCaption(poise:poiseTakenTotal:kind:hasEffectivePoise:) 逐字一致：
-  //   能算出有效韧性 → 「韧性 120 ÷ 承受削韧 0.55」（此前 Windows 写「承受削韧 ×0.55」）；
-  //   poise < 0       → 「superArmorDurability = -1」（此前 Windows 空白）；
-  //   poise = 0       → 「superArmorDurability = 0，该实体没有削韧槽」（此前 Windows 空白）；
+  //   能算出有效韧性 → 「韧性 120 ÷ 承受削韧 0.55」；
+  //   poise < 0       → 「superArmorDurability = -1」；
+  //   poise = 0       → 「superArmorDurability = 0，该实体没有削韧槽」；
   //   倍率异常        → 「承受削韧倍率异常（N）」。
-  // 上一轮只统一了最后一支，另外三支仍是两套说法。
   function poiseCaption(stats) {
     if (stats.effectivePoise !== null) {
       return "韧性 " + fmtNumber(stats.poiseRaw, 0) + " ÷ 承受削韧 " + fmtNumber(stats.poiseTakenTotal, 3);
@@ -543,16 +763,27 @@
     return "承受削韧倍率异常（" + fmtNumber(stats.poiseTakenTotal, 3) + "）";
   }
 
+  // 变异档位下拉的一行文案：三个倍率都写出来，用户不用去底部对表。
+  function mutationOptionLabel(id, mutation) {
+    if (!mutation) return "档位 " + id;
+    return "血量 " + fmtMul(mutation.hp, 3) + " · 攻击 " + fmtMul(mutation.attackRate, 3) +
+      " · 卢恩 " + fmtMul(mutation.runeRate, 3) + "（档位 " + id + "）";
+  }
+
   // ------------------------------------------------------------ 页面状态
 
   var state = {
     party: 1,
     group: "nightlords",
     query: "",
-    deep: false,
+    // 0 = 常规，1–5 = 深夜的深度。原来的布尔开关已经换成这个下拉。
+    depth: 0,
+    showHidden: false,
+    // 每条数值行各自选中的变异档位：key = "<卡片 uid>#<npcId>"，value = 档位 id 字符串。
+    mutation: {},
     data: null,
     items: [],
-    hasDeep: false,
+    hasDepth: false,
     expanded: {},
     loaded: false
   };
@@ -584,6 +815,19 @@
     return defaultFold(value);
   }
 
+  function entryKey(item, entry) {
+    return item.uid + "#" + String(entry && entry.npcId);
+  }
+
+  function selectedMutation(item, entry) {
+    var id = state.mutation[entryKey(item, entry)];
+    return mutationFor(state.data, id);
+  }
+
+  function statsFor(item, entry) {
+    return computeStats(entry, state.party, state.depth, selectedMutation(item, entry));
+  }
+
   // ------------------------------------------------------------ 模板：外壳
 
   function partyControl() {
@@ -604,12 +848,44 @@
     }).join("");
   }
 
+  // 「常规 / 深夜·深度 1…5」六选一。深度差别大（最终 Boss 档深度 5 的伤害是深度 1
+  // 的 2.27 倍），布尔开关表达不了，所以换成下拉。
+  function depthControl() {
+    var options = ["<option value='0'" + (state.depth === 0 ? " selected" : "") + ">常规</option>"];
+    if (state.hasDepth) {
+      DEPTHS.forEach(function (depth) {
+        options.push("<option value='" + depth + "'" + (state.depth === depth ? " selected" : "") + ">" +
+          esc(depthLabel(state.data, depth)) + "</option>");
+      });
+    }
+    return "<label class='select-field bosses-mode'><span class='sr-only'>深夜模式</span>" +
+      "<select data-bosses-depth data-testid='bosses-depth'" + (state.hasDepth ? "" : " disabled") + ">" +
+      options.join("") + "</select></label>";
+  }
+
+  // 顶部说明一律用游戏内文本（CL_MenuText）。「变异个体」是红化敌人的官方简中叫法，
+  // 这里连同 textId 一起写出来，免得用户以为是页面自造词。
+  function depthIntro() {
+    var data = state.data;
+    if (!data || !data.deepOfNightText) return "";
+    var table = data.deepOfNightText;
+    var desc = table.description && table.description.zh ? String(table.description.zh) : "";
+    var lead = state.depth
+      ? depthLabel(data, state.depth) + "：当前所有数值已按该深度换算。"
+      : "常规模式。切到「" + deepText(data, "deepOfNight") + "」可看各" + deepText(data, "depth") + "的数值。";
+    var mutation = "红化敌人在游戏内的正式名称是「" + BADGE_MUTATION + "」（CL_MenuText " +
+      (table.mutation && table.mutation.textId ? table.mutation.textId : "338806") + "）。";
+    return "<p class='bosses-deep-intro' data-testid='bosses-deep-intro'>" +
+      "<strong>" + esc(lead) + "</strong>" + (desc ? "<span>" + esc(desc) + "</span>" : "") +
+      "<span>" + esc(mutation) + "</span></p>";
+  }
+
   function shell() {
     return "" +
       "<div class='page-content bosses-content'>" +
       "<header class='title-block page-title'>" +
       "<div class='logo-mark logo-mark--medium' aria-hidden='true'><i></i><i></i><i></i><span>✓</span></div>" +
-      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性与人数缩放</p></div>" +
+      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
       "</header>" +
       "<section class='card bosses-toolbar' data-testid='bosses-toolbar'>" +
       "<div class='bosses-toolbar-row'>" +
@@ -618,16 +894,20 @@
       partyControl() + "</div></div>" +
       "<div class='bosses-control bosses-control--grow'><span class='bosses-control-label'>搜索</span>" +
       "<label class='search-field'><span aria-hidden='true'>⌕</span>" +
-      "<input type='search' placeholder='搜索首领名、远征名、变体标签，或输入 npcId / chrId 前缀' autocomplete='off' data-testid='bosses-search'></label></div>" +
-      "<div class='bosses-control'><span class='bosses-control-label'>深夜</span>" +
-      "<label class='switch-control bosses-deep'><input type='checkbox' data-testid='bosses-deep'>" +
-      "<span class='switch-track'></span><span data-testid='bosses-deep-label'>深夜数值</span></label></div>" +
+      "<input type='search' placeholder='搜索首领名、参考译名、远征名、变体标签，或输入 npcId / chrId 前缀' autocomplete='off' data-testid='bosses-search'></label></div>" +
+      "<div class='bosses-control'><span class='bosses-control-label'>模式</span>" +
+      depthControl() + "</div>" +
+      "<div class='bosses-control'><span class='bosses-control-label'>隐藏实体</span>" +
+      "<label class='switch-control bosses-hidden-switch' title='召唤物 / 投射物等非首领实体：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵。默认不显示。'>" +
+      "<input type='checkbox' data-testid='bosses-hidden'>" +
+      "<span class='switch-track'></span><span>显示隐藏实体</span></label></div>" +
       "</div>" +
       "<div class='bosses-toolbar-row bosses-toolbar-row--tabs'>" +
       "<div class='segmented-control bosses-group' role='radiogroup' aria-label='首领分组' data-testid='bosses-group'>" +
       groupControl() + "</div>" +
       "<span class='bosses-count' data-testid='bosses-count'>—</span>" +
       "</div>" +
+      "<div data-testid='bosses-intro'>" + depthIntro() + "</div>" +
       "</section>" +
       "<div class='bosses-list' data-testid='bosses-list'></div>" +
       "<div class='empty-state bosses-empty' data-testid='bosses-empty' hidden>" +
@@ -641,7 +921,7 @@
       "<div class='page-content bosses-content'>" +
       "<header class='title-block page-title'>" +
       "<div class='logo-mark logo-mark--medium' aria-hidden='true'><i></i><i></i><i></i><span>✓</span></div>" +
-      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性与人数缩放</p></div>" +
+      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
       "</header>" +
       "<article class='card page-placeholder-card' data-testid='bosses-card'>" +
       "<div class='section-heading'><div class='section-icon'>✸</div>" +
@@ -707,13 +987,21 @@
         badges.push(pill(GROUP_TITLES[group] || group, group === "night" ? "blue" : "green"));
       });
     }
-    if (item.nameBadge) badges.push(pill(item.nameBadge.text, item.nameBadge.kind));
-    if (state.deep) {
-      // 只给真有深夜专属数值的卡片挂徽标：大多数卡片深夜与常规相同，
-      // 逐张挂灰徽标纯属噪音，还会把名称徽标挤到第二行。整体数量写在顶部计数里。
-      var coverage = deepCoverage(item);
-      if (coverage === "all") badges.push(pill("深夜数值", "amber"));
+    (item.nameBadges || []).forEach(function (badge) {
+      badges.push(pill(badge.text, badge.kind));
+    });
+    if (item.hidden) badges.push(pill(BADGE_HIDDEN, "gray"));
+    if (state.depth) {
+      // 深度模式下只给真有 depthStats 的卡片挂徽标；一条都没有的卡另在展开区写明。
+      var coverage = depthCoverage(item);
+      if (coverage === "all") badges.push(pill(deepText(state.data, "depth") + " " + state.depth, "amber"));
       else if (coverage === "some") badges.push(pill("部分行有深夜数值", "amber"));
+      // 另有一层「深夜专属修正」（2287 条件效果，22 张卡有）：它把永夜之王 / DLC 的
+      // 常驻加成在深夜里压回去，数值已经含在 depthStats 里，但值得标出来。
+      // 只看代表行会把格诺斯塔·永夜之王这类首条无深夜修正、其余行有的卡片判错，所以扫全卡。
+      var deep = deepCoverage(item);
+      if (deep === "all") badges.push(pill("含深夜专属修正", "amber"));
+      else if (deep === "some") badges.push(pill("部分行有深夜专属修正", "amber"));
     }
     return badges.join("");
   }
@@ -743,7 +1031,7 @@
     if (ambiguous && pool.length > 1) {
       var list = pool.map(function (row) {
         return entryLabel(row, item.entries.indexOf(row)) + " " +
-          fmtInt(computeStats(row, state.party, state.deep).hp);
+          fmtInt(computeStats(row, state.party, state.depth, null).hp);
       }).join(" · ");
       var lead = item.kind === "nightlord"
         ? pool.length + " 条主战行，上方取血量最高的一条："
@@ -762,23 +1050,33 @@
     return mainRows(item.entries).length > 1 ? "主战血量 · 最高" : "主战血量";
   }
 
-  // 深夜开着、但代表行没有深夜专属缩放时（卡头徽标写「部分行有深夜数值」的那几张），
-  // 要在血量下面直说这一行回落到了常规值，否则摘要与徽标看着像在互相打架。
+  // 深度模式下代表行没有 depthStats 时要直说这一行回落到了常规值，
+  // 否则摘要与卡头徽标看着像在互相打架。
   function summaryHpHint(stats) {
-    if (state.deep) {
-      if (!stats.isDeep) return "该行深夜同常规";
-      return state.party === 1 ? "深夜数值" : "深夜 1 人 " + fmtInt(stats.hpSingle);
+    if (state.depth) {
+      if (!stats.hasDepth) return "该行无深夜数值";
+      return state.party === 1 ? "含深度倍率" : "深度 1 人 " + fmtInt(stats.hpSingle);
     }
     return state.party === 1 ? "含常驻缩放" : "1 人 " + fmtInt(stats.hpSingle);
   }
 
+  // 多人时敌人攻击力也会上浮的四个档位（7744 / 7753 / 7754 / 7758），
+  // 在血量旁边直接标出来——「多人只是血更厚」这个常见误解正是这里错的。
+  function partyAttackNote(stats) {
+    if (!stats.tier || !(stats.partyAttackRate > 1)) return "";
+    return "<div class='bosses-stat-caption bosses-stat-caption--warn'>" +
+      esc("多人攻击 " + fmtMul(stats.partyAttackRate, 3) + "：该档位在 " + partyLabel() +
+        "时敌人攻击力也会上浮，不只是血条变长。") + "</div>";
+  }
+
   function cardSummary(item, entry) {
     if (!entry) return "<p class='bosses-none'>该首领没有可用的数值行。</p>";
-    var stats = computeStats(entry, state.party, state.deep);
-    return summaryCaption(item, entry) + "<div class='bosses-stat-row'>" +
+    var stats = computeStats(entry, state.party, state.depth, null);
+    return summaryCaption(item, entry) + partyAttackNote(stats) + "<div class='bosses-stat-row'>" +
       statCell(hpMetricTitle(item) + "（" + partyLabel() + "）", fmtInt(stats.hp), summaryHpHint(stats)) +
       statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), stats.effectivePoise === null ? "" : "韧性槽 " + fmtNumber(stats.poise, 0)) +
-      statCell("削韧恢复", fmtNumber(stats.poiseRecover, 3), "每秒") +
+      statCell("攻击力倍率", fmtMul(stats.attackRate, 3),
+        stats.depth && stats.hasDepth ? "深度 " + stats.depth : "常驻") +
       "</div>";
   }
 
@@ -821,11 +1119,12 @@
       var active = tierKey(state.party) === row.key;
       if (!tier) {
         return "<tr" + (active ? " class='is-active'" : "") + "><th scope='row'>" + esc(row.label) +
-          "</th><td colspan='5' class='bosses-none'>无缩放数据</td></tr>";
+          "</th><td colspan='6' class='bosses-none'>无缩放数据</td></tr>";
       }
       return "<tr" + (active ? " class='is-active'" : "") + ">" +
         "<th scope='row'>" + esc(row.label) + "</th>" +
         "<td>" + esc(fmtMul(tier.hp)) + "</td>" +
+        "<td>" + esc(fmtAttackRate(tier.attackRate)) + "</td>" +
         "<td>" + esc(fmtMul(tier.poiseTaken)) + "</td>" +
         "<td>" + esc(fmtMul(tier.poiseRecover)) + "</td>" +
         "<td>" + esc(fmtMul(tier.buildupRate)) + "</td>" +
@@ -833,9 +1132,61 @@
         "</tr>";
     }).join("");
     return "<table class='bosses-mini-table bosses-scaling-table'>" +
-      "<thead><tr><th scope='col'>人数</th><th scope='col'>血量</th><th scope='col'>承受削韧</th>" +
-      "<th scope='col'>削韧恢复</th><th scope='col'>异常累积</th><th scope='col'>异常发动伤害</th></tr></thead>" +
+      "<thead><tr><th scope='col'>人数</th><th scope='col'>血量</th><th scope='col'>攻击力</th>" +
+      "<th scope='col'>承受削韧</th><th scope='col'>削韧恢复</th><th scope='col'>异常累积</th>" +
+      "<th scope='col'>异常发动伤害</th></tr></thead>" +
       "<tbody>" + rows + "</tbody></table>";
+  }
+
+  // 「深夜各深度」小表：深度 1–5 的血量 / 攻击倍率 / 承受削韧，全部按当前人数
+  //（与本行选中的变异档位）换算，行内高亮当前深度。
+  function depthTable(item, entry) {
+    var rows = depthRows(entry, state.party, selectedMutation(item, entry));
+    if (!rows) {
+      return "<p class='bosses-note bosses-note--muted'>该行无深夜数值（数据里没有 depthStats）。</p>";
+    }
+    var body = rows.map(function (row) {
+      var active = row.depth === state.depth;
+      return "<tr" + (active ? " class='is-active'" : "") + ">" +
+        "<th scope='row'>" + esc(deepText(state.data, "depth") + " " + row.depth) + "</th>" +
+        "<td>" + esc(fmtInt(row.hp)) + "</td>" +
+        "<td>" + esc(fmtMul(row.attackRate, 3)) + "</td>" +
+        "<td>" + esc(fmtMul(row.poiseTaken, 3)) + "</td></tr>";
+    }).join("");
+    return "<table class='bosses-mini-table bosses-depth-table'>" +
+      "<thead><tr><th scope='col'>" + esc(deepText(state.data, "depth")) + "</th>" +
+      "<th scope='col'>血量（" + esc(partyLabel()) + "）</th>" +
+      "<th scope='col'>攻击倍率</th><th scope='col'>承受削韧</th></tr></thead>" +
+      "<tbody>" + body + "</tbody></table>";
+  }
+
+  // 「变异个体」块：先列出这一行可能变异成的档位，再给一个「按变异个体计算」下拉。
+  // 倍率 spCategory = 203，与常驻 / 深度 / 人数都不同分类，按参数结构推断是再乘一层。
+  function mutationBlock(item, entry) {
+    var pool = Array.isArray(entry.mutationPool) ? entry.mutationPool : [];
+    if (!pool.length) return "";
+    var key = entryKey(item, entry);
+    var current = state.mutation[key] || "";
+    var chips = pool.map(function (id) {
+      var mutation = mutationFor(state.data, id);
+      if (!mutation) return "<span class='bosses-chip'>" + esc("档位 " + id) + "</span>";
+      return "<span class='bosses-chip'>" + esc(mutationOptionLabel(id, mutation)) + "</span>";
+    }).join("");
+    var options = ["<option value=''" + (current ? "" : " selected") + ">无</option>"].concat(
+      pool.map(function (id) {
+        var value = String(id);
+        return "<option value='" + esc(value) + "'" + (current === value ? " selected" : "") + ">" +
+          esc(mutationOptionLabel(id, mutationFor(state.data, id))) + "</option>";
+      })
+    ).join("");
+    return "<div class='bosses-sub'>" + esc(BADGE_MUTATION) + "（可能的变异档位）</div>" +
+      "<div class='bosses-chips'>" + chips + "</div>" +
+      "<label class='select-field bosses-mutation-field'>" +
+      "<span class='sr-only'>按变异个体计算</span>" +
+      "<select data-bosses-mutation='" + esc(key) + "' data-testid='bosses-mutation'>" + options + "</select></label>" +
+      "<p class='bosses-note bosses-note--muted'>选中档位后，本行上面的数值会在当前基础上再乘一层" +
+      "（血量 / 攻击力 / 卢恩）。变异倍率的 spCategory = 203，与常驻(0)、深度(0)、人数(140) 都不同分类，" +
+      "不互相覆盖——「再乘一层」是按参数结构推断的，游戏里没有公开说明。</p>";
   }
 
   function permScalingLine(stats) {
@@ -846,6 +1197,9 @@
       if (!effect) return "<span class='bosses-chip'>常驻 " + esc(id) + "</span>";
       var factors = [];
       if (Number(effect.hp) !== 1) factors.push("血量 " + fmtMul(effect.hp));
+      if (Number(effect.attackRate) !== 1 && effect.attackRate !== undefined) {
+        factors.push("攻击 " + fmtMul(effect.attackRate));
+      }
       if (Number(effect.poiseTaken) !== 1) factors.push("承受削韧 " + fmtMul(effect.poiseTaken));
       if (Number(effect.poiseRecover) !== 1) factors.push("削韧恢复 " + fmtMul(effect.poiseRecover));
       if (Number(effect.ailmentDamageRate) !== 1) factors.push("异常伤害 " + fmtMul(effect.ailmentDamageRate));
@@ -855,34 +1209,35 @@
     return "<div class='bosses-chips'><span class='bosses-sub'>常驻缩放</span>" + chips + "</div>";
   }
 
-  // 深夜提示随开关反向：关着时告诉用户「可以切」，开着时给出常规值作对照，
-  // 不要在已经显示深夜血量的行上再重复播报一遍同一个数字。
-  // 三条文案与 macOS 端 BossFightRowView.scalingSection 完全一致。
-  function deepNote(entry) {
-    if (!entry) return "";
+  // 行内的补充说明：深夜专属修正、无奖励行。两条都是「为什么这一行的数字长这样」。
+  function entryNotes(entry, stats) {
+    var out = [];
     if (entry.deepOfNight) {
-      if (state.deep) {
-        return "<p class='bosses-note'>当前为深夜数值；常规数值：血量 " +
-          esc(fmtInt(entry.hp)) + "（1 人）。</p>";
-      }
-      return "<p class='bosses-note'>该行有深夜专属缩放：血量 " + esc(fmtInt(entry.deepOfNight.hp)) +
-        "（1 人），可用顶部「深夜」开关切换。</p>";
+      out.push("该行另有「深夜专属修正」（2287 条件效果），上表各深度的数值已经把它算进去；" +
+        "常规血量 " + fmtInt(entry.hp) + "（1 人）。");
     }
-    if (state.deep) {
-      return "<p class='bosses-note bosses-note--muted'>该行没有深夜专属缩放，深夜数值与常规相同。</p>";
+    if (stats.depth && stats.hasDepth && stats.depthSpEffectId) {
+      out.push("深度 " + stats.depth + " 用的是 SpEffect " + stats.depthSpEffectId + "。");
     }
-    return "";
+    if (entry.noReward) {
+      out.push("该行不掉任何奖励（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全为 0 或 -1），" +
+        "通常是模板行、血条实体或演出行；选代表行时会排在同分组的实战行之后。");
+    }
+    if (!out.length) return "";
+    return out.map(function (note) {
+      return "<p class='bosses-note bosses-note--muted'>" + esc(note) + "</p>";
+    }).join("");
   }
 
   function entryBlock(item, entry, index) {
-    var stats = computeStats(entry, state.party, state.deep);
+    var stats = statsFor(item, entry);
     var tiers = state.data && state.data.scalingTiers ? state.data.scalingTiers : null;
     var caption = scalingCaption(entry, tiers);
     var badges = entryBadgeTexts(item, entry, stats).map(function (text) {
       if (text === "主战") return pill(text, "green");
       if (text === "守夜") return pill(text, "blue");
       if (text === "野外") return pill(text, "green");
-      if (text === BADGE_LABEL_UNCERTAIN) return pill(text, "amber");
+      if (text === BADGE_MUTATION) return pill(text, "red");
       return pill(text, "amber");
     });
 
@@ -896,19 +1251,76 @@
       "<span class='bosses-entry-id'>" + esc(idText) + "</span>" +
       "</header>" +
       "<div class='bosses-stat-row bosses-stat-row--compact'>" +
-      statCell("血量（" + partyLabel() + "）", fmtInt(stats.hp), "参数原值 " + fmtInt(stats.hpBase) + " × " + fmtNumber(stats.hpMultiplier, 3)) +
+      statCell("血量（" + partyLabel() + "）", fmtInt(stats.hp),
+        stats.depth && stats.hasDepth
+          ? "深度 " + stats.depth + " · 1 人 " + fmtInt(stats.hpSingle)
+          : "参数原值 " + fmtInt(stats.hpBase) + " × " + fmtNumber(stats.hpMultiplier, 3)) +
       statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), poiseCaption(stats)) +
+      statCell("攻击力倍率", fmtMul(stats.attackRate, 3),
+        stats.partyAttackRate > 1 ? "含多人 " + fmtMul(stats.partyAttackRate, 3) : "对玩家伤害倍率") +
       statCell("削韧恢复", fmtNumber(stats.poiseRecover, 3), "每秒") +
       statCell("异常累积", fmtMul(stats.buildupRate), "Boss 承受量") +
       statCell("异常发动伤害", fmtMul(stats.ailmentDamageRate), "中毒/腐败 " + fmtMul(stats.poisonRate)) +
+      (stats.hasMutation ? statCell("卢恩倍率", fmtMul(stats.runeRate, 3), BADGE_MUTATION) : "") +
       "</div>" +
       "<div class='bosses-sub'>承伤倍率（&gt;1 多吃伤害，&lt;1 抗性）</div>" + rateTable(entry) +
       "<div class='bosses-sub'>异常抗性（累积阈值，越大越难触发）</div>" + resistTable(entry) +
+      "<div class='bosses-sub'>" + esc(deepText(state.data, "deepOfNight") + "各" + deepText(state.data, "depth")) +
+      "（按 " + esc(partyLabel()) + "换算）</div>" +
+      depthTable(item, entry) +
+      mutationBlock(item, entry) +
       "<div class='bosses-sub'>多人缩放" + (caption ? "（" + esc(caption) + "）" : "") + "</div>" +
       scalingTable(entry) +
       permScalingLine(stats) +
-      deepNote(entry) +
+      entryNotes(entry, stats) +
       "</section>";
+  }
+
+  // 卡片级的名字说明：近似匹配的依据、参考译名的来龙去脉、隐藏实体的判据。
+  function nameNoteBlock(item) {
+    var parts = [];
+    if (item.nameNote) parts.push(item.nameNote);
+    if (item.nameEvidence && item.nameEvidence.id) {
+      var ev = item.nameEvidence;
+      parts.push("游戏文本依据：" + (ev.fmg || "FMG") + " " + ev.id +
+        "「" + (ev.en || "") + " / " + (ev.zh || "") + "」。");
+    }
+    if (item.nameFallback) {
+      parts.push(item.nameFallbackNote ||
+        ("「" + item.nameFallback + "」不是本作的游戏内文本，是按《艾尔登法环》官方简中补的参考译名。"));
+    }
+    if (item.nameSourceUrl) parts.push("社区来源：" + item.nameSourceUrl);
+    if (item.hidden) {
+      parts.push("本组默认隐藏：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵，" +
+        "判定为召唤物、投射物等非首领实体。");
+    }
+    if (!parts.length) return "";
+    return "<div class='bosses-name-note' data-testid='bosses-name-note'>" +
+      "<div class='bosses-sub'>名称与收录说明</div>" +
+      parts.map(function (note) {
+        return "<p class='bosses-note'>" + esc(note) + "</p>";
+      }).join("") + "</div>";
+  }
+
+  // 夜王各深度的出现权重（NightBossMenuParam.depth1..5ChanceWeight）。
+  // 权重 0 要说清是「该深度不会出现」——永夜之王与救世旗手在深度 1 根本刷不出来。
+  function depthChanceBlock(item) {
+    var weights = item.depthChanceWeights;
+    if (!weights) return "";
+    var cells = DEPTHS.map(function (depth) {
+      var value = Number(weights[String(depth)]);
+      var zero = !isFinite(value) || value === 0;
+      return "<td" + (zero ? " class='bosses-zero'" : "") + ">" +
+        esc(zero ? "该深度不会出现" : fmtInt(value)) + "</td>";
+    }).join("");
+    var head = DEPTHS.map(function (depth) {
+      return "<th scope='col'>" + esc(deepText(state.data, "depth") + " " + depth) + "</th>";
+    }).join("");
+    return "<div class='bosses-sub'>各" + esc(deepText(state.data, "depth")) + "出现权重</div>" +
+      "<table class='bosses-mini-table bosses-chance-table'><thead><tr>" + head + "</tr></thead>" +
+      "<tbody><tr>" + cells + "</tr></tbody></table>" +
+      "<p class='bosses-note bosses-note--muted'>权重来自 NightBossMenuParam.depth1..5ChanceWeight，是同一深度内各夜王之间的相对权重，不是百分比。" +
+      "守夜 / 野外首领没有按深度的出现权重参数，数据集里也没有。</p>";
   }
 
   function cardBody(item) {
@@ -917,7 +1329,7 @@
     if (item.description) {
       head = "<p class='bosses-desc'>" + esc(item.description) + "</p>";
     }
-    return head + item.entries.map(function (entry, index) {
+    return head + nameNoteBlock(item) + depthChanceBlock(item) + item.entries.map(function (entry, index) {
       return entryBlock(item, entry, index);
     }).join("");
   }
@@ -944,7 +1356,8 @@
 
   function cardHtml(item) {
     var expanded = Boolean(state.expanded[item.uid]);
-    return "<article class='card bosses-card" + (expanded ? " is-expanded" : "") + "'" +
+    return "<article class='card bosses-card" + (expanded ? " is-expanded" : "") +
+      (item.hidden ? " is-hidden-entity" : "") + "'" +
       " data-bosses-card='" + esc(item.uid) + "'>" + cardInner(item) + "</article>";
   }
 
@@ -977,10 +1390,11 @@
           ? "<th scope='row' rowspan='2'>#" + esc(key) + "<span>" + esc(groupName) + "</span></th>"
           : "";
         if (!value) {
-          return "<tr>" + first + "<td>" + esc(label) + "</td><td colspan='5' class='bosses-none'>无数据</td></tr>";
+          return "<tr>" + first + "<td>" + esc(label) + "</td><td colspan='6' class='bosses-none'>无数据</td></tr>";
         }
         return "<tr>" + first + "<td>" + esc(label) + "</td>" +
           "<td>" + esc(fmtMul(value.hp)) + "</td>" +
+          "<td>" + esc(fmtAttackRate(value.attackRate)) + "</td>" +
           "<td>" + esc(fmtMul(value.poiseTaken)) + "</td>" +
           "<td>" + esc(fmtMul(value.poiseRecover)) + "</td>" +
           "<td>" + esc(fmtMul(value.buildupRate)) + "</td>" +
@@ -988,12 +1402,21 @@
       }).join("");
     }).join("");
 
+    var audit = Array.isArray(data.notes && data.notes.multiplayerScalingAudit)
+      ? data.notes.multiplayerScalingAudit
+      : [];
+
     return "<details class='card bosses-details' data-testid='bosses-tiers'>" +
       "<summary><span class='bosses-summary-title'>人数缩放档位说明</span>" +
       pill(keys.length + " 档", "purple") + "</summary>" +
       "<div class='bosses-details-body'>" +
+      "<p class='bosses-note bosses-note--lead'>多人<strong>不是</strong>简单乘倍：血量按档位从 ×1 到 ×3 不等" +
+      "（最终 Boss ×2 / ×3，野外常见档 7740 只有 ×1.1 / ×1.2，突袭档 98810 / 98815 完全不加血）；" +
+      "7744 / 7753 / 7754 / 7758 四档还会让敌人<strong>攻击力上浮</strong> ×1.1 / ×1.2；" +
+      "防御、卢恩与掉落、异常阈值三类字段人数缩放一律不碰，变的只是异常累积量与发动伤害倍率（都往下走）。</p>" +
       "<ul class='bosses-legend'>" +
       "<li><b>血量</b>：多人时 Boss 血量乘这个倍率，页面顶部切人数后所有血量都按它换算。</li>" +
+      "<li><b>攻击力</b>：敌人对玩家的伤害倍率（五属性同值）。绝大多数档位「不变」，只有上面四档是 ×1.1 / ×1.2。</li>" +
       "<li><b>承受削韧</b>：Boss 实际吃到的削韧比例。2 人 ×0.55 表示同样的削韧只吃 55%，等价于有效韧性变成约 1.8 倍。</li>" +
       "<li><b>削韧恢复</b>：削韧槽恢复速度倍率，与承受削韧同值。</li>" +
       "<li><b>异常累积</b>：Boss 承受的异常累积量倍率，越小越难打出异常；<b>不是</b>阈值下调，多人并不会更容易上异常。</li>" +
@@ -1001,8 +1424,99 @@
       "</ul>" +
       "<div class='table-wrap bosses-table-wrap'><table class='bosses-mini-table bosses-tier-table'>" +
       "<thead><tr><th scope='col'>档位</th><th scope='col'>人数</th><th scope='col'>血量</th>" +
-      "<th scope='col'>承受削韧</th><th scope='col'>削韧恢复</th><th scope='col'>异常累积</th>" +
-      "<th scope='col'>异常发动伤害</th></tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      "<th scope='col'>攻击力</th><th scope='col'>承受削韧</th><th scope='col'>削韧恢复</th>" +
+      "<th scope='col'>异常累积</th><th scope='col'>异常发动伤害</th></tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      (audit.length
+        ? "<div class='bosses-sub'>核实结论（notes.multiplayerScalingAudit）</div>" +
+          "<ul class='bosses-caveat-list'>" + audit.map(function (line) {
+            return "<li>" + esc(line) + "</li>";
+          }).join("") + "</ul>"
+        : "") +
+      "</div></details>";
+  }
+
+  // 深夜各深度的全局控制值（ChaosMatchingRankControlParam）。
+  // 这张表里**没有**任何血量 / 攻击倍率，那些在每行的 depthStats 里。
+  function depthOverviewBlock(data) {
+    var depths = data.deepOfNightDepths && typeof data.deepOfNightDepths === "object"
+      ? data.deepOfNightDepths
+      : null;
+    if (!depths) return "";
+    var keys = Object.keys(depths).sort(function (a, b) { return Number(a) - Number(b); });
+    if (!keys.length) return "";
+    var rows = keys.map(function (key) {
+      var row = depths[key] || {};
+      var challenge = row.mapChallengeWeight || {};
+      var cataclysm = row.cataclysmWeight || {};
+      return "<tr><th scope='row'>" + esc(row.labelZh || (deepText(data, "depth") + " " + key)) + "</th>" +
+        "<td>" + esc(fmtNumber(row.cursedUncommonRate, 0)) + " / " + esc(fmtNumber(row.cursedRareRate, 0)) + "</td>" +
+        "<td>" + esc(fmtNumber(challenge.map, 0) + " / " + fmtNumber(challenge.nightlord, 0) + " / " + fmtNumber(challenge.none, 0)) + "</td>" +
+        "<td>" + esc(fmtNumber(cataclysm["0"], 0) + " / " + fmtNumber(cataclysm["1"], 0) + " / " + fmtNumber(cataclysm["2"], 0)) + "</td></tr>";
+    }).join("");
+    var desc = data.deepOfNightText && data.deepOfNightText.description
+      ? String(data.deepOfNightText.description.zh || "")
+      : "";
+    return "<details class='card bosses-details' data-testid='bosses-depths'>" +
+      "<summary><span class='bosses-summary-title'>" + esc(deepText(data, "deepOfNight") + "各" + deepText(data, "depth") + "概览") +
+      "</span>" + pill(keys.length + " 档", "blue") + "</summary>" +
+      "<div class='bosses-details-body'>" +
+      (desc ? "<p class='bosses-desc'>" + esc(desc) + "</p>" : "") +
+      "<p class='bosses-note bosses-note--lead'>这张表来自 ChaosMatchingRankControlParam，只管全局控制，<strong>不含任何血量 / 攻击倍率</strong>——" +
+      "各深度的数值倍率在每条数值行的「" + esc(deepText(data, "deepOfNight") + "各" + deepText(data, "depth")) + "」小表里。" +
+      "最终首领档深度 1→5 血量 ×1.3→×1.718、攻击 ×1.3→×2.947，攻击力涨得远比血量快。</p>" +
+      "<table class='bosses-mini-table bosses-depth-overview'>" +
+      "<thead><tr><th scope='col'>" + esc(deepText(data, "depth")) + "</th>" +
+      "<th scope='col'>诅咒遗物率（不常见 / 稀有）</th>" +
+      "<th scope='col'>地图挑战权重（地图 / 夜王 / 无）</th>" +
+      "<th scope='col'>天变数量权重（0 / 1 / 2）</th></tr></thead>" +
+      "<tbody>" + rows + "</tbody></table></div></details>";
+  }
+
+  // 「变异个体出现只数」：ChaosMatchingMutationCategoryParam 给的是**只数**，
+  // 不是百分比概率，这一点最容易误读，所以写在标题下面第一行。
+  function mutationCategoryBlock(data) {
+    var list = Array.isArray(data.mutationCategories) ? data.mutationCategories : [];
+    if (!list.length) return "";
+    var rows = list.map(function (row) {
+      var counts = row.mutatedCount || {};
+      return "<tr><td>" + esc(row.mapZh || row.mapEn || row.mapId) + "</td>" +
+        "<td>" + esc(row.categoryZh || row.categoryEn || row.categoryId) + "</td>" +
+        DEPTHS.map(function (depth) {
+          var value = Number(counts[String(depth)]);
+          var zero = !isFinite(value) || value === 0;
+          return "<td" + (zero ? " class='bosses-zero'" : "") + ">" + esc(zero ? "0" : String(value)) + "</td>";
+        }).join("") + "</tr>";
+    }).join("");
+    var mutations = data.mutations && typeof data.mutations === "object" ? data.mutations : {};
+    var mutationKeys = Object.keys(mutations).sort(function (a, b) { return Number(a) - Number(b); });
+    var mutationRows = mutationKeys.map(function (key) {
+      var mutation = mutations[key];
+      return "<tr><th scope='row'>" + esc(key) + "</th>" +
+        "<td>" + esc(fmtMul(mutation.hp, 3)) + "</td>" +
+        "<td>" + esc(fmtMul(mutation.attackRate, 3)) + "</td>" +
+        "<td>" + esc(fmtMul(mutation.runeRate, 3)) + "</td>" +
+        "<td>" + esc(mutation.statNameEn || "—") + "</td></tr>";
+    }).join("");
+    return "<details class='card bosses-details' data-testid='bosses-mutations'>" +
+      "<summary><span class='bosses-summary-title'>" + esc(BADGE_MUTATION) + "出现只数</span>" +
+      pill(list.length + " 行", "red") + "</summary>" +
+      "<div class='bosses-details-body'>" +
+      "<p class='bosses-note bosses-note--lead'>表里的数字是「该地图、该深度下这一类敌人有<strong>几只</strong>会变异」，" +
+      "<strong>不是百分比概率</strong>——这点最容易读错。野外首领与封印监牢首领深度 1 全是 0，也就是深度 1 遇不到变异的野外/监牢首领。</p>" +
+      "<div class='table-wrap bosses-table-wrap'><table class='bosses-mini-table bosses-mutation-table'>" +
+      "<thead><tr><th scope='col'>地图</th><th scope='col'>敌人类别</th>" +
+      DEPTHS.map(function (depth) {
+        return "<th scope='col'>" + esc(deepText(data, "depth") + " " + depth) + "</th>";
+      }).join("") + "</tr></thead><tbody>" + rows + "</tbody></table></div>" +
+      (mutationRows
+        ? "<div class='bosses-sub'>变异档位倍率（SpEffectSetParam → 数值档位）</div>" +
+          "<table class='bosses-mini-table bosses-mutation-tier-table'>" +
+          "<thead><tr><th scope='col'>档位</th><th scope='col'>血量</th><th scope='col'>攻击</th>" +
+          "<th scope='col'>卢恩</th><th scope='col'>Paramdex 行名</th></tr></thead>" +
+          "<tbody>" + mutationRows + "</tbody></table>"
+        : "") +
+      "<p class='bosses-note bosses-note--muted'>哪些敌人能变异 = NpcParam.chaosMatchingSpEffectSetParamId != -1 的行" +
+      "（数据集里 mutationPool 非空的即是）。按刷新点组织的 ChaosMatchingMutationEnemyTableParam 没法直接对到某一行 NpcParam，未收录。</p>" +
       "</div></details>";
   }
 
@@ -1012,6 +1526,7 @@
       night: 0,
       field: 0,
       both: 0,
+      hidden: 0,
       rows: 0
     };
     (Array.isArray(data.nightBosses) ? data.nightBosses : []).forEach(function (boss) {
@@ -1019,6 +1534,7 @@
       if (groups.indexOf("night") !== -1) counts.night += 1;
       if (groups.indexOf("field") !== -1) counts.field += 1;
       if (groups.length > 1) counts.both += 1;
+      if (boss.hidden) counts.hidden += 1;
       counts.rows += Array.isArray(boss.variants) ? boss.variants.length : 0;
     });
     (Array.isArray(data.nightlords) ? data.nightlords : []).forEach(function (lord) {
@@ -1042,6 +1558,7 @@
       "<div><dt>数据集结构版本</dt><dd>bossesSchemaVersion " + esc(data.bossesSchemaVersion || "—") + "</dd></div>" +
       "<div><dt>收录</dt><dd>夜王 " + counts.lords + " · 守夜 " + counts.night +
       " · 野外 " + counts.field + (counts.both ? "（含 " + counts.both + " 组两边都出现）" : "") +
+      (counts.hidden ? " · 隐藏实体 " + counts.hidden : "") +
       " · 数值行 " + counts.rows + "</dd></div>" +
       "</dl>" +
       (sources ? "<div class='bosses-sub'>来源</div><ul class='bosses-source-list'>" + sources + "</ul>" : "") +
@@ -1049,7 +1566,8 @@
   }
 
   function footerHtml(data) {
-    return caveatsBlock(data) + scalingTiersBlock(data) + versionBlock(data);
+    return caveatsBlock(data) + scalingTiersBlock(data) + depthOverviewBlock(data) +
+      mutationCategoryBlock(data) + versionBlock(data);
   }
 
   // ------------------------------------------------------------ 渲染与事件
@@ -1059,18 +1577,25 @@
     var list = dom.querySelector("[data-testid='bosses-list']");
     var empty = dom.querySelector("[data-testid='bosses-empty']");
     var count = dom.querySelector("[data-testid='bosses-count']");
+    var intro = dom.querySelector("[data-testid='bosses-intro']");
+    if (intro) intro.innerHTML = depthIntro();
     if (!list) return;
-    var visible = filterItems(state.items, state.group, state.query, fold);
+    var visible = filterItems(state.items, state.group, state.query, fold, state.showHidden);
     list.innerHTML = visible.map(cardHtml).join("");
     if (empty) empty.hidden = visible.length > 0;
     if (count) {
-      var total = state.items.filter(function (item) { return itemInGroup(item, state.group); }).length;
-      var deepText = "";
-      if (state.deep) {
-        var withDeep = visible.filter(function (item) { return deepCoverage(item) !== "none"; }).length;
-        deepText = " · 深夜（其中 " + withDeep + " 个有深夜专属数值）";
+      var inGroup = state.items.filter(function (item) { return itemInGroup(item, state.group); });
+      var total = inGroup.filter(function (item) { return state.showHidden || !item.hidden; }).length;
+      var hiddenCount = inGroup.filter(function (item) { return item.hidden; }).length;
+      var depthText = state.depth ? " · " + depthLabel(state.data, state.depth) : "";
+      var hiddenText = "";
+      if (hiddenCount) {
+        hiddenText = state.showHidden
+          ? " · 含隐藏实体 " + hiddenCount + " 个"
+          : " · 已隐藏 " + hiddenCount + " 个非首领实体";
       }
-      count.textContent = "显示 " + visible.length + " / " + total + " 个首领 · " + partyLabel() + deepText;
+      count.textContent = "显示 " + visible.length + " / " + total + " 个首领 · " +
+        partyLabel() + depthText + hiddenText;
     }
   }
 
@@ -1088,30 +1613,36 @@
     });
   }
 
-  function renderCard(uid) {
-    if (!dom) return;
+  function findCard(uid) {
     // uid 里可能带单引号（如 "nb:The Duke's Dear Freja@7800"），不走选择器拼接。
-    var node = null;
     var nodes = dom.querySelectorAll("[data-bosses-card]");
     for (var n = 0; n < nodes.length; n += 1) {
-      if (nodes[n].getAttribute("data-bosses-card") === uid) { node = nodes[n]; break; }
+      if (nodes[n].getAttribute("data-bosses-card") === uid) return nodes[n];
     }
+    return null;
+  }
+
+  function renderCard(uid, focusSelector, focusValue) {
+    if (!dom) return;
+    var node = findCard(uid);
     if (!node) return;
     var item = null;
     for (var i = 0; i < state.items.length; i += 1) {
       if (state.items[i].uid === uid) { item = state.items[i]; break; }
     }
     if (!item) return;
-    // innerHTML 会连刚被点击的那个 .bosses-card-head 一起销毁，焦点会掉回 body；
-    // 重绘后按属性值找回新按钮再 focus()，Tab + Enter 浏览才不用从页首重来。
+    // innerHTML 会连刚被点击的那个控件一起销毁，焦点会掉回 body；
+    // 重绘后按属性值找回新控件再 focus()，Tab + Enter 浏览才不用从页首重来。
     var doc = node.ownerDocument || (dom && dom.ownerDocument);
     var hadFocus = Boolean(doc && doc.activeElement && node.contains(doc.activeElement));
     node.classList.toggle("is-expanded", Boolean(state.expanded[uid]));
     node.innerHTML = cardInner(item);
     if (!hadFocus) return;
-    var heads = node.querySelectorAll("[data-bosses-toggle]");
-    for (var h = 0; h < heads.length; h += 1) {
-      if (heads[h].getAttribute("data-bosses-toggle") === uid) { heads[h].focus(); break; }
+    var attribute = focusSelector || "data-bosses-toggle";
+    var value = focusValue === undefined ? uid : focusValue;
+    var targets = node.querySelectorAll("[" + attribute + "]");
+    for (var h = 0; h < targets.length; h += 1) {
+      if (targets[h].getAttribute(attribute) === value) { targets[h].focus(); break; }
     }
   }
 
@@ -1142,6 +1673,30 @@
       }
     });
 
+    dom.addEventListener("change", function (event) {
+      var mutation = event.target.closest("[data-bosses-mutation]");
+      if (mutation) {
+        var key = mutation.getAttribute("data-bosses-mutation");
+        var value = mutation.value || "";
+        if (value) state.mutation[key] = value;
+        else delete state.mutation[key];
+        // key = "<uid>#<npcId>"，uid 自己不含 "#"，按最后一个 "#" 切回卡片 uid。
+        renderCard(key.slice(0, key.lastIndexOf("#")), "data-bosses-mutation", key);
+        return;
+      }
+      var depth = event.target.closest("[data-bosses-depth]");
+      if (depth) {
+        state.depth = depthValue(depth.value);
+        renderList();
+        return;
+      }
+      var hidden = event.target.closest("[data-testid='bosses-hidden']");
+      if (hidden) {
+        state.showHidden = Boolean(hidden.checked);
+        renderList();
+      }
+    });
+
     var search = dom.querySelector("[data-testid='bosses-search']");
     if (search) {
       search.addEventListener("input", function (event) {
@@ -1149,27 +1704,16 @@
         renderList();
       });
     }
-
-    var deep = dom.querySelector("[data-testid='bosses-deep']");
-    if (deep) {
-      deep.addEventListener("change", function (event) {
-        state.deep = Boolean(event.target.checked);
-        renderList();
-      });
-    }
   }
 
-  function applyDeepAvailability() {
+  function applyDepthAvailability() {
     if (!dom) return;
-    var deep = dom.querySelector("[data-testid='bosses-deep']");
-    var label = dom.querySelector("[data-testid='bosses-deep-label']");
-    if (!deep) return;
-    deep.disabled = !state.hasDeep;
-    if (!state.hasDeep) {
-      deep.checked = false;
-      state.deep = false;
-      if (label) label.textContent = "深夜数值（本数据集无）";
-      var control = deep.closest(".switch-control");
+    var select = dom.querySelector("[data-testid='bosses-depth']");
+    if (!select) return;
+    if (!state.hasDepth) {
+      state.depth = 0;
+      select.disabled = true;
+      var control = select.closest(".select-field");
       if (control) control.classList.add("is-disabled");
     }
   }
@@ -1178,12 +1722,16 @@
     if (!dom) return;
     state.data = data;
     state.items = buildItems(data, fold);
-    state.hasDeep = hasDeepData(data);
+    state.hasDepth = hasDepthData(data);
+    if (!state.hasDepth) state.depth = 0;
+    state.mutation = {};
     dom.innerHTML = shell();
     bindEvents();
     var search = dom.querySelector("[data-testid='bosses-search']");
     if (search && state.query) search.value = state.query;
-    applyDeepAvailability();
+    var hidden = dom.querySelector("[data-testid='bosses-hidden']");
+    if (hidden) hidden.checked = state.showHidden;
+    applyDepthAvailability();
     renderControls();
     renderList();
     var footer = dom.querySelector("[data-testid='bosses-footer']");
@@ -1221,15 +1769,19 @@
     // 纯计算部分，供 windows/tests/bosses.test.mjs 直接测试。
     _internals: {
       tierKey: tierKey,
+      depthValue: depthValue,
       numberOr: numberOr,
       numbersFor: numbersFor,
+      depthStatsFor: depthStatsFor,
+      depthRows: depthRows,
       scalingFor: scalingFor,
+      mutationFor: mutationFor,
       computeStats: computeStats,
       rateClass: rateClass,
       rateNote: rateNote,
       isImmune: isImmune,
       displayName: displayName,
-      nameBadge: nameBadge,
+      nameBadges: nameBadges,
       entryLabel: entryLabel,
       mainEntry: mainEntry,
       mainRows: mainRows,
@@ -1238,24 +1790,31 @@
       itemMatches: itemMatches,
       bossGroups: bossGroups,
       deepCoverage: deepCoverage,
+      depthCoverage: depthCoverage,
       itemInGroup: itemInGroup,
       topDamageTypes: topDamageTypes,
       buildItems: buildItems,
       filterItems: filterItems,
-      hasDeepData: hasDeepData,
+      hasDepthData: hasDepthData,
+      deepText: deepText,
+      depthLabel: depthLabel,
       fmtInt: fmtInt,
       fmtNumber: fmtNumber,
       fmtMul: fmtMul,
+      fmtAttackRate: fmtAttackRate,
       fmtPoise: fmtPoise,
       poiseCaption: poiseCaption,
+      mutationOptionLabel: mutationOptionLabel,
       tierGroupLabel: tierGroupLabel,
       scalingCaption: scalingCaption,
       rowCountText: rowCountText,
       entryBadgeTexts: entryBadgeTexts,
       DAMAGE_TYPES: DAMAGE_TYPES,
       AILMENTS: AILMENTS,
+      DEPTHS: DEPTHS,
       GROUP_LABELS: GROUP_LABELS,
-      GROUP_TITLES: GROUP_TITLES
+      GROUP_TITLES: GROUP_TITLES,
+      NAME_SOURCE_BADGES: NAME_SOURCE_BADGES
     }
   };
 
