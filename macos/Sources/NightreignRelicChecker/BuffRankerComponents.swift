@@ -256,14 +256,14 @@ struct RankerSegmentRow: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 6) {
-                        Text(segment.labelZh)
+                        Text(segment.displayLabelZh)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(segment.noDamage ? AppTheme.tertiaryText : .white)
                         if segment.isBullet {
                             Pill(text: "子弹", color: Color(red: 0.55, green: 0.78, blue: 0.99))
                         }
                         if segment.noFp {
-                            Pill(text: "无 FP 版", color: AppTheme.amber)
+                            Pill(text: "专注值不足版", color: AppTheme.amber)
                         }
                         if segment.noDamage {
                             Pill(text: "只挂状态", color: AppTheme.tertiaryText)
@@ -274,21 +274,32 @@ struct RankerSegmentRow: View {
                             .foregroundStyle(AppTheme.tertiaryText)
                     }
 
+                    // 只列对当前武器真正有贡献的通道（见 SkillSegment.visibleComponents）；
+                    // 确有被隐藏项时在行末补一句很淡的小字，与 Windows 端同文。
                     HStack(spacing: 6) {
-                        ForEach(segment.components) { component in
+                        let shown = segment.visibleComponents
+                        ForEach(shown) { component in
                             componentChip(component)
                         }
-                        if segment.components.isEmpty {
+                        if shown.isEmpty {
                             Text("无伤害数值")
                                 .font(.system(size: 11))
                                 .foregroundStyle(AppTheme.tertiaryText)
+                        } else if segment.hiddenZeroComponentCount > 0 {
+                            Text("其余属性该武器为 0")
+                                .font(.system(size: 10))
+                                .foregroundStyle(AppTheme.tertiaryText)
+                                .opacity(0.62)
                         }
                     }
 
                     HStack(spacing: 12) {
                         metric("削韧", BuffFormat.trim(segment.poise, digits: 1))
                         metric("耐力", BuffFormat.trim(segment.stamina, digits: 1))
-                        if let channel = segment.physicalChannel {
+                        // 物理这一项也按「真正有贡献」显示：法术段的 physicalChannel 来自
+                        // 占位写法的 motion，不该在没有物理芯片时还挂一个物理类型。
+                        if let channel = segment.physicalChannel,
+                           segment.visibleComponents.contains(where: { $0.channel == channel }) {
                             metric("物理类型", channel.titleZh)
                         }
                         Spacer(minLength: 0)

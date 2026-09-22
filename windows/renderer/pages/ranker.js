@@ -164,7 +164,7 @@
   }
 
   // 分段列表工具条的三个动作，返回完整的 override 表（reset＝清空，退回默认规则）。
-  // 「全选」只勾**当前 FP 侧**的段：FP 版与无FP 版互为替代，两边一起勾会把同一击算两遍，
+  // 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍，
   // 相对值合计直接翻倍，构成与排名权重跟着失真。
   function hitOverridesFor(hits, action, noFp) {
     var overrides = {};
@@ -218,6 +218,39 @@
       out[element === "physical" ? physType : element] += value;
     }
     return out;
+  }
+
+  // 分段芯片的展示计划：只留「对当前武器真正有贡献」的属性。
+  //
+  // 动作值（motion）是「武器该属性基础攻击力的百分比」，参数表里每段常常五个属性同值
+  // （尸横遍野每段都是 99% / 99% / 99% / 99% / 99%），但武器这一属性 attackBase 为 0 时
+  // 乘出来恒为 0——尸山血海只有物理 46 与火 46，魔力／雷／圣三项对构成与排名毫无影响，
+  // 并排列出来只会让人以为是 bug。所以展示口径统一成「hitContribution > 0 才显示」：
+  //   · 近战段：武器该属性 attackBase > 0 且（motion > 0 或 flat > 0）；
+  //   · 战技的子弹段：同上（子弹段挂的是真武器，motion 照常参与）；
+  //   · 法术段：weapon 为 null、motion 不参与，等价于「flat > 0 的属性」。
+  // hidden 只数「motion 声明了但恒为 0」的属性，用来在行末补一句「其余属性该武器为 0」；
+  // 法术段不用 motion，所以不会产生 hidden（那几项缺席的原因是法术本来就只用 flat）。
+  // macOS 端 SkillSegment.visibleComponents / hiddenZeroComponentCount 是同一口径。
+  function hitChipPlan(hit, weapon, isSpell) {
+    var motionOn = usesMotion(hit, isSpell);
+    var physType = physicalTypeForHit(hit, weapon);
+    var contribution = hitContribution(hit, weapon, isSpell);
+    var chips = [];
+    var hidden = 0;
+    for (var i = 0; i < ELEMENTS.length; i += 1) {
+      var element = ELEMENTS[i];
+      var motion = motionOn ? num(hit.motion && hit.motion[element]) : 0;
+      var flat = num(hit.flat && hit.flat[element]);
+      if (!motion && !flat) continue;
+      var type = element === "physical" ? physType : element;
+      if (!(contribution[type] > 0)) {
+        if (motion > 0) hidden += 1;
+        continue;
+      }
+      chips.push({ type: type, motion: motion, flat: flat });
+    }
+    return { chips: chips, hidden: hidden };
   }
 
   // 勾选中的段汇总成占比。total 是相对值，没有绝对意义。
@@ -1058,6 +1091,13 @@
     return ctxRef && ctxRef.helpers ? ctxRef.helpers : null;
   }
 
+  // 展示层统一口径：数据集里 hits[].labelZh 仍写「无FP版」（162 段），
+  // 页面一律说中文的「专注值不足版」。只换展示，不动数据集、不动 noFp 字段。
+  // macOS 端 SkillTextZh.noFpLabel 是同一实现。
+  function zhNoFpLabel(value) {
+    return String(value == null ? "" : value).replace(/无\s*FP\s*版/g, "专注值不足版");
+  }
+
   function esc(value) {
     var h = helpers();
     if (h && typeof h.escapeHtml === "function") return h.escapeHtml(value);
@@ -1103,7 +1143,7 @@
     return [];
   }
 
-  // 默认：与「无FP版本」开关同侧的段全勾，另一侧全不勾；用户手动勾选写进 overrides。
+  // 默认：与「使用专注值不足版本」开关同侧的段全勾，另一侧全不勾；用户手动勾选写进 overrides。
   function hitEnabled(hit) {
     if (!hit || hit.noDamage) return false;
     var override = state.hitOverrides[hit.atkId];
@@ -1193,7 +1233,7 @@
         pill(item.badge, item.badgeColor) +
         (item.kind === "skill"
           ? "<span class='ranker-means-meta'>" + item.weaponCount + " 把武器</span>"
-          : "<span class='ranker-means-meta'>FP " + esc(item.mp) + "</span>") +
+          : "<span class='ranker-means-meta'>专注值 " + esc(item.mp) + "</span>") +
         "</button>";
     }).join("");
     var more = list.length > shown.length
@@ -1271,7 +1311,7 @@
         "<div class='ranker-selection-name'>" + esc(spell.nameZh || spell.nameEn) +
         "<span class='ranker-means-en'>" + esc(spell.nameEn) + "</span></div>" +
         "<div class='ranker-selection-pills'>" + pill(spell.kindZh || "法术", spell.kind === "incantation" ? "amber" : "blue") +
-        pill("FP " + spell.mp, "gray") + pill("法术段只用固定值", "gray") + "</div>" +
+        pill("专注值 " + spell.mp, "gray") + pill("法术段只用固定值", "gray") + "</div>" +
         "<div class='ranker-picker-row'>" + handControlHtml() + "</div>" +
         "<p class='ranker-note'>法术没有武器动作套：按 usage「法术 / 子弹段」只取每段的固定伤害值（flat），" +
         "不把 motion 乘到施法器攻击力上。武器槽用于匹配 scope.weaponSlot——" +
@@ -1307,26 +1347,18 @@
   // ---- 分段命中 --------------------------------------------------------
 
   function hitDamageHtml(hit, weapon, isSpell) {
-    var motionOn = usesMotion(hit, isSpell);
-    var physType = physicalTypeForHit(hit, weapon);
-    var contribution = hitContribution(hit, weapon, isSpell);
-    var cells = [];
-    ELEMENTS.forEach(function (element) {
-      var motion = motionOn ? num(hit.motion && hit.motion[element]) : 0;
-      var flat = num(hit.flat && hit.flat[element]);
-      if (!motion && !flat) return;
-      var type = element === "physical" ? physType : element;
-      var label = TYPE_INFO[type].zh;
+    var plan = hitChipPlan(hit, weapon, isSpell);
+    var cells = plan.chips.map(function (chip) {
+      var label = TYPE_INFO[chip.type].zh;
       var parts = [];
-      if (motion) parts.push(fmtNumber(motion, 0) + "%");
-      if (flat) parts.push("固定 " + fmtNumber(flat, 0));
-      // 动作值是「武器该属性攻击力的百分比」：武器这一属性是 0 就打不出伤害，调暗提示。
-      var zero = contribution[type] > 0 ? "" : " is-zero";
-      cells.push("<span class='ranker-hit-el ranker-hit-el--" + esc(type) + zero + "'" +
-        (zero ? " title='武器这一属性的基础攻击力为 0，这一项打不出伤害'" : "") + ">" +
-        esc(label) + " " + esc(parts.join(" + ")) + "</span>");
+      if (chip.motion) parts.push(fmtNumber(chip.motion, 0) + "%");
+      if (chip.flat) parts.push("固定 " + fmtNumber(chip.flat, 0));
+      return "<span class='ranker-hit-el ranker-hit-el--" + esc(chip.type) + "'>" +
+        esc(label) + " " + esc(parts.join(" + ")) + "</span>";
     });
-    if (!cells.length) cells.push("<span class='ranker-hit-el ranker-hit-el--none'>无伤害数值</span>");
+    // 全部属性都无贡献 → 维持原来的「无伤害数值」。
+    if (!cells.length) return "<span class='ranker-hit-el ranker-hit-el--none'>无伤害数值</span>";
+    if (plan.hidden) cells.push("<span class='ranker-hit-el-note'>其余属性该武器为 0</span>");
     return cells.join("");
   }
 
@@ -1358,9 +1390,9 @@
       var disabled = hit.noDamage === true;
       var on = hitEnabled(hit);
       var marks = [];
-      // 段级徽标与 macOS 端 RankerSegmentRow 同文同色：「无 FP 版」「只挂状态」。
+      // 段级徽标与 macOS 端 RankerSegmentRow 同文同色：「专注值不足版」「只挂状态」。
       // 「只挂状态」比「无伤害」更准确——这些段仍会挂上异常，只是不产生伤害数值。
-      if (hit.noFp) marks.push(pill("无 FP 版", "amber"));
+      if (hit.noFp) marks.push(pill("专注值不足版", "amber"));
       if (hit.isBullet) marks.push(pill("子弹", "blue"));
       if (hit.noDamage) marks.push(pill("只挂状态", "gray"));
       if (hit.addBaseAtk) marks.push(pill("额外加一份攻击力", "purple"));
@@ -1368,7 +1400,7 @@
       return "<label class='ranker-hit-row" + (on ? " is-on" : "") + (disabled ? " is-disabled" : "") + "'>" +
         "<input type='checkbox' data-ranker-hit='" + hit.atkId + "'" +
         (on ? " checked" : "") + (disabled ? " disabled" : "") + ">" +
-        "<span class='ranker-hit-name'>" + esc(hit.labelZh || hit.label || ("段 " + hit.atkId)) +
+        "<span class='ranker-hit-name'>" + esc(zhNoFpLabel(hit.labelZh) || hit.label || ("段 " + hit.atkId)) +
         "<span class='ranker-hit-id'>#" + hit.atkId + "</span></span>" +
         "<span class='ranker-hit-damage'>" + hitDamageHtml(hit, weapon, isSpell) + "</span>" +
         "<span class='ranker-hit-poise'>削韧 " + fmtNumber(hitPoise(hit, weapon), 1) +
@@ -1378,14 +1410,17 @@
 
     var toolbar = "<div class='ranker-hits-toolbar'>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='all' " +
-      "title='只勾当前 FP 侧的段：FP 版与无 FP 版互为替代，两边一起勾会把同一击算两遍'>" +
-      "全选（当前 FP 侧）</button>" +
+      "title='只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍'>" +
+      "全选（当前版本）</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='none'>全不选</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='reset'>恢复默认</button>" +
       (hasNoFp
-        ? "<label class='switch-control ranker-nofp'><input type='checkbox' data-testid='ranker-nofp'" +
+        ? "<label class='switch-control ranker-nofp' " +
+          "title='没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换'>" +
+          "<input type='checkbox' data-testid='ranker-nofp'" +
           (state.noFp ? " checked" : "") + "><span class='switch-track'></span>" +
-          "<span>用无 FP 版（与 FP 版互斥）</span></label>"
+          "<span>使用专注值不足版本</span>" +
+          "<span class='ranker-nofp-hint'>没蓝时打出的弱化版战技</span></label>"
         : "") +
       "<span class='ranker-hits-count' data-testid='ranker-hits-count'>已勾选 " + onCount +
       " / " + hits.length + " 段</span></div>";
@@ -2126,6 +2161,8 @@
       physicalTypeForHit: physicalTypeForHit,
       usesMotion: usesMotion,
       hitContribution: hitContribution,
+      hitChipPlan: hitChipPlan,
+      zhNoFpLabel: zhNoFpLabel,
       composition: composition,
       hitPoise: hitPoise,
       hitStamina: hitStamina,

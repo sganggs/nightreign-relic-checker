@@ -41,7 +41,7 @@ final class BuffRankerModel: ObservableObject {
     @Published private(set) var segments: [SkillSegment] = []
     @Published private(set) var selectedSegmentIDs: Set<Int> = []
     @Published private(set) var composition: SkillDamageComposition = .empty
-    /// 当前勾的是无 FP 版（FP 段与无 FP 段互斥切换）。
+    /// 当前勾的是专注值不足版（正常版与专注值不足版互斥切换）。
     @Published private(set) var useNoFp: Bool = false
 
     // MARK: 排名筛选
@@ -206,7 +206,7 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
-    /// 「全选」只勾**当前 FP 侧**的段：FP 版与无 FP 版互为替代，两边一起勾会把同一击算两遍。
+    /// 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍。
     /// 口径与 Windows 端 hitOverridesFor(action="all") 一致。
     func selectAllSegments() {
         selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: useNoFp)
@@ -218,7 +218,7 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
-    /// FP 段与无 FP 段互斥切换。
+    /// 正常版与专注值不足版互斥切换。
     func setUseNoFp(_ value: Bool) {
         guard value != useNoFp else { return }
         useNoFp = value

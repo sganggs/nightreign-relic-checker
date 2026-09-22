@@ -191,6 +191,7 @@ func runBuffRankerChecks() throws -> Int {
     let buffs = try BuffRankerIndex(data: buffsData)
     try checkSkillDataset(skills, counter: &count)
     try checkSegmentSelection(skills, counter: &count)
+    try checkSegmentChips(skills, counter: &count)
     try checkComposition(skills, counter: &count)
     try checkBuffDataset(buffs, counter: &count)
     try checkRealRanking(skills: skills, buffs: buffs, counter: &count)
@@ -559,8 +560,8 @@ private func checkDamageMath(counter count: inout Int) throws {
     try rankerExpect(defaultSelection == [1, 2, 3], "默认勾选应排除 noFp 与 noDamage 段，实际 \(defaultSelection.sorted())", counter: &count)
 
     let noFpSelection = SkillDamageMath.selection(segments, useNoFp: true)
-    try rankerExpect(noFpSelection == [4], "切到无 FP 版应只勾选 noFp 段，实际 \(noFpSelection.sorted())", counter: &count)
-    try rankerExpect(noFpSelection.isDisjoint(with: defaultSelection), "FP 段与无 FP 段必须互斥", counter: &count)
+    try rankerExpect(noFpSelection == [4], "切到专注值不足版应只勾选 noFp 段，实际 \(noFpSelection.sorted())", counter: &count)
+    try rankerExpect(noFpSelection.isDisjoint(with: defaultSelection), "正常版与专注值不足版必须互斥", counter: &count)
 
     // 构成：斩击 200 + 突刺 100 + 标准 100 + 火（50 + 110）= 560。
     let composition = SkillDamageMath.composition(of: segments, selected: defaultSelection)
@@ -1398,7 +1399,7 @@ private func checkSegmentSelection(_ index: SkillDataIndex, counter count: inout
     )
     try rankerExpect(index.defaultWeapon(for: multi) != nil, "应能给出默认武器（第一把）", counter: &count)
 
-    // 无 FP 版：找一套同时有 FP 段与无 FP 段的，验证互斥切换
+    // 专注值不足版：找一套同时有正常版段与专注值不足版段的，验证互斥切换
     var found = false
     for weapon in index.dataset.weapons {
         guard let skill = index.skillsByID[weapon.swordArtsParamId] else { continue }
@@ -1409,19 +1410,123 @@ private func checkSegmentSelection(_ index: SkillDataIndex, counter count: inout
         let noFp = SkillDamageMath.selection(segments, useNoFp: true)
         try rankerExpect(
             normal.allSatisfy { id in segments.first { $0.atkId == id }?.noFp == false },
-            "默认勾选不应包含无 FP 版（「\(skill.displayName)」）",
+            "默认勾选不应包含专注值不足版（「\(skill.displayName)」）",
             counter: &count
         )
         try rankerExpect(
             !noFp.isEmpty && noFp.allSatisfy { id in segments.first { $0.atkId == id }?.noFp == true },
-            "切到无 FP 版后应只剩 noFp 段",
+            "切到专注值不足版后应只剩 noFp 段",
             counter: &count
         )
-        try rankerExpect(normal.isDisjoint(with: noFp), "FP 段与无 FP 段必须互斥", counter: &count)
+        try rankerExpect(normal.isDisjoint(with: noFp), "正常版与专注值不足版必须互斥", counter: &count)
         found = true
         break
     }
-    try rankerExpect(found, "真实数据里应存在同时有 FP 与无 FP 段的战技", counter: &count)
+    try rankerExpect(found, "真实数据里应存在同时有正常版与专注值不足版段的战技", counter: &count)
+}
+
+/// 分段芯片的展示口径：只列「对当前武器真正有贡献」的通道（两端同文同序）。
+///
+/// 参数表里每段常常五属性同值，但武器该属性 attackBase 为 0 时乘出来恒为 0——
+/// 这些项对构成与排名毫无影响，并排列出来只会被当成 bug。
+/// Windows 端 renderer/pages/ranker.js 的 hitChipPlan 是同一口径。
+private func checkSegmentChips(_ index: SkillDataIndex, counter count: inout Int) throws {
+    // ① 尸山血海（9040000）＋ 尸横遍野（1177）：武器只有物理 46 与火 46，
+    //    每段的芯片只应剩「斩击 + 火」两个，另外三项记进 hiddenZeroComponentCount。
+    guard let weapon = index.weaponsByID[9040000], let skill = index.skillsByID[1177] else {
+        throw CheckFailure(description: "增伤排名：对照用例的武器 9040000 / 战技 1177 不在数据集里")
+    }
+    try rankerExpect(
+        weapon.attack(.physical) > 0 && weapon.attack(.fire) > 0,
+        "尸山血海应当有物理与火的基础攻击力",
+        counter: &count
+    )
+    for element in [SkillElement.magic, .lightning, .holy] {
+        try rankerExpect(
+            weapon.attack(element) <= 0,
+            "尸山血海的 \(element) 基础攻击力应当是 0",
+            counter: &count
+        )
+    }
+    let segments = index.segments(for: skill, weapon: weapon)
+    try rankerExpect(!segments.isEmpty, "尸横遍野 + 尸山血海应当选得出段", counter: &count)
+    for segment in segments {
+        try rankerExpect(
+            segment.visibleComponents.map(\.channel) == [.slash, .fire],
+            "尸横遍野 #\(segment.atkId) 的芯片只应剩「斩击 + 火」两个，"
+                + "实际 \(segment.visibleComponents.map(\.channel.titleZh))",
+            counter: &count
+        )
+        try rankerExpect(
+            segment.hiddenZeroComponentCount == 3,
+            "尸横遍野 #\(segment.atkId) 应当有三项因「武器该属性为 0」被隐藏",
+            counter: &count
+        )
+        try rankerExpect(
+            segment.components.count == 5,
+            "components 本身不得被裁剪——隐藏只发生在展示层",
+            counter: &count
+        )
+    }
+
+    // ② 法术段本来就只用 flat：芯片只剩带 flat 的通道，且不算「被隐藏」
+    //    （缺席的原因是法术不吃 motion，不是武器该属性为 0）。
+    guard let spell = index.spellsByID[4021] else {
+        throw CheckFailure(description: "增伤排名：对照用例的法术 4021（帚星）不在数据集里")
+    }
+    let spellSegments = index.segments(for: spell).filter { $0.hasDamage }
+    try rankerExpect(!spellSegments.isEmpty, "帚星应当有带固定值的命中段", counter: &count)
+    for segment in spellSegments {
+        try rankerExpect(
+            !segment.visibleComponents.isEmpty,
+            "帚星 #\(segment.atkId) 应当至少剩一个芯片",
+            counter: &count
+        )
+        try rankerExpect(
+            segment.visibleComponents.allSatisfy { ($0.flat ?? 0) > 0 && $0.motionPercent == nil },
+            "帚星 #\(segment.atkId) 的芯片只应来自 flat，且不显示动作值",
+            counter: &count
+        )
+        try rankerExpect(
+            segment.hiddenZeroComponentCount == 0,
+            "法术段缺席的属性不算「武器该属性为 0」，不得触发行末那句小字",
+            counter: &count
+        )
+    }
+
+    // ③ 隐藏只动展示层：可见通道的相对值之和必须等于整段的 total。
+    let composition = SkillDamageMath.composition(
+        of: segments, selected: SkillDamageMath.defaultSelection(segments)
+    )
+    let visibleTotal = segments
+        .filter { SkillDamageMath.defaultSelection(segments).contains($0.atkId) }
+        .reduce(0.0) { $0 + $1.visibleComponents.reduce(0) { $0 + $1.amount } }
+    try rankerExpectClose(
+        visibleTotal, composition.total,
+        "隐藏零贡献通道不得改变构成总量", tolerance: 0.000000001, counter: &count
+    )
+
+    // ④ 展示层文案：数据集里的「无FP版」一律显示成「专注值不足版」，原文不动。
+    let rawNoFp = skill.hits.filter { $0.noFp }
+    try rankerExpect(!rawNoFp.isEmpty, "尸横遍野应当带专注值不足版的段", counter: &count)
+    for hit in rawNoFp {
+        try rankerExpect(
+            hit.displayLabel.contains("无FP版"),
+            "数据集原文应当保持不变（hits[].labelZh 仍写「无FP版」）",
+            counter: &count
+        )
+        try rankerExpect(
+            SkillTextZh.noFpLabel(hit.displayLabel).hasPrefix("专注值不足版")
+                && !SkillTextZh.noFpLabel(hit.displayLabel).contains("FP"),
+            "展示层应当把「无FP版」换成「专注值不足版」",
+            counter: &count
+        )
+    }
+    try rankerExpect(
+        SkillTextZh.noFpLabel("L2 第3段") == "L2 第3段",
+        "不含 FP 的段名应当原样返回",
+        counter: &count
+    )
 }
 
 private func checkComposition(_ index: SkillDataIndex, counter count: inout Int) throws {
@@ -1988,12 +2093,12 @@ private struct CrossCase {
     /// 法术 id（战技用例为 nil）。
     let spellID: Int?
     let weaponID: Int?
-    /// nil = 默认勾选（当前 FP 侧的全部非 noDamage 段）。
+    /// nil = 默认勾选（正常版这一侧的全部非 noDamage 段）。
     let onlyAtkIds: Set<Int>?
 }
 
 private let crossCases: [CrossCase] = [
-    // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是无 FP 版。
+    // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
     CrossCase(key: "corpse-piler-full", skillID: 1177, spellID: nil, weaponID: 9040000, onlyAtkIds: nil),
     // 同一把武器只勾最后一段：每段五属性 motion 同值，构成比例必须与全段完全一致。
     CrossCase(key: "corpse-piler-last", skillID: 1177, spellID: nil, weaponID: 9040000, onlyAtkIds: [303400305]),
@@ -2179,7 +2284,7 @@ private func checkCrossPlatformCases(
         if item.onlyAtkIds == nil {
             try rankerExpect(
                 result.selected.allSatisfy { hitsByID[$0]?.noFp != true },
-                "\(item.key)：默认勾选只取 FP 侧，无 FP 版不得同时计入",
+                "\(item.key)：默认勾选只取正常版这一侧，专注值不足版不得同时计入",
                 counter: &count
             )
         }

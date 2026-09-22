@@ -194,7 +194,7 @@ test("selectHits：没有 variants 时退回 ctx 单选（武器名 → 类别 �
   );
 });
 
-test("hitOverridesFor：「全选」只勾当前 FP 侧，FP 段与无FP 段不会同时计入", () => {
+test("hitOverridesFor：「全选」只勾当前这一侧，正常版与专注值不足版不会同时计入", () => {
   const hits = [
     { atkId: 1 },
     { atkId: 2, noFp: true },
@@ -202,7 +202,7 @@ test("hitOverridesFor：「全选」只勾当前 FP 侧，FP 段与无FP 段不�
   ];
   const all = R.hitOverridesFor(hits, "all", false);
   assert.equal(all[1], true);
-  assert.equal(all[2], false, "无FP 版与 FP 版互为替代，一起勾会把同一击算两遍");
+  assert.equal(all[2], false, "专注值不足版与正常版互为替代，一起勾会把同一击算两遍");
   assert.equal(3 in all, false, "noDamage 段不参与");
 
   const allNoFp = R.hitOverridesFor(hits, "all", true);
@@ -216,7 +216,7 @@ test("hitOverridesFor：「全选」只勾当前 FP 侧，FP 段与无FP 段不�
   const weapon = skills.weapons.find((one) => typeof one.skillVariant === "number" &&
     skills.skills.some((skill) => (skill.weaponIds || []).indexOf(one.id) !== -1 &&
       R.selectHits(skill, one).some((hit) => hit.noFp)));
-  assert.ok(weapon, "数据集里应当有带无FP 版本的战技");
+  assert.ok(weapon, "数据集里应当有带专注值不足版本的战技");
   const skill = skills.skills.find((one) => (one.weaponIds || []).indexOf(weapon.id) !== -1 &&
     R.selectHits(one, weapon).some((hit) => hit.noFp));
   const picked = R.selectHits(skill, weapon);
@@ -287,6 +287,93 @@ test("hitContribution：武器段 = 攻击力 × motion/100 + flat，addBaseAtk 
 
   // noDamage 段（只挂 spEffect）完全不计入。
   assert.equal(R.hitContribution(Object.assign({ noDamage: true }, hit), weapon, false).slash, 0);
+});
+
+test("hitChipPlan：分段芯片只留对当前武器真正有贡献的属性", () => {
+  const weapon = { attackBase: { physical: 100, fire: 50 }, atkAttribute: 0, atkAttribute2: 0 };
+  // 参数表里五属性同值，但武器只有物理与火 → 魔力／雷／圣三项乘出来恒为 0。
+  const hit = {
+    attribute: "Slash",
+    motion: { physical: 99, magic: 99, fire: 99, lightning: 99, holy: 99 }
+  };
+  const plan = R.hitChipPlan(hit, weapon, false);
+  assert.deepEqual(plan.chips.map((chip) => chip.type), ["slash", "fire"]);
+  assert.equal(plan.hidden, 3, "被隐藏的三项要数出来，行末才补得上那句小字");
+
+  // flat 会让一个 attackBase 为 0 的属性重新有贡献。
+  const withFlat = R.hitChipPlan(Object.assign({ flat: { holy: 20 } }, hit), weapon, false);
+  assert.deepEqual(withFlat.chips.map((chip) => chip.type), ["slash", "fire", "holy"]);
+  assert.equal(withFlat.hidden, 2);
+
+  // 顺序固定为 物理子类型 → 魔力 → 火 → 雷 → 圣（与 macOS 端 SkillDamageChannel 一致）。
+  const full = { attackBase: { physical: 10, magic: 10, fire: 10, lightning: 10, holy: 10 } };
+  assert.deepEqual(
+    R.hitChipPlan(hit, Object.assign({ atkAttribute: 0, atkAttribute2: 0 }, full), false)
+      .chips.map((chip) => chip.type),
+    ["slash", "magic", "fire", "lightning", "holy"]
+  );
+
+  // 法术段只用 flat：motion 一项都不显示，也不算「被隐藏」（缺席的原因不是武器为 0）。
+  const spellHit = { attribute: "None", motion: { physical: 100, magic: 100, fire: 100 }, flat: { magic: 152 } };
+  const spellPlan = R.hitChipPlan(spellHit, null, true);
+  assert.deepEqual(spellPlan.chips.map((chip) => chip.type), ["magic"]);
+  assert.equal(spellPlan.hidden, 0);
+
+  // 全部属性都无贡献 → 没有芯片，渲染侧退回「无伤害数值」。
+  const dead = R.hitChipPlan({ attribute: "Slash", motion: { magic: 99 } }, weapon, false);
+  assert.equal(dead.chips.length, 0);
+});
+
+test("真实数据：尸横遍野 + 尸山血海 每段只剩「斩击 + 火」两个属性芯片", () => {
+  const weapon = skills._weaponById[9040000];
+  const skill = skills.skills.find((one) => one.id === 1177);
+  assert.ok(weapon && skill, "对照用例的武器 9040000 / 战技 1177 必须在数据集里");
+  const base = weapon.attackBase || {};
+  assert.ok(Number(base.physical) > 0 && Number(base.fire) > 0);
+  ["magic", "lightning", "holy"].forEach((key) => {
+    assert.ok(!(Number(base[key]) > 0), key + " 的基础攻击力应当是 0");
+  });
+
+  const hits = R.selectHits(skill, weapon);
+  assert.ok(hits.length > 0);
+  hits.forEach((hit) => {
+    const plan = R.hitChipPlan(hit, weapon, false);
+    assert.deepEqual(
+      plan.chips.map((chip) => chip.type),
+      ["slash", "fire"],
+      "段 " + hit.atkId + " 只应显示斩击与火"
+    );
+    assert.equal(plan.hidden, 3, "段 " + hit.atkId + " 有三项被隐藏");
+  });
+});
+
+test("真实数据：某个法术段只显示带 flat 的那些属性", () => {
+  const spell = skills.spells.find((one) => one.id === 4021);
+  assert.ok(spell, "帚星（4021）必须在数据集里");
+  const hit = (spell.hits || []).find((one) => !one.noDamage &&
+    one.flat && Object.keys(one.flat).length > 0);
+  assert.ok(hit, "帚星应当有带 flat 的命中段");
+  const plan = R.hitChipPlan(hit, null, true);
+  assert.ok(plan.chips.length > 0);
+  assert.equal(plan.hidden, 0, "法术段不用 motion，缺席的属性不算「武器为 0」");
+  const flatKeys = Object.keys(hit.flat).filter((key) => Number(hit.flat[key]) > 0);
+  assert.equal(plan.chips.length, flatKeys.length, "芯片数应当等于 flat > 0 的属性数");
+  plan.chips.forEach((chip) => {
+    assert.ok(chip.flat > 0, "法术段的每个芯片都来自 flat");
+    assert.equal(chip.motion, 0, "法术段不显示动作值");
+  });
+});
+
+test("zhNoFpLabel：展示层把数据集里的「无FP版」换成「专注值不足版」", () => {
+  assert.equal(R.zhNoFpLabel("无FP版 L2 第1段-第1击"), "专注值不足版 L2 第1段-第1击");
+  assert.equal(R.zhNoFpLabel("无 FP 版 R2"), "专注值不足版 R2");
+  assert.equal(R.zhNoFpLabel("L2 第3段"), "L2 第3段", "不含 FP 的标签原样返回");
+  assert.equal(R.zhNoFpLabel(undefined), "", "缺标签时返回空串，交给后面的兜底");
+  // 数据集本身不动：noFp 字段与 labelZh 原文都还在。
+  const skill = skills.skills.find((one) => one.id === 1177);
+  const raw = (skill.hits || []).filter((hit) => hit.noFp === true);
+  assert.ok(raw.length > 0);
+  assert.ok(raw.every((hit) => (hit.labelZh || "").indexOf("无FP版") === 0), "数据集原文保持不变");
 });
 
 test("真实数据：可达的子弹段能算出构成（只有 motion 的子弹段不得被整段归零）", () => {

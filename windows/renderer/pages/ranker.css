@@ -314,10 +314,21 @@
 .ranker-hit-el--holy { border-left-color: var(--ranker-holy); }
 .ranker-hit-el--none { color: var(--text-tertiary); }
 
-/* 武器这一属性基础攻击力为 0 → 动作值再高也打不出伤害，调暗但不隐藏。 */
-.ranker-hit-el.is-zero {
-  opacity: .38;
-  border-left-color: var(--border);
+/* 武器这一属性基础攻击力为 0 → 动作值再高也打不出伤害，直接不显示这一项
+   （见 ranker.js 的 hitChipPlan）；确有被隐藏项时在行末补一句很淡的小字。 */
+.ranker-hit-el-note {
+  align-self: center;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  opacity: .62;
+  white-space: nowrap;
+}
+
+/* 「使用专注值不足版本」开关后面的补充说明。 */
+.ranker-nofp-hint {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  opacity: .7;
 }
 
 .ranker-hit-poise {

@@ -30,7 +30,7 @@ const index = R.indexBuffs(buffs);
 
 // 与 macOS 端 crossCases 一一对应。
 const CASES = [
-  // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是无 FP 版。
+  // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
   { key: "corpse-piler-full", kind: "skill", id: 1177, weaponId: 9040000, only: null },
   // 同一把武器只勾最后一段：每段五属性 motion 同值，构成比例必须与全段完全一致。
   { key: "corpse-piler-last", kind: "skill", id: 1177, weaponId: 9040000, only: [303400305] },
@@ -126,7 +126,7 @@ function runCase(def) {
   const selected = hits.filter((hit) => {
     if (hit.noDamage) return false;
     if (def.only) return def.only.indexOf(hit.atkId) !== -1;
-    return Boolean(hit.noFp) === false;   // 默认勾选＝当前 FP 侧
+    return Boolean(hit.noFp) === false;   // 默认勾选＝正常版这一侧
   });
   const comp = R.composition(selected, weapon, isSpell);
   const options = {
@@ -163,7 +163,7 @@ CASES.forEach((def) => {
     run.selected.forEach((hit) => {
       assert.ok(ids.has(hit.atkId), "勾选的段必须来自选出的段");
       assert.notEqual(hit.noDamage, true, "noDamage 段不该被勾上");
-      if (!def.only) assert.notEqual(hit.noFp, true, "默认勾选只取 FP 侧");
+      if (!def.only) assert.notEqual(hit.noFp, true, "默认勾选只取正常版这一侧");
     });
 
     const reference = referenceShares(run.hits, run.weapon, new Set(run.selected.map((hit) => hit.atkId)));

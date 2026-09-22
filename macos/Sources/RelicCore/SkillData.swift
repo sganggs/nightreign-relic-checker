@@ -546,6 +546,20 @@ extension SkillDataset: Decodable {
     }
 }
 
+// MARK: - 展示层文案
+
+/// 展示层的中文口径工具。**只换展示，不动数据集、不动字段名。**
+public enum SkillTextZh {
+    /// 数据集里 hits[].labelZh 仍写「无FP版」（本版本 162 段），页面一律说「专注值不足版」。
+    /// Windows 端 renderer/pages/ranker.js 的 zhNoFpLabel 是同一实现。
+    public static func noFpLabel(_ text: String) -> String {
+        guard text.contains("FP") else { return text }
+        return text
+            .replacingOccurrences(of: "无 FP 版", with: "专注值不足版")
+            .replacingOccurrences(of: "无FP版", with: "专注值不足版")
+    }
+}
+
 // MARK: - 分段命中（已按所选武器算好相对伤害）
 
 /// 一段命中在某个伤害通道上的贡献。`motionPercent` / `flat` 原样来自数据集，
@@ -579,6 +593,29 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
 
     public var id: Int { atkId }
     public var hasDamage: Bool { total > 0 }
+
+    /// 展示层的段名：把数据集里的「无FP版」换成中文的「专注值不足版」。
+    public var displayLabelZh: String { SkillTextZh.noFpLabel(labelZh) }
+
+    /// 芯片行要显示的通道：**只留对当前武器真正有贡献的那些**。
+    ///
+    /// 动作值（motion）是「武器该属性基础攻击力的百分比」，参数表里每段常常五个属性同值
+    /// （尸横遍野每段都是 99%），但武器这一属性 attackBase 为 0 时乘出来恒为 0——
+    /// 尸山血海只有物理 46 与火 46，魔力／雷／圣三项对构成与排名毫无影响，
+    /// 并排列出来只会让人以为是 bug。判定即「amount > 0」，等价于：
+    ///   · 近战段／战技子弹段：attackBase > 0 且（motion > 0 或 flat > 0）；
+    ///   · 法术段：weapon 为 nil、motion 不参与，等价于「flat > 0 的属性」。
+    /// Windows 端 ranker.js 的 hitChipPlan 是同一口径。
+    public var visibleComponents: [SkillSegmentComponent] {
+        components.filter { $0.amount > 0 }
+    }
+
+    /// 被隐藏的「动作值声明了、但武器该属性攻击力为 0」的通道数。
+    /// 只数这一种，用来在芯片行末尾补一句「其余属性该武器为 0」；法术段的 motionPercent
+    /// 本来就是 nil（不参与计算），缺席的原因不是武器为 0，所以不会计进来。
+    public var hiddenZeroComponentCount: Int {
+        components.filter { $0.amount <= 0 && ($0.motionPercent ?? 0) > 0 }.count
+    }
 
     public func amount(_ channel: SkillDamageChannel) -> Double {
         components.first { $0.channel == channel }?.amount ?? 0
@@ -716,15 +753,15 @@ public enum SkillDamageMath {
         )
     }
 
-    /// 默认勾选：当前 FP 侧、非 noDamage 的段（默认在 FP 侧）。
+    /// 默认勾选：正常版这一侧、非 noDamage 的段（默认在正常版侧）。
     public static func defaultSelection(_ segments: [SkillSegment]) -> Set<Int> {
         selection(segments, useNoFp: false)
     }
 
-    /// 「无 FP 版」与「FP 版」互斥切换：只勾这一侧的段。
+    /// 「专注值不足版」与「正常版」互斥切换：只勾这一侧的段。
     ///
     /// 两侧互为替代，一起勾会把同一击算两遍，相对值合计直接翻倍、构成与排名权重跟着失真，
-    /// 所以这里不做「这一侧为空就退回另一侧」的兜底（本版本数据里也不存在整套只有无 FP 版的动作套）。
+    /// 所以这里不做「这一侧为空就退回另一侧」的兜底（本版本数据里也不存在整套只有专注值不足版的动作套）。
     /// 与 Windows 端 hitEnabled / hitOverridesFor 同一口径：数值为 0 但没标 noDamage 的段照样勾上，
     /// 它对构成的贡献本来就是 0。
     public static func selection(_ segments: [SkillSegment], useNoFp: Bool) -> Set<Int> {
@@ -861,7 +898,7 @@ public struct SkillDataIndex: Sendable {
                     entryID: spell.id,
                     nameZh: spell.nameZh,
                     nameEn: spell.nameEn,
-                    subtitleZh: "\(kindZh) · FP \(spell.mp)",
+                    subtitleZh: "\(kindZh) · 专注值 \(spell.mp)",
                     weaponCount: 0,
                     segmentCount: spell.hits.count,
                     searchKey: "\(spell.nameZh) \(spell.nameEn) \(kindZh)".foldedForSearch

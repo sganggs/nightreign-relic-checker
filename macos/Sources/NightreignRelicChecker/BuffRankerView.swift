@@ -362,19 +362,24 @@ struct BuffRankerSegmentSection: View {
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(AppTheme.purpleSoft)
+                    .help("只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍")
                 Button("全不选") { model.clearSegments() }
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(AppTheme.purpleSoft)
 
                 if model.hasNoFpVariant {
-                    Toggle("无 FP 版", isOn: Binding(
+                    Toggle("使用专注值不足版本", isOn: Binding(
                         get: { model.useNoFp },
                         set: { model.setUseNoFp($0) }
                     ))
                     .toggleStyle(.switch)
                     .font(.caption)
-                    .help("战技的 FP 版与无 FP 版是互斥的两套段，这里整体切换")
+                    .help("没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换")
+
+                    Text("没蓝时打出的弱化版战技")
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
                 }
 
                 Spacer(minLength: 0)
