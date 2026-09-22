@@ -10,6 +10,8 @@
 - 本版改用 Windows 10/11 系统自带的 **Microsoft Edge WebView2 运行时**
   渲染同一套页面（同为 Chromium 内核），EXE 只包含一个几 MB 的 Go 壳。
 
+当前版本 **v0.3.0**（`main.go` 的 `appVersion` 与 `winres/winres.json` 为准）。
+
 ## 运行要求
 
 - Windows 10/11 x64；
@@ -19,7 +21,8 @@
 自定义词条库保存在 `%LOCALAPPDATA%\NightreignRelicChecker\affixes.json`；
 另外壳程序会在
 `%LOCALAPPDATA%\NightreignRelicChecker\ui\` 与 `...\WebView2\` 下存放
-界面文件副本与 WebView2 浏览器数据。
+界面文件副本与 WebView2 浏览器数据。界面副本按版本分目录（`ui\v0.3.0\`），
+升级时旧版本目录会被自动清理，与版本无关的 `ui\resources\`（新页面数据）保留。
 
 ## 构建
 
@@ -31,50 +34,108 @@
 go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe
 ```
 
-仅当修改图标或版本信息时，才需用 go-winres 重新生成上述 syso：
+交叉构建（在 macOS / Linux 上产出同一个 EXE）：
+
+```
+GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe .
+```
+
+仅当修改图标或版本信息时，才需用 go-winres 重新生成上述 syso（改完
+`winres/winres.json` 的版本号务必跑一次，否则 EXE 属性里还是旧版本号）：
 
 ```
 go install github.com/tc-hib/go-winres@latest
-go generate ./...
+go-winres make --arch 386,amd64
 ```
 
-运行审计核心（JS）与存档解析器（Go 子包）测试，任意平台可跑：
+> `--arch` 不可省：它的默认值是 `amd64,386`，但会被环境变量 `$GOARCH` 覆盖
+> （见 `go-winres make --help`）。在上面交叉编译那一节导出过 `GOARCH` 的 shell 里
+> 直接跑 `go-winres make`，只会重写该架构的 syso，另一个架构仍留着旧版本号；
+> 在 Apple Silicon 上跑 `go generate ./...`（`main.go` 里的 `//go:generate go-winres make`
+> 走的正是这条命令）同样会被注入 `GOARCH=arm64`，只产出 `rsrc_windows_arm64.syso`。
+> 显式写 `--arch 386,amd64`（或先 `unset GOARCH`）可避免这个坑；本仓库不分发
+> Windows on ARM 构建，误生成的 `rsrc_windows_arm64.syso` 不入库，删掉即可。
+
+## 测试
+
+审计核心（JS）与三个新页面的纯计算层测试，任意平台可跑（无依赖，用 node 自带的
+测试运行器）：
 
 ```
-node --test tests/core_audit.test.mjs
+node --test tests/*.test.mjs
+```
+
+当前覆盖 `tests/` 下六个文件：`core_audit`（存档审计规则，用例取自仓库根
+`testdata/`，与 macOS 端对拍）、`save_report` / `save_diff`（报告导出与存档对比，
+口径与 macOS 端 `SaveReport.swift` / `SaveCompare.swift` 逐行一致）、
+`bosses` / `lookup_index` / `ranker`（三个新页面的纯逻辑层）。
+
+存档解析器（Go 子包，无平台约束）：
+
+```
 go test ./internal/savefile/
 ```
 
-运行主包全部测试（依赖 `golang.org/x/sys/windows`，需在 Windows 环境运行）：
+静态检查（交叉平台）与主包全部测试（后者依赖 `golang.org/x/sys/windows`，
+需在 Windows 环境运行）：
 
 ```
+GOOS=windows go vet ./...
 go test ./...
 ```
 
+页面改动建议在浏览器里实际点验：`renderer/` 是纯静态目录，用任意静态 HTTP
+服务打开 `index.html` 即可（`file://` 下 `fetch` 被 Chromium 拦截，必须走
+HTTP；预览模式会从 `../resources/<name>.json` 回退读取数据）。
+
+## 数据
+
+内置数据在 `resources/`，由 `go:embed` 打进 EXE，**不要手工复制**：仓库根的
+`data/` 是唯一权威来源，换数据时在仓库根运行
+
+```
+zsh scripts/sync-data.sh
+```
+
+把 `data/nightreign-<名字>-v<版本>.json` 同步成 `windows/resources/<名字>.json`
+（affixes、relics、bosses、skills、buffs 五项），两端同时覆盖，代码无需改动。
+
+`resources/bosses.json`、`skills.json`、`buffs.json` 的生成管线在
+[`../macos/DataSources/`](../macos/DataSources/PROVENANCE.md)（`dump_regulation.py` /
+`extract_msg.py` / `generate_*.py`，需要本机游戏本体；Oodle 解压器的构建与调用
+见 [`../macos/DataSources/tools/oodledec/README.md`](../macos/DataSources/tools/oodledec/README.md)）。
+数据集的来源、字段映射与已知局限见同目录的 `PROVENANCE.md`。
+
 ## 结构
 
-- `main.go` — 入口：展开内嵌 renderer、创建窗口、注册桥接、进入消息循环。
+- `main.go` — 入口：展开内嵌 renderer 与数据、创建窗口、注册桥接、进入消息循环；
+  `appVersion` 决定 `ui\v<版本>\` 目录名与旧版本清理（`pruneOldUIVersions` 保留
+  `ui\resources\`）。
 - `window.go` — WebView2 壳窗口（基于 jchv/go-webview2 的 MIT 代码定制：
   加载完成前隐藏窗口、深色背景、绑定函数在后台 goroutine 运行、
   禁用右键菜单 / DevTools / 浏览器快捷键 / 缩放 / 自动填充、拒绝权限请求）。
 - `bindings.go` — `window.nightreign` 桥：loadCatalog / importCatalog /
   saveCustomCatalog / resetCatalog / exportCatalog / openSaveFile /
-  loadRelicData（含取消返回值与统一的错误文案）。
+  locateSaveFiles / openLocatedSave / parseSaveData / exportText /
+  loadRelicData / loadGameData（含取消返回值与统一的错误文案）。
 - `internal/savefile` — 存档只读解析器（BND4 容器、AES-128-CBC 解密、
   遗物记录提取；无平台约束，任意平台可测）；`savefile.go` 为主包薄封装。
 - `catalog.go` — 词条库读写：原子写入（临时文件 + 重命名）与统一的校验、
   错误消息。
 - `internal/w32` — 所需的少量 Win32 绑定（自 jchv/go-webview2 内部包 fork）。
-- `renderer/`、`resources/affixes.json`、`resources/relics.json`、`build/icon.ico`
-  — 界面、内置词条库、遗物物品表（存档检查用）与图标。
+- `renderer/` — 界面：`index.html` / `app.js` / `core.js`（规则与审计）/
+  `styles.css`，以及存档页的 `savereport.js`（报告与 CSV 导出）与
+  `savediff.js`（存档对比）。
 - `renderer/pages/` — 三个新页面（首领数据 / 词条反查 / 增伤排名）各自的
-  `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**，
+  `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**：
+  注册方式、`ctx` 的内容、`ctx.getGameData` 的语义、样式与 CSP 约束都在那里，
   功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。
-- `resources/bosses.json`、`resources/skills.json`、`resources/buffs.json`
-  — 上述三页的数据，同样由 `go:embed` 内嵌，经 `window.nightreign.loadGameData(name)`
-  桥交给渲染层。真实数据就绪前是最小占位 JSON（`{"placeholder": true}`），
-  页面显示「数据未内置」；用仓库根的 `zsh scripts/sync-data.sh` 覆盖后重新构建即可，
-  **占位文件不能删**（`go:embed` 要求文件存在）。
+- `resources/affixes.json`、`relics.json`、`bosses.json`、`skills.json`、
+  `buffs.json`、`build/icon.ico` — 内置词条库、遗物物品表与三套游戏数据集
+  （全部由 `go:embed` 内嵌，经 `window.nightreign.loadGameData(name)` 桥交给渲染层）
+  与图标。**这些文件不能删**（`go:embed` 要求文件存在）；内容统一由
+  `scripts/sync-data.sh` 覆盖。
+- `cmd/dumpsave` — 排障用的存档转储小工具。
 - `winres/winres.json` — 图标、版本信息与 per-monitor v2 DPI 清单。
 
 ## 调试

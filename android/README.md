@@ -1,5 +1,10 @@
 # 夜幕验物 Android
 
+> **版本说明（仓库 v0.3.0）**：本轮只做桌面双端的新功能与文档收尾，**Android 版没有任何新功能**，
+> `versionName` 仍是 **0.2.1**，Release 附件也仍是 `NightreignRelicChecker-Android-v0.2.1.apk`。
+> 桌面端 v0.3.0 新增的「首领数据」「词条反查」「增伤排名」三页与存档检查的四项增强
+> （自动查找、拖拽打开、导出报告、存档对比）都不在手机版里。内置词条库与判定规则与桌面端同源，未变。
+
 Android 首版是一个完全离线、手机优先的三词条手动验物工具。包名为
 `com.nightreign.relicchecker`，使用 Kotlin、Jetpack Compose、Material 3 与 Preferences DataStore。
 界面沿用桌面版的深黑紫色视觉语言，并针对手机的触控、底部导航和底部抽屉重新布局。
@@ -75,6 +80,11 @@ Debug APK 输出到 `app/build/outputs/apk/debug/app-debug.apk`。
 本轮优先交付稳定的手动验物 MVP。Android 首版不解析 `.sl2` / `.co2`，也没有不可用的存档按钮；
 桌面端的具体遗物 ID、正负词条配对、唯一遗物重复等存档审计功能尚未移植。后续如移植，应使用
 Android Storage Access Framework 做只读文件选择，并复用桌面端对拍用例，不能把“深夜正面”预检当作完整存档结论。
+
+桌面端 v0.3.0 还新增了三个基于游戏参数表的数据页（首领数据 / 词条反查 / 增伤排名），手机版同样没有。
+这三页依赖 `data/` 下约 3.5 MB 的新数据集（`nightreign-{bosses,skills,buffs}-v1.03.5.json`），
+如果后续要移植，建议先评估 APK 体积与低端机的解析耗时，并沿用 `macos/DataSources/PROVENANCE.md`
+里记录的数值口径与已知局限，不要另起一套说法。
 
 ## 许可与数据来源
 

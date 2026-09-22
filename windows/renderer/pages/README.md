@@ -45,7 +45,7 @@ renderer/pages/<key>.css   页面样式（功能开发者独占）
 | --- | --- |
 | `ctx.Core` | `core.js` 导出的规则模块（`MODES`、`isEligible`、`check`、`buildRelicIndex`、`auditRelic`、`relicKindLabel`…） |
 | `ctx.catalog` | 当前已通过 `Core.validateCatalog` 校验的词条库对象（`{ schemaVersion, gameVersion, affixes: [...] , ... }`）。词条库载入失败时可能为 `null`，请判空 |
-| `ctx.relicData` | 遗物物品表（`resources/relics.json`）。**只有进过「存档检查」页之后才有值**，否则为 `null`；需要时自行判空或提示用户 |
+| `ctx.relicData` | 遗物物品表（`resources/relics.json`）。**只有进过「存档检查」页之后才有值**，否则为 `null`；需要时自行判空或提示用户。也可以像 `lookup.js` 那样在判空后自行调 `window.nightreign.loadRelicData()` 桥补载并在闭包里缓存（浏览器预览模式下退回 `fetch("../resources/relics.json")`） |
 | `ctx.getGameData(name)` | `name ∈ "bosses" \| "skills" \| "buffs"`，返回 `Promise`，懒加载并缓存 |
 | `ctx.helpers` | 见下表 |
 
@@ -81,8 +81,14 @@ ctx.getGameData("bosses").then(function (data) {
   - `resources/<name>.json` 不存在或读取失败；
   - 文件还是脚手架占位内容（顶层 `{"placeholder": true}`）；
   - `name` 不在 `"bosses" | "skills" | "buffs"` 之内。
-- 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」），
-  三个 JSON 由另一条数据流水线生成，随时可能还没到位。
+- 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」）——三个 JSON
+  由另一条数据流水线生成，换版本或重新生成期间随时可能缺位。
+- 自 v0.3.0 起三份数据都已就位（regulation 1.03.5 导出，当前
+  `bossesSchemaVersion` 2 / skills 2 / buffs 5——这三个数字是写死的，重新生成数据集时
+  要连同 `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
+  [`macos/DataSources/PROVENANCE.md`](../../../macos/DataSources/PROVENANCE.md)
+  和 JSON 自带的 `notes` / `usage` / `caveats` / `fieldNotes` 为准**，页面不要另立说法，
+  也不要把参数表数值当成实测值展示。
 
 数据文件的来源与落地：
 
@@ -124,5 +130,10 @@ ctx.getGameData("bosses").then(function (data) {
   委托），不要用 `onclick=""` 属性。
 - 渲染层完全离线，不得发起任何网络请求。
 - 需要新的测试钩子时，沿用 `data-testid="<key>-xxx"` 命名。
+- 纯计算层建议写成既能被浏览器加载、又能被 node `require` 的模块（顶层不碰
+  `document` / `window`，渲染部分放进 `install(root)` 之后再执行，见 `lookup.js`），
+  这样可以直接用 `node --test tests/*.test.mjs` 覆盖，不必起浏览器。当前
+  `tests/bosses.test.mjs`、`tests/lookup_index.test.mjs`、`tests/ranker.test.mjs`
+  就是这三页的纯逻辑测试；改页面时请一并更新，整套测试的条数只增不减。
 - 新增数据文件（除上面三个以外）需要同时改 `main.go` 的 `go:embed` 与
   `scripts/sync-data.sh`，请先与维护者确认。
