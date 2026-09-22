@@ -25,3 +25,6 @@ macos/DataSources/raw/
 
 # Python
 __pycache__/
+
+# Claude 工作树
+.claude/
