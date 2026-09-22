@@ -1506,6 +1506,94 @@ private func checkSegmentChips(_ index: SkillDataIndex, counter count: inout Int
         "隐藏零贡献通道不得改变构成总量", tolerance: 0.000000001, counter: &count
     )
 
+    // ③' 同一条不变量的**全量版本**：所有可达的（段 × 武器）与全部法术段逐对验。
+    //    Windows 端 ranker.test.mjs 有同名断言，两端一起钉住「芯片＝真正有贡献的属性」。
+    //    单点版本只覆盖尸横遍野这一把武器，正是它当初没能发现「只靠 addBaseAtk 出伤害的
+    //    属性被漏掉」——那一类段的可见通道之和会小于 total，最狠的整段一个芯片都不剩。
+    var chipPairs = 0
+    var pairsWithHidden = 0
+    var pairsWithBaseAtkOnlyChannel = 0
+    var mismatched: [String] = []
+    var emptyChipsWithDamage: [String] = []
+    func auditChips(_ segment: SkillSegment, where label: String) {
+        chipPairs += 1
+        let visible = segment.visibleComponents.reduce(0.0) { $0 + $1.amount }
+        if abs(visible - segment.total) > 0.000000001 { mismatched.append(label) }
+        if segment.visibleComponents.isEmpty && segment.total > 0 { emptyChipsWithDamage.append(label) }
+        if segment.hiddenZeroComponentCount > 0 { pairsWithHidden += 1 }
+        if segment.visibleComponents.contains(where: {
+            $0.motionPercent == nil && $0.flat == nil && $0.baseAttack != nil
+        }) { pairsWithBaseAtkOnlyChannel += 1 }
+    }
+    for one in index.dataset.skills {
+        for id in one.weaponIds {
+            guard let aWeapon = index.weaponsByID[id] else { continue }
+            for segment in index.segments(for: one, weapon: aWeapon) {
+                auditChips(segment, where: "#\(segment.atkId) × \(aWeapon.nameZh)")
+            }
+        }
+    }
+    for one in index.dataset.spells {
+        for segment in index.segments(for: one) {
+            auditChips(segment, where: "法术段 #\(segment.atkId)")
+        }
+    }
+    try rankerExpect(
+        mismatched.isEmpty,
+        "可见芯片之和必须等于整段总量，\(mismatched.count) 对不成立"
+            + "（例如 \(mismatched.prefix(3).joined(separator: "、"))）",
+        counter: &count
+    )
+    try rankerExpect(
+        emptyChipsWithDamage.isEmpty,
+        "有伤害的段不得一个芯片都不剩（会被渲染成「无伤害数值」），"
+            + "\(emptyChipsWithDamage.count) 对不成立"
+            + "（例如 \(emptyChipsWithDamage.prefix(3).joined(separator: "、"))）",
+        counter: &count
+    )
+    try rankerExpect(chipPairs > 8000, "对照样本太少说明遍历写错了（本版本 8540 对）", counter: &count)
+    try rankerExpect(
+        pairsWithHidden > 0,
+        "真实数据里应当有「其余属性该武器为 0」的段，否则这一关是空跑",
+        counter: &count
+    )
+    try rankerExpect(
+        pairsWithBaseAtkOnlyChannel > 0,
+        "真实数据里应当有只靠 addBaseAtk 出伤害的通道，否则这一关是空跑",
+        counter: &count
+    )
+
+    // ③'' 单点样本：113 主教冲锋 + 23000600 雷电主教大火槌的 #30000831。数据里只有
+    //     flat.fire = 55，段自己声明 attribute=Standard，标准与雷两条通道全部来自
+    //     addBaseAtk——旧口径下这一段会被显示成「火 固定 55」，实际打的是 219。
+    guard let chargeWeapon = index.weaponsByID[23000600],
+          let charge = index.skillsByID[113],
+          let bullet = index.segments(for: charge, weapon: chargeWeapon)
+              .first(where: { $0.atkId == 30000831 }) else {
+        throw CheckFailure(description: "增伤排名：对照用例 113 × 23000600 的 #30000831 不在数据集里")
+    }
+    try rankerExpect(
+        bullet.visibleComponents.map(\.channel) == [.standard, .fire, .lightning],
+        "#30000831 的芯片应当是「标准 · 火 · 雷」三条，"
+            + "实际 \(bullet.visibleComponents.map(\.channel.titleZh))",
+        counter: &count
+    )
+    try rankerExpect(
+        bullet.visibleComponents.first { $0.channel == .standard }
+            .map { $0.motionPercent == nil && $0.flat == nil && $0.baseAttack == 82 } == true,
+        "#30000831 的标准一格只有「+基础攻击力」（82），没有动作值也没有固定值",
+        counter: &count
+    )
+    try rankerExpectClose(
+        bullet.total, 219, "#30000831 的总量应当是 219（标准 82 + 雷 82 + 火 55）",
+        tolerance: 0.000000001, counter: &count
+    )
+    try rankerExpect(
+        bullet.hiddenZeroComponentCount == 0,
+        "addBaseAtk 撑起来的通道不是「武器该属性为 0」，不得触发行末那句小字",
+        counter: &count
+    )
+
     // ④ 展示层文案：数据集里的「无FP版」一律显示成「专注值不足版」，原文不动。
     let rawNoFp = skill.hits.filter { $0.noFp }
     try rankerExpect(!rawNoFp.isEmpty, "尸横遍野应当带专注值不足版的段", counter: &count)
@@ -1516,17 +1604,45 @@ private func checkSegmentChips(_ index: SkillDataIndex, counter count: inout Int
             counter: &count
         )
         try rankerExpect(
-            SkillTextZh.noFpLabel(hit.displayLabel).hasPrefix("专注值不足版")
-                && !SkillTextZh.noFpLabel(hit.displayLabel).contains("FP"),
+            SkillTextZh.fpText(hit.displayLabel).hasPrefix("专注值不足版")
+                && !SkillTextZh.fpText(hit.displayLabel).contains("FP"),
             "展示层应当把「无FP版」换成「专注值不足版」",
             counter: &count
         )
     }
     try rankerExpect(
-        SkillTextZh.noFpLabel("L2 第3段") == "L2 第3段",
+        SkillTextZh.fpText("L2 第3段") == "L2 第3段",
         "不含 FP 的段名应当原样返回",
         counter: &count
     )
+    // 两端同一套正则：全角空格也要吃下，数据集换写法时不能只有一端替换掉
+    // （原来 macOS 这边是两个字面量，Windows 是正则，正是会分叉的地方）。
+    try rankerExpect(
+        SkillTextZh.fpText("无　FP版 R2") == "专注值不足版 R2",
+        "全角空格写法也应当替换掉",
+        counter: &count
+    )
+
+    // ⑤ 底部「战技数据的取舍与已知问题」用的是数据集 caveats 原文，里面还写着
+    //    「12 段（6 段带 FP + 6 段 No FP）」。展示层一律换成中文，原文不动。
+    try rankerExpect(
+        SkillTextZh.fpText("12 段（6 段带 FP + 6 段 No FP）就是全部")
+            == "12 段（6 段正常版 + 6 段专注值不足版）就是全部",
+        "caveats 里的「带 FP」「No FP」应当换成「正常版」「专注值不足版」",
+        counter: &count
+    )
+    try rankerExpect(
+        index.dataset.caveats.contains { $0.contains("FP") },
+        "数据集 caveats 原文里确实还有 FP（否则这一关是空跑）",
+        counter: &count
+    )
+    for caveat in index.dataset.caveats {
+        try rankerExpect(
+            !SkillTextZh.fpText(caveat).contains("FP"),
+            "页面上不该再出现英文 FP：\(SkillTextZh.fpText(caveat).prefix(40))",
+            counter: &count
+        )
+    }
 }
 
 private func checkComposition(_ index: SkillDataIndex, counter count: inout Int) throws {

@@ -369,6 +369,9 @@ struct BuffRankerSegmentSection: View {
                     .foregroundStyle(AppTheme.purpleSoft)
 
                 if model.hasNoFpVariant {
+                    // 「没蓝时打出的弱化版战技」只放在 help 里：再并排一段完全同文的小字，
+                    // 信息重复不说，窄窗口下还会把这条工具条挤到换行。
+                    // Windows 端 ranker.js 的 .ranker-nofp 也是同样处理（title 留着，小字去掉）。
                     Toggle("使用专注值不足版本", isOn: Binding(
                         get: { model.useNoFp },
                         set: { model.setUseNoFp($0) }
@@ -376,10 +379,6 @@ struct BuffRankerSegmentSection: View {
                     .toggleStyle(.switch)
                     .font(.caption)
                     .help("没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换")
-
-                    Text("没蓝时打出的弱化版战技")
-                        .font(.system(size: 10))
-                        .foregroundStyle(AppTheme.tertiaryText)
                 }
 
                 Spacer(minLength: 0)

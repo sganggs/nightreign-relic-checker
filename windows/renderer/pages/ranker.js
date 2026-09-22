@@ -222,33 +222,62 @@
 
   // 分段芯片的展示计划：只留「对当前武器真正有贡献」的属性。
   //
+  // 这是 macOS 端 SkillDamageMath.segment + SkillSegment.visibleComponents /
+  // hiddenZeroComponentCount 的逐字翻译：chip 的 motion / flat / baseAttack 与
+  // SkillSegmentComponent 的三个字段一一对应，**数据集没声明的那一项写 null**
+  // （不是 0），展示侧照 null 判断这一格要不要出现，两端才不会在「数据里写了个 0」
+  // 这种边角上分叉。
+  //
   // 动作值（motion）是「武器该属性基础攻击力的百分比」，参数表里每段常常五个属性同值
   // （尸横遍野每段都是 99% / 99% / 99% / 99% / 99%），但武器这一属性 attackBase 为 0 时
   // 乘出来恒为 0——尸山血海只有物理 46 与火 46，魔力／雷／圣三项对构成与排名毫无影响，
-  // 并排列出来只会让人以为是 bug。所以展示口径统一成「hitContribution > 0 才显示」：
+  // 并排列出来只会让人以为是 bug。所以展示口径统一成「这一档算出来 > 0 才显示」：
   //   · 近战段：武器该属性 attackBase > 0 且（motion > 0 或 flat > 0）；
   //   · 战技的子弹段：同上（子弹段挂的是真武器，motion 照常参与）；
+  //   · addBaseAtk（额外加一份武器该属性攻击力）**单独也算一条通道**：这一档哪怕没有
+  //     motion 也没有 flat 照样出芯片，写成「+基础攻击力」。漏掉它会把芯片行读成假的——
+  //     113 主教冲锋 + 23000600 雷电主教大火槌的 #30000831 数据里只有 flat.fire = 55，
+  //     真正打出来的 219 里有 164 来自 addBaseAtk 的标准 82 + 雷 82；本版本还有 467 对
+  //     （段 × 武器）整段只靠 addBaseAtk 出伤害，漏掉就直接显示成「无伤害数值」。
   //   · 法术段：weapon 为 null、motion 不参与，等价于「flat > 0 的属性」。
+  // 由此得到的不变量：**可见芯片的相对值之和 == 这一段的总量**（隐藏的那些本来就是 0）。
   // hidden 只数「motion 声明了但恒为 0」的属性，用来在行末补一句「其余属性该武器为 0」；
   // 法术段不用 motion，所以不会产生 hidden（那几项缺席的原因是法术本来就只用 flat）。
-  // macOS 端 SkillSegment.visibleComponents / hiddenZeroComponentCount 是同一口径。
   function hitChipPlan(hit, weapon, isSpell) {
+    // noDamage 段与 hitContribution 第一行同样整段短路：不出芯片，也不数 hidden。
+    if (!hit || hit.noDamage) return { chips: [], hidden: 0 };
     var motionOn = usesMotion(hit, isSpell);
     var physType = physicalTypeForHit(hit, weapon);
-    var contribution = hitContribution(hit, weapon, isSpell);
+    var base = (weapon && weapon.attackBase) || {};
+    var byType = {};
     var chips = [];
     var hidden = 0;
     for (var i = 0; i < ELEMENTS.length; i += 1) {
       var element = ELEMENTS[i];
-      var motion = motionOn ? num(hit.motion && hit.motion[element]) : 0;
-      var flat = num(hit.flat && hit.flat[element]);
-      if (!motion && !flat) continue;
-      var type = element === "physical" ? physType : element;
-      if (!(contribution[type] > 0)) {
+      var attack = num(base[element]);
+      var motion = motionOn && hit.motion && hit.motion[element] != null
+        ? num(hit.motion[element])
+        : null;
+      var flat = hit.flat && hit.flat[element] != null ? num(hit.flat[element]) : null;
+      var baseAttack = hit.addBaseAtk === true && attack > 0 ? attack : null;
+      if (motion === null && flat === null && baseAttack === null) continue;
+      var amount = (attack * (motion || 0)) / 100 + (flat || 0) + (baseAttack || 0);
+      if (!(amount > 0)) {
         if (motion > 0) hidden += 1;
         continue;
       }
-      chips.push({ type: type, motion: motion, flat: flat });
+      var type = element === "physical" ? physType : element;
+      // 同一伤害类型只会来自一个属性槽，这里仍合并一次以防数据出现重复键（macOS 端同理）。
+      var chip = byType[type];
+      if (chip) {
+        if (chip.motion === null) chip.motion = motion;
+        if (flat !== null) chip.flat = (chip.flat || 0) + flat;
+        if (baseAttack !== null) chip.baseAttack = (chip.baseAttack || 0) + baseAttack;
+      } else {
+        chip = { type: type, motion: motion, flat: flat, baseAttack: baseAttack };
+        byType[type] = chip;
+        chips.push(chip);
+      }
     }
     return { chips: chips, hidden: hidden };
   }
@@ -1091,11 +1120,28 @@
     return ctxRef && ctxRef.helpers ? ctxRef.helpers : null;
   }
 
-  // 展示层统一口径：数据集里 hits[].labelZh 仍写「无FP版」（162 段），
-  // 页面一律说中文的「专注值不足版」。只换展示，不动数据集、不动 noFp 字段。
-  // macOS 端 SkillTextZh.noFpLabel 是同一实现。
-  function zhNoFpLabel(value) {
-    return String(value == null ? "" : value).replace(/无\s*FP\s*版/g, "专注值不足版");
+  // 展示层统一口径：数据集原文里还留着英文的 FP——hits[].labelZh 的「无FP版」（本版本
+  // 162 段）、caveats 第 4 条的「12 段（6 段带 FP + 6 段 No FP）」——页面一律说中文的
+  // 「专注值」。只换展示：数据集、JSON 字段名与 noFp 字段一个都不动。
+  //
+  // 规则表与 macOS 端 SkillTextZh.fpText 逐条相同（两端都走正则，`\s` 把全角空格一起吃下，
+  // 数据集以后写成「无　FP版」也不会只有一端替换掉），顺序有意义：先认长的写法，
+  // 最后才把剩下的孤零零 FP 换成「专注值」。
+  //
+  // 只对这两处**说明文字**用。buffs 数据集里「Determination - Right No FP Damage Buff」
+  // 这类是游戏参数表的英文原名（本版本上百条），套上去只会变成中英夹杂的乱码。
+  var FP_TEXT_RULES = [
+    [/无\s*FP\s*版/g, "专注值不足版"],
+    [/\s*[Nn]o\s*FP(?:\s*版)?/g, "专注值不足版"],
+    [/带\s*FP(?:\s*版)?/g, "正常版"],
+    [/FP/g, "专注值"]
+  ];
+
+  function zhFpText(value) {
+    var text = String(value == null ? "" : value);
+    if (text.indexOf("FP") === -1) return text;
+    FP_TEXT_RULES.forEach(function (rule) { text = text.replace(rule[0], rule[1]); });
+    return text;
   }
 
   function esc(value) {
@@ -1350,11 +1396,14 @@
     var plan = hitChipPlan(hit, weapon, isSpell);
     var cells = plan.chips.map(function (chip) {
       var label = TYPE_INFO[chip.type].zh;
+      // 与 macOS 端 RankerSegmentRow.componentChip 同文同序：动作值 → 固定值 →
+      // 「+基础攻击力」，分隔符是「 · 」。判 null 而不是判真假，数据里写 0 也照样列出来。
       var parts = [];
-      if (chip.motion) parts.push(fmtNumber(chip.motion, 0) + "%");
-      if (chip.flat) parts.push("固定 " + fmtNumber(chip.flat, 0));
+      if (chip.motion !== null) parts.push(fmtNumber(chip.motion, 0) + "%");
+      if (chip.flat !== null) parts.push("固定 " + fmtNumber(chip.flat, 0));
+      if (chip.baseAttack !== null) parts.push("+基础攻击力");
       return "<span class='ranker-hit-el ranker-hit-el--" + esc(chip.type) + "'>" +
-        esc(label) + " " + esc(parts.join(" + ")) + "</span>";
+        esc(label) + " " + esc(parts.join(" · ")) + "</span>";
     });
     // 全部属性都无贡献 → 维持原来的「无伤害数值」。
     if (!cells.length) return "<span class='ranker-hit-el ranker-hit-el--none'>无伤害数值</span>";
@@ -1400,7 +1449,7 @@
       return "<label class='ranker-hit-row" + (on ? " is-on" : "") + (disabled ? " is-disabled" : "") + "'>" +
         "<input type='checkbox' data-ranker-hit='" + hit.atkId + "'" +
         (on ? " checked" : "") + (disabled ? " disabled" : "") + ">" +
-        "<span class='ranker-hit-name'>" + esc(zhNoFpLabel(hit.labelZh) || hit.label || ("段 " + hit.atkId)) +
+        "<span class='ranker-hit-name'>" + esc(zhFpText(hit.labelZh) || hit.label || ("段 " + hit.atkId)) +
         "<span class='ranker-hit-id'>#" + hit.atkId + "</span></span>" +
         "<span class='ranker-hit-damage'>" + hitDamageHtml(hit, weapon, isSpell) + "</span>" +
         "<span class='ranker-hit-poise'>削韧 " + fmtNumber(hitPoise(hit, weapon), 1) +
@@ -1414,13 +1463,15 @@
       "全选（当前版本）</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='none'>全不选</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='reset'>恢复默认</button>" +
+      // 「没蓝时打出的弱化版战技」只放在 title 里：.switch-control 是 nowrap，再并一段
+      // 可见小字会把整条工具条撑长，窄窗口下只能靠 flex-wrap 兜底，而且与 title 完全同文。
+      // macOS 端 BuffRankerView 的 Toggle 也是同样处理（help 留着，并排的 Text 去掉）。
       (hasNoFp
         ? "<label class='switch-control ranker-nofp' " +
           "title='没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换'>" +
           "<input type='checkbox' data-testid='ranker-nofp'" +
           (state.noFp ? " checked" : "") + "><span class='switch-track'></span>" +
-          "<span>使用专注值不足版本</span>" +
-          "<span class='ranker-nofp-hint'>没蓝时打出的弱化版战技</span></label>"
+          "<span>使用专注值不足版本</span></label>"
         : "") +
       "<span class='ranker-hits-count' data-testid='ranker-hits-count'>已勾选 " + onCount +
       " / " + hits.length + " 段</span></div>";
@@ -1766,8 +1817,11 @@
         return "<li>" + esc(text) + "</li>";
       }).join("") + "</ul>" +
       "<div class='ranker-sub'>skills 数据集的已知取舍</div>" +
+      // 数据集原文里还写着「6 段带 FP + 6 段 No FP」，这里与段名走同一套展示层替换
+      // （macOS 端 BuffRankerRankingSection 的「战技数据的取舍与已知问题」同理），
+      // 免得同一页上段名说「专注值不足版」、底部说「No FP」。数据集本身不动。
       "<ul class='ranker-caveat-list'>" + list.map(function (text) {
-        return "<li>" + esc(text) + "</li>";
+        return "<li>" + esc(zhFpText(text)) + "</li>";
       }).join("") + "</ul></div></details>";
   }
 
@@ -2162,7 +2216,7 @@
       usesMotion: usesMotion,
       hitContribution: hitContribution,
       hitChipPlan: hitChipPlan,
-      zhNoFpLabel: zhNoFpLabel,
+      zhFpText: zhFpText,
       composition: composition,
       hitPoise: hitPoise,
       hitStamina: hitStamina,

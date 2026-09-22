@@ -324,13 +324,6 @@
   white-space: nowrap;
 }
 
-/* 「使用专注值不足版本」开关后面的补充说明。 */
-.ranker-nofp-hint {
-  color: var(--text-tertiary);
-  font-size: 9.5px;
-  opacity: .7;
-}
-
 .ranker-hit-poise {
   color: var(--text-secondary);
   font-size: 10.5px;

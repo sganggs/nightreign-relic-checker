@@ -425,7 +425,10 @@ struct BuffRankerNotesSection: View {
                     title: "战技数据的取舍与已知问题（\(skills.dataset.caveats.count) 条）",
                     isOn: $showCaveats
                 ) {
-                    bulletList(skills.dataset.caveats)
+                    // 数据集原文里还写着「6 段带 FP + 6 段 No FP」，这里与段名走同一套展示层
+                    // 替换（Windows 端 caveatsHtml 同理），免得同一页上段名说「专注值不足版」、
+                    // 底部说「No FP」。数据集本身不动。
+                    bulletList(skills.dataset.caveats.map(SkillTextZh.fpText))
                 }
 
                 RankerDisclosure(title: "选段与边界（战技数据集 usage 原文）", isOn: $showUsage) {

@@ -322,6 +322,80 @@ test("hitChipPlan：分段芯片只留对当前武器真正有贡献的属性", 
   // 全部属性都无贡献 → 没有芯片，渲染侧退回「无伤害数值」。
   const dead = R.hitChipPlan({ attribute: "Slash", motion: { magic: 99 } }, weapon, false);
   assert.equal(dead.chips.length, 0);
+
+  // noDamage 段整段短路：不出芯片，也不数 hidden（与 macOS 端 segment() 的
+  // `for element in ... where !hit.noDamage` 同一口径）。
+  const noDamage = R.hitChipPlan(Object.assign({ noDamage: true }, hit), weapon, false);
+  assert.deepEqual(noDamage, { chips: [], hidden: 0 });
+});
+
+test("hitChipPlan：只靠 addBaseAtk 出伤害的属性也要出芯片", () => {
+  // 113 主教冲锋 + 23000600 雷电主教大火槌的 #30000831 就是这个形状：数据里只有
+  // flat.fire = 55，标准（段自己声明 attribute=Standard）与雷两条通道全部来自
+  // addBaseAtk（额外一份武器该属性攻击力）。
+  // 漏掉它们，芯片行会把一段 219 的伤害显示成「火 固定 55」。
+  const weapon = { attackBase: { physical: 82, lightning: 82 }, atkAttribute: 1, atkAttribute2: 1 };
+  const hit = { attribute: "Standard", addBaseAtk: true, flat: { fire: 55 } };
+  const plan = R.hitChipPlan(hit, weapon, false);
+  assert.deepEqual(plan.chips.map((chip) => chip.type), ["neutral", "fire", "lightning"]);
+  assert.equal(plan.hidden, 0, "这几项不是「武器为 0」，不该触发行末那句小字");
+
+  const physical = plan.chips[0];
+  assert.equal(physical.motion, null, "数据里没写 motion → null，展示侧不出这一格");
+  assert.equal(physical.flat, null);
+  assert.equal(physical.baseAttack, 82, "「+基础攻击力」这一格的来源");
+
+  // 可见芯片之和 == 这一段的真实总量（219 = 打击 82 + 雷 82 + 火 55）。
+  const contribution = R.hitContribution(hit, weapon, false);
+  const visible = plan.chips.reduce((sum, chip) => sum + contribution[chip.type], 0);
+  const total = R.TYPE_KEYS.reduce((sum, key) => sum + contribution[key], 0);
+  assert.equal(total, 219);
+  assert.equal(visible, total);
+
+  // 整段只靠 addBaseAtk：照样出芯片，不能退回「无伤害数值」。
+  const onlyBase = R.hitChipPlan({ attribute: "Standard", addBaseAtk: true }, weapon, false);
+  assert.deepEqual(onlyBase.chips.map((chip) => chip.type), ["neutral", "lightning"]);
+
+  // addBaseAtk 碰上 attackBase 为 0 的属性不算一条通道（macOS 端的 `base > 0` 同理）。
+  assert.deepEqual(
+    R.hitChipPlan({ attribute: "Standard", addBaseAtk: true }, { attackBase: {} }, false).chips,
+    []
+  );
+});
+
+test("真实数据：可见芯片的相对值之和恒等于该段总量（隐藏只发生在展示层）", () => {
+  // 这条是「芯片＝真正有贡献的属性」这个承诺的全量版本，对所有可达的（段 × 武器）
+  // 与全部法术段逐对验；macOS 端 checkSegmentChips 有同一条断言，两端一起钉住。
+  let pairs = 0;
+  let withHidden = 0;
+  let onlyBaseAtk = 0;
+  const check = (hit, weapon, isSpell, where) => {
+    pairs += 1;
+    const plan = R.hitChipPlan(hit, weapon, isSpell);
+    const contribution = R.hitContribution(hit, weapon, isSpell);
+    const total = R.TYPE_KEYS.reduce((sum, key) => sum + contribution[key], 0);
+    const visible = plan.chips.reduce((sum, chip) => sum + contribution[chip.type], 0);
+    assert.equal(visible, total, where + "：可见芯片之和应当等于整段总量");
+    assert.equal(
+      plan.chips.length === 0, !(total > 0),
+      where + "：有伤害就必须至少有一个芯片，没伤害才退回「无伤害数值」"
+    );
+    if (plan.hidden > 0) withHidden += 1;
+    if (plan.chips.some((chip) => chip.motion === null && chip.flat === null)) onlyBaseAtk += 1;
+  };
+
+  for (const skill of skills.skills) {
+    for (const weapon of R.weaponsForSkill(skills, skill)) {
+      for (const hit of R.selectHits(skill, weapon)) check(hit, weapon, false, "段 " + hit.atkId);
+    }
+  }
+  for (const spell of skills.spells) {
+    for (const hit of spell.hits || []) check(hit, null, true, "法术段 " + hit.atkId);
+  }
+
+  assert.ok(pairs > 8000, "对照样本太少说明遍历写错了（本版本 8540 对）");
+  assert.ok(withHidden > 0, "真实数据里应当有「其余属性该武器为 0」的段，否则这一关是空跑");
+  assert.ok(onlyBaseAtk > 0, "真实数据里应当有只靠 addBaseAtk 出伤害的通道，否则这一关是空跑");
 });
 
 test("真实数据：尸横遍野 + 尸山血海 每段只剩「斩击 + 火」两个属性芯片", () => {
@@ -360,15 +434,30 @@ test("真实数据：某个法术段只显示带 flat 的那些属性", () => {
   assert.equal(plan.chips.length, flatKeys.length, "芯片数应当等于 flat > 0 的属性数");
   plan.chips.forEach((chip) => {
     assert.ok(chip.flat > 0, "法术段的每个芯片都来自 flat");
-    assert.equal(chip.motion, 0, "法术段不显示动作值");
+    assert.equal(chip.motion, null, "法术段不显示动作值（没声明就是 null，不是 0）");
+    assert.equal(chip.baseAttack, null, "法术段没有武器，addBaseAtk 也无从加起");
   });
 });
 
-test("zhNoFpLabel：展示层把数据集里的「无FP版」换成「专注值不足版」", () => {
-  assert.equal(R.zhNoFpLabel("无FP版 L2 第1段-第1击"), "专注值不足版 L2 第1段-第1击");
-  assert.equal(R.zhNoFpLabel("无 FP 版 R2"), "专注值不足版 R2");
-  assert.equal(R.zhNoFpLabel("L2 第3段"), "L2 第3段", "不含 FP 的标签原样返回");
-  assert.equal(R.zhNoFpLabel(undefined), "", "缺标签时返回空串，交给后面的兜底");
+test("zhFpText：展示层把数据集原文里的 FP 一律换成中文说法", () => {
+  // ① 段名（hits[].labelZh，本版本 162 段）。
+  assert.equal(R.zhFpText("无FP版 L2 第1段-第1击"), "专注值不足版 L2 第1段-第1击");
+  assert.equal(R.zhFpText("无 FP 版 R2"), "专注值不足版 R2");
+  assert.equal(R.zhFpText("L2 第3段"), "L2 第3段", "不含 FP 的标签原样返回");
+  assert.equal(R.zhFpText(undefined), "", "缺标签时返回空串，交给后面的兜底");
+  // 全角空格也要吃下——两端同一套正则，数据集换写法时不能只有一端替换掉。
+  assert.equal(R.zhFpText("无　FP版 R2"), "专注值不足版 R2");
+
+  // ② 底部「数据说明」里的 caveats 原文。
+  assert.equal(
+    R.zhFpText("12 段（6 段带 FP + 6 段 No FP）就是全部"),
+    "12 段（6 段正常版 + 6 段专注值不足版）就是全部"
+  );
+  const caveats = skills.caveats || [];
+  assert.ok(caveats.some((text) => text.indexOf("FP") !== -1), "数据集原文里确实还有 FP");
+  caveats.forEach((text) => {
+    assert.equal(R.zhFpText(text).indexOf("FP"), -1, "页面上不该再出现英文 FP");
+  });
   // 数据集本身不动：noFp 字段与 labelZh 原文都还在。
   const skill = skills.skills.find((one) => one.id === 1177);
   const raw = (skill.hits || []).filter((hit) => hit.noFp === true);

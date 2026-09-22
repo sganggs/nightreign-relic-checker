@@ -550,13 +550,32 @@ extension SkillDataset: Decodable {
 
 /// 展示层的中文口径工具。**只换展示，不动数据集、不动字段名。**
 public enum SkillTextZh {
-    /// 数据集里 hits[].labelZh 仍写「无FP版」（本版本 162 段），页面一律说「专注值不足版」。
-    /// Windows 端 renderer/pages/ranker.js 的 zhNoFpLabel 是同一实现。
-    public static func noFpLabel(_ text: String) -> String {
+    /// 与 Windows 端 renderer/pages/ranker.js 的 FP_TEXT_RULES 逐条相同。
+    /// 顺序有意义：先认长的写法，最后才把剩下的孤零零 FP 换成「专注值」。
+    private static let fpRules: [(pattern: String, replacement: String)] = [
+        (#"无\s*FP\s*版"#, "专注值不足版"),
+        (#"\s*[Nn]o\s*FP(?:\s*版)?"#, "专注值不足版"),
+        (#"带\s*FP(?:\s*版)?"#, "正常版"),
+        ("FP", "专注值")
+    ]
+
+    /// 数据集原文里还留着英文的 FP——hits[].labelZh 的「无FP版」（本版本 162 段）、
+    /// caveats 第 4 条的「12 段（6 段带 FP + 6 段 No FP）」——页面一律说中文的「专注值」。
+    ///
+    /// 两端都走正则，`\s` 把全角空格一起吃下（ICU 与 JS 的 `\s` 都含 U+3000），
+    /// 数据集以后写成「无　FP版」也不会只有一端替换掉。
+    ///
+    /// 只对这两处**说明文字**用。buffs 数据集里「Determination - Right No FP Damage Buff」
+    /// 这类是游戏参数表的英文原名（本版本上百条），套上去只会变成中英夹杂的乱码。
+    public static func fpText(_ text: String) -> String {
         guard text.contains("FP") else { return text }
-        return text
-            .replacingOccurrences(of: "无 FP 版", with: "专注值不足版")
-            .replacingOccurrences(of: "无FP版", with: "专注值不足版")
+        var out = text
+        for rule in fpRules {
+            out = out.replacingOccurrences(
+                of: rule.pattern, with: rule.replacement, options: [.regularExpression]
+            )
+        }
+        return out
     }
 }
 
@@ -594,8 +613,8 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
     public var id: Int { atkId }
     public var hasDamage: Bool { total > 0 }
 
-    /// 展示层的段名：把数据集里的「无FP版」换成中文的「专注值不足版」。
-    public var displayLabelZh: String { SkillTextZh.noFpLabel(labelZh) }
+    /// 展示层的段名：把数据集里的「无FP版」换成中文的「专注值不足版」（见 SkillTextZh.fpText）。
+    public var displayLabelZh: String { SkillTextZh.fpText(labelZh) }
 
     /// 芯片行要显示的通道：**只留对当前武器真正有贡献的那些**。
     ///
@@ -604,8 +623,12 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
     /// 尸山血海只有物理 46 与火 46，魔力／雷／圣三项对构成与排名毫无影响，
     /// 并排列出来只会让人以为是 bug。判定即「amount > 0」，等价于：
     ///   · 近战段／战技子弹段：attackBase > 0 且（motion > 0 或 flat > 0）；
+    ///   · addBaseAtk（额外加一份武器该属性攻击力）**单独也算一条通道**：这一档没有 motion
+    ///     也没有 flat 照样出芯片（写成「+基础攻击力」），否则「可见芯片之和 == total」
+    ///     这条不变量就不成立——113 主教冲锋 + 23000600 雷电主教大火槌的 #30000831
+    ///     数据里只有 flat.fire = 55，真正打出来的 219 里有 164 来自 addBaseAtk；
     ///   · 法术段：weapon 为 nil、motion 不参与，等价于「flat > 0 的属性」。
-    /// Windows 端 ranker.js 的 hitChipPlan 是同一口径。
+    /// Windows 端 ranker.js 的 hitChipPlan 是同一口径（两端各有一条全量对照的自检）。
     public var visibleComponents: [SkillSegmentComponent] {
         components.filter { $0.amount > 0 }
     }
