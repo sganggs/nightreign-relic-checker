@@ -53,6 +53,12 @@ is the *scope* triple
   atkAttribute / spAttribute   (physical / special attribute filter)
 
 so every buff carries both its `rates` and the `scope` those rates are gated by.
+A second, unrelated place states the same kind of restriction: SpEffectParam's
+`stateInfo` (SP_EFFECT_TYPE), where 367 = Enhance Critical Attacks and 197 =
+Enhance Thrusting Counter Attacks.  `scope.attackContexts` folds both routes
+into one vocabulary a ranking page can branch on -- without it the ten
+critical-hit / thrusting-counter affixes (x1.10 .. x1.24) look like ordinary
+always-on damage and get multiplied into the general DPS ranking.
 Each field in the output `rateFields` list was verified against the CSV header
 of raw/params/SpEffectParam.csv and against the Paramdex field metadata; nothing
 here is invented.
@@ -88,7 +94,7 @@ PARAM_DIR = HERE / "raw" / "params"
 MSG_DIR = HERE / "raw" / "msg"
 DEFAULT_OUT = ROOT / "data" / "nightreign-buffs-v1.03.5.json"
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 SMITHBOX_COMMIT = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
@@ -103,6 +109,44 @@ CHAIN_INHERIT_LIMIT = 4
 # bump would not need this, but v1 -> v2 also narrowed countsAsDamage and
 # affectsAllies, which silently changes any ranking built on v1).
 SCHEMA_CHANGELOG: list[dict[str, Any]] = [
+    {
+        "version": 4,
+        "zh": "① **activation 判定不再把计时列当成发动条件。** v3 的第③条规则是『conditions 非空 → conditional』，"
+              "而 conditionFields 里混着两个纯机制字段：motionInterval"
+              "（ER paramdef：発動間隔[s]／『何秒間隔で発生するのかを設定』，即效果每几秒重新 tick 一次）"
+              "与 isPeriodicEffect（周期性 tick 开关）。它们不是玩家需要满足的游戏状态。"
+              "v3 里 210 条 buff 仅凭这两个字段被判成 conditional，其中 8 条是全表最强的真实无条件增伤"
+              "（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、"
+              "1605000 火焰啊赐予我力量 ×1.20、1660000 黄金树立誓 ×1.15 等），按 v3 文档实现的页面会把它们"
+              "全部排除在默认排名之外。现在 has_conditions 只看非计时类条件列；"
+              "conditionFields[] 每项新增 `isActivationCondition` 布尔，明确标出哪两个不是发动条件。"
+              "② **新增 buffs[].scope.attackContexts（string[]）与 enums.attackContext。** "
+              "『致命一击』『突刺反击』这类只在特定攻击情境生效的倍率，其限制写在 SpEffectParam.stateInfo 里"
+              "（367 Enhance Critical Attacks、197 Enhance Thrusting Counter Attacks），"
+              "v3 只把 stateInfo 当作裸数字放在 stacking.stateInfo，scope 里没有 subCategories，"
+              "所以 10 条 ×1.1–1.24 的倍率在页面看来是『对所有攻击生效的常驻增伤』。"
+              "attackContexts 把 magicSubCategoryChange 与 stateInfo 两条来路统一成一组机读键"
+              "（criticalHit／thrustingCounter／guardCounter／chainFinisher／jumpAttack／chargedHeavyAttack…）；"
+              "**attackContexts 非空的条目不得计入通用排名，只在用户勾选对应情境时参与乘算。**"
+              "同时新增 enums.stateInfo（Paramdex SP_EFFECT_TYPE 的中英文标签）。"
+              "③ **buffs[].target 修正 33 条。** 命中投递槽的识别过去只认 Bullet.spEffectId0..4，"
+              "漏了 atkOccurrenceSpEffectId（攻击命中时投递）。油脂／附加属性武器的异常累积行"
+              "（3176 毒油脂、3151 催眠油脂、1449001 冰霜武器、1632002 血炎武器等）与结构完全相同的"
+              "弹道投递版（1722000 毒雾、1631001 授血）自相矛盾地一个标 self 一个标 enemy。"
+              "现已把 atkOccurrenceSpEffectId 纳入命中槽，新增 targetSource "
+              "attackHitOpposeOnly／attackHitSelfOnly／attackHitStatusPayload。"
+              "④ **修正 v3 changelog ⑤ 与 enums.targetSource 里一句与参数相反的说明**："
+              "v3 写『3176 毒油脂……根本没走命中槽……本数据集正确地把它标成 target=\"self\"』，"
+              "但 3176 的投递路径正是 refId_default->atkOccurrenceSpEffectId，"
+              "且 effectTargetSelfTarget=0，参数层面根本不允许挂在玩家身上。该举例已删除并改写。"
+              "⑤ **新增 buffs[].stackLadder 与 activationSource stackLadderTier1／localizedNameCondition／"
+              "paramRowPassiveTimed。** 7069001『每次打倒封印监牢里的囚犯，能提升攻击力』×1.05、"
+              "7069201『每次打倒黑夜入侵者』×1.07、8988200『玛雷家的庇佑』、8998000『复仇的庇佑』"
+              "在 v3 里是 passive／noEvidence，会被无条件乘进排名；它们其实都是叠层阶梯的第 1 层"
+              "（参数表里 7069002-010 一路涨到 ×1.6289、7069202-210 到 ×1.9672），必须先反复达成条件。"
+              "⑥ diagnostics.topUnconditionalMultipliers 由 15 条扩到 40 条并排除 attackContexts 非空的条目；"
+              "被排除的那一批改列在新的 diagnostics.contextGatedMultipliers。",
+    },
     {
         "version": 3,
         "zh": "① **新增 buffs[].activation（passive／conditional／activated）与 activationSource**，"
@@ -123,8 +167,11 @@ SCHEMA_CHANGELOG: list[dict[str, Any]] = [
               "降到倒数第二级，中间新增『来源类别』一级，并强制同族条目取相同的限定词组合；"
               "依赖 displayName 字符串做键的消费方需要重取。"
               "⑤ enums.targetSource 里 bulletHitOpposeOnly／bulletHitFriendlyOnly 的说明改写："
-              "阵营过滤位必须在『全部来源只由 Bullet 命中槽投递』的前提下才有判定力"
-              "（3176 毒油脂同样是 selfTarget=0／opposeTarget=1，却是挂在玩家身上的）。",
+              "阵营过滤位必须在『已确认投递路径是命中槽』的前提下才有判定力。"
+              "（**v4 更正**：v3 这一条原本举 3176 毒油脂为『阵营位是 oppose-only 却挂在玩家身上』的反例，"
+              "该举例是错的——3176 走的正是 refId_default->atkOccurrenceSpEffectId 这个命中槽，"
+              "且 effectTargetSelfTarget=0，v4 已把它改判为 target=\"enemy\"。"
+              "当前的正确表述与真实反例见 v4 条目④与 diagnostics.opposeBitsWithoutHitSlot。）",
     },
     {
         "version": 2,
@@ -549,6 +596,101 @@ SP_ATTR_TYPE = {
     254: ("不限", "None"),
 }
 
+# SP_EFFECT_TYPE ("状態変化タイプ" -- SpEffectParam.stateInfo), transcribed from
+# Smithbox NR/Param Enums/SP_EFFECT_TYPE.json (723 entries; only the values the
+# regulation actually uses on a buff in this dataset are kept, the rest would be
+# dead weight).  v3 exported stateInfo as a bare number with no labels at all,
+# which is how "Enhance Critical Attacks" (367) and "Enhance Thrusting Counter
+# Attacks" (197) ended up looking like unconditional x1.24 / x1.20 affixes.
+STATE_INFO_TYPE = {
+    2: ("中毒", "Poison"),
+    5: ("猩红腐败", "Scarlet Rot"),
+    6: ("出血", "Blood Loss"),
+    28: ("右手武器附加特效", "Right-hand Buff VFX"),
+    48: ("提升伤害", "Increase Damage"),
+    50: ("HP／FP／精力回复", "HP/FP/Stamina Recovery"),
+    60: ("魔力武器附加特效", "Magic Buff VFX"),
+    62: ("火焰武器附加特效", "Fire Weapon Buff VFX"),
+    64: ("附魔武器特效", "Enchanted Weapon Buff VFX"),
+    71: ("法术威力提升", "Spell Power Boost"),
+    116: ("死之诅咒", "Death Blight"),
+    151: ("雷电武器附加特效", "Lightning Weapon Buff VFX"),
+    152: ("允许对敌人施加攻击特效", "Enable Attack Effect against Enemy"),
+    158: ("左手武器附加特效", "Left-hand Buff VFX"),
+    168: ("弓射程变化", "Bow Distance Change"),
+    197: ("强化突刺反击", "Enhance Thrusting Counter Attacks"),
+    200: ("内在之力特效", "Power Within VFX"),
+    205: ("圣属性武器附加特效", "Holy Weapon Buff VFX"),
+    260: ("冻伤", "Frostbite"),
+    303: ("累积器 1", "Accumulator 1"),
+    305: ("累积器 3", "Accumulator 3"),
+    308: ("累积器 6", "Accumulator 6"),
+    367: ("强化致命一击", "Enhance Critical Attacks"),
+    384: ("斗志加成", "Determination Buff"),
+    385: ("斗志加成", "Determination Buff"),
+    436: ("睡眠", "Sleep"),
+    437: ("发狂", "Madness"),
+    443: ("触发冲击波", "Triggers Shockwave"),
+    449: ("受伤后攻击回复（反击回血）", "Rally/Post-Damage Attacks Heal"),
+    601: ("再演", "Restage"),
+    2100: ("使用武器种类触发", "Use Weapon Type Trigger"),
+    2103: ("施加攻击时效果", "Apply On-Attack Effect"),
+    2108: ("复仇者召唤物 2 生效中", "Revenant Summon 2 Active"),
+    2110: ("使用敌人状态触发", "Use Enemy State Info Trigger"),
+    2111: ("依当前血量缩放攻击", "Scale attack based on Current HP"),
+    2113: ("无赖：延长绝招持续时间", "Raider: Extend Ultimate Art Duration"),
+    2121: ("随机施加效果", "Apply Effect Randomly"),
+}
+
+# --------------------------------------------------------------------------
+# attack contexts -- "this multiplier only applies to attacks made *like this*"
+# --------------------------------------------------------------------------
+# The game states an attack-situation restriction in two unrelated places:
+#
+#   magicSubCategoryChange1..3  ATK_SUB_CATEGORY, e.g. 103 Guard Counter Attack
+#                               -- exported as scope.subCategories since v1
+#   stateInfo                   SP_EFFECT_TYPE, e.g. 367 Enhance Critical
+#                               Attacks -- a bare number in stacking.stateInfo
+#
+# A page cannot be expected to know the second one exists, which is how the six
+# "Improved Critical Hits" rows (x1.12..x1.24) and the four "Improved Thrusting
+# Counterattack" rows (x1.10..x1.20) came through v3 as passive, unscoped, and
+# therefore multiplied into the general DPS ranking.  Note the thrusting-counter
+# rows do not even look restricted: their scope is
+# {affectsSorcery, affectsIncantation, affectsShaman} = true, which reads as
+# "applies to everything including spells".
+#
+# `scope.attackContexts` folds both routes into one list of stable keys.  Only
+# situations the *player* gets into are listed -- a weapon/spell class filter
+# ("Melee Weapon Attack", "Ranged Weapon Attack", "Skill Attack", the sorcery
+# and incantation schools) is damage composition, not a situation, and stays in
+# scope.subCategories where the page already weights it.
+#
+# key -> (zh, en, from subCategories, from stateInfo)
+ATTACK_CONTEXTS: dict[str, tuple[str, str, tuple[int, ...], tuple[int, ...]]] = {
+    "criticalHit": ("致命一击／处决", "Critical hit / riposte / backstab", (), (367,)),
+    "thrustingCounter": ("突刺反击（被打断攻击后的突刺）", "Thrusting counterattack", (), (197,)),
+    "guardCounter": ("防御反击", "Guard counter", (103,), ()),
+    "chainFinisher": ("连段最后一击", "Final hit of a chain attack", (104,), ()),
+    "jumpAttack": ("跳跃攻击", "Jump attack", (102,), ()),
+    "dashAttack": ("冲刺攻击", "Dash attack", (127,), ()),
+    "rollingAttack": ("翻滚攻击", "Rolling attack", (128,), ()),
+    "backstepAttack": ("后跳攻击", "Backstep attack", (129,), ()),
+    "initialAttack": ("起手普通攻击", "Initial standard attack", (119,), ()),
+    "horsebackAttack": ("骑马攻击", "Horseback attack", (101,), ()),
+    "chargedHeavyAttack": ("蓄力强攻击", "Charged heavy attack", (100,), ()),
+    "chargedSpell": ("蓄力法术", "Charged spell", (110,), ()),
+    "chargedSkill": ("蓄力战技", "Charged skill", (111,), ()),
+    "twoHanded": ("双手持武器时", "While two-handing one armament", (124,), ()),
+    "dualWield": ("双持（左右手各一把）时", "While wielding two armaments", (125,), ()),
+}
+ATTACK_CONTEXT_BY_SUBCATEGORY = {
+    value: key for key, (_zh, _en, subs, _st) in ATTACK_CONTEXTS.items() for value in subs
+}
+ATTACK_CONTEXT_BY_STATE_INFO = {
+    value: key for key, (_zh, _en, _subs, states) in ATTACK_CONTEXTS.items() for value in states
+}
+
 # SP_EFFECT_SPCATEGORY buckets, derived from the enum's own labels.
 #
 # The Paramdex enum only *names* the values it has seen (100..204, 1000..1006,
@@ -637,12 +779,31 @@ FIELD_DEFAULTS: dict[str, str] = {
 for _f in RATE_FIELDS:
     FIELD_DEFAULTS[_f["key"]] = str(_f["default"])
 
+# Two of the columns below are *timing* columns, not player-facing conditions.
+# The ER paramdef (Smithbox ER/Defs/SpEffect.xml) spells motionInterval out as
+#   DisplayName 発動間隔[s]   Description 何秒間隔で発生するのかを設定
+# i.e. "how many seconds between ticks", the sibling of cycleOccurrenceSpEffectId
+# (周期発生特殊効果 / 発動周期毎に発生する特殊効果ID).  isPeriodicEffect is the NR
+# bit that says the effect re-applies on that cycle at all (13472 rows, 33 set,
+# every one of them a tick/aura row such as "[Weapon] Poison Buildup When Below
+# Max HP - Apply Poison").  Neither is a game state the player has to reach.
+#
+# v3 fed the whole `conditions` dict into the activation classifier, so 210
+# buffs were labelled conditional on the strength of a tick interval alone --
+# including Bloodboil Aromatic x1.45, Golden Vow x1.15 and Flame Grant Me
+# Strength x1.20, i.e. the most ordinary "drink it / cast it and it is on"
+# buffs in the game.  They stay in `conditions` (a consumer may well want to
+# show the tick rate) but they may not decide `activation`.
+TIMING_CONDITION_FIELDS = {"motionInterval", "isPeriodicEffect"}
+
 CONDITION_FIELDS = [
     ("conditionHp", "残余血量低于此比例(%)才发动"),
     ("conditionHpRate", "残余血量高于此比例(%)才发动"),
     ("conditionStamina", "精力条件"),
-    ("motionInterval", "发动间隔（秒）"),
-    ("isPeriodicEffect", "周期性发动"),
+    ("motionInterval", "效果重新施加的间隔（秒）——ER paramdef『発動間隔[s]／何秒間隔で発生するのかを設定』，"
+                       "是计时机制不是发动条件，**不参与 activation 判定**"),
+    ("isPeriodicEffect", "该效果按上面的间隔周期性重新施加——同样是计时机制不是发动条件，"
+                         "**不参与 activation 判定**"),
     ("wepTypeTrigger", "触发所需武器种类"),
     ("wepTypeTriggerCount", "触发所需武器数量"),
     ("triggerOnWepType", "指定武器种类时触发"),
@@ -744,6 +905,16 @@ BULLET_SPEFFECT_FIELDS = [
 BULLET_HIT_VIA_RE = re.compile(r"Bullet(\d+)\.spEffectId[0-4](?:->|$)")
 BULLET_SHOOTER_VIA_RE = re.compile(r"Bullet\d+\.spEffectIDForShooter(?:->|$)")
 
+# The *other* hit slot.  SpEffectParam.atkOccurrenceSpEffectId is "攻撃命中時に
+# 発生する特殊効果" -- the payload handed to whatever the attack connected with.
+# v3 only recognised the Bullet hit slots, so the 25 grease / armament rows that
+# reach their payload through refId_default->atkOccurrenceSpEffectId
+# (3176 Poison Grease, 3151 Soporific Grease, 1723001 Poison Armament, ...) fell
+# through to target="self" while the structurally identical bullet-delivered
+# versions (1722000 Poison Mist, 1631001 Bloodboon) were target="enemy".  Same
+# faction bits, same spCategory, same cycleOccurrenceSpEffectId, opposite label.
+ATTACK_HIT_VIA_RE = re.compile(r"atkOccurrenceSpEffectId(?:->|$)")
+
 # Revenant family (Helen / Frederick / Sebastian) stat scaling: these rows are
 # applied to the summons, not to the player.
 SUMMON_ROW_RE = re.compile(
@@ -779,15 +950,38 @@ TARGET_SOURCE_LABELS = {
         "在这个前提下，再用阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 "
         "区分它投给敌方还是己方，判定为敌方。"
         "⚠️ 这两个位**单独出现不足以判定 target**：它们的语义是『这份异常累积／效果允许打给哪个阵营』，"
-        "不是『这条 SpEffect 挂在谁身上』。SpEffectParam 3176『[Item] Poison Grease (Right) - Poison』"
-        "同样是 selfTarget=0／opposeTarget=1（与 1722000『毒雾』一模一样），"
-        "但它是玩家抹在自己武器上的毒油脂，本数据集正确地把它标成 target=\"self\"——"
-        "因为它的来源是 EquipParamGoods，根本没走 Bullet 命中槽，不满足上面的前提。"
-        "下一轮维护者若把这条规则推广到非弹道来源上，会把大量玩家自身的异常累积 buff 误判成 enemy。",
+        "不是『这条 SpEffect 挂在谁身上』，必须先确认投递路径确实是命中槽"
+        "（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId）。"
+        "本版本仍有一批条目带着 oppose-only 的阵营位、却只能靠 Paramdex 行名或武器行为槽追溯来源，"
+        "投递路径无法确认，一律保守地按 self 处理——清单见 diagnostics.opposeBitsWithoutHitSlot，"
+        "那是缺省而不是已证实的结论。"
+        "（v3 这里原本举 3176『[Item] Poison Grease (Right) - Poison』为『阵营位 oppose-only 却挂在玩家身上』"
+        "的反例，说它『来源是 EquipParamGoods，根本没走命中槽』。那句是错的："
+        "3176 的 via 正是 refId_default->atkOccurrenceSpEffectId，走的就是命中槽，"
+        "v4 已按同一规则把它改判为 target=\"enemy\"。）",
     "bulletHitFriendlyOnly":
         "**前提同上**（全部来源都只能由 Bullet 的命中槽投递）；在这个前提下 effectTargetOpposeTarget=0 "
         "说明这份效果只允许打给己方阵营，判定为 ally。"
         "同样地，effectTargetOpposeTarget=0 单独出现不足以判定 target，必须先满足『只由命中槽投递』的前提。",
+    "attackHitOpposeOnly":
+        "全部来源都经由 atkOccurrenceSpEffectId（『攻击命中时发动』）投递——"
+        "也就是说这份效果是在玩家打中目标的那一刻挂到**被打中的对象**身上的，不是挂在玩家身上；"
+        "阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 进一步确认只能打给敌方。"
+        "各种油脂（毒／催眠／出血／腐败）与『附加毒属性』祷告的累积行都属于这一类，"
+        "与弹道投递的同类（1722000『毒雾』、1631001『授血』）判定一致。"
+        "⚠️ 这些条目虽然 target=enemy，但**确实是玩家的异常累积手段**：要做『异常累积』榜时不能只留 self，"
+        "应当按 sources[].kind 取玩家可获得的来源，见 notes.target。",
+    "attackHitSelfOnly":
+        "全部来源都经由 atkOccurrenceSpEffectId 投递，但阵营位允许打给自己"
+        "（effectTargetSelfTarget=1 且 effectTargetOpposeTarget=0，或两侧都开而负载不只是异常累积）——"
+        "这是『命中后给自己上 buff』的形态，效果挂在玩家身上"
+        "（例：7036901『打出连段最后一击后提升攻击力』×1.16、"
+        "8660203『致命一击附带出血』的攻击力加算）。发动条件由 activation 另行标记。",
+    "attackHitStatusPayload":
+        "全部来源都经由 atkOccurrenceSpEffectId 投递，阵营过滤两侧都开，而负载只有异常累积／开关"
+        "（没有任何倍率或攻击力加算）——这种行是『打中谁就给谁累积』，视为挂在被命中的敌人身上"
+        "（例：3141『[Item] Freezing Grease (Right) - Frostbite』、"
+        "1449001『[Sorcery] Frozen Armament - Frost』、1632002『血炎武器 - 出血』）。",
     "bulletHitSupportBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 伤害修正全为 0（纯辅助弹道，只会罩到己方）",
     "bulletHitStatusMist": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，弹道本身不造成伤害，且效果只有异常状态累积（站在雾里的人吃累积，视为敌人侧）",
     "bulletHitOffensiveBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 是会造成伤害的攻击弹道（命中的是敌人）",
@@ -834,6 +1028,25 @@ CONDITION_ROW_NAME_RE = re.compile(
     r"\b(while|whenever|when|upon|during|below|above|alongside|two-hand|wielding|stack)",
     re.IGNORECASE)
 
+# "[Passive - X]" rows that carry a *finite* duration.  A hero passive that is
+# genuinely always on has effectEndurance = -1; one that lasts 18.5 s must have
+# been switched on by something (the Executor's Tenacity fires on a successful
+# deflect).  v3 caught 707070/707071 only through motionInterval=0.06, i.e. by
+# accident, and lost them the moment the timing columns stopped counting.
+PASSIVE_ROW_CATEGORY_RE = re.compile(r"^Passive\b")
+
+# Localisation fallback.  Rules ① and ② read the English Paramdex row name, so
+# they are blind on the rows that have none -- and two of those spell their
+# condition out in the Chinese state-bar text instead:
+#   7069001 "每次打倒封印监牢里的囚犯，能提升攻击力"  x1.05
+#   7069201 "每次打倒黑夜入侵者，能提升攻击力"        x1.07
+# The vocabulary is deliberately tiny (repeat-an-event wording only) and the
+# rule is deliberately restricted to paramName-less rows: the v3 decision to
+# keep counter / critical / charged / chain *out* of the condition vocabulary
+# must not be undone through the Chinese side, where 『强化连续攻击的最后攻击』
+# and 『降低射击时，伤害随距离递减的影响』 would otherwise match.
+LOCALIZED_CONDITION_RE = re.compile(r"每次|每当|打倒|击倒|成功时|命中时")
+
 ACTIVATION_LABELS = {
     "passive": ("装备／饮用后即生效，没有额外的发动条件，可默认计入乘积",
                 "Always on once the source is equipped or used"),
@@ -844,9 +1057,12 @@ ACTIVATION_LABELS = {
                   "Only while a skill / ultimate art / ash of war is running"),
 }
 ACTIVATION_SOURCE_LABELS = {
-    "noEvidence": "没有任何发动条件的证据：来源行名不含条件词、conditions 为空、triggered 为假，"
-                  "且不是技艺／绝招／战技行。注意 passive 的含义是『没有额外的发动条件』，"
-                  "不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
+    "noEvidence": "没有任何发动条件的证据：来源行名不含条件词、非计时类 conditions 为空、triggered 为假，"
+                  "且不是技艺／绝招／战技行、不是带时限的角色被动、不是叠层阶梯第 1 层。"
+                  "注意 passive 的含义是『没有额外的发动条件』，"
+                  "不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事；"
+                  "也**不等于『对所有攻击都生效』**——作用范围是另一条轴，"
+                  "先看 scope.attackContexts（致命一击、防御反击、蓄力…）再决定能不能计入通用排名。",
     "paramRowCategoryArt": "Paramdex 行名的 [...] 前缀是 Ultimate／Skill／AoW，"
                            "即这条 SpEffect 只在绝招／角色技艺／战技发动期间挂在身上"
                            "（例：707215『[Ultimate - Executor] Beast Attack Boost - Level 15』×3.55 "
@@ -859,7 +1075,27 @@ ACTIVATION_SOURCE_LABELS = {
                              "后两者还彼此互斥，不能同时计入）。"
                              "刻意不含 counter／critical／charged／chain 这类词：那是作用范围（scope.subCategories）"
                              "而不是发动条件，「强化防御反击」是常驻词条。",
-    "conditionFields": "SpEffectParam 自带的条件列非默认（见 buffs[].conditions 与 conditionFields）。",
+    "paramRowPassiveTimed": "Paramdex 行名的 [...] 前缀是 Passive（角色被动），但 effectEndurance 是有限值——"
+                            "真正常驻的被动是 -1，带时限就说明它是被某个时机打开的"
+                            "（例：707071『[Passive - Executor] Tenacity』×1.2 持续 18.5 秒，"
+                            "是处刑人挡拆成功后的窗口；707070 是它的 1.5 秒起手段）。",
+    "localizedNameCondition": "该行没有 Paramdex 英文行名（规则①②天然失效），但简中／英文状态栏文本里写明了"
+                              "需要反复达成的条件（每次／每当／打倒／击倒／成功时／命中时）"
+                              "（例：7069001『每次打倒封印监牢里的囚犯，能提升攻击力』、"
+                              "7069201『每次打倒黑夜入侵者，能提升攻击力』）。"
+                              "刻意只在 paramName 为空时启用、且词表只收『重复达成某事』这一类措辞——"
+                              "否则『强化连续攻击的最后攻击』『降低射击时，伤害随距离递减的影响』"
+                              "这类**作用范围**描述会被误判成发动条件。",
+    "stackLadderTier1": "这条 buff 是一段叠层阶梯的第 1 层（见 buffs[].stackLadder）："
+                        "参数表里紧随其后是一串行名为空、除倍率外所有列完全相同、倍率逐层严格递增、"
+                        "且 saveCategory≠-1（占用存档槽＝随游戏进程累积）的行。"
+                        "层数要靠反复达成某个条件才涨，所以第 1 层的数值既不是无条件的、也不是该词条的上限"
+                        "（例：8988200『玛雷家的庇佑』第 1 层 ×1.011，满 100 层 ×1.70）。",
+    "conditionFields": "SpEffectParam 自带的条件列非默认（见 buffs[].conditions 与 conditionFields）。"
+                       "**只算 conditionFields[].isActivationCondition=true 的那些列**——"
+                       "motionInterval（发动间隔［秒］）与 isPeriodicEffect（周期性重新施加）是计时机制，"
+                       "不是玩家要满足的状态；v3 把它们算进来，导致 210 条无条件 buff"
+                       "（狂热香药 ×1.45、黄金树立誓 ×1.15…）被误判成 conditional。",
     "onHitTrigger": "来源是 AttachEffectParam.onHitSpEffect（命中时才挂上），同 buffs[].triggered。",
     "eventScriptTimedBuff": "这条 SpEffect 没有任何参数列指向它（全部来源都是 inferred=true，由游戏脚本挂载），"
                             "且持续时间有限（effectEndurance ≠ -1）——脚本必然是在某个时刻才把它打开的，"
@@ -1668,14 +1904,30 @@ def build() -> dict[str, Any]:
                 # (Freezing Mist), not a party buff.
                 return "enemy", "bulletHitStatusMist"
             return "enemy", "bulletHitOffensiveBullet"
+        if vias and all(ATTACK_HIT_VIA_RE.search(via) for via in vias):
+            # every route is "applied when the attack connects".  Same three
+            # questions as the bullet branch, minus the bullet: the faction
+            # bits first, and when both are open, what the payload is.
+            self_side = row.get("effectTargetSelfTarget") == "1"
+            oppose_side = row.get("effectTargetOpposeTarget") == "1"
+            if oppose_side and not self_side:
+                return "enemy", "attackHitOpposeOnly"
+            if self_side and not oppose_side:
+                return "self", "attackHitSelfOnly"
+            if not rate_groups - {"status", "flag"}:
+                # nothing but ailment buildup -- it is what the weapon puts on
+                # the thing it hit (greases, Frozen Armament, Bloodflame Blade)
+                return "enemy", "attackHitStatusPayload"
+            return "self", "attackHitSelfOnly"
         if ALLIES_ROW_RE.search(name):
             return "ally", "alliesRow"
         return "self", "default"
 
     # --- does something have to happen first? -----------------------------
     def classify_activation(row: dict[str, str], all_sources: list[dict[str, Any]],
-                            has_conditions: bool, has_trigger: bool,
-                            duration: float) -> tuple[str, str]:
+                            conditions: dict[str, Any], has_trigger: bool,
+                            duration: float, localized: str,
+                            stack_ladder: dict[str, Any] | None) -> tuple[str, str]:
         """(activation, activationSource) -- entirely data driven, no id lists.
 
         Checked strongest-first so the label is never weaker than the evidence:
@@ -1686,18 +1938,90 @@ def build() -> dict[str, Any]:
             return "activated", "paramRowCategoryArt"
         if CONDITION_ROW_NAME_RE.search(clean_param_name(name)):
             return "conditional", "paramRowNameCondition"
-        if has_conditions:
+        if PASSIVE_ROW_CATEGORY_RE.match(row_category(name)) and duration != -1.0:
+            return "conditional", "paramRowPassiveTimed"
+        if not name.strip() and LOCALIZED_CONDITION_RE.search(localized):
+            # only where rules (1) and (2) have nothing to read
+            return "conditional", "localizedNameCondition"
+        # `conditions` carries two timing columns that are not player-facing
+        # states; see TIMING_CONDITION_FIELDS.
+        if any(key not in TIMING_CONDITION_FIELDS for key in conditions):
             return "conditional", "conditionFields"
         if has_trigger:
             return "conditional", "onHitTrigger"
+        if stack_ladder:
+            return "conditional", "stackLadderTier1"
         if all_sources and all(s.get("inferred") for s in all_sources) and duration != -1.0:
             return "conditional", "eventScriptTimedBuff"
         return "passive", "noEvidence"
+
+    # --- is this row tier 1 of an accumulating stack? ---------------------
+    # 7069001 "每次打倒封印监牢里的囚犯，能提升攻击力" ships as x1.05, but the CSV
+    # continues 7069002..7069010 up to x1.6289 with empty row names: the affix
+    # is a ladder the player climbs, and only the first rung is reachable from a
+    # param column.  Detection is structural, no id list:
+    #   * consecutive ids, row name empty, not themselves a shipped buff
+    #   * every non-rate column identical to tier 1 (stacking, scope, duration)
+    #   * exactly the same set of non-default rate keys
+    #   * at least one multiplier, and every multiplier strictly increasing
+    #   * saveCategory != -1  -- the buff occupies a save slot, i.e. the tier is
+    #     remembered across the run.  This is what separates a real ladder from
+    #     "[Relic] Improved Throwing Pot Damage +1/+2", three separately
+    #     equippable affix grades that all sit at saveCategory = -1.
+    LADDER_SAME_COLUMNS = (
+        "spCategory", "categoryPriority", "saveCategory", "stateInfo",
+        "effectEndurance", "wepParamChange", "magParamChange", "miracleParamChange",
+        "shamanParamChange", "throwAttackParamChange", "atkAttribute", "spAttribute",
+        "magicSubCategoryChange1", "magicSubCategoryChange2", "magicSubCategoryChange3",
+    )
+    LADDER_MAX_TIERS = 256
+
+    def detect_stack_ladder(sp_id: str, row: dict[str, str],
+                            rates: dict[str, Any],
+                            shipped: set[str]) -> dict[str, Any] | None:
+        if row.get("saveCategory", "-1") == "-1":
+            return None
+        multipliers = [key for key in rates
+                       if RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"]
+        if not multipliers:
+            return None
+        base_keys = set(rates)
+        tiers: list[str] = []
+        previous = row
+        step = 1
+        while step <= LADDER_MAX_TIERS:
+            nxt_id = str(int(sp_id) + step)
+            nxt = sp.get(nxt_id)
+            if nxt is None or nxt.get("Name", "").strip() or nxt_id in shipped:
+                break
+            if any(nxt[column] != row[column] for column in LADDER_SAME_COLUMNS):
+                break
+            nxt_rates = {key: as_number(nxt[key]) for key in RATE_FIELD_BY_KEY
+                         if key in nxt and not is_default(nxt, key)}
+            if set(nxt_rates) != base_keys:
+                break
+            if not all(float(nxt[key]) > float(previous[key]) for key in multipliers):
+                break
+            tiers.append(nxt_id)
+            previous = nxt
+            step += 1
+        if not tiers:
+            return None
+        top = sp[tiers[-1]]
+        return {
+            "tiers": len(tiers) + 1,
+            "tierSpEffectIds": [int(t) for t in tiers],
+            "topRates": {key: as_number(top[key]) for key in sorted(base_keys)},
+            "saved": True,
+        }
 
     # --- emit buffs -------------------------------------------------------
     buffs: list[dict[str, Any]] = []
     sentinel_rows: list[dict[str, Any]] = []
     display_inputs: dict[int, tuple[list[dict[str, Any]], str | None]] = {}
+    # ids the dataset will ship, needed before the loop so the stack-ladder scan
+    # can stop at the next *reachable* tier instead of swallowing it
+    shipped_ids = {sid for sid in sources if sp.get(sid) is not None and classify(sid)[0]}
     for sp_id in sorted(sources, key=int):
         row = sp.get(sp_id)
         if row is None:
@@ -1847,6 +2171,19 @@ def build() -> dict[str, Any]:
         ]
         if sub_categories:
             scope["subCategories"] = sub_categories   # -> enums.atkSubCategory
+        # v4: the one key a ranking page can branch on for "does this multiplier
+        # only apply to a particular kind of attack".  Folds the two places the
+        # game states such a restriction (magicSubCategoryChange + stateInfo)
+        # into one vocabulary; see ATTACK_CONTEXTS and enums.attackContext.
+        state_info = int(row["stateInfo"])
+        attack_contexts = sorted(
+            {ATTACK_CONTEXT_BY_SUBCATEGORY[value] for value in sub_categories
+             if value in ATTACK_CONTEXT_BY_SUBCATEGORY}
+            | ({ATTACK_CONTEXT_BY_STATE_INFO[state_info]}
+               if state_info in ATTACK_CONTEXT_BY_STATE_INFO else set())
+        )
+        if attack_contexts:
+            scope["attackContexts"] = attack_contexts  # -> enums.attackContext
 
         conditions: dict[str, Any] = {}
         for key, _label in CONDITION_FIELDS:
@@ -1860,9 +2197,13 @@ def build() -> dict[str, Any]:
                 chain.append({"field": key, "spEffectId": int(target)})
 
         has_trigger = any(item.get("trigger") for item in src_list)
+        desc_zh = zh["speffectInfo"].get(text_ids[0]) if text_ids else None
+        stack_ladder = detect_stack_ladder(sp_id, row, rates, shipped_ids)
         buff_activation, buff_activation_source = classify_activation(
-            row, sources[sp_id], bool(conditions), has_trigger,
-            float(row["effectEndurance"]))
+            row, sources[sp_id], conditions, has_trigger,
+            float(row["effectEndurance"]),
+            " || ".join(filter(None, (name_zh, name_en, desc_zh))),
+            stack_ladder)
 
         fallback_name = name_en or clean_param_name(row.get("Name", "")) or None
         entry: dict[str, Any] = {
@@ -1913,6 +2254,8 @@ def build() -> dict[str, Any]:
             "activation": buff_activation,
             "activationSource": buff_activation_source,
         }
+        if stack_ladder:
+            entry["stackLadder"] = stack_ladder
         if inferred_name:
             entry["inferredName"] = True
             entry["inferredNameFrom"] = inferred_name_from
@@ -1920,9 +2263,8 @@ def build() -> dict[str, Any]:
             entry["statusLabelsZh"] = labels_zh
         if labels_en:
             entry["statusLabelsEn"] = labels_en
-        info = zh["speffectInfo"].get(text_ids[0]) if text_ids else None
-        if info:
-            entry["descZh"] = info
+        if desc_zh:
+            entry["descZh"] = desc_zh
         if conditions:
             entry["conditions"] = conditions
         if chain:
@@ -2159,7 +2501,13 @@ def build() -> dict[str, Any]:
                   "或『魅惑树枝』让被魅惑的敌人攻击力 ×2）。"
                   "**增伤排名只能对 target 为 self／ally 的条目做乘算**；enemy 条目的 `direction` 描述的是"
                   "敌人数值的增减（decrease＝把敌人削弱，对玩家有利），语义与 self 条目相反，"
-                  "summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。",
+                  "summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。"
+                  "**v4 注意**：油脂、附加属性武器、毒雾这类『打中谁就给谁上异常累积』的行，"
+                  "target 一律是 enemy（v3 里由 atkOccurrenceSpEffectId 投递的 33 条被错标成 self，"
+                  "与结构完全相同、由弹道投递的同类自相矛盾）。"
+                  "但它们**确实是玩家的异常累积手段**——要做『异常状态累积』榜时不要只留 target=self，"
+                  "应按 sources[].kind 取玩家可获得的来源（goods／spell／weaponPassive…），"
+                  "target 在那条轴上表示的是『累积加在谁身上』，本来就该是 enemy。",
         "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。"
                       "`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，"
                       "而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，"
@@ -2172,12 +2520,40 @@ def build() -> dict[str, Any]:
                       "同理 707201-215 是绝招兽化的 15 个等级，同一时刻只有一层。"
                       "判定依据逐条写在 `activationSource`，中文解释见 enums.activationSource；"
                       "passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——"
-                      "消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
+                      "消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事；"
+                      "也**不等于『对所有攻击都生效』**——那是 scope.attackContexts 管的，见 notes.attackContext。"
+                      "**v4 修正**：v3 把 conditions 整个拿来判定，而 conditions 里混着 motionInterval"
+                      "（效果重新 tick 的间隔［秒］）与 isPeriodicEffect（周期性重新施加）两个计时字段，"
+                      "结果 210 条无条件 buff 被误判成 conditional——其中就有狂热香药 ×1.45／×1.35、"
+                      "夏玻利利的嘶吼 ×1.25、火焰啊赐予我力量 ×1.20、黄金树立誓 ×1.15，"
+                      "也就是整张表里最常用的几条消耗品与团队增益。"
+                      "现在只有 conditionFields[].isActivationCondition=true 的列才参与判定。",
+        "attackContext": "`scope.attackContexts` 是**作用情境的机读标记**：非空表示这条倍率只在列出的攻击情境下"
+                         "才吃得到，**默认不得乘进通用排名**，只有用户勾选了该情境才参与乘算。"
+                         "它和 activation 是正交的两条轴——activation 回答『这份 buff 现在挂在身上吗』，"
+                         "attackContexts 回答『挂着的时候哪些攻击吃得到』。"
+                         "『强化致命一击 ×1.24』『强化突刺反击 ×1.20』装上就一直在（activation=passive），"
+                         "但只有打出致命一击／突刺反击时才生效，所以必须靠这一条拦住。"
+                         "取值与中文说明见 enums.attackContext，其中还写明每个键是从哪个原始值推出来的："
+                         "fromSubCategories 对应 magicSubCategoryChange1..3（ATK_SUB_CATEGORY），"
+                         "fromStateInfo 对应 SpEffectParam.stateInfo（SP_EFFECT_TYPE，中文标签见 enums.stateInfo）。"
+                         "**v3 只有前一条来路是机读的**，所以 stateInfo=367（强化致命一击，6 条 ×1.12–1.24）"
+                         "与 stateInfo=197（强化突刺反击，4 条 ×1.10–1.20）在页面看来是『对所有攻击生效的常驻增伤』；"
+                         "突刺反击那 4 条的 scope 甚至是 affectsSorcery／affectsIncantation／affectsShaman 全 true。"
+                         "注意 attackContexts 只收『玩家进入的攻击情境』，"
+                         "武器／法术门类过滤（近战武器攻击、远程武器攻击、战技攻击、各流派魔法祷告）"
+                         "仍然只出现在 scope.subCategories 里，按伤害构成加权即可，不属于情境勾选。",
         "conditions": "带 `conditions` / `triggered` 的 buff 有发动条件（武器种类、血量、自身状态、概率、命中触发等），"
                       "例如 7037001 是送葬者遗物词条，只有装备该词条并且身上有祷告辅助效果时才给 +19%——"
                       "它挂在 30 个辅助祷告的 Magic.refId10 上，并不代表任何人施放这些祷告都能拿到。"
                       "排名时必须让用户勾选是否满足条件，**默认不计入乘积**。"
-                      "本版本 conditions 字段的中文含义见 conditionFields。",
+                      "本版本 conditions 字段的中文含义见 conditionFields。"
+                      "⚠️ conditions 里有两个字段**不是发动条件**："
+                      "motionInterval（效果每几秒重新施加一次，ER paramdef『発動間隔[s]』）与 "
+                      "isPeriodicEffect（是否按该间隔周期性重新施加）。"
+                      "它们是光环／持续类效果的计时机制，几乎每条有持续时间的 buff 都带，"
+                      "**判断一条 buff 是否有发动条件时必须跳过它们**——"
+                      "conditionFields[].isActivationCondition 就是为此而设。",
         "damageTypeNaming": "参数里的 dark 槽位在本作即『圣』属性；physics 为物理总量，slash/blow/thrust/neutral 是物理攻击类型细分。",
         "ranking": "增伤排名的推荐步骤（顺序不能省）："
                    "① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、"
@@ -2190,9 +2566,18 @@ def build() -> dict[str, Any]:
                    "顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、"
                    "8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，"
                    "那一步在最需要它的条目上是空转的。"
-                   "拿到具体条件字段仍然看 `conditions`（含义见 conditionFields）与 `triggered`；"
-                   "④ 按 `scope` 判断是否作用于目标攻击（affectsSorcery／affectsIncantation／affectsShaman／"
-                   "affectsThrow／weaponSlot／spAttribute／subCategories）；"
+                   "拿到具体条件字段仍然看 `conditions`（含义见 conditionFields，"
+                   "**只有 isActivationCondition=true 的列才是发动条件**，"
+                   "motionInterval／isPeriodicEffect 是计时机制）与 `triggered`；"
+                   "④ **再看 `scope.attackContexts`**：非空表示这条倍率只在某种攻击情境下生效"
+                   "（致命一击、突刺反击、防御反击、连段最后一击、蓄力、跳跃／冲刺／翻滚攻击、双手持…），"
+                   "**默认不得计入通用排名**，只有当用户勾选了对应情境时才参与乘算——"
+                   "这类条目本身是 passive（装上就一直在），限制的是作用范围而不是发动时机，"
+                   "所以第③步拦不住它们，必须单独走这一步。"
+                   "其余 scope 字段（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／"
+                   "weaponSlot／spAttribute／subCategories）仍按伤害构成加权；"
+                   "attackContexts 是 subCategories 与 stateInfo 两条来路的归一化视图，"
+                   "原始值都还在原处，中文解释见 enums.attackContext；"
                    "⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` "
                    "决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，"
                    "attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，"
@@ -2262,6 +2647,16 @@ def build() -> dict[str, Any]:
     ]
     payload["enums"] = {
         "atkSubCategory": {str(k): {"zh": v[0], "en": v[1]} for k, v in ATK_SUB_CATEGORY.items()},
+        "attackContext": {
+            key: {
+                "zh": zh_label,
+                "en": en_label,
+                "fromSubCategories": list(subs),
+                "fromStateInfo": list(states),
+            }
+            for key, (zh_label, en_label, subs, states) in ATTACK_CONTEXTS.items()
+        },
+        "stateInfo": {str(k): {"zh": v[0], "en": v[1]} for k, v in STATE_INFO_TYPE.items()},
         "wepParamChange": {str(k): {"zh": v[0], "en": v[1]} for k, v in WEP_CHANGE_PARAM.items()},
         "atkAttribute": {str(k): {"zh": v[0], "en": v[1]} for k, v in ATK_ATTR_TYPE.items()},
         "spAttribute": {str(k): {"zh": v[0], "en": v[1]} for k, v in SP_ATTR_TYPE.items()},
@@ -2298,7 +2693,17 @@ def build() -> dict[str, Any]:
                             "但 inferred=true 的条目在参数表里根本没有对应行（由游戏脚本挂载），"
                             "其 id 恒为 null，消费方看到 inferred:true 必须只用 nameEn / paramRowCategory 展示，不得联表。",
     }
-    payload["conditionFields"] = [{"key": key, "zh": label} for key, label in CONDITION_FIELDS]
+    payload["conditionFields"] = [
+        {
+            "key": key,
+            "zh": label,
+            # v4: two of these columns are timing, not conditions.  A consumer
+            # deciding "is this buff gated" must skip the false ones -- and so
+            # must classify_activation, which v3 did not.
+            "isActivationCondition": key not in TIMING_CONDITION_FIELDS,
+        }
+        for key, label in CONDITION_FIELDS
+    ]
     payload["chainFields"] = [{"key": key, "zh": label} for key, label in CHAIN_FIELDS]
     payload["stackingRules"] = {"zh": STACKING_RULES_ZH}
     target_counts: dict[str, int] = defaultdict(int)
@@ -2306,9 +2711,12 @@ def build() -> dict[str, Any]:
         target_counts[buff["target"]] += 1
     activation_counts: dict[str, int] = defaultdict(int)
     activation_source_counts: dict[str, int] = defaultdict(int)
+    attack_context_counts: dict[str, int] = defaultdict(int)
     for buff in buffs:
         activation_counts[buff["activation"]] += 1
         activation_source_counts[buff["activationSource"]] += 1
+        for context in buff["scope"].get("attackContexts", ()):
+            attack_context_counts[context] += 1
     display_id_fallback = [
         buff["spEffectId"] for buff in buffs
         if buff["displayNameZh"] and DISPLAY_ID_TAIL_RE.search(buff["displayNameZh"])
@@ -2321,6 +2729,9 @@ def build() -> dict[str, Any]:
         "buffsByTarget": dict(sorted(target_counts.items())),
         "buffsByActivation": dict(sorted(activation_counts.items())),
         "buffsByActivationSource": dict(sorted(activation_source_counts.items())),
+        "buffsByAttackContext": dict(sorted(attack_context_counts.items())),
+        "buffsWithAttackContext": sum(1 for b in buffs if b["scope"].get("attackContexts")),
+        "buffsWithStackLadder": sum(1 for b in buffs if b.get("stackLadder")),
         "displayNameZhFallingBackToSpEffectId": len(display_id_fallback),
         "buffsAffectingAllies": sum(1 for b in buffs if b["affectsAllies"]),
         "buffsWithoutChineseName": sum(1 for b in buffs if not b["nameZh"]),
@@ -2340,10 +2751,58 @@ def build() -> dict[str, Any]:
     unique_missing_items = sorted(set(missing_item_zh))
     unused_rate_fields = [f["key"] for f in RATE_FIELDS if not rate_field_usage.get(f["key"])]
     unused_scope_keys = [
-        key for key in ("weaponSlot", "atkAttribute", "spAttribute", "subCategories")
+        key for key in ("weaponSlot", "atkAttribute", "spAttribute", "subCategories",
+                        "attackContexts")
         if not any(key in b["scope"] for b in buffs)
     ]
     observed_behaviours = sorted({b["stacking"]["spCategoryBehavior"] for b in buffs})
+
+    def damage_multipliers(buff: dict[str, Any]) -> list[float]:
+        return [value for key, value in buff["rates"].items()
+                if RATE_FIELD_BY_KEY[key]["countsAsDamage"]
+                and RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"
+                and value > 1]
+
+    def multiplier_digest(buff: dict[str, Any]) -> dict[str, Any]:
+        contexts = buff["scope"].get("attackContexts", [])
+        sub_categories = buff["scope"].get("subCategories", [])
+        gate_from = sorted(
+            ({"subCategories"} if sub_categories else set())
+            | ({"stateInfo"} if buff["stacking"]["stateInfo"]
+               in ATTACK_CONTEXT_BY_STATE_INFO else set()))
+        digest = {
+            "spEffectId": buff["spEffectId"],
+            "displayNameZh": buff["displayNameZh"],
+            "paramName": buff["paramName"],
+            "maxMultiplier": max(damage_multipliers(buff)),
+            "duration": buff["duration"],
+            "activation": buff["activation"],
+        }
+        if contexts:
+            digest["attackContexts"] = contexts
+        if sub_categories:
+            digest["subCategories"] = sub_categories
+        if gate_from:
+            digest["gateFrom"] = gate_from
+        return digest
+
+    def is_scope_gated(buff: dict[str, Any]) -> bool:
+        return bool(buff["scope"].get("attackContexts")
+                    or buff["scope"].get("subCategories"))
+
+    passive_damage = sorted(
+        (b for b in buffs
+         if b["target"] in ("self", "ally") and b["activation"] == "passive"
+         and damage_multipliers(b)),
+        key=lambda b: (-max(damage_multipliers(b)), b["spEffectId"]))
+    general_multipliers = [b for b in passive_damage if not is_scope_gated(b)]
+    context_gated_multipliers = [b for b in passive_damage if is_scope_gated(b)]
+    oppose_without_hit_slot = [
+        b["spEffectId"] for b in buffs
+        if sp[str(b["spEffectId"])].get("effectTargetSelfTarget") == "0"
+        and sp[str(b["spEffectId"])].get("effectTargetOpposeTarget") == "1"
+        and b["targetSource"] == "default"
+    ]
     payload["diagnostics"] = {
         "buffsWithoutChineseName": len(unique_missing),
         "buffsWithoutChineseNameSample": unique_missing[:60],
@@ -2370,33 +2829,98 @@ def build() -> dict[str, Any]:
                           "**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**："
                           "v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、"
                           "8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）"
-                          "的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。",
+                          "的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。"
+                          "**v4 两处修正**："
+                          "① v3 的『conditions 非空 → conditional』把 motionInterval（重新施加间隔［秒］）"
+                          "与 isPeriodicEffect（周期性重新施加）这两个计时列也算了进去，"
+                          "结果 210 条 buff 仅凭一个 tick 间隔被判成 conditional——"
+                          "其中 8 条是 target∈{self,ally} 的真实无条件增伤"
+                          "（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、"
+                          "707070／707071 处刑人 Tenacity ×1.2、1605000 火焰啊赐予我力量 ×1.20、"
+                          "1660000 黄金树立誓 ×1.15、1732 Golden Great Arrow ×1.075）。"
+                          "现在只看 conditionFields[].isActivationCondition=true 的列，"
+                          "处刑人 Tenacity 改由 paramRowPassiveTimed（[Passive - X] 行且时长有限）判出，"
+                          "1732 改由 eventScriptTimedBuff 判出，都不再依赖那个 0.06 秒的 tick。"
+                          "② activation 只回答『这份 buff 现在在不在身上』，不回答『哪些攻击吃得到』——"
+                          "后者是 scope.attackContexts（v4 新增），"
+                          "致命一击族与突刺反击族在 v3 里是 passive 且毫无作用范围标记，"
+                          "会被无条件乘进排名，见 diagnostics.contextGatedMultipliers。",
         "topUnconditionalMultipliers": [
+            multiplier_digest(buff) for buff in general_multipliers[:40]
+        ],
+        "topUnconditionalMultipliersNote": "按 target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率，"
+                                           "**且 scope 里既没有 attackContexts 也没有 subCategories** 筛出的前 40 条，"
+                                           "也就是页面默认会原封不动乘进通用排名的那一批。"
+                                           "这份清单是给维护者做人工抽查用的：如果哪天有明显需要发动条件的"
+                                           "条目出现在这里，说明 activation 判定漏了一条规则。"
+                                           f"本版本符合条件的共 {len(general_multipliers)} 条"
+                                           f"（另有 {len(context_gated_multipliers)} 条受作用范围限制，"
+                                           "见 contextGatedMultipliers）。"
+                                           "v3 只导出前 15 条、阈值卡在 ×1.28，也不区分作用范围，"
+                                           "结果排在第 16–20 名开外的致命一击族／突刺反击族整个漏出了抽查范围。",
+        "contextGatedMultipliers": [
+            multiplier_digest(buff) for buff in context_gated_multipliers
+        ],
+        "contextGatedMultipliersNote": "target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率，"
+                                       "但作用范围受限——装上就一直生效（所以是 passive），"
+                                       "可是只有一部分攻击吃得到，**不得原封不动乘进通用排名**。"
+                                       "两种受限方式要分开处理："
+                                       "① `attackContexts` 非空＝只在某种攻击情境下生效"
+                                       "（致命一击、突刺反击、防御反击、蓄力、跳跃／冲刺／翻滚…），"
+                                       "**默认不计入，用户勾选该情境后才乘**；"
+                                       "② 只有 `subCategories`＝限定攻击／法术门类"
+                                       "（投掷壶道具攻击、香水道具攻击、远程武器攻击、各流派魔法祷告…），"
+                                       "按伤害构成加权即可，不必做成勾选项。"
+                                       "gateFrom 写明限制写在哪一列：subCategories＝magicSubCategoryChange1..3"
+                                       "（v1 起就机读）；stateInfo＝SpEffectParam.stateInfo"
+                                       "（v3 之前只有裸数字，致命一击族 6 条 ×1.12–1.24 与突刺反击族 4 条 ×1.10–1.20 "
+                                       "因此在页面看来是对所有攻击生效的常驻增伤——"
+                                       "突刺反击族的 scope 甚至是 affectsSorcery/Incantation/Shaman 全 true）。",
+        "opposeBitsWithoutHitSlot": sorted(oppose_without_hit_slot),
+        "opposeBitsWithoutHitSlotNote": "这些条目的 effectTargetSelfTarget=0／effectTargetOpposeTarget=1"
+                                        "（阵营过滤位说『只允许打给敌方』），但它们的来源全部是 Paramdex 行名推断、"
+                                        "武器行为槽或其它无法确认投递路径的通道，"
+                                        "既没有 Bullet 命中槽也没有 atkOccurrenceSpEffectId，"
+                                        "因此仍按保守缺省判成 target=\"self\"。"
+                                        "**这是缺省而不是已证实的结论**：阵营位本身只说明『这份效果允许打给谁』，"
+                                        "不说明『这条 SpEffect 挂在谁身上』。"
+                                        "若下一轮能把 [AoW] 行的投递路径还原出来，这批条目多半要改判 enemy。",
+        "stackLadders": [
             {
                 "spEffectId": buff["spEffectId"],
                 "displayNameZh": buff["displayNameZh"],
                 "paramName": buff["paramName"],
-                "maxMultiplier": max(
-                    value for key, value in buff["rates"].items()
-                    if RATE_FIELD_BY_KEY[key]["countsAsDamage"]
-                    and RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"),
+                "tiers": buff["stackLadder"]["tiers"],
+                "tier1Rates": dict(buff["rates"]),
+                "topRates": buff["stackLadder"]["topRates"],
                 "activation": buff["activation"],
+                "activationSource": buff["activationSource"],
             }
-            for buff in sorted(
-                (b for b in buffs
-                 if b["target"] in ("self", "ally") and b["activation"] == "passive"
-                 and any(RATE_FIELD_BY_KEY[k]["countsAsDamage"]
-                         and RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier"
-                         and v > 1 for k, v in b["rates"].items())),
-                key=lambda b: -max(
-                    value for key, value in b["rates"].items()
-                    if RATE_FIELD_BY_KEY[key]["countsAsDamage"]
-                    and RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"))[:15]
+            for buff in buffs if buff.get("stackLadder")
         ],
-        "topUnconditionalMultipliersNote": "按 target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率"
-                                           "筛出的前 15 条，也就是页面默认会无条件乘进排名的那一批。"
-                                           "这份清单是给维护者做人工抽查用的：如果哪天有明显需要发动条件的"
-                                           "条目出现在这里，说明 activation 判定漏了一条规则。",
+        "stackLaddersNote": "数据集只收录了这些叠层效果的**第 1 层**（参数表里只有第 1 层被某个参数列指向，"
+                            "更高层由游戏脚本按层数替换）。buffs[].stackLadder 给出总层数、后续各层的 spEffectId "
+                            "与满层数值，页面展示时不要把 rates 当成该词条的上限："
+                            "7069001『每次打倒封印监牢里的囚犯』第 1 层 ×1.05、满 10 层 ×1.6289；"
+                            "7069201『每次打倒黑夜入侵者』×1.07 → ×1.9672；"
+                            "8988200『玛雷家的庇佑』×1.011 → ×1.70（100 层）；"
+                            "8998000『复仇的庇佑』×1.007 → ×1.40（100 层）。"
+                            "同层互斥（spCategory 落在 removePrevious 区间），所以任何时刻只有一层生效，"
+                            "绝不能把各层相乘。"
+                            "检测是结构性的：ID 连续、行名为空、除倍率外所有列相同、倍率逐层严格递增、"
+                            "且 saveCategory≠-1——最后一条把『[Relic] Improved Throwing Pot Damage +1/+2』"
+                            "这种可分别装备的词条档位排除在外（它们的 saveCategory 都是 -1）。",
+        "passiveWithoutParamName": sorted(
+            buff["spEffectId"] for buff in buffs
+            if buff["activation"] == "passive" and not buff["paramName"]
+        ),
+        "passiveWithoutParamNameNote": "activation 判定链的前两条规则读的是 Paramdex 英文行名，"
+                                       "对没有行名的条目天然失效。这里列出最终仍判成 passive、"
+                                       "却连行名都没有的条目，供维护者人工复核——"
+                                       "它们的发动条件（如果有）只可能写在本地化文本或游戏脚本里。"
+                                       "v3 这份清单有 4 条（7069001／7069201／8988200／8998000），"
+                                       "全部是叠层阶梯的第 1 层，v4 已分别由 localizedNameCondition 与 "
+                                       "stackLadderTier1 判成 conditional。",
         "sentinelOnlyRows": sentinel_rows,
         "sentinelOnlyRowsNote": "这些 SpEffect 满足入选条件，但它们唯一的合格数值是一个『×0』的 economy 倍率"
                                 "并且没有持续时间（effectEndurance=0），属于哨兵值而不是可展示的倍率，"
@@ -2409,7 +2933,9 @@ def build() -> dict[str, Any]:
                                 "注意排除规则刻意收得很窄：青露的秘密滴泪（511060／708920）与魔法帷幕（1801400）"
                                 "同样带 ×0 的消耗倍率，但它们有 15／20／8 秒的持续时间、确实让施法免费，仍然保留。",
         "nonSelfTargetNote": "target 不是 self 的 buff：summon＝复仇者家人自身的数值缩放行（不是玩家倍率）；"
-                             "enemy＝通过 Bullet 命中槽挂到被命中对象身上的效果（减益或魅惑后的敌人增伤）；"
+                             "enemy＝通过命中槽挂到被命中对象身上的效果"
+                             "（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId；"
+                             "减益、魅惑后的敌人增伤，以及油脂／附加属性武器打上去的异常累积）；"
                              "ally＝友方 AoE／团队增益。它们仍然保留在数据集里（有各自的展示价值），"
                              "但**增伤排名必须先按 target 过滤**。",
         "skippedUnnamedSourceRows": {
@@ -2473,6 +2999,12 @@ def self_check(payload: dict[str, Any]) -> None:
         assert len(set(values)) == len(values), f"{name} is not unique"
 
     bullet_hit = re.compile(r"Bullet\d+\.spEffectId[0-4](?:->|$)")
+    attack_hit = re.compile(r"atkOccurrenceSpEffectId(?:->|$)")
+    timing_condition_keys = {
+        field["key"] for field in payload["conditionFields"]
+        if not field["isActivationCondition"]
+    }
+    assert timing_condition_keys == TIMING_CONDITION_FIELDS, timing_condition_keys
     for buff in buffs:
         sp_id = buff["spEffectId"]
         assert buff["target"] in payload["enums"]["target"], (sp_id, buff["target"])
@@ -2481,15 +3013,33 @@ def self_check(payload: dict[str, Any]) -> None:
         assert buff["activationSource"] in payload["enums"]["activationSource"], \
             (sp_id, buff["activationSource"])
         # an activated / conditional label must never be *weaker* than the
-        # explicit condition columns the row already carries
-        if buff.get("conditions") or buff.get("triggered"):
+        # explicit condition columns the row already carries -- but the two
+        # timing columns are not conditions, so they may not force the label
+        real_conditions = set(buff.get("conditions") or {}) - timing_condition_keys
+        if real_conditions or buff.get("triggered"):
             assert buff["activation"] != "passive", (sp_id, "condition columns but passive")
+        # every attack context must be resolvable, and must really come from a
+        # raw value the row carries (no context invented out of nothing)
+        for context in buff["scope"].get("attackContexts", ()):
+            assert context in payload["enums"]["attackContext"], (sp_id, context)
+            spec = payload["enums"]["attackContext"][context]
+            assert (set(spec["fromSubCategories"]) & set(buff["scope"].get("subCategories", ()))
+                    or buff["stacking"]["stateInfo"] in spec["fromStateInfo"]), (sp_id, context)
+        if buff["stacking"]["stateInfo"]:
+            assert str(buff["stacking"]["stateInfo"]) in payload["enums"]["stateInfo"], sp_id
+        ladder = buff.get("stackLadder")
+        if ladder:
+            assert ladder["tiers"] == len(ladder["tierSpEffectIds"]) + 1, sp_id
+            assert set(ladder["topRates"]) == set(buff["rates"]), sp_id
+            # tier 1 of a saved ladder is never an unconditional multiplier
+            assert buff["activation"] == "conditional", (sp_id, "stack ladder but not conditional")
         # a buff every one of whose routes is a bullet *hit* slot lands on the
         # thing that was hit, so it can never be the "no evidence" default --
         # this is the invariant the `$`-anchored via regex used to violate
         # (1631001 『授血』 reached through ...spEffectId0->cycleOccurrenceSpEffectId)
         vias = [entry["via"] for entry in buff["sources"]]
-        if vias and all(bullet_hit.search(via) for via in vias):
+        if vias and (all(bullet_hit.search(via) for via in vias)
+                     or all(attack_hit.search(via) for via in vias)):
             assert buff["targetSource"] != "default", (sp_id, vias)
         # no shipped buff may rest solely on a "×0 with no duration" sentinel
         sentinel = [key for key, value in buff["rates"].items()

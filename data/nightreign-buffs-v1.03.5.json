@@ -1,13 +1,17 @@
 {
- "schemaVersion": 3,
+ "schemaVersion": 4,
  "datasetId": "nightreign-buffs",
  "gameVersion": "v1.03.5 + DLC1",
  "dataVersion": "regulation 10350000",
- "generatedAt": "2026-09-22T12:16:13Z",
+ "generatedAt": "2026-09-22T12:56:02Z",
  "schemaChangelog": [
   {
+   "version": 4,
+   "zh": "① **activation 判定不再把计时列当成发动条件。** v3 的第③条规则是『conditions 非空 → conditional』，而 conditionFields 里混着两个纯机制字段：motionInterval（ER paramdef：発動間隔[s]／『何秒間隔で発生するのかを設定』，即效果每几秒重新 tick 一次）与 isPeriodicEffect（周期性 tick 开关）。它们不是玩家需要满足的游戏状态。v3 里 210 条 buff 仅凭这两个字段被判成 conditional，其中 8 条是全表最强的真实无条件增伤（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、1605000 火焰啊赐予我力量 ×1.20、1660000 黄金树立誓 ×1.15 等），按 v3 文档实现的页面会把它们全部排除在默认排名之外。现在 has_conditions 只看非计时类条件列；conditionFields[] 每项新增 `isActivationCondition` 布尔，明确标出哪两个不是发动条件。② **新增 buffs[].scope.attackContexts（string[]）与 enums.attackContext。** 『致命一击』『突刺反击』这类只在特定攻击情境生效的倍率，其限制写在 SpEffectParam.stateInfo 里（367 Enhance Critical Attacks、197 Enhance Thrusting Counter Attacks），v3 只把 stateInfo 当作裸数字放在 stacking.stateInfo，scope 里没有 subCategories，所以 10 条 ×1.1–1.24 的倍率在页面看来是『对所有攻击生效的常驻增伤』。attackContexts 把 magicSubCategoryChange 与 stateInfo 两条来路统一成一组机读键（criticalHit／thrustingCounter／guardCounter／chainFinisher／jumpAttack／chargedHeavyAttack…）；**attackContexts 非空的条目不得计入通用排名，只在用户勾选对应情境时参与乘算。**同时新增 enums.stateInfo（Paramdex SP_EFFECT_TYPE 的中英文标签）。③ **buffs[].target 修正 33 条。** 命中投递槽的识别过去只认 Bullet.spEffectId0..4，漏了 atkOccurrenceSpEffectId（攻击命中时投递）。油脂／附加属性武器的异常累积行（3176 毒油脂、3151 催眠油脂、1449001 冰霜武器、1632002 血炎武器等）与结构完全相同的弹道投递版（1722000 毒雾、1631001 授血）自相矛盾地一个标 self 一个标 enemy。现已把 atkOccurrenceSpEffectId 纳入命中槽，新增 targetSource attackHitOpposeOnly／attackHitSelfOnly／attackHitStatusPayload。④ **修正 v3 changelog ⑤ 与 enums.targetSource 里一句与参数相反的说明**：v3 写『3176 毒油脂……根本没走命中槽……本数据集正确地把它标成 target=\"self\"』，但 3176 的投递路径正是 refId_default->atkOccurrenceSpEffectId，且 effectTargetSelfTarget=0，参数层面根本不允许挂在玩家身上。该举例已删除并改写。⑤ **新增 buffs[].stackLadder 与 activationSource stackLadderTier1／localizedNameCondition／paramRowPassiveTimed。** 7069001『每次打倒封印监牢里的囚犯，能提升攻击力』×1.05、7069201『每次打倒黑夜入侵者』×1.07、8988200『玛雷家的庇佑』、8998000『复仇的庇佑』在 v3 里是 passive／noEvidence，会被无条件乘进排名；它们其实都是叠层阶梯的第 1 层（参数表里 7069002-010 一路涨到 ×1.6289、7069202-210 到 ×1.9672），必须先反复达成条件。⑥ diagnostics.topUnconditionalMultipliers 由 15 条扩到 40 条并排除 attackContexts 非空的条目；被排除的那一批改列在新的 diagnostics.contextGatedMultipliers。"
+  },
+  {
    "version": 3,
-   "zh": "① **新增 buffs[].activation（passive／conditional／activated）与 activationSource**，配套 enums.activation／enums.activationSource、counts.buffsByActivation、notes.activation。v2 的 notes.ranking 第 ③ 步要求页面用 conditions／triggered 过滤发动条件型 buff，但榜首的 704301（残血 ×1.5）、8300000-2（双手持 +18%）、8310000-2（双持 +18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是 null，那一步是空转的。**排名默认只能乘 activation=\"passive\" 的条目。**② **buffs[].target 修正一条**：1631001『授血（血炎出血）』的 via 形如 `refId1->Bullet10631000.spEffectId0->cycleOccurrenceSpEffectId`，旧正则带 `$` 锚匹配不到链式后缀，导致这条挂在敌人身上的出血累积被标成 self；现已按规则重算为 target=\"enemy\"／targetSource=\"bulletHitOffensiveBullet\"，与同类的『冰雾』『毒雾』一致（status 组 countsAsDamage=false，不影响伤害乘积）。③ **buffs 少一条（704000）**：它唯一的合格数值是 characterSkillCooldownReduction=0 且 effectEndurance=0，是无赖反击免伤窗口里的哨兵值而非『冷却 -100%』；改为记进 diagnostics.sentinelOnlyRows 而不是当成 buff 输出。④ **displayNameZh／En 的消歧顺序变了**（唯一性保证不变）：原始英文 Paramdex 行名由第一级降到倒数第二级，中间新增『来源类别』一级，并强制同族条目取相同的限定词组合；依赖 displayName 字符串做键的消费方需要重取。⑤ enums.targetSource 里 bulletHitOpposeOnly／bulletHitFriendlyOnly 的说明改写：阵营过滤位必须在『全部来源只由 Bullet 命中槽投递』的前提下才有判定力（3176 毒油脂同样是 selfTarget=0／opposeTarget=1，却是挂在玩家身上的）。"
+   "zh": "① **新增 buffs[].activation（passive／conditional／activated）与 activationSource**，配套 enums.activation／enums.activationSource、counts.buffsByActivation、notes.activation。v2 的 notes.ranking 第 ③ 步要求页面用 conditions／triggered 过滤发动条件型 buff，但榜首的 704301（残血 ×1.5）、8300000-2（双手持 +18%）、8310000-2（双持 +18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是 null，那一步是空转的。**排名默认只能乘 activation=\"passive\" 的条目。**② **buffs[].target 修正一条**：1631001『授血（血炎出血）』的 via 形如 `refId1->Bullet10631000.spEffectId0->cycleOccurrenceSpEffectId`，旧正则带 `$` 锚匹配不到链式后缀，导致这条挂在敌人身上的出血累积被标成 self；现已按规则重算为 target=\"enemy\"／targetSource=\"bulletHitOffensiveBullet\"，与同类的『冰雾』『毒雾』一致（status 组 countsAsDamage=false，不影响伤害乘积）。③ **buffs 少一条（704000）**：它唯一的合格数值是 characterSkillCooldownReduction=0 且 effectEndurance=0，是无赖反击免伤窗口里的哨兵值而非『冷却 -100%』；改为记进 diagnostics.sentinelOnlyRows 而不是当成 buff 输出。④ **displayNameZh／En 的消歧顺序变了**（唯一性保证不变）：原始英文 Paramdex 行名由第一级降到倒数第二级，中间新增『来源类别』一级，并强制同族条目取相同的限定词组合；依赖 displayName 字符串做键的消费方需要重取。⑤ enums.targetSource 里 bulletHitOpposeOnly／bulletHitFriendlyOnly 的说明改写：阵营过滤位必须在『已确认投递路径是命中槽』的前提下才有判定力。（**v4 更正**：v3 这一条原本举 3176 毒油脂为『阵营位是 oppose-only 却挂在玩家身上』的反例，该举例是错的——3176 走的正是 refId_default->atkOccurrenceSpEffectId 这个命中槽，且 effectTargetSelfTarget=0，v4 已把它改判为 target=\"enemy\"。当前的正确表述与真实反例见 v4 条目④与 diagnostics.opposeBitsWithoutHitSlot。）"
   },
   {
    "version": 2,
@@ -46,11 +50,12 @@
  ],
  "notes": {
   "zh": "收录「能改变输出数值」且能从玩家可获得的物品／法术／永久强化／遗物词条追溯到的 SpEffect。**注意：能追溯到玩家物品 ≠ 挂在玩家身上**——投掷道具与法术的 Bullet 命中槽（spEffectId0..4）把效果挂在被命中的对象上，复仇者的家人（海伦／弗雷德里克／塞巴斯蒂安）另有自己的数值缩放行。因此每条 buff 都带 `target`（self／ally／summon／enemy），排名前必须先按它过滤。本作没有独立的『战技伤害 +x%』类字段，针对战技／跳跃攻击／防御反击／绝招等的强化都是普通的 AttackRate 字段 + magicSubCategoryChange 子类过滤，见每条 buff 的 scope。",
-  "target": "`target` 说明这条 SpEffect 实际挂在谁身上：self＝只作用于玩家自己；ally＝自己与／或附近队友（友方 AoE 弹道，如黄金树立誓、振奋香，或行名明示 Allies 的团队增益）；summon＝复仇者家人等召唤物**自己**的数值缩放（296220『塞巴斯蒂安』的 0.15 是召唤物的伤害系数，不是让玩家伤害变成 15%）；enemy＝挂在被命中的敌人身上（酸蚀喷雾、桂奥尔的咆哮这类减益，或『魅惑树枝』让被魅惑的敌人攻击力 ×2）。**增伤排名只能对 target 为 self／ally 的条目做乘算**；enemy 条目的 `direction` 描述的是敌人数值的增减（decrease＝把敌人削弱，对玩家有利），语义与 self 条目相反，summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。",
-  "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，所以 v2 里 704301『残血 25% 以下 ×1.5』、8300000-2『双手持 +12/15/18%』、8310000-2『双持 +12/15/18%』、707201-215『处刑人绝招兽化 ×1.62–3.55』的 conditions 与 triggered 全是 null。**只有 activation=\"passive\" 的条目才允许默认乘进通用排名**；conditional 与 activated 必须由用户显式勾选（默认不计入）。另外请注意互斥：8300000-2（双手共持）与 8310000-2（双手各持）不可能同时成立，同理 707201-215 是绝招兽化的 15 个等级，同一时刻只有一层。判定依据逐条写在 `activationSource`，中文解释见 enums.activationSource；passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
-  "conditions": "带 `conditions` / `triggered` 的 buff 有发动条件（武器种类、血量、自身状态、概率、命中触发等），例如 7037001 是送葬者遗物词条，只有装备该词条并且身上有祷告辅助效果时才给 +19%——它挂在 30 个辅助祷告的 Magic.refId10 上，并不代表任何人施放这些祷告都能拿到。排名时必须让用户勾选是否满足条件，**默认不计入乘积**。本版本 conditions 字段的中文含义见 conditionFields。",
+  "target": "`target` 说明这条 SpEffect 实际挂在谁身上：self＝只作用于玩家自己；ally＝自己与／或附近队友（友方 AoE 弹道，如黄金树立誓、振奋香，或行名明示 Allies 的团队增益）；summon＝复仇者家人等召唤物**自己**的数值缩放（296220『塞巴斯蒂安』的 0.15 是召唤物的伤害系数，不是让玩家伤害变成 15%）；enemy＝挂在被命中的敌人身上（酸蚀喷雾、桂奥尔的咆哮这类减益，或『魅惑树枝』让被魅惑的敌人攻击力 ×2）。**增伤排名只能对 target 为 self／ally 的条目做乘算**；enemy 条目的 `direction` 描述的是敌人数值的增减（decrease＝把敌人削弱，对玩家有利），语义与 self 条目相反，summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。**v4 注意**：油脂、附加属性武器、毒雾这类『打中谁就给谁上异常累积』的行，target 一律是 enemy（v3 里由 atkOccurrenceSpEffectId 投递的 33 条被错标成 self，与结构完全相同、由弹道投递的同类自相矛盾）。但它们**确实是玩家的异常累积手段**——要做『异常状态累积』榜时不要只留 target=self，应按 sources[].kind 取玩家可获得的来源（goods／spell／weaponPassive…），target 在那条轴上表示的是『累积加在谁身上』，本来就该是 enemy。",
+  "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，所以 v2 里 704301『残血 25% 以下 ×1.5』、8300000-2『双手持 +12/15/18%』、8310000-2『双持 +12/15/18%』、707201-215『处刑人绝招兽化 ×1.62–3.55』的 conditions 与 triggered 全是 null。**只有 activation=\"passive\" 的条目才允许默认乘进通用排名**；conditional 与 activated 必须由用户显式勾选（默认不计入）。另外请注意互斥：8300000-2（双手共持）与 8310000-2（双手各持）不可能同时成立，同理 707201-215 是绝招兽化的 15 个等级，同一时刻只有一层。判定依据逐条写在 `activationSource`，中文解释见 enums.activationSource；passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事；也**不等于『对所有攻击都生效』**——那是 scope.attackContexts 管的，见 notes.attackContext。**v4 修正**：v3 把 conditions 整个拿来判定，而 conditions 里混着 motionInterval（效果重新 tick 的间隔［秒］）与 isPeriodicEffect（周期性重新施加）两个计时字段，结果 210 条无条件 buff 被误判成 conditional——其中就有狂热香药 ×1.45／×1.35、夏玻利利的嘶吼 ×1.25、火焰啊赐予我力量 ×1.20、黄金树立誓 ×1.15，也就是整张表里最常用的几条消耗品与团队增益。现在只有 conditionFields[].isActivationCondition=true 的列才参与判定。",
+  "attackContext": "`scope.attackContexts` 是**作用情境的机读标记**：非空表示这条倍率只在列出的攻击情境下才吃得到，**默认不得乘进通用排名**，只有用户勾选了该情境才参与乘算。它和 activation 是正交的两条轴——activation 回答『这份 buff 现在挂在身上吗』，attackContexts 回答『挂着的时候哪些攻击吃得到』。『强化致命一击 ×1.24』『强化突刺反击 ×1.20』装上就一直在（activation=passive），但只有打出致命一击／突刺反击时才生效，所以必须靠这一条拦住。取值与中文说明见 enums.attackContext，其中还写明每个键是从哪个原始值推出来的：fromSubCategories 对应 magicSubCategoryChange1..3（ATK_SUB_CATEGORY），fromStateInfo 对应 SpEffectParam.stateInfo（SP_EFFECT_TYPE，中文标签见 enums.stateInfo）。**v3 只有前一条来路是机读的**，所以 stateInfo=367（强化致命一击，6 条 ×1.12–1.24）与 stateInfo=197（强化突刺反击，4 条 ×1.10–1.20）在页面看来是『对所有攻击生效的常驻增伤』；突刺反击那 4 条的 scope 甚至是 affectsSorcery／affectsIncantation／affectsShaman 全 true。注意 attackContexts 只收『玩家进入的攻击情境』，武器／法术门类过滤（近战武器攻击、远程武器攻击、战技攻击、各流派魔法祷告）仍然只出现在 scope.subCategories 里，按伤害构成加权即可，不属于情境勾选。",
+  "conditions": "带 `conditions` / `triggered` 的 buff 有发动条件（武器种类、血量、自身状态、概率、命中触发等），例如 7037001 是送葬者遗物词条，只有装备该词条并且身上有祷告辅助效果时才给 +19%——它挂在 30 个辅助祷告的 Magic.refId10 上，并不代表任何人施放这些祷告都能拿到。排名时必须让用户勾选是否满足条件，**默认不计入乘积**。本版本 conditions 字段的中文含义见 conditionFields。⚠️ conditions 里有两个字段**不是发动条件**：motionInterval（效果每几秒重新施加一次，ER paramdef『発動間隔[s]』）与 isPeriodicEffect（是否按该间隔周期性重新施加）。它们是光环／持续类效果的计时机制，几乎每条有持续时间的 buff 都带，**判断一条 buff 是否有发动条件时必须跳过它们**——conditionFields[].isActivationCondition 就是为此而设。",
   "damageTypeNaming": "参数里的 dark 槽位在本作即『圣』属性；physics 为物理总量，slash/blow/thrust/neutral 是物理攻击类型细分。",
-  "ranking": "增伤排名的推荐步骤（顺序不能省）：① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；② 按 `direction` 过滤（只要 increase／mixed）；③ **先看 `activation`，再看 `conditions`／`triggered`**：只有 activation=\"passive\" 才允许默认计入乘积；conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）一律由用户勾选，默认不计入。顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，那一步在最需要它的条目上是空转的。拿到具体条件字段仍然看 `conditions`（含义见 conditionFields）与 `triggered`；④ 按 `scope` 判断是否作用于目标攻击（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／weaponSlot／spAttribute／subCategories）；⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` 决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，stance／status 另开一条轴，special／flag／economy 只展示不乘；⑥ 用 `stacking.group` 分组去重（同组按 `spCategoryBehavior` 处理）后跨组相乘；⑦ 列表一律显示 `displayNameZh`（已保证唯一）。",
+  "ranking": "增伤排名的推荐步骤（顺序不能省）：① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；② 按 `direction` 过滤（只要 increase／mixed）；③ **先看 `activation`，再看 `conditions`／`triggered`**：只有 activation=\"passive\" 才允许默认计入乘积；conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）一律由用户勾选，默认不计入。顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，那一步在最需要它的条目上是空转的。拿到具体条件字段仍然看 `conditions`（含义见 conditionFields，**只有 isActivationCondition=true 的列才是发动条件**，motionInterval／isPeriodicEffect 是计时机制）与 `triggered`；④ **再看 `scope.attackContexts`**：非空表示这条倍率只在某种攻击情境下生效（致命一击、突刺反击、防御反击、连段最后一击、蓄力、跳跃／冲刺／翻滚攻击、双手持…），**默认不得计入通用排名**，只有当用户勾选了对应情境时才参与乘算——这类条目本身是 passive（装上就一直在），限制的是作用范围而不是发动时机，所以第③步拦不住它们，必须单独走这一步。其余 scope 字段（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／weaponSlot／spAttribute／subCategories）仍按伤害构成加权；attackContexts 是 subCategories 与 stateInfo 两条来路的归一化视图，原始值都还在原处，中文解释见 enums.attackContext；⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` 决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，stance／status 另开一条轴，special／flag／economy 只展示不乘；⑥ 用 `stacking.group` 分组去重（同组按 `spCategoryBehavior` 处理）后跨组相乘；⑦ 列表一律显示 `displayNameZh`（已保证唯一）。",
   "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind：multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；flag 只是开关，不参与计算；special 的每个字段语义各不相同、**一律不得相乘**（restageAttackRate=0.6 指女爵『再演』复制那一份占 60%，不是 -40% 伤害）。再用两个布尔做粗筛：`countsAsDamage=true` 的组（damage／attackPower／attackPowerFlat）是**无条件**的血量伤害，可以进通用乘积；`conditionalDamage=true` 的组与字段（weakness 特攻、critical 致命一击、以及 economy 里的 bowDistRate 远程衰减）确实改血量伤害，但要先满足条件才成立，**不得无条件乘进通用排名**——『纠死圣律』weakDmgRateB=10 只对不死类敌人生效，无条件相乘会让它以 ×10 稳居榜首；页面应在『指定敌人类型』或『远程／致命一击』分区里另算。两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）不进伤害乘积，只单独展示或另开轴。",
   "displayName": "nameZh 取自状态栏文本，重名极多（『提升攻击力』92 条、『异常状态：冻伤』53 条），**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%）、③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。因此『提升火属性攻击力（火油脂・档位2・右手）』这种长名字是刻意的：六个油脂档位×左右手原本完全同名。v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，避免同一组遗物一条带 #id、一条不带。实际退到 `#spEffectId` 的条数见 counts.displayNameZhFallingBackToSpEffectId，完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId（v2 为 52 条）。"
  },
@@ -1279,6 +1284,278 @@
     "en": "Melee Weapon Attack"
    }
   },
+  "attackContext": {
+   "criticalHit": {
+    "zh": "致命一击／处决",
+    "en": "Critical hit / riposte / backstab",
+    "fromSubCategories": [],
+    "fromStateInfo": [
+     367
+    ]
+   },
+   "thrustingCounter": {
+    "zh": "突刺反击（被打断攻击后的突刺）",
+    "en": "Thrusting counterattack",
+    "fromSubCategories": [],
+    "fromStateInfo": [
+     197
+    ]
+   },
+   "guardCounter": {
+    "zh": "防御反击",
+    "en": "Guard counter",
+    "fromSubCategories": [
+     103
+    ],
+    "fromStateInfo": []
+   },
+   "chainFinisher": {
+    "zh": "连段最后一击",
+    "en": "Final hit of a chain attack",
+    "fromSubCategories": [
+     104
+    ],
+    "fromStateInfo": []
+   },
+   "jumpAttack": {
+    "zh": "跳跃攻击",
+    "en": "Jump attack",
+    "fromSubCategories": [
+     102
+    ],
+    "fromStateInfo": []
+   },
+   "dashAttack": {
+    "zh": "冲刺攻击",
+    "en": "Dash attack",
+    "fromSubCategories": [
+     127
+    ],
+    "fromStateInfo": []
+   },
+   "rollingAttack": {
+    "zh": "翻滚攻击",
+    "en": "Rolling attack",
+    "fromSubCategories": [
+     128
+    ],
+    "fromStateInfo": []
+   },
+   "backstepAttack": {
+    "zh": "后跳攻击",
+    "en": "Backstep attack",
+    "fromSubCategories": [
+     129
+    ],
+    "fromStateInfo": []
+   },
+   "initialAttack": {
+    "zh": "起手普通攻击",
+    "en": "Initial standard attack",
+    "fromSubCategories": [
+     119
+    ],
+    "fromStateInfo": []
+   },
+   "horsebackAttack": {
+    "zh": "骑马攻击",
+    "en": "Horseback attack",
+    "fromSubCategories": [
+     101
+    ],
+    "fromStateInfo": []
+   },
+   "chargedHeavyAttack": {
+    "zh": "蓄力强攻击",
+    "en": "Charged heavy attack",
+    "fromSubCategories": [
+     100
+    ],
+    "fromStateInfo": []
+   },
+   "chargedSpell": {
+    "zh": "蓄力法术",
+    "en": "Charged spell",
+    "fromSubCategories": [
+     110
+    ],
+    "fromStateInfo": []
+   },
+   "chargedSkill": {
+    "zh": "蓄力战技",
+    "en": "Charged skill",
+    "fromSubCategories": [
+     111
+    ],
+    "fromStateInfo": []
+   },
+   "twoHanded": {
+    "zh": "双手持武器时",
+    "en": "While two-handing one armament",
+    "fromSubCategories": [
+     124
+    ],
+    "fromStateInfo": []
+   },
+   "dualWield": {
+    "zh": "双持（左右手各一把）时",
+    "en": "While wielding two armaments",
+    "fromSubCategories": [
+     125
+    ],
+    "fromStateInfo": []
+   }
+  },
+  "stateInfo": {
+   "2": {
+    "zh": "中毒",
+    "en": "Poison"
+   },
+   "5": {
+    "zh": "猩红腐败",
+    "en": "Scarlet Rot"
+   },
+   "6": {
+    "zh": "出血",
+    "en": "Blood Loss"
+   },
+   "28": {
+    "zh": "右手武器附加特效",
+    "en": "Right-hand Buff VFX"
+   },
+   "48": {
+    "zh": "提升伤害",
+    "en": "Increase Damage"
+   },
+   "50": {
+    "zh": "HP／FP／精力回复",
+    "en": "HP/FP/Stamina Recovery"
+   },
+   "60": {
+    "zh": "魔力武器附加特效",
+    "en": "Magic Buff VFX"
+   },
+   "62": {
+    "zh": "火焰武器附加特效",
+    "en": "Fire Weapon Buff VFX"
+   },
+   "64": {
+    "zh": "附魔武器特效",
+    "en": "Enchanted Weapon Buff VFX"
+   },
+   "71": {
+    "zh": "法术威力提升",
+    "en": "Spell Power Boost"
+   },
+   "116": {
+    "zh": "死之诅咒",
+    "en": "Death Blight"
+   },
+   "151": {
+    "zh": "雷电武器附加特效",
+    "en": "Lightning Weapon Buff VFX"
+   },
+   "152": {
+    "zh": "允许对敌人施加攻击特效",
+    "en": "Enable Attack Effect against Enemy"
+   },
+   "158": {
+    "zh": "左手武器附加特效",
+    "en": "Left-hand Buff VFX"
+   },
+   "168": {
+    "zh": "弓射程变化",
+    "en": "Bow Distance Change"
+   },
+   "197": {
+    "zh": "强化突刺反击",
+    "en": "Enhance Thrusting Counter Attacks"
+   },
+   "200": {
+    "zh": "内在之力特效",
+    "en": "Power Within VFX"
+   },
+   "205": {
+    "zh": "圣属性武器附加特效",
+    "en": "Holy Weapon Buff VFX"
+   },
+   "260": {
+    "zh": "冻伤",
+    "en": "Frostbite"
+   },
+   "303": {
+    "zh": "累积器 1",
+    "en": "Accumulator 1"
+   },
+   "305": {
+    "zh": "累积器 3",
+    "en": "Accumulator 3"
+   },
+   "308": {
+    "zh": "累积器 6",
+    "en": "Accumulator 6"
+   },
+   "367": {
+    "zh": "强化致命一击",
+    "en": "Enhance Critical Attacks"
+   },
+   "384": {
+    "zh": "斗志加成",
+    "en": "Determination Buff"
+   },
+   "385": {
+    "zh": "斗志加成",
+    "en": "Determination Buff"
+   },
+   "436": {
+    "zh": "睡眠",
+    "en": "Sleep"
+   },
+   "437": {
+    "zh": "发狂",
+    "en": "Madness"
+   },
+   "443": {
+    "zh": "触发冲击波",
+    "en": "Triggers Shockwave"
+   },
+   "449": {
+    "zh": "受伤后攻击回复（反击回血）",
+    "en": "Rally/Post-Damage Attacks Heal"
+   },
+   "601": {
+    "zh": "再演",
+    "en": "Restage"
+   },
+   "2100": {
+    "zh": "使用武器种类触发",
+    "en": "Use Weapon Type Trigger"
+   },
+   "2103": {
+    "zh": "施加攻击时效果",
+    "en": "Apply On-Attack Effect"
+   },
+   "2108": {
+    "zh": "复仇者召唤物 2 生效中",
+    "en": "Revenant Summon 2 Active"
+   },
+   "2110": {
+    "zh": "使用敌人状态触发",
+    "en": "Use Enemy State Info Trigger"
+   },
+   "2111": {
+    "zh": "依当前血量缩放攻击",
+    "en": "Scale attack based on Current HP"
+   },
+   "2113": {
+    "zh": "无赖：延长绝招持续时间",
+    "en": "Raider: Extend Ultimate Art Duration"
+   },
+   "2121": {
+    "zh": "随机施加效果",
+    "en": "Apply Effect Randomly"
+   }
+  },
   "wepParamChange": {
    "0": {
     "zh": "不限",
@@ -1488,8 +1765,11 @@
    "default": "没有命中目标槽位的证据，按『挂在玩家自己身上』处理（遗物词条／护符／武器被动／永久强化等）",
    "revenantFamilyRow": "Paramdex 行名表明这是复仇者家人（召唤物）自身的数值缩放行",
    "alliesRow": "Paramdex 行名明示效果发给 allies（队友）",
-   "bulletHitOpposeOnly": "**前提是**这条 SpEffect 的全部来源都只能由 Bullet 的命中槽（spEffectId0..4）投递；在这个前提下，再用阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 区分它投给敌方还是己方，判定为敌方。⚠️ 这两个位**单独出现不足以判定 target**：它们的语义是『这份异常累积／效果允许打给哪个阵营』，不是『这条 SpEffect 挂在谁身上』。SpEffectParam 3176『[Item] Poison Grease (Right) - Poison』同样是 selfTarget=0／opposeTarget=1（与 1722000『毒雾』一模一样），但它是玩家抹在自己武器上的毒油脂，本数据集正确地把它标成 target=\"self\"——因为它的来源是 EquipParamGoods，根本没走 Bullet 命中槽，不满足上面的前提。下一轮维护者若把这条规则推广到非弹道来源上，会把大量玩家自身的异常累积 buff 误判成 enemy。",
+   "bulletHitOpposeOnly": "**前提是**这条 SpEffect 的全部来源都只能由 Bullet 的命中槽（spEffectId0..4）投递；在这个前提下，再用阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 区分它投给敌方还是己方，判定为敌方。⚠️ 这两个位**单独出现不足以判定 target**：它们的语义是『这份异常累积／效果允许打给哪个阵营』，不是『这条 SpEffect 挂在谁身上』，必须先确认投递路径确实是命中槽（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId）。本版本仍有一批条目带着 oppose-only 的阵营位、却只能靠 Paramdex 行名或武器行为槽追溯来源，投递路径无法确认，一律保守地按 self 处理——清单见 diagnostics.opposeBitsWithoutHitSlot，那是缺省而不是已证实的结论。（v3 这里原本举 3176『[Item] Poison Grease (Right) - Poison』为『阵营位 oppose-only 却挂在玩家身上』的反例，说它『来源是 EquipParamGoods，根本没走命中槽』。那句是错的：3176 的 via 正是 refId_default->atkOccurrenceSpEffectId，走的就是命中槽，v4 已按同一规则把它改判为 target=\"enemy\"。）",
    "bulletHitFriendlyOnly": "**前提同上**（全部来源都只能由 Bullet 的命中槽投递）；在这个前提下 effectTargetOpposeTarget=0 说明这份效果只允许打给己方阵营，判定为 ally。同样地，effectTargetOpposeTarget=0 单独出现不足以判定 target，必须先满足『只由命中槽投递』的前提。",
+   "attackHitOpposeOnly": "全部来源都经由 atkOccurrenceSpEffectId（『攻击命中时发动』）投递——也就是说这份效果是在玩家打中目标的那一刻挂到**被打中的对象**身上的，不是挂在玩家身上；阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 进一步确认只能打给敌方。各种油脂（毒／催眠／出血／腐败）与『附加毒属性』祷告的累积行都属于这一类，与弹道投递的同类（1722000『毒雾』、1631001『授血』）判定一致。⚠️ 这些条目虽然 target=enemy，但**确实是玩家的异常累积手段**：要做『异常累积』榜时不能只留 self，应当按 sources[].kind 取玩家可获得的来源，见 notes.target。",
+   "attackHitSelfOnly": "全部来源都经由 atkOccurrenceSpEffectId 投递，但阵营位允许打给自己（effectTargetSelfTarget=1 且 effectTargetOpposeTarget=0，或两侧都开而负载不只是异常累积）——这是『命中后给自己上 buff』的形态，效果挂在玩家身上（例：7036901『打出连段最后一击后提升攻击力』×1.16、8660203『致命一击附带出血』的攻击力加算）。发动条件由 activation 另行标记。",
+   "attackHitStatusPayload": "全部来源都经由 atkOccurrenceSpEffectId 投递，阵营过滤两侧都开，而负载只有异常累积／开关（没有任何倍率或攻击力加算）——这种行是『打中谁就给谁累积』，视为挂在被命中的敌人身上（例：3141『[Item] Freezing Grease (Right) - Frostbite』、1449001『[Sorcery] Frozen Armament - Frost』、1632002『血炎武器 - 出血』）。",
    "bulletHitSupportBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 伤害修正全为 0（纯辅助弹道，只会罩到己方）",
    "bulletHitStatusMist": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，弹道本身不造成伤害，且效果只有异常状态累积（站在雾里的人吃累积，视为敌人侧）",
    "bulletHitOffensiveBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 是会造成伤害的攻击弹道（命中的是敌人）"
@@ -1509,10 +1789,13 @@
    }
   },
   "activationSource": {
-   "noEvidence": "没有任何发动条件的证据：来源行名不含条件词、conditions 为空、triggered 为假，且不是技艺／绝招／战技行。注意 passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
+   "noEvidence": "没有任何发动条件的证据：来源行名不含条件词、非计时类 conditions 为空、triggered 为假，且不是技艺／绝招／战技行、不是带时限的角色被动、不是叠层阶梯第 1 层。注意 passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事；也**不等于『对所有攻击都生效』**——作用范围是另一条轴，先看 scope.attackContexts（致命一击、防御反击、蓄力…）再决定能不能计入通用排名。",
    "paramRowCategoryArt": "Paramdex 行名的 [...] 前缀是 Ultimate／Skill／AoW，即这条 SpEffect 只在绝招／角色技艺／战技发动期间挂在身上（例：707215『[Ultimate - Executor] Beast Attack Boost - Level 15』×3.55 只存在于处刑人绝招兽化期间）。",
    "paramRowNameCondition": "Paramdex 行名里写明了发动条件（while／when／upon／during／below／above／alongside／two-handing／wielding／stack）（例：704301『Attack Boost when below 25% Health』×1.5、8300000『Improved Attack Power when Two-Handing』、8310000『Attack Up when Wielding Two Armaments』——后两者还彼此互斥，不能同时计入）。刻意不含 counter／critical／charged／chain 这类词：那是作用范围（scope.subCategories）而不是发动条件，「强化防御反击」是常驻词条。",
-   "conditionFields": "SpEffectParam 自带的条件列非默认（见 buffs[].conditions 与 conditionFields）。",
+   "paramRowPassiveTimed": "Paramdex 行名的 [...] 前缀是 Passive（角色被动），但 effectEndurance 是有限值——真正常驻的被动是 -1，带时限就说明它是被某个时机打开的（例：707071『[Passive - Executor] Tenacity』×1.2 持续 18.5 秒，是处刑人挡拆成功后的窗口；707070 是它的 1.5 秒起手段）。",
+   "localizedNameCondition": "该行没有 Paramdex 英文行名（规则①②天然失效），但简中／英文状态栏文本里写明了需要反复达成的条件（每次／每当／打倒／击倒／成功时／命中时）（例：7069001『每次打倒封印监牢里的囚犯，能提升攻击力』、7069201『每次打倒黑夜入侵者，能提升攻击力』）。刻意只在 paramName 为空时启用、且词表只收『重复达成某事』这一类措辞——否则『强化连续攻击的最后攻击』『降低射击时，伤害随距离递减的影响』这类**作用范围**描述会被误判成发动条件。",
+   "stackLadderTier1": "这条 buff 是一段叠层阶梯的第 1 层（见 buffs[].stackLadder）：参数表里紧随其后是一串行名为空、除倍率外所有列完全相同、倍率逐层严格递增、且 saveCategory≠-1（占用存档槽＝随游戏进程累积）的行。层数要靠反复达成某个条件才涨，所以第 1 层的数值既不是无条件的、也不是该词条的上限（例：8988200『玛雷家的庇佑』第 1 层 ×1.011，满 100 层 ×1.70）。",
+   "conditionFields": "SpEffectParam 自带的条件列非默认（见 buffs[].conditions 与 conditionFields）。**只算 conditionFields[].isActivationCondition=true 的那些列**——motionInterval（发动间隔［秒］）与 isPeriodicEffect（周期性重新施加）是计时机制，不是玩家要满足的状态；v3 把它们算进来，导致 210 条无条件 buff（狂热香药 ×1.45、黄金树立誓 ×1.15…）被误判成 conditional。",
    "onHitTrigger": "来源是 AttachEffectParam.onHitSpEffect（命中时才挂上），同 buffs[].triggered。",
    "eventScriptTimedBuff": "这条 SpEffect 没有任何参数列指向它（全部来源都是 inferred=true，由游戏脚本挂载），且持续时间有限（effectEndurance ≠ -1）——脚本必然是在某个时刻才把它打开的，只是那个时刻写在 ESD／EMEVD 里、参数表看不到（例：8980002『Power of Night and Flame: Magic Damage Buff』30 秒、7035703『Switching Weapons Adds an Affinity Attack』10 秒）。"
   },
@@ -1521,75 +1804,93 @@
  "conditionFields": [
   {
    "key": "conditionHp",
-   "zh": "残余血量低于此比例(%)才发动"
+   "zh": "残余血量低于此比例(%)才发动",
+   "isActivationCondition": true
   },
   {
    "key": "conditionHpRate",
-   "zh": "残余血量高于此比例(%)才发动"
+   "zh": "残余血量高于此比例(%)才发动",
+   "isActivationCondition": true
   },
   {
    "key": "conditionStamina",
-   "zh": "精力条件"
+   "zh": "精力条件",
+   "isActivationCondition": true
   },
   {
    "key": "motionInterval",
-   "zh": "发动间隔（秒）"
+   "zh": "效果重新施加的间隔（秒）——ER paramdef『発動間隔[s]／何秒間隔で発生するのかを設定』，是计时机制不是发动条件，**不参与 activation 判定**",
+   "isActivationCondition": false
   },
   {
    "key": "isPeriodicEffect",
-   "zh": "周期性发动"
+   "zh": "该效果按上面的间隔周期性重新施加——同样是计时机制不是发动条件，**不参与 activation 判定**",
+   "isActivationCondition": false
   },
   {
    "key": "wepTypeTrigger",
-   "zh": "触发所需武器种类"
+   "zh": "触发所需武器种类",
+   "isActivationCondition": true
   },
   {
    "key": "wepTypeTriggerCount",
-   "zh": "触发所需武器数量"
+   "zh": "触发所需武器数量",
+   "isActivationCondition": true
   },
   {
    "key": "triggerOnWepType",
-   "zh": "指定武器种类时触发"
+   "zh": "指定武器种类时触发",
+   "isActivationCondition": true
   },
   {
    "key": "triggerAttachedWeapon",
-   "zh": "需要附加属性的武器"
+   "zh": "需要附加属性的武器",
+   "isActivationCondition": true
   },
   {
    "key": "enemyStateInfoTrigger",
-   "zh": "敌人处于指定状态时触发"
+   "zh": "敌人处于指定状态时触发",
+   "isActivationCondition": true
   },
   {
    "key": "invocationConditionsStateChange1",
-   "zh": "发动条件：自身状态1"
+   "zh": "发动条件：自身状态1",
+   "isActivationCondition": true
   },
   {
    "key": "invocationConditionsStateChange2",
-   "zh": "发动条件：自身状态2"
+   "zh": "发动条件：自身状态2",
+   "isActivationCondition": true
   },
   {
    "key": "invocationConditionsStateChange3",
-   "zh": "发动条件：自身状态3"
+   "zh": "发动条件：自身状态3",
+   "isActivationCondition": true
   },
   {
    "key": "randomChanceValue",
-   "zh": "发动概率值"
+   "zh": "发动概率值",
+   "isActivationCondition": true
   },
   {
    "key": "accumuOverVal",
-   "zh": "累积阈值（上）"
+   "zh": "累积阈值（上）",
+   "isActivationCondition": true
   },
   {
    "key": "accumuUnderVal",
-   "zh": "累积阈值（下）"
+   "zh": "累积阈值（下）",
+   "isActivationCondition": true
   },
   {
    "key": "accumuVal",
-   "zh": "每次累积量"
+   "zh": "每次累积量",
+   "isActivationCondition": true
   },
   {
    "key": "vowType0",
-   "zh": "誓约0（阵营／模式限制）"
+   "zh": "誓约0（阵营／模式限制）",
+   "isActivationCondition": true
   }
  ],
  "chainFields": [
@@ -1692,23 +1993,44 @@
   },
   "buffsByTarget": {
    "ally": 13,
-   "enemy": 32,
-   "self": 792,
+   "enemy": 65,
+   "self": 759,
    "summon": 37
   },
   "buffsByActivation": {
    "activated": 157,
-   "conditional": 432,
-   "passive": 285
+   "conditional": 363,
+   "passive": 354
   },
   "buffsByActivationSource": {
-   "conditionFields": 315,
-   "eventScriptTimedBuff": 35,
-   "noEvidence": 285,
-   "onHitTrigger": 18,
+   "conditionFields": 105,
+   "eventScriptTimedBuff": 110,
+   "localizedNameCondition": 2,
+   "noEvidence": 354,
+   "onHitTrigger": 78,
    "paramRowCategoryArt": 157,
-   "paramRowNameCondition": 64
+   "paramRowNameCondition": 64,
+   "paramRowPassiveTimed": 2,
+   "stackLadderTier1": 2
   },
+  "buffsByAttackContext": {
+   "backstepAttack": 3,
+   "chainFinisher": 4,
+   "chargedHeavyAttack": 6,
+   "chargedSkill": 6,
+   "chargedSpell": 7,
+   "criticalHit": 6,
+   "dashAttack": 3,
+   "dualWield": 4,
+   "guardCounter": 8,
+   "initialAttack": 1,
+   "jumpAttack": 4,
+   "rollingAttack": 3,
+   "thrustingCounter": 5,
+   "twoHanded": 4
+  },
+  "buffsWithAttackContext": 60,
+  "buffsWithStackLadder": 4,
   "displayNameZhFallingBackToSpEffectId": 58,
   "buffsAffectingAllies": 13,
   "buffsWithoutChineseName": 82,
@@ -1812,11 +2134,41 @@
    ],
    "enemy": [
     3115,
+    3141,
+    3145,
+    3151,
+    3155,
+    3176,
+    3180,
+    3191,
+    3195,
+    3311,
+    3315,
     500930,
     501720,
     503580,
     503610,
     708310,
+    708561,
+    708563,
+    708566,
+    708568,
+    708571,
+    708573,
+    708576,
+    708578,
+    708581,
+    708583,
+    708586,
+    708588,
+    708591,
+    708593,
+    708596,
+    708598,
+    708611,
+    708613,
+    708616,
+    708618,
     708650,
     708660,
     708680,
@@ -1826,9 +2178,11 @@
     1441000,
     1442000,
     1443101,
+    1449001,
     1490010,
     1501000,
     1631001,
+    1632002,
     1692100,
     1702000,
     1702100,
@@ -1836,13 +2190,9 @@
     1703100,
     1709000,
     1722000,
+    1723001,
     1731000,
-    1731001,
-    1731100,
-    1732000,
-    1732001,
-    1733001,
-    1802301
+    1731001
    ],
    "summon": [
     290001,
@@ -1884,13 +2234,22 @@
     296554
    ]
   },
-  "activationNote": "activation 的三态判定完全由数据推出，没有写死的 ID 名单，判定依据逐条写在 buffs[].activationSource（中文解释见 enums.activationSource）。本版本取值分布见 counts.buffsByActivation／buffsByActivationSource。**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**：v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。",
+  "activationNote": "activation 的三态判定完全由数据推出，没有写死的 ID 名单，判定依据逐条写在 buffs[].activationSource（中文解释见 enums.activationSource）。本版本取值分布见 counts.buffsByActivation／buffsByActivationSource。**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**：v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。**v4 两处修正**：① v3 的『conditions 非空 → conditional』把 motionInterval（重新施加间隔［秒］）与 isPeriodicEffect（周期性重新施加）这两个计时列也算了进去，结果 210 条 buff 仅凭一个 tick 间隔被判成 conditional——其中 8 条是 target∈{self,ally} 的真实无条件增伤（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、707070／707071 处刑人 Tenacity ×1.2、1605000 火焰啊赐予我力量 ×1.20、1660000 黄金树立誓 ×1.15、1732 Golden Great Arrow ×1.075）。现在只看 conditionFields[].isActivationCondition=true 的列，处刑人 Tenacity 改由 paramRowPassiveTimed（[Passive - X] 行且时长有限）判出，1732 改由 eventScriptTimedBuff 判出，都不再依赖那个 0.06 秒的 tick。② activation 只回答『这份 buff 现在在不在身上』，不回答『哪些攻击吃得到』——后者是 scope.attackContexts（v4 新增），致命一击族与突刺反击族在 v3 里是 passive 且毫无作用范围标记，会被无条件乘进排名，见 diagnostics.contextGatedMultipliers。",
   "topUnconditionalMultipliers": [
    {
-    "spEffectId": 8320002,
-    "displayNameZh": "强化连续攻击的最后攻击（档位3）",
-    "paramName": "[Weapon] Improved Chain Attack Finishers - Potency 3",
-    "maxMultiplier": 1.31,
+    "spEffectId": 708720,
+    "displayNameZh": "提升攻击力（狂热香药・档位2）",
+    "paramName": "[Item - Level 2] Bloodboil Aromatic",
+    "maxMultiplier": 1.45,
+    "duration": 60,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 503550,
+    "displayNameZh": "提升攻击力（狂热香药）",
+    "paramName": "[Item] Bloodboil Aromatic",
+    "maxMultiplier": 1.35,
+    "duration": 60,
     "activation": "passive"
    },
    {
@@ -1898,6 +2257,7 @@
     "displayNameZh": "提升物理攻击力（勇者肉块・档位2）",
     "paramName": "[Item - Level 2] Exalted Flesh",
     "maxMultiplier": 1.3,
+    "duration": 30,
     "activation": "passive"
    },
    {
@@ -1905,13 +2265,7 @@
     "displayNameZh": "提升物理攻击力（勇者肉块・档位3）",
     "paramName": "[Item - Level 3] Exalted Flesh",
     "maxMultiplier": 1.3,
-    "activation": "passive"
-   },
-   {
-    "spEffectId": 708860,
-    "displayNameZh": "强化蓄力攻击（大刺破露滴・档位2）",
-    "paramName": "[Item - Level 2] Spiked Cracked Tear",
-    "maxMultiplier": 1.3,
+    "duration": 30,
     "activation": "passive"
    },
    {
@@ -1919,6 +2273,7 @@
     "displayNameZh": "提升火属性攻击力（带火破露滴・档位2）",
     "paramName": "[Item - Level 2] Flame-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
+    "duration": 120,
     "activation": "passive"
    },
    {
@@ -1926,6 +2281,7 @@
     "displayNameZh": "提升魔力属性攻击力（带魔力破露滴・档位2）",
     "paramName": "[Item - Level 2] Magic-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
+    "duration": 120,
     "activation": "passive"
    },
    {
@@ -1933,6 +2289,7 @@
     "displayNameZh": "提升雷属性攻击力（带雷破露滴・档位2）",
     "paramName": "[Item - Level 2] Lightning-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
+    "duration": 120,
     "activation": "passive"
    },
    {
@@ -1940,59 +2297,1757 @@
     "displayNameZh": "提升圣属性攻击力（带圣破露滴・档位2）",
     "paramName": "[Item - Level 2] Holy-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
+    "duration": 120,
     "activation": "passive"
+   },
+   {
+    "spEffectId": 1733000,
+    "displayNameZh": "提升攻击力（夏玻利利的嘶吼）",
+    "paramName": "[Incantation] Howl of Shabriri (Buff)",
+    "maxMultiplier": 1.25,
+    "duration": 40,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 3950,
+    "displayNameZh": "提升物理攻击力（勇者肉块）",
+    "paramName": "[Item] Exalted Flesh",
+    "maxMultiplier": 1.2,
+    "duration": 30,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 511028,
+    "displayNameZh": "提升火属性攻击力（带火破露滴）",
+    "paramName": "[Item] Flame-Shrouding Cracked Tear",
+    "maxMultiplier": 1.2,
+    "duration": 120,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 511029,
+    "displayNameZh": "提升魔力属性攻击力（带魔力破露滴）",
+    "paramName": "[Item] Magic-Shrouding Cracked Tear",
+    "maxMultiplier": 1.2,
+    "duration": 120,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 511030,
+    "displayNameZh": "提升雷属性攻击力（带雷破露滴）",
+    "paramName": "[Item] Lightning-Shrouding Cracked Tear",
+    "maxMultiplier": 1.2,
+    "duration": 120,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 511031,
+    "displayNameZh": "提升圣属性攻击力（带圣破露滴）",
+    "paramName": "[Item] Holy-Shrouding Cracked Tear",
+    "maxMultiplier": 1.2,
+    "duration": 120,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 708691,
+    "displayNameZh": "提升攻击力（振奋香・档位2）",
+    "paramName": "[Item - Level 2] Uplifting Aromatic (Attack Boost)",
+    "maxMultiplier": 1.2,
+    "duration": 40,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 1605000,
+    "displayNameZh": "提升物理攻击力（火焰啊，赐予我力量！）",
+    "paramName": "[Incantation] Flame Grant Me Strength",
+    "maxMultiplier": 1.2,
+    "duration": 30,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 320000,
+    "displayNameZh": "提升魔力属性攻击力（魔力对蝎）",
+    "paramName": "[Talisman] Improved Magic Attack Power+Impaired Physical Damage Negation",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 320100,
+    "displayNameZh": "提升雷属性攻击力（雷对蝎）",
+    "paramName": "[Talisman] Improved Lightning Attack Power+Impaired Physical Damage Negation",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 320200,
+    "displayNameZh": "提升火属性攻击力（火对蝎）",
+    "paramName": "[Talisman] Improved Fire Attack Power+Impaired Physical Damage Negation",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 320300,
+    "displayNameZh": "提升圣属性攻击力（圣对蝎）",
+    "paramName": "[Talisman] Improved Holy Attack Power+Impaired Physical Damage Negation",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 708605,
+    "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・右手武器）",
+    "paramName": "[Item - Level 3] Dragonwound Grease (Right)",
+    "maxMultiplier": 1.15,
+    "duration": 90,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 708606,
+    "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・左手武器）",
+    "paramName": "[Item - Level 3] Dragonwound Grease (Left)",
+    "maxMultiplier": 1.15,
+    "duration": 90,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 1660000,
+    "displayNameZh": "提升攻击力（黄金树立誓・祷告・×1.15）",
+    "paramName": "[Incantation] Golden Vow",
+    "maxMultiplier": 1.15,
+    "duration": 80,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001404,
+    "displayNameZh": "提升物理攻击力＋４",
+    "paramName": "[Relic] Physical Attack Up +4",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001504,
+    "displayNameZh": "提升魔力属性攻击力＋４",
+    "paramName": "[Relic] Magic Attack Power Up +4",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001604,
+    "displayNameZh": "提升火属性攻击力＋４",
+    "paramName": "[Relic] Fire Attack Power Up +4",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001704,
+    "displayNameZh": "提升雷属性攻击力＋４",
+    "paramName": "[Relic] Lightning Attack Power Up +4",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001804,
+    "displayNameZh": "提升圣属性攻击力＋４",
+    "paramName": "[Relic] Holy Attack Power Up +4",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8100102,
+    "displayNameZh": "提升魔力属性攻击力（档位3）",
+    "paramName": "[Weapon] Improved Magic Attack Power - Potency 3",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8100202,
+    "displayNameZh": "提升火属性攻击力（档位3）",
+    "paramName": "[Weapon] Improved Fire Attack Power - Potency 3",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8100302,
+    "displayNameZh": "提升雷属性攻击力（档位3）",
+    "paramName": "[Weapon] Improved Lightning Attack Power - Potency 3",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8100402,
+    "displayNameZh": "提升圣属性攻击力（档位3）",
+    "paramName": "[Weapon] Improved Holy Attack Power - Potency 3",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 330000,
+    "displayNameZh": "强化魔法（魔法师球护符・护符）",
+    "paramName": "[Talisman] Improved Sorceries",
+    "maxMultiplier": 1.11,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 330400,
+    "displayNameZh": "强化祷告（信徒的立誓布・护符）",
+    "paramName": "[Talisman] Improved Incantations",
+    "maxMultiplier": 1.11,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8330002,
+    "displayNameZh": "强化魔法（档位3・武器）",
+    "paramName": "[Weapon] Improved Sorceries - Potency 3",
+    "maxMultiplier": 1.11,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8330102,
+    "displayNameZh": "强化祷告（档位3・武器）",
+    "paramName": "[Weapon] Improved Incantations - Potency 3",
+    "maxMultiplier": 1.11,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 8330104,
+    "displayNameZh": "强化魔法、祷告（档位2・武器・×1.11）",
+    "paramName": "[Weapon] Improved Sorceries and Incantations - Potency 2",
+    "maxMultiplier": 1.11,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001403,
+    "displayNameZh": "提升物理攻击力＋３",
+    "paramName": "[Relic] Physical Attack Up +3",
+    "maxMultiplier": 1.105,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001503,
+    "displayNameZh": "提升魔力属性攻击力＋３",
+    "paramName": "[Relic] Magic Attack Power Up +3",
+    "maxMultiplier": 1.105,
+    "duration": -1,
+    "activation": "passive"
+   },
+   {
+    "spEffectId": 7001603,
+    "displayNameZh": "提升火属性攻击力＋３",
+    "paramName": "[Relic] Fire Attack Power Up +3",
+    "maxMultiplier": 1.105,
+    "duration": -1,
+    "activation": "passive"
+   }
+  ],
+  "topUnconditionalMultipliersNote": "按 target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率，**且 scope 里既没有 attackContexts 也没有 subCategories** 筛出的前 40 条，也就是页面默认会原封不动乘进通用排名的那一批。这份清单是给维护者做人工抽查用的：如果哪天有明显需要发动条件的条目出现在这里，说明 activation 判定漏了一条规则。本版本符合条件的共 96 条（另有 86 条受作用范围限制，见 contextGatedMultipliers）。v3 只导出前 15 条、阈值卡在 ×1.28，也不区分作用范围，结果排在第 16–20 名开外的致命一击族／突刺反击族整个漏出了抽查范围。",
+  "contextGatedMultipliers": [
+   {
+    "spEffectId": 8320002,
+    "displayNameZh": "强化连续攻击的最后攻击（档位3）",
+    "paramName": "[Weapon] Improved Chain Attack Finishers - Potency 3",
+    "maxMultiplier": 1.31,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chainFinisher"
+    ],
+    "subCategories": [
+     104
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 708860,
+    "displayNameZh": "强化蓄力攻击（大刺破露滴・档位2）",
+    "paramName": "[Item - Level 2] Spiked Cracked Tear",
+    "maxMultiplier": 1.3,
+    "duration": 120,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 7040301,
     "displayNameZh": "提升投掷壶的攻击力＋１",
     "paramName": "[Relic] Improved Throwing Pot Damage +1",
     "maxMultiplier": 1.3,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     108
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 7040401,
     "displayNameZh": "提升投掷小刀的攻击力＋１",
     "paramName": "[Relic] Improved Throwing Knife Damage +1",
     "maxMultiplier": 1.3,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     120
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 7040501,
     "displayNameZh": "提升使用辉石、重力石道具的攻击力＋１",
     "paramName": "[Relic] Improved Glintstone and Gravity Stone Damage +1",
     "maxMultiplier": 1.3,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     121
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 8400001,
     "displayNameZh": "强化调香术＋１",
     "paramName": "[Weapon] Improved Perfuming Arts +1",
     "maxMultiplier": 1.3,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     109
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 8400002,
     "displayNameZh": "Improved Perfuming Arts +2",
     "paramName": "[Weapon] Improved Perfuming Arts +2",
     "maxMultiplier": 1.3,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     109
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 7040102,
     "displayNameZh": "强化防御反击＋２",
     "paramName": "[Relic] Improved Guard Counters +2",
     "maxMultiplier": 1.29,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    },
    {
     "spEffectId": 8320620,
     "displayNameZh": "强化冲刺攻击（档位3）",
     "paramName": "[Weapon] Improved Dash Attacks - Potency 3",
     "maxMultiplier": 1.28,
-    "activation": "passive"
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "dashAttack"
+    ],
+    "subCategories": [
+     127
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320720,
+    "displayNameZh": "强化翻滚攻击（档位3）",
+    "paramName": "[Weapon] Improved Rolling Attacks - Potency 3",
+    "maxMultiplier": 1.28,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
+    ],
+    "subCategories": [
+     128,
+     129
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320001,
+    "displayNameZh": "强化连续攻击的最后攻击（档位2）",
+    "paramName": "[Weapon] Improved Chain Attack Finishers - Potency 2",
+    "maxMultiplier": 1.26,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chainFinisher"
+    ],
+    "subCategories": [
+     104
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040101,
+    "displayNameZh": "强化防御反击＋１",
+    "paramName": "[Relic] Improved Guard Counters +1",
+    "maxMultiplier": 1.25,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 320900,
+    "displayNameZh": "强化致命一击（短剑护符）",
+    "paramName": "[Talisman] Improved Critical Hits",
+    "maxMultiplier": 1.24,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8130002,
+    "displayNameZh": "强化致命一击（档位3）",
+    "paramName": "[Weapon] Improved Critical Hits - Potency 3",
+    "maxMultiplier": 1.24,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8320610,
+    "displayNameZh": "强化冲刺攻击（档位2）",
+    "paramName": "[Weapon] Improved Dash Attacks - Potency 2",
+    "maxMultiplier": 1.24,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "dashAttack"
+    ],
+    "subCategories": [
+     127
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320710,
+    "displayNameZh": "强化翻滚攻击（档位2）",
+    "paramName": "[Weapon] Improved Rolling Attacks - Potency 2",
+    "maxMultiplier": 1.24,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
+    ],
+    "subCategories": [
+     128,
+     129
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040201,
+    "displayNameZh": "强化致命一击＋１",
+    "paramName": "[Relic] Improved Critical Hits",
+    "maxMultiplier": 1.23,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8420002,
+    "displayNameZh": "强化防御反击（档位3）",
+    "paramName": "[Weapon] Improved Guard Counters - Potency 3",
+    "maxMultiplier": 1.23,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320102,
+    "displayNameZh": "强化蓄力攻击（档位3）",
+    "paramName": "[Weapon] Improved Charge Attacks - Potency 3",
+    "maxMultiplier": 1.22,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320000,
+    "displayNameZh": "强化连续攻击的最后攻击（档位1）",
+    "paramName": "[Weapon] Improved Chain Attack Finishers - Potency 1",
+    "maxMultiplier": 1.21,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chainFinisher"
+    ],
+    "subCategories": [
+     104
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8350002,
+    "displayNameZh": "提升战技攻击力（档位3）",
+    "paramName": "[Weapon] Improved Skill Attack Power - Potency 3",
+    "maxMultiplier": 1.21,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill"
+    ],
+    "subCategories": [
+     112,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 320600,
+    "displayNameZh": "强化突刺反击（矛护符・护符）",
+    "paramName": "[Talisman] Improved Thrusting Counterattack",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "thrustingCounter"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 321900,
+    "displayNameZh": "强化咆哮与吐息（咆哮链坠）",
+    "paramName": "[Talisman] Improved Roar & Breath Attacks",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     106,
+     116,
+     107
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 322000,
+    "displayNameZh": "强化防御反击（曲剑护符）",
+    "paramName": "[Talisman] Improved Guard Counters",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 322100,
+    "displayNameZh": "强化投掷壶",
+    "paramName": "[Talisman] Improved Throwing Pots",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     108
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 322200,
+    "displayNameZh": "强化调香术（调香师护符）",
+    "paramName": "[Talisman] Improved Perfuming Arts",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     109
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320302,
+    "displayNameZh": "强化跳跃攻击（档位3）",
+    "paramName": "[Weapon] Improved Jump Attacks - Potency 3",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "jumpAttack"
+    ],
+    "subCategories": [
+     102
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320600,
+    "displayNameZh": "强化冲刺攻击（档位1）",
+    "paramName": "[Weapon] Improved Dash Attacks - Potency 1",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "dashAttack"
+    ],
+    "subCategories": [
+     127
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320700,
+    "displayNameZh": "强化翻滚攻击（档位1）",
+    "paramName": "[Weapon] Improved Rolling Attacks - Potency 1",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
+    ],
+    "subCategories": [
+     128,
+     129
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8390000,
+    "displayNameZh": "Improved Thrown Pot Attacks",
+    "paramName": "[EFfect] Improved Thrown Pot Attacks",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     108
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8420001,
+    "displayNameZh": "强化防御反击（档位2）",
+    "paramName": "[Weapon] Improved Guard Counters - Potency 2",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8430000,
+    "displayNameZh": "强化突刺反击（武器）",
+    "paramName": "[Weapon] Improved Thrusting Counterattack",
+    "maxMultiplier": 1.2,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "thrustingCounter"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8320101,
+    "displayNameZh": "强化蓄力攻击（档位2）",
+    "paramName": "[Weapon] Improved Charge Attacks - Potency 2",
+    "maxMultiplier": 1.19,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 330900,
+    "displayNameZh": "强化魔法、祷告、战技的蓄力使用",
+    "paramName": "[Talisman] Improved Charged Spells & Skills",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill",
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040100,
+    "displayNameZh": "强化防御反击",
+    "paramName": "[Relic] Improved Guard Counters",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040200,
+    "displayNameZh": "强化致命一击",
+    "paramName": "[Relic] Improved Critical Hits",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8130001,
+    "displayNameZh": "强化致命一击（档位2）",
+    "paramName": "[Weapon] Improved Critical Hits - Potency 2",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8330202,
+    "displayNameZh": "强化魔法的蓄力施展（档位3）",
+    "paramName": "[Weapon] Improved Charged Sorceries - Potency 3",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8330302,
+    "displayNameZh": "强化祷告的蓄力执行（档位3）",
+    "paramName": "[Weapon] Improved Charged Incantations - Potency 3",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8350001,
+    "displayNameZh": "提升战技攻击力（档位2）",
+    "paramName": "[Weapon] Improved Skill Attack Power - Potency 2",
+    "maxMultiplier": 1.18,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill"
+    ],
+    "subCategories": [
+     112,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320301,
+    "displayNameZh": "强化跳跃攻击（档位2）",
+    "paramName": "[Weapon] Improved Jump Attacks - Potency 2",
+    "maxMultiplier": 1.17,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "jumpAttack"
+    ],
+    "subCategories": [
+     102
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8420000,
+    "displayNameZh": "强化防御反击（档位1）",
+    "paramName": "[Weapon] Improved Guard Counters - Potency 1",
+    "maxMultiplier": 1.17,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "guardCounter"
+    ],
+    "subCategories": [
+     103
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320100,
+    "displayNameZh": "强化蓄力攻击（档位1）",
+    "paramName": "[Weapon] Improved Charge Attacks - Potency 1",
+    "maxMultiplier": 1.16,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 312300,
+    "displayNameZh": "提升战技攻击力（战士壶碎片）",
+    "paramName": "[Talisman] Improved Skill Attack Power",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill"
+    ],
+    "subCategories": [
+     112,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 321200,
+    "displayNameZh": "强化连续攻击的最后攻击（双头剑护符）",
+    "paramName": "[Talisman] Improved Chain Attack Finishers",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chainFinisher"
+    ],
+    "subCategories": [
+     104
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 511014,
+    "displayNameZh": "强化蓄力攻击（大刺破露滴）",
+    "paramName": "[Item] Spiked Cracked Tear",
+    "maxMultiplier": 1.15,
+    "duration": 120,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7006700,
+    "displayNameZh": "提升战技攻击力",
+    "paramName": "[Weapon] Improved Skill Attack Power",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill"
+    ],
+    "subCategories": [
+     112,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040000,
+    "displayNameZh": "强化轻攻击的第一记攻击",
+    "paramName": "[Relic] Improved Initial Standard Attack",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "initialAttack"
+    ],
+    "subCategories": [
+     119
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040300,
+    "displayNameZh": "提升投掷壶的攻击力",
+    "paramName": "[Relic] Improved Throwing Pot Damage",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     108
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040400,
+    "displayNameZh": "提升投掷小刀的攻击力",
+    "paramName": "[Relic] Improved Throwing Knife Damage",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     120
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7040500,
+    "displayNameZh": "提升使用辉石、重力石道具的攻击力",
+    "paramName": "[Relic] Improved Throwing Stone Damage",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     121
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320520,
+    "displayNameZh": "提升近战攻击力（档位3）",
+    "paramName": "[Weapon] Improved Melee Attack Power - Potency 3",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     130
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8350000,
+    "displayNameZh": "提升战技攻击力（档位1）",
+    "paramName": "[Weapon] Improved Skill Attack Power - Potency 1",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSkill"
+    ],
+    "subCategories": [
+     112,
+     111
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8380000,
+    "displayNameZh": "强化咆哮与吐息",
+    "paramName": "[Weapon] Improved Roar & Breath Attacks",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     106,
+     116,
+     107
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8400000,
+    "displayNameZh": "强化调香术",
+    "paramName": "[Weapon] Improved Perfuming Arts",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     109
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8851850,
+    "displayNameZh": "强化突刺反击（档位2・武器）",
+    "paramName": "[Weapon] Improved Thrusting Counterattack - Potency 2",
+    "maxMultiplier": 1.15,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "thrustingCounter"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 321500,
+    "displayNameZh": "强化射击（硬箭护符）",
+    "paramName": "[Talisman] Improved Ranged Weapon Attacks",
+    "maxMultiplier": 1.14,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     105,
+     113,
+     118
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8320300,
+    "displayNameZh": "强化跳跃攻击（档位1）",
+    "paramName": "[Weapon] Improved Jump Attacks - Potency 1",
+    "maxMultiplier": 1.14,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "jumpAttack"
+    ],
+    "subCategories": [
+     102
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8340002,
+    "displayNameZh": "强化射击（档位3）",
+    "paramName": "[Weapon] Improved Ranged Weapon Attacks - Potency 3",
+    "maxMultiplier": 1.14,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     105,
+     113,
+     118
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8330201,
+    "displayNameZh": "强化魔法的蓄力施展（档位2）",
+    "paramName": "[Weapon] Improved Charged Sorceries - Potency 2",
+    "maxMultiplier": 1.13,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8330301,
+    "displayNameZh": "强化祷告的蓄力执行（档位2）",
+    "paramName": "[Weapon] Improved Charged Incantations - Potency 2",
+    "maxMultiplier": 1.13,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 321300,
+    "displayNameZh": "强化蓄力攻击（斧护符）",
+    "paramName": "[Talisman] Improved Charge Attacks",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedHeavyAttack"
+    ],
+    "subCategories": [
+     100
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 321800,
+    "displayNameZh": "强化跳跃攻击（钩爪护符）",
+    "paramName": "[Talisman] Improved Jump Attacks",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "jumpAttack"
+    ],
+    "subCategories": [
+     102
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043200,
+    "displayNameZh": "强化挖石的魔法",
+    "paramName": "[Relic] Improved Stonedigger Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     4
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043300,
+    "displayNameZh": "强化卡利亚剑的魔法",
+    "paramName": "[Relic] Improved Carian Sword Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     2
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043400,
+    "displayNameZh": "强化辉剑的魔法",
+    "paramName": "[Relic] Improved Glintblade Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     3
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043500,
+    "displayNameZh": "强化隐形的魔法",
+    "paramName": "[Relic] Improved Invisibility Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     12
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043600,
+    "displayNameZh": "强化结晶人的魔法",
+    "paramName": "[Relic] Improved Crystalian sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     5
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043700,
+    "displayNameZh": "强化重力的魔法",
+    "paramName": "[Relic] Improved Gravity Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     11
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7043800,
+    "displayNameZh": "强化荆棘的魔法",
+    "paramName": "[Relic] Improved Thorn Sorcery",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     9
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044000,
+    "displayNameZh": "强化黄金律法基本主义的祷告",
+    "paramName": "[Relic] Improved Fundamentalist Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     24
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044100,
+    "displayNameZh": "强化王城古龙信仰的祷告",
+    "paramName": "[Relic] Improved Dragon Cult Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     22
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044200,
+    "displayNameZh": "强化巨人火焰的祷告",
+    "paramName": "[Relic] Improved Giants' Flame Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     21
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044300,
+    "displayNameZh": "强化狩猎神祇的祷告",
+    "paramName": "[Relic] Improved Godslayer Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     20
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044400,
+    "displayNameZh": "强化野兽的祷告",
+    "paramName": "[Relic] Improved Bestial Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     23
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044500,
+    "displayNameZh": "强化癫火的祷告",
+    "paramName": "[Relic] Improved Frenzied Flame Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     26
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7044600,
+    "displayNameZh": "强化龙飨的祷告",
+    "paramName": "[Relic] Improved Dragon Communion Incantations",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     25
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8130000,
+    "displayNameZh": "强化致命一击（档位1）",
+    "paramName": "[Weapon] Improved Critical Hits - Potency 1",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "criticalHit"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8320510,
+    "displayNameZh": "提升近战攻击力（档位2）",
+    "paramName": "[Weapon] Improved Melee Attack Power - Potency 2",
+    "maxMultiplier": 1.12,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     130
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8340001,
+    "displayNameZh": "强化射击（档位2）",
+    "paramName": "[Weapon] Improved Ranged Weapon Attacks - Potency 2",
+    "maxMultiplier": 1.1,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     105,
+     113,
+     118
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8851800,
+    "displayNameZh": "强化突刺反击（档位1・武器）",
+    "paramName": "[Weapon] Improved Thrusting Counterattack - Potency 1",
+    "maxMultiplier": 1.1,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "thrustingCounter"
+    ],
+    "gateFrom": [
+     "stateInfo"
+    ]
+   },
+   {
+    "spEffectId": 8320500,
+    "displayNameZh": "提升近战攻击力（档位1）",
+    "paramName": "[Weapon] Improved Melee Attack Power - Potency 1",
+    "maxMultiplier": 1.09,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     130
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8330200,
+    "displayNameZh": "强化魔法的蓄力施展（档位1）",
+    "paramName": "[Weapon] Improved Charged Sorceries - Potency 1",
+    "maxMultiplier": 1.09,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8330300,
+    "displayNameZh": "强化祷告的蓄力执行（档位1）",
+    "paramName": "[Weapon] Improved Charged Incantations - Potency 1",
+    "maxMultiplier": 1.09,
+    "duration": -1,
+    "activation": "passive",
+    "attackContexts": [
+     "chargedSpell"
+    ],
+    "subCategories": [
+     110
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 8340000,
+    "displayNameZh": "强化射击（档位1）",
+    "paramName": "[Weapon] Improved Ranged Weapon Attacks - Potency 1",
+    "maxMultiplier": 1.07,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     105,
+     113,
+     118
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
+   },
+   {
+    "spEffectId": 7006600,
+    "displayNameZh": "提升近战攻击力",
+    "paramName": "[Weapon] Improved Melee Attack Power",
+    "maxMultiplier": 1.06,
+    "duration": -1,
+    "activation": "passive",
+    "subCategories": [
+     130
+    ],
+    "gateFrom": [
+     "subCategories"
+    ]
    }
   ],
-  "topUnconditionalMultipliersNote": "按 target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率筛出的前 15 条，也就是页面默认会无条件乘进排名的那一批。这份清单是给维护者做人工抽查用的：如果哪天有明显需要发动条件的条目出现在这里，说明 activation 判定漏了一条规则。",
+  "contextGatedMultipliersNote": "target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率，但作用范围受限——装上就一直生效（所以是 passive），可是只有一部分攻击吃得到，**不得原封不动乘进通用排名**。两种受限方式要分开处理：① `attackContexts` 非空＝只在某种攻击情境下生效（致命一击、突刺反击、防御反击、蓄力、跳跃／冲刺／翻滚…），**默认不计入，用户勾选该情境后才乘**；② 只有 `subCategories`＝限定攻击／法术门类（投掷壶道具攻击、香水道具攻击、远程武器攻击、各流派魔法祷告…），按伤害构成加权即可，不必做成勾选项。gateFrom 写明限制写在哪一列：subCategories＝magicSubCategoryChange1..3（v1 起就机读）；stateInfo＝SpEffectParam.stateInfo（v3 之前只有裸数字，致命一击族 6 条 ×1.12–1.24 与突刺反击族 4 条 ×1.10–1.20 因此在页面看来是对所有攻击生效的常驻增伤——突刺反击族的 scope 甚至是 affectsSorcery/Incantation/Shaman 全 true）。",
+  "opposeBitsWithoutHitSlot": [
+   834,
+   1625,
+   1756,
+   1759,
+   1785,
+   1884,
+   1885,
+   1939,
+   48005,
+   105510,
+   500900,
+   500901,
+   500941,
+   500950,
+   708340,
+   708341,
+   708350,
+   708361,
+   708362,
+   708363,
+   1491010,
+   1502000,
+   1504000,
+   1504001,
+   1724000,
+   1724001,
+   1730000,
+   7010701,
+   7034602,
+   7290001,
+   8110200,
+   8110201,
+   8110202,
+   8660204,
+   8660207,
+   8690001,
+   8690002,
+   8690101,
+   8690202,
+   8690401,
+   8882514,
+   8882515
+  ],
+  "opposeBitsWithoutHitSlotNote": "这些条目的 effectTargetSelfTarget=0／effectTargetOpposeTarget=1（阵营过滤位说『只允许打给敌方』），但它们的来源全部是 Paramdex 行名推断、武器行为槽或其它无法确认投递路径的通道，既没有 Bullet 命中槽也没有 atkOccurrenceSpEffectId，因此仍按保守缺省判成 target=\"self\"。**这是缺省而不是已证实的结论**：阵营位本身只说明『这份效果允许打给谁』，不说明『这条 SpEffect 挂在谁身上』。若下一轮能把 [AoW] 行的投递路径还原出来，这批条目多半要改判 enemy。",
+  "stackLadders": [
+   {
+    "spEffectId": 7069001,
+    "displayNameZh": "每次打倒封印监牢里的囚犯，能提升攻击力",
+    "paramName": null,
+    "tiers": 10,
+    "tier1Rates": {
+     "physicsAttackRate": 1.05,
+     "magicAttackRate": 1.05,
+     "fireAttackRate": 1.05,
+     "thunderAttackRate": 1.05,
+     "darkAttackRate": 1.05
+    },
+    "topRates": {
+     "darkAttackRate": 1.6289,
+     "fireAttackRate": 1.6289,
+     "magicAttackRate": 1.6289,
+     "physicsAttackRate": 1.6289,
+     "thunderAttackRate": 1.6289
+    },
+    "activation": "conditional",
+    "activationSource": "localizedNameCondition"
+   },
+   {
+    "spEffectId": 7069201,
+    "displayNameZh": "每次打倒黑夜入侵者，能提升攻击力",
+    "paramName": null,
+    "tiers": 10,
+    "tier1Rates": {
+     "physicsAttackRate": 1.07,
+     "magicAttackRate": 1.07,
+     "fireAttackRate": 1.07,
+     "thunderAttackRate": 1.07,
+     "darkAttackRate": 1.07
+    },
+    "topRates": {
+     "darkAttackRate": 1.9672,
+     "fireAttackRate": 1.9672,
+     "magicAttackRate": 1.9672,
+     "physicsAttackRate": 1.9672,
+     "thunderAttackRate": 1.9672
+    },
+    "activation": "conditional",
+    "activationSource": "localizedNameCondition"
+   },
+   {
+    "spEffectId": 8988200,
+    "displayNameZh": "玛雷家的庇佑",
+    "paramName": null,
+    "tiers": 100,
+    "tier1Rates": {
+     "physicsAttackRate": 1.011,
+     "magicAttackRate": 1.011,
+     "fireAttackRate": 1.011,
+     "thunderAttackRate": 1.011,
+     "darkAttackRate": 1.011
+    },
+    "topRates": {
+     "darkAttackRate": 1.7,
+     "fireAttackRate": 1.7,
+     "magicAttackRate": 1.7,
+     "physicsAttackRate": 1.7,
+     "thunderAttackRate": 1.7
+    },
+    "activation": "conditional",
+    "activationSource": "stackLadderTier1"
+   },
+   {
+    "spEffectId": 8998000,
+    "displayNameZh": "复仇的庇佑",
+    "paramName": null,
+    "tiers": 100,
+    "tier1Rates": {
+     "physicsAttackRate": 1.007,
+     "magicAttackRate": 1.007,
+     "fireAttackRate": 1.007,
+     "thunderAttackRate": 1.007,
+     "darkAttackRate": 1.007
+    },
+    "topRates": {
+     "darkAttackRate": 1.4,
+     "fireAttackRate": 1.4,
+     "magicAttackRate": 1.4,
+     "physicsAttackRate": 1.4,
+     "thunderAttackRate": 1.4
+    },
+    "activation": "conditional",
+    "activationSource": "stackLadderTier1"
+   }
+  ],
+  "stackLaddersNote": "数据集只收录了这些叠层效果的**第 1 层**（参数表里只有第 1 层被某个参数列指向，更高层由游戏脚本按层数替换）。buffs[].stackLadder 给出总层数、后续各层的 spEffectId 与满层数值，页面展示时不要把 rates 当成该词条的上限：7069001『每次打倒封印监牢里的囚犯』第 1 层 ×1.05、满 10 层 ×1.6289；7069201『每次打倒黑夜入侵者』×1.07 → ×1.9672；8988200『玛雷家的庇佑』×1.011 → ×1.70（100 层）；8998000『复仇的庇佑』×1.007 → ×1.40（100 层）。同层互斥（spCategory 落在 removePrevious 区间），所以任何时刻只有一层生效，绝不能把各层相乘。检测是结构性的：ID 连续、行名为空、除倍率外所有列相同、倍率逐层严格递增、且 saveCategory≠-1——最后一条把『[Relic] Improved Throwing Pot Damage +1/+2』这种可分别装备的词条档位排除在外（它们的 saveCategory 都是 -1）。",
+  "passiveWithoutParamName": [],
+  "passiveWithoutParamNameNote": "activation 判定链的前两条规则读的是 Paramdex 英文行名，对没有行名的条目天然失效。这里列出最终仍判成 passive、却连行名都没有的条目，供维护者人工复核——它们的发动条件（如果有）只可能写在本地化文本或游戏脚本里。v3 这份清单有 4 条（7069001／7069201／8988200／8998000），全部是叠层阶梯的第 1 层，v4 已分别由 localizedNameCondition 与 stackLadderTier1 判成 conditional。",
   "sentinelOnlyRows": [
    {
     "spEffectId": 704000,
@@ -2005,7 +4060,7 @@
    }
   ],
   "sentinelOnlyRowsNote": "这些 SpEffect 满足入选条件，但它们唯一的合格数值是一个『×0』的 economy 倍率并且没有持续时间（effectEndurance=0），属于哨兵值而不是可展示的倍率，因此**不作为 buff 输出**，只记在这里。本版本唯一实例 704000『[Skill - Raider] Retaliate (Defense and Immortality)』是无赖反击那一瞬的免伤／无敌窗口（真正的负载是本数据集不读的 slash/blow/thrust/neutral/magic/fire/thunder/dark DamageCutRate=0.25），它的 characterSkillCooldownReduction=0 若按字面展示就是『技艺冷却 -100%』，会与真正的遗物档位 0.95／0.925／0.9 混在同一个『输出效率』列表里。注意排除规则刻意收得很窄：青露的秘密滴泪（511060／708920）与魔法帷幕（1801400）同样带 ×0 的消耗倍率，但它们有 15／20／8 秒的持续时间、确实让施法免费，仍然保留。",
-  "nonSelfTargetNote": "target 不是 self 的 buff：summon＝复仇者家人自身的数值缩放行（不是玩家倍率）；enemy＝通过 Bullet 命中槽挂到被命中对象身上的效果（减益或魅惑后的敌人增伤）；ally＝友方 AoE／团队增益。它们仍然保留在数据集里（有各自的展示价值），但**增伤排名必须先按 target 过滤**。",
+  "nonSelfTargetNote": "target 不是 self 的 buff：summon＝复仇者家人自身的数值缩放行（不是玩家倍率）；enemy＝通过命中槽挂到被命中对象身上的效果（Bullet.spEffectId0..4 或 atkOccurrenceSpEffectId；减益、魅惑后的敌人增伤，以及油脂／附加属性武器打上去的异常累积）；ally＝友方 AoE／团队增益。它们仍然保留在数据集里（有各自的展示价值），但**增伤排名必须先按 target 过滤**。",
   "skippedUnnamedSourceRows": {
    "EquipParamAccessory": {
     "rows": 74,
@@ -5191,7 +7246,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "conditions": {
     "motionInterval": 0.06
    },
@@ -8549,8 +10604,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -8748,8 +10803,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -8814,10 +10869,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -8883,10 +10938,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -8952,10 +11007,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -9021,10 +11076,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -9439,10 +11494,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -9509,10 +11564,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -9694,10 +11749,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -9763,10 +11818,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -9956,10 +12011,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -10025,10 +12080,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -10374,8 +12429,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -10567,7 +12622,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -10633,8 +12688,8 @@
    "effectTargetFriendRaw": false,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "conditions": {
     "motionInterval": 1
    }
@@ -10802,7 +12857,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "持续恢复专注值",
     "强化异常状态催眠"
@@ -11137,8 +13192,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -11478,8 +13533,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -11714,8 +13769,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -11781,8 +13836,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -12121,8 +14176,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -12462,8 +14517,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -12572,8 +14627,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -12737,8 +14792,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -12972,8 +15027,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -13046,8 +15101,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -13120,8 +15175,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -13460,8 +15515,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -13535,8 +15590,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -13875,8 +15930,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -14132,8 +16187,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -14220,8 +16275,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -14343,8 +16398,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -14459,8 +16514,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -14582,8 +16637,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -14922,8 +16977,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -14997,8 +17052,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -15071,8 +17126,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -15411,8 +17466,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -15661,8 +17716,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -15728,8 +17783,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -15848,8 +17903,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -17844,6 +19899,9 @@
     "subCategories": [
      112,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill"
     ]
    },
    "stacking": {
@@ -18453,7 +20511,10 @@
     "affectsSorcery": true,
     "affectsIncantation": true,
     "affectsShaman": true,
-    "affectsThrow": false
+    "affectsThrow": false,
+    "attackContexts": [
+     "thrustingCounter"
+    ]
    },
    "stacking": {
     "stateInfo": 197,
@@ -18788,7 +20849,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -18895,6 +20959,9 @@
     "affectsThrow": false,
     "subCategories": [
      104
+    ],
+    "attackContexts": [
+     "chainFinisher"
     ]
    },
    "stacking": {
@@ -18952,6 +21019,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -19190,6 +21260,9 @@
     "affectsThrow": false,
     "subCategories": [
      102
+    ],
+    "attackContexts": [
+     "jumpAttack"
     ]
    },
    "stacking": {
@@ -19306,6 +21379,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -19608,8 +21684,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "conditions": {
     "motionInterval": 0.06
    }
@@ -19653,6 +21729,10 @@
     "subCategories": [
      110,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill",
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -19772,7 +21852,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -19838,7 +21918,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -19906,7 +21986,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -19974,7 +22054,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -20040,7 +22120,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -20106,7 +22186,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -20187,8 +22267,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -20252,8 +22332,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -20319,7 +22399,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -20385,7 +22465,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -20450,7 +22530,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -20516,7 +22596,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -20580,8 +22660,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -20697,8 +22777,8 @@
    "effectTargetFriendRaw": true,
    "target": "ally",
    "targetSource": "bulletHitSupportBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "提升攻击力",
     "提升精力上限",
@@ -20760,8 +22840,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -20861,6 +22941,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -21206,8 +23289,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "所有的专注值消耗归零"
    ],
@@ -21387,7 +23470,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "paramRowPassiveTimed",
    "statusLabelsZh": [
     "提升攻击力",
     "提升精力恢复速度"
@@ -21457,7 +23540,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "paramRowPassiveTimed",
    "statusLabelsZh": [
     "提升攻击力",
     "提升精力恢复速度"
@@ -22559,7 +24642,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -22625,7 +24708,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -22696,8 +24779,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -22763,7 +24846,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -22829,7 +24912,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -22897,7 +24980,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -22965,7 +25048,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -23033,7 +25116,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -23101,7 +25184,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -23169,7 +25252,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -23235,7 +25318,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -23301,7 +25384,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -23367,7 +25450,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -23432,7 +25515,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -23500,7 +25583,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -23566,7 +25649,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -24673,10 +26756,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -24742,10 +26825,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -24811,10 +26894,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -24880,10 +26963,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -24949,10 +27032,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -25018,10 +27101,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -25087,10 +27170,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -25156,10 +27239,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -25226,10 +27309,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -25296,10 +27379,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -25366,10 +27449,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -25436,10 +27519,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -25505,10 +27588,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -25574,10 +27657,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -25643,10 +27726,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -25712,10 +27795,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -26029,10 +28112,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -26098,10 +28181,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -26167,10 +28250,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -26236,10 +28319,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -26311,8 +28394,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -26383,8 +28466,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -26568,8 +28651,8 @@
    "effectTargetFriendRaw": true,
    "target": "ally",
    "targetSource": "bulletHitSupportBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "提升攻击力",
     "提升精力上限",
@@ -26638,8 +28721,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -26746,6 +28829,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -26820,8 +28906,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "所有的专注值消耗归零"
    ],
@@ -27328,7 +29414,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27391,8 +29477,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27462,8 +29548,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27533,8 +29619,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitStatusMist",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27599,7 +29685,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27683,8 +29769,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27808,10 +29894,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -27970,8 +30056,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -28101,7 +30187,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -28164,8 +30250,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -28230,7 +30316,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -28296,7 +30382,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：死亡"
    ],
@@ -28362,7 +30448,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：死亡"
    ],
@@ -28428,7 +30514,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：死亡"
    ],
@@ -28491,8 +30577,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "提升物理攻击力",
     "提升火属性攻击力",
@@ -28668,7 +30754,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -28743,7 +30829,7 @@
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -28875,10 +30961,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitStatusPayload",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -29039,8 +31125,8 @@
    "effectTargetFriendRaw": true,
    "target": "ally",
    "targetSource": "bulletHitFriendlyOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "提升攻击力",
     "强化魔法、祷告",
@@ -29210,8 +31296,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -29439,8 +31525,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -29504,8 +31590,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -29569,8 +31655,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -29640,8 +31726,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -29756,8 +31842,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -29822,10 +31908,10 @@
    "permanent": false,
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
-   "target": "self",
-   "targetSource": "default",
+   "target": "enemy",
+   "targetSource": "attackHitOpposeOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -29891,7 +31977,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -29956,7 +32042,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -30022,7 +32108,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30231,8 +32317,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30307,8 +32393,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30376,8 +32462,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30445,8 +32531,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30556,8 +32642,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30625,8 +32711,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30694,8 +32780,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30763,8 +32849,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30832,8 +32918,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30901,8 +32987,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -30972,8 +33058,8 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "提升攻击力",
     "强化魔法、祷告",
@@ -31036,8 +33122,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOpposeOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -31104,8 +33190,8 @@
    "effectTargetFriendRaw": true,
    "target": "ally",
    "targetSource": "bulletHitFriendlyOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -31174,8 +33260,8 @@
    "effectTargetFriendRaw": true,
    "target": "ally",
    "targetSource": "bulletHitFriendlyOnly",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "魔法、祷告的专注值消耗归零",
     "战技的专注值消耗归零",
@@ -31241,8 +33327,8 @@
    "effectTargetFriendRaw": true,
    "target": "enemy",
    "targetSource": "bulletHitOffensiveBullet",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -31310,7 +33396,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -31379,7 +33465,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -31448,7 +33534,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -31517,7 +33603,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -31586,7 +33672,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -31659,7 +33745,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -31728,7 +33814,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：死亡"
    ],
@@ -31856,7 +33942,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -31923,7 +34009,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -31987,8 +34073,8 @@
    "effectTargetFriendRaw": false,
    "target": "self",
    "targetSource": "default",
-   "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activation": "passive",
+   "activationSource": "noEvidence",
    "conditions": {
     "motionInterval": 1
    }
@@ -33757,6 +35843,9 @@
     "subCategories": [
      112,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill"
     ]
    },
    "stacking": {
@@ -34832,7 +36921,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -34879,7 +36968,10 @@
     "affectsSorcery": true,
     "affectsIncantation": true,
     "affectsShaman": true,
-    "affectsThrow": false
+    "affectsThrow": false,
+    "attackContexts": [
+     "thrustingCounter"
+    ]
    },
    "stacking": {
     "stateInfo": 197,
@@ -35805,7 +37897,7 @@
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
    "target": "self",
-   "targetSource": "default",
+   "targetSource": "attackHitSelfOnly",
    "activation": "conditional",
    "activationSource": "onHitTrigger",
    "statusLabelsZh": [
@@ -36734,6 +38826,9 @@
     "affectsThrow": false,
     "subCategories": [
      119
+    ],
+    "attackContexts": [
+     "initialAttack"
     ]
    },
    "stacking": {
@@ -36788,6 +38883,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -36842,6 +38940,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -36896,6 +38997,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -36947,7 +39051,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -36998,7 +39105,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -38214,8 +40324,30 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "passive",
-   "activationSource": "noEvidence"
+   "activation": "conditional",
+   "activationSource": "localizedNameCondition",
+   "stackLadder": {
+    "tiers": 10,
+    "tierSpEffectIds": [
+     7069002,
+     7069003,
+     7069004,
+     7069005,
+     7069006,
+     7069007,
+     7069008,
+     7069009,
+     7069010
+    ],
+    "topRates": {
+     "darkAttackRate": 1.6289,
+     "fireAttackRate": 1.6289,
+     "magicAttackRate": 1.6289,
+     "physicsAttackRate": 1.6289,
+     "thunderAttackRate": 1.6289
+    },
+    "saved": true
+   }
   },
   {
    "spEffectId": 7069201,
@@ -38265,8 +40397,30 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "passive",
-   "activationSource": "noEvidence"
+   "activation": "conditional",
+   "activationSource": "localizedNameCondition",
+   "stackLadder": {
+    "tiers": 10,
+    "tierSpEffectIds": [
+     7069202,
+     7069203,
+     7069204,
+     7069205,
+     7069206,
+     7069207,
+     7069208,
+     7069209,
+     7069210
+    ],
+    "topRates": {
+     "darkAttackRate": 1.9672,
+     "fireAttackRate": 1.9672,
+     "magicAttackRate": 1.9672,
+     "physicsAttackRate": 1.9672,
+     "thunderAttackRate": 1.9672
+    },
+    "saved": true
+   }
   },
   {
    "spEffectId": 7080000,
@@ -41084,7 +43238,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -41152,7 +43306,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -41220,7 +43374,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -41288,7 +43442,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -41600,7 +43754,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -41668,7 +43822,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -41736,7 +43890,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -41804,7 +43958,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -42116,7 +44270,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -42184,7 +44338,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -42252,7 +44406,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -42320,7 +44474,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -42369,6 +44523,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -43258,7 +45415,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -43326,7 +45483,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -43394,7 +45551,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -45461,7 +47618,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -45532,7 +47689,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -45603,7 +47760,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -45674,7 +47831,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -45745,7 +47902,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -45816,7 +47973,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -45887,7 +48044,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -45964,7 +48121,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -46041,7 +48198,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -46118,7 +48275,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -46189,7 +48346,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -46260,7 +48417,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -46331,7 +48488,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -46408,7 +48565,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -46485,7 +48642,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -47526,7 +49683,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -47577,7 +49737,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -47628,7 +49791,10 @@
     "affectsSorcery": false,
     "affectsIncantation": false,
     "affectsShaman": false,
-    "affectsThrow": true
+    "affectsThrow": true,
+    "attackContexts": [
+     "criticalHit"
+    ]
    },
    "stacking": {
     "stateInfo": 367,
@@ -49176,6 +51342,9 @@
     "affectsThrow": false,
     "subCategories": [
      124
+    ],
+    "attackContexts": [
+     "twoHanded"
     ]
    },
    "stacking": {
@@ -49232,6 +51401,9 @@
     "affectsThrow": false,
     "subCategories": [
      124
+    ],
+    "attackContexts": [
+     "twoHanded"
     ]
    },
    "stacking": {
@@ -49288,6 +51460,9 @@
     "affectsThrow": false,
     "subCategories": [
      124
+    ],
+    "attackContexts": [
+     "twoHanded"
     ]
    },
    "stacking": {
@@ -49347,6 +51522,9 @@
     "affectsThrow": false,
     "subCategories": [
      124
+    ],
+    "attackContexts": [
+     "twoHanded"
     ]
    },
    "stacking": {
@@ -49403,6 +51581,9 @@
     "affectsThrow": false,
     "subCategories": [
      125
+    ],
+    "attackContexts": [
+     "dualWield"
     ]
    },
    "stacking": {
@@ -49459,6 +51640,9 @@
     "affectsThrow": false,
     "subCategories": [
      125
+    ],
+    "attackContexts": [
+     "dualWield"
     ]
    },
    "stacking": {
@@ -49515,6 +51699,9 @@
     "affectsThrow": false,
     "subCategories": [
      125
+    ],
+    "attackContexts": [
+     "dualWield"
     ]
    },
    "stacking": {
@@ -49574,6 +51761,9 @@
     "affectsThrow": false,
     "subCategories": [
      125
+    ],
+    "attackContexts": [
+     "dualWield"
     ]
    },
    "stacking": {
@@ -49628,6 +51818,9 @@
     "affectsThrow": false,
     "subCategories": [
      104
+    ],
+    "attackContexts": [
+     "chainFinisher"
     ]
    },
    "stacking": {
@@ -49682,6 +51875,9 @@
     "affectsThrow": false,
     "subCategories": [
      104
+    ],
+    "attackContexts": [
+     "chainFinisher"
     ]
    },
    "stacking": {
@@ -49736,6 +51932,9 @@
     "affectsThrow": false,
     "subCategories": [
      104
+    ],
+    "attackContexts": [
+     "chainFinisher"
     ]
    },
    "stacking": {
@@ -49790,6 +51989,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -49844,6 +52046,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -49898,6 +52103,9 @@
     "affectsThrow": false,
     "subCategories": [
      100
+    ],
+    "attackContexts": [
+     "chargedHeavyAttack"
     ]
    },
    "stacking": {
@@ -49952,6 +52160,9 @@
     "affectsThrow": false,
     "subCategories": [
      102
+    ],
+    "attackContexts": [
+     "jumpAttack"
     ]
    },
    "stacking": {
@@ -50006,6 +52217,9 @@
     "affectsThrow": false,
     "subCategories": [
      102
+    ],
+    "attackContexts": [
+     "jumpAttack"
     ]
    },
    "stacking": {
@@ -50060,6 +52274,9 @@
     "affectsThrow": false,
     "subCategories": [
      102
+    ],
+    "attackContexts": [
+     "jumpAttack"
     ]
    },
    "stacking": {
@@ -50276,6 +52493,9 @@
     "affectsThrow": false,
     "subCategories": [
      127
+    ],
+    "attackContexts": [
+     "dashAttack"
     ]
    },
    "stacking": {
@@ -50330,6 +52550,9 @@
     "affectsThrow": false,
     "subCategories": [
      127
+    ],
+    "attackContexts": [
+     "dashAttack"
     ]
    },
    "stacking": {
@@ -50384,6 +52607,9 @@
     "affectsThrow": false,
     "subCategories": [
      127
+    ],
+    "attackContexts": [
+     "dashAttack"
     ]
    },
    "stacking": {
@@ -50439,6 +52665,10 @@
     "subCategories": [
      128,
      129
+    ],
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
     ]
    },
    "stacking": {
@@ -50494,6 +52724,10 @@
     "subCategories": [
      128,
      129
+    ],
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
     ]
    },
    "stacking": {
@@ -50549,6 +52783,10 @@
     "subCategories": [
      128,
      129
+    ],
+    "attackContexts": [
+     "backstepAttack",
+     "rollingAttack"
     ]
    },
    "stacking": {
@@ -51035,6 +53273,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51090,6 +53331,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51145,6 +53389,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51200,6 +53447,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51255,6 +53505,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51310,6 +53563,9 @@
     "weaponSlot": 3,
     "subCategories": [
      110
+    ],
+    "attackContexts": [
+     "chargedSpell"
     ]
    },
    "stacking": {
@@ -51953,6 +54209,9 @@
     "subCategories": [
      112,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill"
     ]
    },
    "stacking": {
@@ -52008,6 +54267,9 @@
     "subCategories": [
      112,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill"
     ]
    },
    "stacking": {
@@ -52063,6 +54325,9 @@
     "subCategories": [
      112,
      111
+    ],
+    "attackContexts": [
+     "chargedSkill"
     ]
    },
    "stacking": {
@@ -52634,6 +54899,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -52688,6 +54956,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -52742,6 +55013,9 @@
     "affectsThrow": false,
     "subCategories": [
      103
+    ],
+    "attackContexts": [
+     "guardCounter"
     ]
    },
    "stacking": {
@@ -52797,7 +55071,10 @@
     "affectsSorcery": true,
     "affectsIncantation": true,
     "affectsShaman": true,
-    "affectsThrow": false
+    "affectsThrow": false,
+    "attackContexts": [
+     "thrustingCounter"
+    ]
    },
    "stacking": {
     "stateInfo": 197,
@@ -52863,7 +55140,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -53190,9 +55467,9 @@
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
    "target": "self",
-   "targetSource": "default",
+   "targetSource": "attackHitSelfOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "附加异常状态出血的效果",
     "提升物理攻击力"
@@ -53263,7 +55540,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -53338,9 +55615,9 @@
    "affectsAllies": false,
    "effectTargetFriendRaw": true,
    "target": "self",
-   "targetSource": "default",
+   "targetSource": "attackHitSelfOnly",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "onHitTrigger",
    "statusLabelsZh": [
     "附加异常状态出血的效果",
     "提升物理攻击力"
@@ -53411,7 +55688,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：出血"
    ],
@@ -53660,7 +55937,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -53726,7 +56003,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：中毒"
    ],
@@ -53792,7 +56069,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -53862,7 +56139,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -53932,7 +56209,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -53997,7 +56274,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：猩红腐败"
    ],
@@ -54063,7 +56340,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -54128,7 +56405,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：冻伤"
    ],
@@ -54194,7 +56471,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -55303,7 +57580,10 @@
     "affectsSorcery": true,
     "affectsIncantation": true,
     "affectsShaman": true,
-    "affectsThrow": false
+    "affectsThrow": false,
+    "attackContexts": [
+     "thrustingCounter"
+    ]
    },
    "stacking": {
     "stateInfo": 197,
@@ -55350,7 +57630,10 @@
     "affectsSorcery": true,
     "affectsIncantation": true,
     "affectsShaman": true,
-    "affectsThrow": false
+    "affectsThrow": false,
+    "attackContexts": [
+     "thrustingCounter"
+    ]
    },
    "stacking": {
     "stateInfo": 197,
@@ -56038,7 +58321,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -56103,7 +58386,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：催眠"
    ],
@@ -56537,7 +58820,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -56609,7 +58892,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -56681,7 +58964,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -56753,7 +59036,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -56825,7 +59108,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -56897,7 +59180,7 @@
    "target": "self",
    "targetSource": "default",
    "activation": "conditional",
-   "activationSource": "conditionFields",
+   "activationSource": "eventScriptTimedBuff",
    "statusLabelsZh": [
     "异常状态：发狂"
    ],
@@ -57492,8 +59775,120 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "passive",
-   "activationSource": "noEvidence"
+   "activation": "conditional",
+   "activationSource": "stackLadderTier1",
+   "stackLadder": {
+    "tiers": 100,
+    "tierSpEffectIds": [
+     8988201,
+     8988202,
+     8988203,
+     8988204,
+     8988205,
+     8988206,
+     8988207,
+     8988208,
+     8988209,
+     8988210,
+     8988211,
+     8988212,
+     8988213,
+     8988214,
+     8988215,
+     8988216,
+     8988217,
+     8988218,
+     8988219,
+     8988220,
+     8988221,
+     8988222,
+     8988223,
+     8988224,
+     8988225,
+     8988226,
+     8988227,
+     8988228,
+     8988229,
+     8988230,
+     8988231,
+     8988232,
+     8988233,
+     8988234,
+     8988235,
+     8988236,
+     8988237,
+     8988238,
+     8988239,
+     8988240,
+     8988241,
+     8988242,
+     8988243,
+     8988244,
+     8988245,
+     8988246,
+     8988247,
+     8988248,
+     8988249,
+     8988250,
+     8988251,
+     8988252,
+     8988253,
+     8988254,
+     8988255,
+     8988256,
+     8988257,
+     8988258,
+     8988259,
+     8988260,
+     8988261,
+     8988262,
+     8988263,
+     8988264,
+     8988265,
+     8988266,
+     8988267,
+     8988268,
+     8988269,
+     8988270,
+     8988271,
+     8988272,
+     8988273,
+     8988274,
+     8988275,
+     8988276,
+     8988277,
+     8988278,
+     8988279,
+     8988280,
+     8988281,
+     8988282,
+     8988283,
+     8988284,
+     8988285,
+     8988286,
+     8988287,
+     8988288,
+     8988289,
+     8988290,
+     8988291,
+     8988292,
+     8988293,
+     8988294,
+     8988295,
+     8988296,
+     8988297,
+     8988298,
+     8988299
+    ],
+    "topRates": {
+     "darkAttackRate": 1.7,
+     "fireAttackRate": 1.7,
+     "magicAttackRate": 1.7,
+     "physicsAttackRate": 1.7,
+     "thunderAttackRate": 1.7
+    },
+    "saved": true
+   }
   },
   {
    "spEffectId": 8998000,
@@ -57544,8 +59939,120 @@
    "effectTargetFriendRaw": true,
    "target": "self",
    "targetSource": "default",
-   "activation": "passive",
-   "activationSource": "noEvidence"
+   "activation": "conditional",
+   "activationSource": "stackLadderTier1",
+   "stackLadder": {
+    "tiers": 100,
+    "tierSpEffectIds": [
+     8998001,
+     8998002,
+     8998003,
+     8998004,
+     8998005,
+     8998006,
+     8998007,
+     8998008,
+     8998009,
+     8998010,
+     8998011,
+     8998012,
+     8998013,
+     8998014,
+     8998015,
+     8998016,
+     8998017,
+     8998018,
+     8998019,
+     8998020,
+     8998021,
+     8998022,
+     8998023,
+     8998024,
+     8998025,
+     8998026,
+     8998027,
+     8998028,
+     8998029,
+     8998030,
+     8998031,
+     8998032,
+     8998033,
+     8998034,
+     8998035,
+     8998036,
+     8998037,
+     8998038,
+     8998039,
+     8998040,
+     8998041,
+     8998042,
+     8998043,
+     8998044,
+     8998045,
+     8998046,
+     8998047,
+     8998048,
+     8998049,
+     8998050,
+     8998051,
+     8998052,
+     8998053,
+     8998054,
+     8998055,
+     8998056,
+     8998057,
+     8998058,
+     8998059,
+     8998060,
+     8998061,
+     8998062,
+     8998063,
+     8998064,
+     8998065,
+     8998066,
+     8998067,
+     8998068,
+     8998069,
+     8998070,
+     8998071,
+     8998072,
+     8998073,
+     8998074,
+     8998075,
+     8998076,
+     8998077,
+     8998078,
+     8998079,
+     8998080,
+     8998081,
+     8998082,
+     8998083,
+     8998084,
+     8998085,
+     8998086,
+     8998087,
+     8998088,
+     8998089,
+     8998090,
+     8998091,
+     8998092,
+     8998093,
+     8998094,
+     8998095,
+     8998096,
+     8998097,
+     8998098,
+     8998099
+    ],
+    "topRates": {
+     "darkAttackRate": 1.4,
+     "fireAttackRate": 1.4,
+     "magicAttackRate": 1.4,
+     "physicsAttackRate": 1.4,
+     "thunderAttackRate": 1.4
+    },
+    "saved": true
+   }
   },
   {
    "spEffectId": 9900210,
