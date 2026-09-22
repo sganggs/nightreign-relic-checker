@@ -288,9 +288,14 @@ func checkBossData() throws -> Int {
     try bossExpect(dataset.title(for: .standard) == BossDamageKind.standard.titleZh, "物理属性没有 affinity 码，应退回内置文案", counter: &count)
 
     // 9f. notes.unmatchedNames 要能取到（页面底部「数据说明」要展示）
+    //     schemaVersion 3：2 → 16 条。v2 里那 14 条按《艾尔登法环》官方简中手工补的译名
+    //     （nameSource = manual）全部移出 nameZh，其中 12 条在游戏文本里查无此名 →
+    //     english-only；另外 4 条（雪花石之王 / 缟玛瑙之王 / 大型黄金河马 / 废弃物蚯蚓脸）
+    //     的候选词条会和别的首领撞同一个中文名，按 notes.nameCollisions 让出 → 也是 english-only。
+    //     旧译名都在 nameZhFallback 里。
     try bossExpect(
-        (dataset.notes?.unmatchedNames.count ?? 0) == 2,
-        "notes.unmatchedNames 应有 2 条（Putrid Flesh / Giant Skeleton Torso）",
+        (dataset.notes?.unmatchedNames.count ?? 0) == 16,
+        "notes.unmatchedNames 应有 16 条（Putrid Flesh / Giant Skeleton Torso 等只剩英文名的组）",
         counter: &count
     )
 
@@ -378,22 +383,27 @@ func checkBossData() throws -> Int {
     try bossExpect(englishOnly.nameBadge == .englishOnly, "english-only 应挂「仅英文名」徽标", counter: &count)
     try bossExpect(englishOnly.nameBadge?.text == "仅英文名", "徽标文案应为「仅英文名」", counter: &count)
     try bossExpect(englishOnly.displayName == "Putrid Flesh", "没有简中名时显示英文名", counter: &count)
-    let chrFallback = try cardForBoss("Unknown Enemy (c4504)@4504")
+    // schemaVersion 3：c4504 被社区资料认出是 Elder Dragon Greyoll，不再是 chrid-fallback；
+    // 现在只剩 c7931 / c7932 这两组连社区也认不出的实体。
+    let chrFallback = try cardForBoss("Unknown Enemy (c7931)@7931")
     try bossExpect(
         chrFallback.nameBadge == .noGameName && chrFallback.nameBadge?.text == "无游戏内名称",
         "chrid-fallback 应挂「无游戏内名称」徽标（它的 nameZh 是生成器兜底的「未知敌人 cXXXX」）",
         counter: &count
     )
-    try bossExpect(chrFallback.displayName == "未知敌人 c4504", "chrid-fallback 的显示名应是「未知敌人 c4504」", counter: &count)
-    let manualCard = try cardForBoss("Cemetery Shade@3664")
+    try bossExpect(chrFallback.displayName == "未知敌人 c7931", "chrid-fallback 的显示名应是「未知敌人 c7931」", counter: &count)
+    // schemaVersion 3：nameSource = manual 不再产出。Cemetery Shade 的手工译名「墓地幽魂」
+    // 已移出 nameZh（进 nameZhFallback），徽标从「名称手工补录」变成「仅英文名」——
+    // nameZh 为空的分支优先于 nameInferred，徽标优先级仍然在这里验。
+    let fallbackCard = try cardForBoss("Cemetery Shade@3664")
     try bossExpect(
-        manualCard.nameSource == "manual" && manualCard.nameInferred,
-        "Cemetery Shade 同时是 manual 与 nameInferred，用来验证徽标优先级",
+        fallbackCard.nameSource == "english-only" && fallbackCard.nameInferred,
+        "Cemetery Shade 现在是 english-only 且 nameInferred，用来验证徽标优先级",
         counter: &count
     )
     try bossExpect(
-        manualCard.nameBadge == .manual && manualCard.nameBadge?.text == "名称手工补录",
-        "manual 优先于 nameInferred，文案应为「名称手工补录」",
+        fallbackCard.nameBadge == .englishOnly && fallbackCard.nameBadge?.text == "仅英文名",
+        "nameZh 为空优先于 nameInferred，文案应为「仅英文名」",
         counter: &count
     )
     let inferredCard = try cardForBoss("Horned Warrior@5250")
@@ -466,9 +476,12 @@ func checkBossData() throws -> Int {
         "每个档位都应有可显示的分组名",
         counter: &count
     )
+    // schemaVersion 3：守夜 51 → 50（c7711 与 c7712 被社区资料认出是同一只 Centipede Grub，
+    // 两组合并），数值行 384 → 394（merge_key 加入 chaosCorrectId / mutationSetId 后拆分，
+    // 再扣掉 10 条 Paramdex 模板行）。与 Windows 端 bosses.test.mjs 的同名断言保持一致。
     try bossExpect(
-        index.inventorySummary == "夜王 18 · 守夜 51 · 野外 72（含 6 组两边都出现） · 数值行 384",
-        "收录统计文案应为「夜王 18 · 守夜 51 · 野外 72（含 6 组两边都出现） · 数值行 384」，实际「\(index.inventorySummary)」",
+        index.inventorySummary == "夜王 18 · 守夜 50 · 野外 72（含 6 组两边都出现） · 数值行 394",
+        "收录统计文案应为「夜王 18 · 守夜 50 · 野外 72（含 6 组两边都出现） · 数值行 394」，实际「\(index.inventorySummary)」",
         counter: &count
     )
 

@@ -28,8 +28,10 @@ test("模块注册：导出 init / refresh，不依赖 window", () => {
   assert.equal(typeof globalThis.NightreignPages, "undefined", "node 下不应尝试注册页面");
 });
 
-test("数据集本身就是 schema 2，且能被页面读懂", () => {
-  assert.equal(data.bossesSchemaVersion, 2);
+test("数据集本身就是 schema 3，且能被页面读懂", () => {
+  // schemaVersion 3 相对 2 是纯增量（新增顶层键与字段，没有删除或改名），
+  // 页面仍按 2 的口径读；这里钉住版本号，数据契约再变时必须同步改本文件。
+  assert.equal(data.bossesSchemaVersion, 3);
   assert.ok(data.nightlords.length > 0);
   assert.ok(data.nightBosses.length > 0);
   assert.ok(Array.isArray(data.caveats) && data.caveats.length > 0, "页面底部要展示 caveats");
@@ -330,8 +332,14 @@ test("分组按 tiers 判定：同属守夜与野外的 Boss 两个分组都能�
   }
 
   // 大金河马的「基准」行 threat 就是 field，之前在野外分组里彻底搜不到。
-  const hippo = B.filterItems(items, "field", "河马", Core.foldForSearch);
+  // schemaVersion 3 起它的 nameZh 为空（游戏文本只有 c5011 那条「黄金河马」，
+  // 同一个中文名不允许同时挂在两组首领上，见 notes.nameCollisions），所以按英文名搜。
+  const hippo = B.filterItems(items, "field", "Golden Hippopotamus", Core.foldForSearch);
   assert.ok(hippo.some((item) => item.uid === "nb:Large Golden Hippopotamus@5010"));
+  const large = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
+  assert.equal(large.nameZh, "");
+  assert.equal(large.nameSource, "english-only");
+  assert.equal(large.nameZhFallback, "大型黄金河马", "旧手工译名仍在 nameZhFallback 里可兜底");
 });
 
 test("搜索串不含 nameSource 内部枚举值", () => {
@@ -344,9 +352,12 @@ test("搜索串不含 nameSource 内部枚举值", () => {
   }
   // 提示语里写明支持的几种搜法仍然有效。
   assert.ok(B.filterItems(items, "night", "7800", Core.foldForSearch).length > 0, "chrId 仍可搜");
-  const manual = data.nightBosses.find((boss) => boss.nameSource === "manual" && boss.nameZh);
-  assert.ok(B.filterItems(items, "night", manual.nameZh, Core.foldForSearch).length +
-    B.filterItems(items, "field", manual.nameZh, Core.foldForSearch).length > 0, "中文名仍可搜");
+  // schemaVersion 3 起 nameSource = manual 不再产出（手工译名移到 nameZhFallback），
+  // 拿一条有游戏内简中名的条目来验证「中文名仍可搜」。
+  const zhNamed = data.nightBosses.find((boss) => boss.nameZh && boss.nameSource !== "chrid-fallback");
+  assert.ok(zhNamed, "数据集里应存在带游戏内简中名的条目");
+  assert.ok(B.filterItems(items, "night", zhNamed.nameZh, Core.foldForSearch).length +
+    B.filterItems(items, "field", zhNamed.nameZh, Core.foldForSearch).length > 0, "中文名仍可搜");
 });
 
 test("poise = 0 与 poise = -1 语义分开：无削韧槽 ≠ 不吃削韧", () => {
@@ -509,10 +520,13 @@ test("收录统计与 macOS 的 inventorySummary 是同一组数字", () => {
   for (const lord of data.nightlords) counts.rows += lord.fights.length;
 
   assert.equal(data.nightlords.length, 18);
-  assert.equal(counts.night, 51);
+  // schemaVersion 3：守夜组 51 → 50（c7711 与 c7712 被社区资料认出是同一只
+  // Centipede Grub，两组合并成一条），数值行 384 → 394
+  //（merge_key 加入 chaosCorrectId / mutationSetId 后拆分，再扣掉 10 条 Paramdex 模板行）。
+  assert.equal(counts.night, 50);
   assert.equal(counts.field, 72);
   assert.equal(counts.both, 6);
-  assert.equal(counts.rows, 384);
+  assert.equal(counts.rows, 394);
 });
 
 test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {

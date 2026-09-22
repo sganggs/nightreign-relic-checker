@@ -8,13 +8,27 @@
 以及 2 人 / 3 人的血量与削韧、异常累积缩放。
 
 上游数据（均已导出在 raw/ 下，不入 git）：
-  raw/params/NightBossMenuParam.csv      夜王菜单（名称/远征/官方弱点标注）
+  raw/params/NightBossMenuParam.csv      夜王菜单（名称/远征/官方弱点标注/各深度出现权重）
   raw/params/NpcParam.csv                敌人实体数值（hp、削韧、承伤倍率、异常抗性）
   raw/params/MultiPlayCorrectionParam.csv 人数缩放：client1=双人 / client2=三人
   raw/params/SpEffectParam.csv           缩放倍率本体（maxHpRate / saReceiveDamageRate / *DamageRate）
-  raw/msg/<lang>/menu_dlc01/CL_MenuText(.._dlc01).json  夜王名、远征名、夜王说明
+  raw/params/SpEffectSetParam.csv        深夜「变异个体」（红化）的 VFX + 数值组合
+  raw/params/ChaosMatchingCorrectParam.csv        深夜深度 1–5 的数值缩放（spEffect00..04）
+  raw/params/ChaosMatchingRankControlParam.csv    深度 1–5 的全局控制（诅咒率/挑战/天变权重）
+  raw/params/ChaosMatchingMutationCategoryParam.csv 每个深度各类敌人被变异的「个数」
+  raw/msg/<lang>/menu_dlc01/CL_MenuText(.._dlc01).json  夜王名、远征名、夜王说明、深夜/深度/变异个体
   raw/msg/<lang>/item_dlc01/NpcName(.._dlc01).json      Boss 简中/英文名
   NpcParam/NightBossMenuParam 的 Name 列 = 社区 Paramdex 行名（vawser/Smithbox@f5969c0）
+
+schemaVersion 3 新增（只增不删）：
+  * 名字：nameEvidence / nameApprox / nameSourceUrl / nameNote / hidden；
+    删掉了 v2 里按《艾尔登法环》官方简中手工补的 14 个 manual 译名
+    （游戏文本里找不到完全一致的字符串，一律改成 nameZh 留空）。
+  * 深夜：顶层 deepOfNightDepths / deepOfNightTiers / mutations / mutationCategories，
+    每个 fight/variant 上的 chaosCorrectId / depthTierId / depthStats[1..5] /
+    mutationSetId / mutationPool，夜王条目上的 depthChanceWeights。
+  * 人数缩放：scalingTiers.*.fullEffects（client1/client2 SpEffect 的全部非默认字段）、
+    duo/trio 的 attackRate（部分档位多人时敌人攻击力**会上升**）。
 
 关键约定（与 PROVENANCE 一致）：
   * NpcParam 的 def_* 字段全部是 100，真正的属性减伤走 *DamageCutRate：
@@ -38,6 +52,19 @@
       真正增减阈值的是 change*ResistPoint（护符 +75 那种），人数缩放行全为 0，
       也就是多人**不**改阈值。
   * resist_* 是异常累积阈值（越大越难触发），999 视为免疫。
+  * 深夜（The Deep of Night）三层缩放：
+      1) NpcParam.chaosMatchingCorrectParamId → ChaosMatchingCorrectParam 的
+         spEffect00..spEffect04 = 深度 1..5 的「[Deep Night Scaling] Tier X, Depth N」行，
+         带 maxHpRate / *AttackPowerRate / staminaAttackRate / saReceiveDamageRate，
+         并且自身 stateInfo = 2287；
+      2) stateInfo 2287 会点亮该敌人 spEffectID0..31 上 invocationConditionsStateChange=2287
+         的「[Deep of Night Everdark Scaling] / [DLC Deep of Night Scaling]」修正行
+         （把永夜之王/DLC 的加成压回去）；
+      3) 「变异个体」（玩家口中的红化）：NpcParam.chaosMatchingSpEffectSetParamId →
+         SpEffectSetParam「Set: Deep Night Mutation - VFX + Scaling」→
+         spEffectId1 = 红光 VFX 档位（4480..4483 / 4485），spEffectId2 = 数值档位
+         （7200/7210/7215/7220/7230/7240/7241，最高 2 倍血 2 倍伤害 2 倍卢恩）。
+      三者 spCategory 互不相同（深度 0 / 常驻 0 / 变异 203 / 人数 140），互不覆盖，倍率连乘。
 
 用法：
   cd macos/DataSources && python3 generate_bosses.py [--raw raw] [--out ../../data/nightreign-bosses-v1.03.5.json]
@@ -53,7 +80,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 PARAMDEX_REV = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
@@ -298,8 +325,15 @@ ALIAS_NPCNAME_ID_BY_CHR = {
 ALIAS_INFERRED = {k for k in ALIAS_NPCNAME_ID_BY_CHR
                   if k not in {(61003, "Duchess"), (61003, "Revenant")}}
 
-# 游戏文本里没有对应条目、按 Elden Ring 官方简中补的名字
-ALIAS_MANUAL_ZH = {
+# v2 里按《艾尔登法环》官方简中手工补的译名已从 nameZh 里全部删除：逐条在全部 FMG
+# （两种语言、55 个文件）里做过「完全一致字符串」检索，没有任何一条能对上，
+# 属于翻译而不是游戏文本。现在 nameZh 的规则是「有游戏文本就用文本，没有就留空 + nameEn」。
+# 为了页面不至于只剩英文，这些译名改挂在**另一个字段** nameZhFallback 上，
+# 并由 nameZhFallbackNote 明确写清「不是游戏内文本」——页面可以拿它兜底显示，
+# 但必须和 nameZh 区分开。变更明细在 notes.nameChanges。
+# 唯一在 FMG 里查到的是 Stonedigger Troll（904600320「挖石山妖」），
+# 它对应的是 c4603，走下面的 COMMUNITY_CHR。
+REMOVED_MANUAL_ZH = {
     "Troll": "山妖",
     "Alabaster Lord": "雪花石之王",
     "Onyx Lord": "缟玛瑙之王",
@@ -316,6 +350,66 @@ ALIAS_MANUAL_ZH = {
     "Cemetery Shade": "墓地幽魂",
     "Lord of Blood Spear": "鲜血君王的长枪",
 }
+
+# Paramdex 与游戏文本都没有名字的 chrId：社区资料给出的身份。
+# 来源：4laric/nightreign-enemy-rando 的 data/nr_enemy_roster.json（all_variants[].variant_name）
+# 与 data/nr_enemy_tags.json（name / tier / _confidence / _source）。
+# 这里只用它「认身份」；中文名仍然必须从 NpcName 等 FMG 里取（见 NameBook.resolve）。
+# role: "boss" = 正经首领/首领的一个阶段；"add" = 召唤物/杂兵；"unknown" = 社区也不知道。
+COMMUNITY_SOURCE_URL = "https://github.com/4laric/nightreign-enemy-rando/blob/HEAD/data/nr_enemy_roster.json"
+COMMUNITY_CHR = {
+    4504: {
+        "nameEn": "Elder Dragon Greyoll", "role": "boss", "confidence": "high",
+        "note": "社区（nr_enemy_tags：_confidence=high，_source_override=er_npc_param_import）认定为"
+                "《艾尔登法环》的古龙桂奥尔；参数侧佐证：hitRadius 17（全表最大之一）、"
+                "superArmorDurability -1（不吃削韧，和不会被打断的巨龙一致）、behaviorVariationId 45000"
+                "（与 c4500/c4505 飞龙同一套行为）。游戏文本里没有这只敌人的名字词条"
+                "（只有 MagicName 7090「桂奥尔的咆哮」提到桂奥尔），所以 nameZh 留空。",
+    },
+    4603: {
+        "nameEn": "Stonedigger Troll", "role": "boss", "confidence": "high",
+        "note": "社区 roster 标为 Stonedigger Troll；参数侧佐证：behaviorVariationId 46000"
+                "（与 c4600 山妖同一套行为）、hitHeight 7.2 / hitRadius 1.8 与山妖体型一致。"
+                "游戏文本 NpcName 904600320「Stonedigger Troll / 挖石山妖」正好对上。",
+    },
+    7711: {
+        "nameEn": "Centipede Grub", "role": "add", "confidence": "medium",
+        "note": "紧邻 c7710「百足恶魔」，getSoul = 0、chaosMatchingRewardLotId = -1（不掉任何奖励），"
+                "weight 30000（不可推动）；社区 roster 标为 Centipede Grub、tier=grunt。"
+                "判断为百足恶魔战里的幼虫召唤物，不应作为首领展示（hidden=true）。",
+    },
+    7712: {
+        "nameEn": "Centipede Grub", "role": "add", "confidence": "medium",
+        "note": "与 c7711 同一套（体型略小）：不掉奖励、社区 tier=grunt，"
+                "判断为百足恶魔的幼虫召唤物，不应作为首领展示（hidden=true）。",
+    },
+    7910: {
+        "nameEn": "Storm King", "role": "boss", "confidence": "low",
+        "note": "紧邻 c7900「无名王者」，社区 roster 标为 Storm King（《黑暗之魂3》无名王者的"
+                "坐骑巨龙 King of the Storm）。参数侧：getSoul = 0、无独立掉落，符合「同一场战斗的"
+                "第一阶段，奖励挂在无名王者身上」。游戏文本里没有对应名字词条，nameZh 留空。",
+    },
+    7931: {
+        "nameEn": "", "role": "unknown", "confidence": "none",
+        "note": "无法确认。紧邻 c7930「恶魔王子」且 hp 2880 与恶魔王子（守夜档）完全相同，"
+                "但 superArmorDurability = 0、partsDamageType = 0、hitRadius 1.1、"
+                "getSoul = 0 且没有任何掉落，behaviorVariationId 自成一套（79310）。"
+                "疑似恶魔王子战里的火焰/投射物实体，不应作为首领展示（hidden=true）。"
+                "社区 roster 对这两组也只写了 chrId，没有名字。",
+    },
+    7932: {
+        "nameEn": "", "role": "unknown", "confidence": "none",
+        "note": "无法确认。4 行完全相同（79320000–79320003），hitRadius 0.7、无削韧、无掉落，"
+                "hp 沿用恶魔王子的 2880。疑似恶魔王子战里成组生成的火焰实体，"
+                "不应作为首领展示（hidden=true）。",
+    },
+}
+
+# 中文里的「群/们/队」后缀：同一条英文名有单数和群体两种中文词条时优先取非群体的那条
+PLURAL_ZH_SUFFIX = ("群", "们", "队")
+
+# 深夜深度（The Deep of Night）：ChaosMatchingCorrectParam.spEffect00..04 = 深度 1..5
+DEPTHS = (1, 2, 3, 4, 5)
 
 FIELD_THREAT = range(7740, 7750)
 NIGHT_THREAT = range(7750, 7760)
@@ -360,11 +454,142 @@ CAVEATS = [
     "它们没有独立的夜王菜单行、没有独立 BGM 行，chrId 也紧邻格诺斯塔；亚尼姆斯只在永夜之王版本登场。",
     "NightBossMenuParam 的 ID 100「深夜」没有 bossNameId（不是一个夜王，是深度模式入口），已跳过。",
     "守夜/野外 Boss 的中文名按 NpcParam.nameId → chrId 对照 NpcName 文本取得；"
-    "个别条目游戏文本里没有对应词条，nameSource 会标成 manual（按 Elden Ring 官方简中补）、"
-    "chrid-fallback（连英文名都没有，用 chrId 兜底）或 english-only（只有英文）；"
-    "nameInferred = true 表示名字是按 ID 结构推断的。",
+    "个别条目游戏文本里没有对应词条，nameSource 会标成 chrid-fallback"
+    "（连英文名都没有，用 chrId 兜底）或 english-only（只有英文）；"
+    "nameInferred = true 表示名字是按 ID 结构推断的。"
+    "（v2 还有一种 manual = 按《艾尔登法环》官方简中手工补的译名，schemaVersion 3 起不再产出，"
+    "取值保留只为兼容旧数据，详见下面【名字】几条。）",
     "nightBosses 的主键是 id（形如 \"Flying Dragon@4500\"），nameEn 会重复"
     "（chr 4500「丘陵飞龙」与 chr 4505「飞龙」的 Paramdex 基础名都是 Flying Dragon），不要拿它当 key。",
+
+    # ---------------- schemaVersion 3 新增 ----------------
+    "【名字】schemaVersion 3 起，简中名只来自游戏自带文本（item/NpcName、menu/CL_MenuText 等 FMG），"
+    "不再有按《艾尔登法环》官方简中手工补的译名。v2 里 14 条 manual 译名逐条在全部 FMG 里"
+    "检索过「完全一致的字符串」，一条都没有，已全部删除；找不到文本的组 nameZh 留空、只给 nameEn。"
+    "变更明细在 notes.nameChanges。nameSource 合法取值：npcparam-nameid、npcname、"
+    "npcname-global、npcname-relaxed、npcname-chr-only、npcname-alias、npcname-alias-chr、"
+    "community-npcname、community、english-only、chrid-fallback"
+    "（manual 已不再产出，保留取值只为兼容旧数据；npcname-relaxed / npcname-chr-only "
+    "目前数据里也没有条目——解析出来的那 4 条都因为下面的「同名去重」退回了 english-only，"
+    "页面对未知取值按 english-only 优雅降级即可）。",
+    "【名字】nameZhFallback 收下全部 14 条被移出 nameZh 的手工译名（《艾尔登法环》官方简中），"
+    "**不是本作的游戏内文本**，nameZhFallbackNote 里写清了这一点。"
+    "只要这一组现在的 nameZh 不等于旧译名就会写（nameZh 为空的 14 条都有）。"
+    "页面在 nameZh 为空时可以用它兜底显示，但要和游戏文本名区分开（例如加「非官方译名」标记）；"
+    "判断「这个名字是不是游戏里的」请只看 nameZh 与 nameSource。",
+    "【名字】nameEvidence 给出这个简中名的出处（fmg 文件名 + 文本 ID + 该条的英文/简中原文），"
+    "nameApprox = true 表示不是逐字命中：可能是借了中心词（Large Wormface → "
+    "NpcName 904580600「Wormface / 蚯蚓脸」），或英文是单复数差异。"
+    "页面展示 nameApprox 的条目时建议加个「近似」标记，并可用 nameNote 解释。",
+    "【名字】同一个 nameZh 不会同时挂在两组首领上——nameZh 是两端卡片的主显示名，"
+    "两张卡顶同一个中文名等于没有名字。放宽匹配（中心词 / chrId 独苗群体名）一度产生 3 对重名，"
+    "现在按证据强度裁决：逐字命中 > 近似但词条属于本组自己的 chrId > 借别的 chrId 的词条；"
+    "唯一的最强者留下 nameZh，其余退回 english-only（两端既有的「仅英文名」徽标会自动挂上），"
+    "被挡下的候选词条完整记在 nameZhRejected（fmg / id / en / zh / reason）里，证据不丢。"
+    "结果：黄金河马归 Golden Hippopotamus@5011（Large Golden Hippopotamus@5010 让出）、"
+    "蚯蚓脸归 Large Wormface@4580（Dreg Wormface@7660 让出）；"
+    "石肤众王（903600530「Stoneskin Lords」）对 Alabaster Lord 与 Onyx Lord 是同一个群体名、"
+    "证据强度相同，两组都让出——它本来就盖不住这两个各自独立的首领。"
+    "明细在 notes.nameCollisions。",
+    "【名字】nameSource = community / community-npcname 的条目，身份判断来自社区资料"
+    "（4laric/nightreign-enemy-rando 的 data/nr_enemy_roster.json 与 nr_enemy_tags.json，"
+    "URL 在 nameSourceUrl），中文仍然只从游戏文本取；社区也认不出来的两组"
+    "（c7931 / c7932）保留「未知敌人 cXXXX」，判断写在 nameNote 里。",
+    "【名字】hidden = true 表示这一组明显不是「首领」，页面默认可以不展示。判据是结构性的："
+    "整组不掉任何奖励（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全是 0 或 -1），"
+    "并且要么不吃削韧（superArmorDurability ≤ 0，典型的投射物/部件实体），"
+    "要么连游戏文本带社区资料都认不出是谁，要么社区把它标成杂兵。"
+    "noReward 单独给出「不掉奖励」这一项，方便页面自己定策略。",
+
+    "【深夜】深夜（The Deep of Night）的「深度」1–5 走 NpcParam.chaosMatchingCorrectParamId → "
+    "ChaosMatchingCorrectParam.spEffect00..04，顶层 deepOfNightTiers 是按档位归并的完整倍率表，"
+    "每个 fight/variant 的 depthStats[\"1\"..\"5\"] 是该行在各深度的实际数值"
+    "（hp / hpMultiplier / attackRateBase / attackRatesBase / poiseTakenBase / staminaAttackRateBase）。"
+    "depthStats 已经把常驻档位与深夜修正一起乘进去了，可以直接展示；"
+    "原有的 deepOfNight 字段语义不变（= 深夜基准，相当于深度倍率取 1），只是新增了攻击力/耐力两项。",
+    "【深夜】深度对攻击力的加成远大于对血量的加成。实战夜王：27 条 isMain 战斗行里有 26 条走 "
+    "chaosCorrectId = 7767，深度档位是 **Tier 4a** —— 深度 1→5 血量 "
+    "×1.25 / 1.4 / 1.57 / 1.95 / 2.16，攻击力 ×1.25 / 1.55 / 1.92 / 2.83 / 3.31"
+    "（深度 5 的伤害是深度 1 的 2.65 倍），承受削韧 0.88 → 0.84，对玩家耐力削减 1.15 → 1.5。"
+    "注意 ChaosMatchingCorrectParam 的 7760–7769 行名虽然都是「Final Boss Threat」，"
+    "深度档位却不是同一个：7765 = Tier 2c、7766 = Tier 3e、7767 = Tier 4a，"
+    "其余（7760–7764 / 7768 / 7769）才是 Tier 3f（×1.3 → ×1.718 血 / ×1.3 → ×2.947 攻击），"
+    "本数据集里 Tier 3f 只出现在夜王的非主战行（召唤物/阶段实体）与救世旗手哈尔莫妮亚的永夜虫上。"
+    "请一律按每行自己的 chaosCorrectId 去查 deepOfNightTiers，别按行名段猜。"
+    "页面只展示血量会严重低估深夜的难度。",
+    "【深夜】「红化」在游戏内简中的正式叫法是**变异个体**（CL_MenuText 138296 / 338806）。"
+    "顶层 mutations 按 SpEffectSetParam 行号列出每一档变异会给敌人加什么"
+    "（vfxTier = 红光档位，hp / attackRate / runeRate = 血量/伤害/卢恩倍率），"
+    "每个 fight/variant 的 mutationSetId（与 mutationPool）指向它；mutationSetId 为 null "
+    "表示这一行不会被变异。变异倍率与深度、常驻、人数三层都是相乘关系（spCategory 各不相同）。",
+    "【深夜·不确定】变异档位的两行（VFX 4480–4483 与数值 7200–7241）spCategory 都是 203、"
+    "categoryPriority 都是 10。同一分类通常意味着互相覆盖，但它们是通过同一个 SpEffectSetParam "
+    "一起挂上去的、且改的字段完全不重叠（VFX 行只有 vfxId，数值行只有倍率），"
+    "Paramdex 也没有对 203 的说明，所以这里按「两条都生效」处理。"
+    "如果实际是只生效一条，受影响的只是 mutations 里 vfxTier 与倍率的搭配，倍率本身不变。",
+    "【深夜·不确定】ChaosMatchingCorrectParam 与 MultiPlayCorrectionParam 用的是同一套行号"
+    "（7700–7780、98810…），但 NpcParam 里有 18 组行的 chaosMatchingCorrectParamId 与 "
+    "multiPlayCorrectionParamId 不同（例如 mpc 7730 / chaos 7753 共 60 行），"
+    "所以两者必须分别查表，不能互相代用；本数据集的 scalingId 与 chaosCorrectId 因此可能不相等。",
+    "【深夜】变异的**数量**由 ChaosMatchingMutationCategoryParam 决定（顶层 mutationCategories）："
+    "它给的是「该深度这一类敌人会有几只被变异」的个数，不是每只敌人被变异的百分比概率。"
+    "野外首领（类别 120）与封印监牢首领（类别 160）在深度 1 都是 0，"
+    "也就是深度 1 不会遇到变异的野外首领；深度 4 起据点首领（类别 110）的变异数量再上一档。",
+    "【深夜】夜王在各深度的出现权重在 nightlords[].depthChanceWeights（NightBossMenuParam "
+    "depth1..5ChanceWeight）：本体夜王 1000/800/650/500/500，永夜之王与救世旗手 "
+    "0/200/350/500/500 —— 深度 1 不会出永夜形态。守夜/野外 Boss **没有**对应的按深度出现权重表，"
+    "参数里只有上面那张变异数量表，所以本数据集不提供它们的深度出现概率。",
+    "【深夜】ChaosMatchingMutationEnemyTableParam（3067 行）是按地图刷新点组织的"
+    "（categoryId + smallBaseId → SmallBaseMapVariationParam），没法直接对到某一行 NpcParam，"
+    "因此没有收录；ChaosMatchingReplaceTreasure* 两张表 Paramdex 的字段全是 unk_*，也没有收录。",
+
+    "【多人】多人**不是**简单乘倍数。scalingTiers.*.fullEffects 里是 client1（双人）/ "
+    "client2（三人）指向的 SpEffect 行的全部非默认字段，完整结论见 notes.multiplayerScalingAudit。"
+    "要点：血量倍率按档位从 ×1（突袭档）到 ×2/×3（最终 Boss）不等；"
+    "7744 / 7753 / 7754 / 7758 四个档位多人时敌人**攻击力**还会 ×1.1（双人）/ ×1.2（三人）"
+    "（新增字段 scaling.duo.attackRate / scaling.trio.attackRate）；"
+    "防御减伤、卢恩掉落、异常阈值完全不变。",
+    "【多人】与社区实测核对（Fextralife，2026-09）：格拉狄乌斯 11,328 / 22,656 / 33,984、"
+    "永夜之王格拉狄乌斯 17,558 / 35,116 / 52,674、艾德雷 13,140 / 26,280 / 39,420 完全一致；"
+    "卡莉果 Fextralife 记 12,007 / 24,014 / 36,021 而本数据集是 12,008 / 24,016 / 36,024，"
+    "差别只在 3392 × 3.54 = 12007.68 的取整（本数据集四舍五入，Fextralife 截断），不是算法分歧。"
+    "个别条目与第三方 wiki 差 1–3 点血都属于这一类，不必当成错误。",
+    "【多人】MultiPlayCorrectionParam 的 client3SpEffectId（4 人）整表都是 -1，"
+    "对应游戏最多 3 人，fullEffects.quad 恒为 null。",
+    "【常驻缩放】schemaVersion 3 起，常驻 SpEffect 的判定多看了攻击力（五种 *AttackPowerRate）"
+    "与 staminaAttackRate 两项，因此 permScalingIds / deepOfNight.permScalingIds 会多出"
+    "一些「只改攻击力、不改血量」的行（如 7799「Enemy Scaling: Noklateo Lesser Threat」×1.2 攻击、"
+    "7783「Mountaintop Giant Crow」×2.45 攻击、62750 ×1.15 耐力削减），共影响 27 处。"
+    "hp / hpMultiplier / poise / damageRates / resist / scaling 等所有原有数值**没有任何改动**，"
+    "新增的合并倍率在 attackRateBase / attackRatesBase / staminaAttackRateBase 里。",
+    "【合并】schemaVersion 3 起，merge_key 额外比较 chaosCorrectId（深度档位）与 "
+    "mutationSetId（变异档位），所以 v2 里因为「玩家侧数值相同」而被合并、但深度/变异档位不同的行"
+    "现在会拆开（例如黑刀刺客 2 → 3 个变体）。npcIds 仍然保留全部原始行号，hp 等数值没有任何改动。"
+    "拆开后同一张卡里会出现血量相同、只差深度/变异档位的两行，"
+    "个别组（血斑巨乌鸦 c4561、冰霜螯虾 c4420）里没有 Paramdex 行名的那一行 npcId 更小，"
+    "按「血量最高、同血量取 npcId 较小」的代表行规则会顶上卡头、labelZh 显示成「基准」；"
+    "两行的数值完全一致，差别只在「能不能被变异」（mutationSetId）。",
+    "【合并】Paramdex 行名以「- Template」结尾的模板行不收录（与 …9999 调试行同一口径），"
+    "明细在 notes.skippedRows。这 10 行是黑夜人偶十个角色的模板"
+    "（600030000/600030100/…/600030900）：数值与同组真实行完全相同，但 getSoul = 0、"
+    "rewardItemLot 全是 -1，chaosMatchingCorrectParamId 也不一样（模板 7740 / 真实 7780）。"
+    "v3 的 merge_key 加入 chaosCorrectId 后它们会被拆成独立变体，而且 npcId 更小会抢走"
+    "两端的代表行位置，让卡头显示「模板行」、深度 5 血量高 7.4% / 攻击力高 33%。"
+    "另外每个 fight/variant 新增了 noReward 布尔（整行不掉卢恩/不掉任何奖励表），"
+    "两端排代表行时可以让它排在同血量的实战行之后。",
+    "【变异】mutationCategories 的 categoryZh / mapZh，以及 mutations 里的「变异个体」，"
+    "是按 Paramdex 的 MUTATION_CATEGORY / PATTERN_MODIFIER 枚举与 CL_MenuText 的语义"
+    "**译出来的标签**，游戏文本里没有这些词条单独存在"
+    "（「变异个体」只作为 138296「打败敌人的次数（变异个体）」与 338806「已打倒变异个体」的子串出现，"
+    "「林薇尔德」「陨石坑」「笼罩之城」「据点首领」等在 zhocn FMG 里检索不到）。"
+    "上面【名字】那条「简中名只来自游戏文本」只约束 nightBosses.nameZh 与 nightlords 的名字，"
+    "不包括这些分类标签；categoryEn / mapEn 与枚举逐字一致，数值与 CSV 逐字段一致。",
+    "【体积】schemaVersion 3 的文件约 1.1 MB（v2 约 0.4 MB），涨的主要是 depthStats："
+    "每个 fight/variant 都把 5 个深度的 hp / hpMultiplier / poiseTakenBase / "
+    "attackRateBase / attackRatesBase / staminaAttackRateBase / depthSpEffectId 展开了一遍，"
+    "与 scaling 在每条记录里重复展开是同类取舍（换页面零查表）。"
+    "嫌大可以只用 depthStats[N].hp，其余倍率按 chaosCorrectId 去 deepOfNightTiers 查"
+    "（整表只有 22 档），两者数值一致。",
 ]
 
 # ---------------------------------------------------------------- 工具函数
@@ -394,6 +619,27 @@ def num(text: str):
     """CSV 文本 → int / float（尽量保持整数形态，便于 JSON 体积）。"""
     f = float(text)
     return int(f) if f == int(f) else round(f, 6)
+
+
+def is_template(row: dict) -> bool:
+    """Paramdex 行名以「- Template」结尾的模板行。
+
+    NpcParam 里 600030000/600030100/…/600030900 这 10 行是黑夜人偶（Night Invader）
+    十个角色的模板：数值与同组真实行（…0010/…0110/…）完全相同，但
+    getSoul = 0、rewardItemLot_1/2 = -1（真实行是 getSoul 1000 + rewardItemLot 13xxxxxx），
+    chaosMatchingCorrectParamId 也不一样（模板 7740 / 真实 7780），
+    显然不是实战行。schemaVersion 2 里它们因为「玩家侧数值相同」被并进真实行，
+    schemaVersion 3 的 merge_key 加入 chaosCorrectId 后会被拆成独立变体、
+    而且 npcId 更小会抢走两端的「代表行」位置（血条与深度倍率都会显示错的那一套），
+    所以与 …9999 调试行同一口径直接跳过，明细在 notes.skippedRows。
+    """
+    return (row.get("Name") or "").rstrip().endswith("- Template")
+
+
+def rows_no_reward(rows: list[dict]) -> bool:
+    """整组行都不掉任何奖励（卢恩 / 深夜奖励表 / 敌人掉落表全是 0 或 -1）。"""
+    return all(num(r["getSoul"]) <= 0 and int(r["chaosMatchingRewardLotId"]) <= 0
+               and int(r["itemLotId_enemy"]) <= 0 for r in rows)
 
 
 def base_and_variant(paramdex_name: str) -> tuple[str, str]:
@@ -472,13 +718,89 @@ def load_speffects(raw: Path) -> dict[str, dict]:
     return sp
 
 
+# SpEffectParam 每一列的「默认值」：取全表该列的众数。Paramdex 的 Param Meta 里写了
+# DefaultValue，但 raw/ 下没有存 Meta，而 SpEffectParam 有上万行、绝大多数列压倒性地是
+# 同一个值（maxHpRate=1、physicsAttackPowerRate=1、*DefDamageRate=1、*DamageRate=100…），
+# 众数与 Meta 的 DefaultValue 在所有用到的列上一致，且只依赖 CSV 本身，结果可复现。
+SPEFFECT_META_COLS = ("ID", "Name")
+
+
+def speffect_defaults(sp: dict[str, dict]) -> dict[str, str]:
+    cols = list(next(iter(sp.values())).keys())
+    out: dict[str, str] = {}
+    for col in cols:
+        if col in SPEFFECT_META_COLS:
+            continue
+        counter: dict[str, int] = defaultdict(int)
+        for row in sp.values():
+            counter[row[col]] += 1
+        out[col] = max(counter.items(), key=lambda kv: (kv[1], kv[0]))[0]
+    return out
+
+
+def speffect_diff(row: dict, defaults: dict[str, str]) -> dict:
+    """SpEffect 行 → 所有与默认值不同的字段（原样保留 CSV 文本转成的数字）。"""
+    out: dict = {}
+    for col, default in defaults.items():
+        v = row.get(col)
+        if v is None or v == default:
+            continue
+        try:
+            out[col] = num(v)
+        except ValueError:
+            out[col] = v
+    return out
+
+
+# SpEffect 里敌人自身攻击力的五项倍率（dark 槽在本作是「圣」，与 DAMAGE_RATES 一致）
+ATTACK_RATE_FIELDS = [
+    ("physical", "physicsAttackPowerRate"),
+    ("magic", "magicAttackPowerRate"),
+    ("fire", "fireAttackPowerRate"),
+    ("lightning", "thunderAttackPowerRate"),
+    ("holy", "darkAttackPowerRate"),
+]
+
+
+def attack_rates(e: dict) -> dict[str, float]:
+    return {out: float(e[src]) for out, src in ATTACK_RATE_FIELDS}
+
+
+def attack_rate(e: dict) -> float:
+    """缩放行的攻击力倍率。人数/深度/变异三类缩放行的五项始终同值，取一个即可。"""
+    rates = set(attack_rates(e).values())
+    assert len(rates) == 1, f"SpEffect {e['ID']} 的五种攻击力倍率不一致：{rates}"
+    return rates.pop()
+
+
 class Scaling:
     """multiPlayCorrectionParamId → 双人/三人倍率。"""
 
-    def __init__(self, raw: Path, sp: dict[str, dict]):
+    def __init__(self, raw: Path, sp: dict[str, dict], defaults: dict[str, str]):
         self.mpc = {r["ID"]: r for r in read_param(raw, "MultiPlayCorrectionParam")}
         self.sp = sp
+        self.defaults = defaults
         self.used: dict[int, dict] = {}
+
+    def _full(self, eid: str) -> dict | None:
+        """client1/client2 指向的 SpEffect 行的**全部**非默认字段。
+
+        用来回答「多人是不是简单乘倍数」：把整行摊开看，改动的只有
+        maxHpRate / saReceiveDamageRate / changeSaRecoveryVelocity /
+        七种 *DefDamageRate（异常累积） / 四种 *DamageRate（异常发动伤害） /
+        五种 *AttackPowerRate（少数档位），外加 spCategory=140、stateInfo=282 两个
+        标记位。**没有**任何防御/减伤（*DiffenceRate、defEnemyDmgCorrectRate_*）、
+        没有 haveSoulRate（卢恩）、没有 change*ResistPoint（异常阈值）、
+        没有 maxStaminaRate / itemDropRate。
+        """
+        row = self.sp.get(eid)
+        if row is None:
+            return None
+        return {
+            "spEffectId": int(eid),
+            "nameEn": row["Name"] or None,
+            "fields": speffect_diff(row, self.defaults),
+        }
 
     @staticmethod
     def _tier(sp: dict | None) -> dict | None:
@@ -505,6 +827,10 @@ class Scaling:
             "ailmentDamageRate": _pct(sp["bloodDamageRate"]),
             "poisonRate": _pct(sp["poisonDamageRate"]),
             "buildupRate": num(sp["poisonDefDamageRate"]),
+            # schemaVersion 3 新增：多人时敌人自身的攻击力倍率。多数档位是 1，
+            # 但 7744 / 7753 / 7754 三档双人 ×1.1、三人 ×1.2 —— 人越多 Boss 打得越疼。
+            "attackRate": num(str(attack_rate(sp))),
+            "staminaAttackRate": num(sp["staminaAttackRate"]),
         }
 
     def get(self, mpc_id: str) -> tuple[int | None, dict | None]:
@@ -516,6 +842,14 @@ class Scaling:
             "group": row["Name"] or None,
             "duo": self._tier(self.sp.get(row["client1SpEffectId"])),
             "trio": self._tier(self.sp.get(row["client2SpEffectId"])),
+            # schemaVersion 3 新增：两档人数缩放 SpEffect 的全部非默认字段 + 行号
+            "fullEffects": {
+                "duo": self._full(row["client1SpEffectId"]),
+                "trio": self._full(row["client2SpEffectId"]),
+                # 4 人档位在 NIGHTREIGN 里整表都是 -1（游戏最多 3 人）
+                "quad": self._full(row.get("client3SpEffectId", "-1")),
+                "overrideType": num(row["bOverrideSpEffect"]) if row.get("bOverrideSpEffect") else None,
+            },
         }
         self.used[mid] = entry
         return mid, {"duo": entry["duo"], "trio": entry["trio"]}
@@ -561,34 +895,47 @@ class PermScaling:
         self.sp = sp
         self.used: dict[int, dict] = {}
 
-    def _factors(self, e: dict) -> tuple[float, float, float, float]:
+    # (血量, 承受削韧, 削韧恢复, 异常发动伤害, 耐力削减, 物理/魔力/火/雷/圣 五项攻击力)
+    FACTOR_KEYS = ("hp", "poiseTaken", "poiseRecover", "ailmentDamageRate",
+                   "staminaAttackRate") + tuple(k for k, _ in ATTACK_RATE_FIELDS)
+
+    def _factors(self, e: dict) -> tuple[float, ...]:
+        atk = attack_rates(e)
         return (
             float(e["maxHpRate"]),
             float(e["saReceiveDamageRate"]),
             float(e["changeSaRecoveryVelocity"]),
             float(e["bloodDamageRate"] or 100) / 100,
-        )
+            float(e["staminaAttackRate"]),
+        ) + tuple(atk[k] for k, _ in ATTACK_RATE_FIELDS)
 
     def _register(self, eid: int, e: dict, deep: bool) -> None:
         if eid in self.used:
             return
-        hp, poise, recover, ail = self._factors(e)
+        f = dict(zip(self.FACTOR_KEYS, self._factors(e)))
         self.used[eid] = {
             "nameEn": e["Name"] or None,
             "nameZh": perm_label_zh(e["Name"], deep),
-            "hp": num(str(hp)),
-            "poiseTaken": num(str(poise)),
-            "poiseRecover": num(str(recover)),
-            "ailmentDamageRate": num(str(ail)),
+            "hp": num(str(f["hp"])),
+            "poiseTaken": num(str(f["poiseTaken"])),
+            "poiseRecover": num(str(f["poiseRecover"])),
+            "ailmentDamageRate": num(str(f["ailmentDamageRate"])),
             "deepOfNight": deep,
+            # schemaVersion 3 新增：敌人自身的攻击力倍率（分属性）与对玩家耐力的削减倍率。
+            # 常驻档位里确实有只加物理的行（16178「×2.42 血 ×1.1 物理」），所以必须分开记。
+            "attackRates": {k: num(str(f[k])) for k, _ in ATTACK_RATE_FIELDS},
+            "attackRate": num(str(f["physical"])),
+            "staminaAttackRate": num(str(f["staminaAttackRate"])),
         }
 
     def of(self, row: dict) -> dict:
         """→ 常驻缩放汇总（含深夜档）。"""
         ids: list[int] = []
         deep_ids: list[int] = []
-        hp = poise = recover = ail = 1.0
-        d_hp = d_poise = d_recover = d_ail = 1.0
+        n = len(self.FACTOR_KEYS)
+        base = [1.0] * n
+        deep_f = [1.0] * n
+        neutral = tuple([1.0] * n)
         for slot in self.SLOTS:
             v = row.get(slot)
             if v in (None, "", "0", "-1"):
@@ -597,7 +944,7 @@ class PermScaling:
             if e is None:
                 continue
             f = self._factors(e)
-            if f == (1.0, 1.0, 1.0, 1.0):
+            if f == neutral:
                 continue
             conds = [int(e[f"invocationConditionsStateChange{i}"]) for i in (1, 2, 3)]
             deep = DEEP_OF_NIGHT_STATE in conds
@@ -605,12 +952,12 @@ class PermScaling:
                 continue                      # 其它条件触发的效果不算常驻
             eid = int(v)
             self._register(eid, e, deep)
-            if deep:
-                deep_ids.append(eid)
-                d_hp *= f[0]; d_poise *= f[1]; d_recover *= f[2]; d_ail *= f[3]
-            else:
-                ids.append(eid)
-                hp *= f[0]; poise *= f[1]; recover *= f[2]; ail *= f[3]
+            target, bucket = (deep_f, deep_ids) if deep else (base, ids)
+            bucket.append(eid)
+            for i in range(n):
+                target[i] *= f[i]
+        b = dict(zip(self.FACTOR_KEYS, base))
+        d = dict(zip(self.FACTOR_KEYS, (x * y for x, y in zip(base, deep_f))))
         return {
             "ids": sorted(ids),
             "deepIds": sorted(deep_ids),
@@ -619,23 +966,179 @@ class PermScaling:
             "everdarkScaled": any(
                 (self.used[i]["nameEn"] or "").startswith("[Everdark Sovereign Scaling]")
                 for i in ids),
-            "hpMultiplier": round(hp, 6),
-            "poiseTakenBase": round(poise, 6),
-            "poiseRecoverMultiplier": round(recover, 6),
-            "ailmentDamageRateBase": round(ail, 6),
+            "hpMultiplier": round(b["hp"], 6),
+            "poiseTakenBase": round(b["poiseTaken"], 6),
+            "poiseRecoverMultiplier": round(b["poiseRecover"], 6),
+            "ailmentDamageRateBase": round(b["ailmentDamageRate"], 6),
+            "attackRatesBase": {k: round(b[k], 6) for k, _ in ATTACK_RATE_FIELDS},
+            "attackRateBase": round(b["physical"], 6),
+            "staminaAttackRateBase": round(b["staminaAttackRate"], 6),
             "deep": None if not deep_ids else {
-                "hpMultiplier": round(hp * d_hp, 6),
-                "poiseTakenBase": round(poise * d_poise, 6),
-                "poiseRecoverMultiplier": round(recover * d_recover, 6),
-                "ailmentDamageRateBase": round(ail * d_ail, 6),
+                "hpMultiplier": round(d["hp"], 6),
+                "poiseTakenBase": round(d["poiseTaken"], 6),
+                "poiseRecoverMultiplier": round(d["poiseRecover"], 6),
+                "ailmentDamageRateBase": round(d["ailmentDamageRate"], 6),
+                "attackRatesBase": {k: round(d[k], 6) for k, _ in ATTACK_RATE_FIELDS},
+                "attackRateBase": round(d["physical"], 6),
+                "staminaAttackRateBase": round(d["staminaAttackRate"], 6),
             },
         }
+
+
+# ------------------------------------------------- 深夜深度 / 变异个体（红化）
+
+# ChaosMatchingMutationCategoryParam.categoryId 的枚举（Paramdex Param Enums/
+# MUTATION_CATEGORY.json）+ 简中说明。游戏文本里没有这些类别的词条，zh 是说明不是官方译名。
+MUTATION_CATEGORY_ZH = {
+    100: ("普通敌人 A", "Standard Enemy A"),
+    101: ("普通敌人 B", "Standard Enemy B"),
+    103: ("普通敌人 C", "Standard Enemy C"),
+    104: ("普通敌人 D", "Standard Enemy D"),
+    105: ("普通敌人（大空洞）", "Standard Enemy (Great Hollow)"),
+    110: ("据点首领", "Base Boss"),
+    120: ("野外首领", "Field Boss"),
+    130: ("城堡精英", "Castle Elite"),
+    131: ("城堡敌人", "Castle Enemy"),
+    135: ("东部堡垒首领/精英（大空洞）", "Eastern Fort Boss/Elite (Great Hollow)"),
+    136: ("西部堡垒首领/精英（大空洞）", "Western Fort Boss/Elite (Great Hollow)"),
+    137: ("东部堡垒敌人（大空洞）", "Eastern Fort Enemy (Great Hollow)"),
+    138: ("西部堡垒敌人（大空洞）", "Western Fort Enemy (Great Hollow)"),
+    140: ("圣甲虫", "Scarab"),
+    141: ("圣甲虫（大空洞）", "Scarab (Great Hollow)"),
+    150: ("坑道精英", "Mine Elite"),
+    151: ("坑道精英（大空洞）", "Mine Elite (Great Hollow)"),
+    160: ("封印监牢首领", "Evergaol Boss"),
+}
+
+# ChaosMatchingMutationCategoryParam.modifierMapId 里出现的「地图」枚举
+# （Paramdex Param Enums/PATTERN_MODIFIER.json 的 10–15 段）
+MUTATION_MAP_ZH = {
+    0: ("全部地图", "All maps"),
+    10: ("林薇尔德", "Map - Limveld"),
+    11: ("山顶", "Map - Mountaintop"),
+    12: ("陨石坑", "Map - The Crater"),
+    13: ("腐败森林", "Map - Rotted Woods"),
+    14: ("大空洞", "Map - Great Hollow"),
+    15: ("笼罩之城", "Map - Shrouded City"),
+}
+
+# CL_MenuText 里和深夜/深度/变异个体有关的词条 ID（游戏文本，不是翻译）
+DEEP_TEXT_IDS = {
+    "deepOfNight": "131150",     # 深夜 / The Deep of Night
+    "depth": "131011",           # 深度 / Depth
+    "mutation": "338806",        # 已打倒变异个体 / Variant felled
+    "mutationCount": "138296",   # 打败敌人的次数（变异个体） / Enemies felled (variants)
+    "description": "131151",     # 深夜的说明
+}
+
+
+class DepthScaling:
+    """深夜「深度 1–5」的数值缩放。
+
+    NpcParam.chaosMatchingCorrectParamId → ChaosMatchingCorrectParam →
+    spEffect00..spEffect04 = 深度 1..5 的 SpEffect 行
+    （Paramdex 行名「[Deep Night Scaling] Tier X, Depth N」）。
+    这些行自身 stateInfo = 2287，也就是「进入深夜」这个状态本身就是它们打上去的，
+    因此它们和 NpcParam 上 invocationConditionsStateChange=2287 的修正行是叠加关系：
+    深度行 spCategory = 0，[Deep of Night Everdark Scaling] 是 20（个别 100），
+    [DLC Deep of Night Scaling] 是 0 —— 分类各不相同，不互相覆盖，倍率连乘。
+    """
+
+    def __init__(self, raw: Path, sp: dict[str, dict]):
+        self.rows = {r["ID"]: r for r in read_param(raw, "ChaosMatchingCorrectParam")}
+        self.sp = sp
+        self.used: dict[int, dict] = {}
+
+    def get(self, chaos_id: str) -> tuple[int | None, dict | None]:
+        """→ (ChaosMatchingCorrectParam 行号, {"1".."5": 该深度的倍率})"""
+        if chaos_id in (None, "", "0", "-1") or chaos_id not in self.rows:
+            return None, None
+        row = self.rows[chaos_id]
+        depths: dict[str, dict] = {}
+        for i, depth in enumerate(DEPTHS):
+            eid = row[f"spEffect0{i}"]
+            e = self.sp.get(eid)
+            if e is None:
+                continue
+            depths[str(depth)] = {
+                "spEffectId": int(eid),
+                "nameEn": e["Name"] or None,
+                "hp": num(e["maxHpRate"]),
+                "attackRate": num(str(attack_rate(e))),
+                "poiseTaken": num(e["saReceiveDamageRate"]),
+                "staminaAttackRate": num(e["staminaAttackRate"]),
+            }
+        if not depths:
+            return None, None
+        cid = int(chaos_id)
+        self.used[cid] = {
+            "group": row["Name"] or None,
+            # 行名形如「[Deep Night Scaling] Tier 3b, Depth 1」，档位名取 Tier 那段
+            "tier": _depth_tier_name(depths["1"]["nameEn"]),
+            "depths": depths,
+        }
+        return cid, depths
+
+
+def _depth_tier_name(name: str | None) -> str | None:
+    m = re.match(r"^\[(?:Deep Night Scaling|.+?)\]\s*(.*?),?\s*Depth \d+$", name or "")
+    return (m.group(1).strip() or None) if m else (name or None)
+
+
+class Mutations:
+    """深夜的「变异个体」（玩家口中的红化 / 红怪）。
+
+    NpcParam.chaosMatchingSpEffectSetParamId → SpEffectSetParam
+    「Set: Deep Night Mutation - VFX + Scaling」：
+      spEffectId1 = 红光 VFX 档位（4480 / 4481 / 4482 / 4483，vfxId 150050–150053）
+      spEffectId2 = 数值档位（[Deep Night Scaling] N x HP, M x damage）
+      spEffectId3 = 附加档（4485，vfxId 150055，只挂在少数行上）
+    数值档位的 spCategory 是 203，和深度（0）、常驻（0）、人数（140）都不同，
+    所以变异倍率是在其它缩放之上再乘一层。haveSoulRate 说明变异个体掉的卢恩也翻倍。
+    「变异个体」是游戏内简中原词（CL_MenuText 138296 / 338806），不是自造译名。
+    """
+
+    def __init__(self, raw: Path, sp: dict[str, dict]):
+        self.sets = {r["ID"]: r for r in read_param(raw, "SpEffectSetParam")}
+        self.sp = sp
+        self.used: dict[int, dict] = {}
+
+    def get(self, set_id: str) -> int | None:
+        if set_id in (None, "", "0", "-1") or set_id not in self.sets:
+            return None
+        row = self.sets[set_id]
+        sid = int(set_id)
+        if sid not in self.used:
+            slots = [row[f"spEffectId{i}"] for i in (1, 2, 3, 4)]
+            vfx_ids, stat = [], None
+            for v in slots:
+                e = self.sp.get(v)
+                if e is None:
+                    continue
+                if (e["Name"] or "").startswith("Deep Night Mutation VFX"):
+                    vfx_ids.append(int(v))
+                elif float(e["maxHpRate"]) != 1.0 or attack_rate(e) != 1.0:
+                    stat = e
+            self.used[sid] = {
+                "nameZh": "变异个体",
+                "nameEn": "Variant",
+                "setNameEn": row["Name"] or None,
+                "vfxSpEffectIds": sorted(vfx_ids),
+                "vfxTier": (min(vfx_ids) - 4479) if vfx_ids else None,
+                "statSpEffectId": int(stat["ID"]) if stat else None,
+                "statNameEn": (stat["Name"] or None) if stat else None,
+                "hp": num(stat["maxHpRate"]) if stat else 1,
+                "attackRate": num(str(attack_rate(stat))) if stat else 1,
+                "runeRate": num(stat["haveSoulRate"]) if stat else 1,
+            }
+        return sid
 
 
 # ---------------------------------------------------------------- 战斗行构建
 
 
-def fight_stats(row: dict, scaling: Scaling, perm: PermScaling) -> dict:
+def fight_stats(row: dict, scaling: Scaling, perm: PermScaling,
+                depth: "DepthScaling", mutations: "Mutations") -> dict:
     rates = {out: num(row[f"{src}DamageCutRate"]) for out, src in DAMAGE_RATES}
     resist = {out: num(row[src]) for out, src in RESISTS}
     scaling_id, tiers = scaling.get(row["multiPlayCorrectionParamId"])
@@ -649,8 +1152,37 @@ def fight_stats(row: dict, scaling: Scaling, perm: PermScaling) -> dict:
             "poiseTakenBase": p["deep"]["poiseTakenBase"],
             "poiseRecoverMultiplier": p["deep"]["poiseRecoverMultiplier"],
             "ailmentDamageRateBase": p["deep"]["ailmentDamageRateBase"],
+            "attackRateBase": p["deep"]["attackRateBase"],
+            "attackRatesBase": p["deep"]["attackRatesBase"],
+            "staminaAttackRateBase": p["deep"]["staminaAttackRateBase"],
             "permScalingIds": p["ids"] + p["deepIds"],
         }
+
+    # ---- 深夜各深度（schemaVersion 3）
+    # 深夜里「深度修正行（2287 条件触发）」和「深度 1–5 的缩放行」都会生效，所以
+    # 深度 N 的基准 = deepOfNight 那一档（没有就是常驻档）再乘上深度行的倍率。
+    chaos_id, depth_tiers = depth.get(row.get("chaosMatchingCorrectParamId", "0"))
+    deep_hp_mult = p["deep"]["hpMultiplier"] if p["deep"] else p["hpMultiplier"]
+    deep_poise = p["deep"]["poiseTakenBase"] if p["deep"] else p["poiseTakenBase"]
+    deep_atk = p["deep"]["attackRatesBase"] if p["deep"] else p["attackRatesBase"]
+    deep_stam = p["deep"]["staminaAttackRateBase"] if p["deep"] else p["staminaAttackRateBase"]
+    depth_stats = None
+    if depth_tiers:
+        depth_stats = {}
+        for k, d in depth_tiers.items():
+            depth_stats[k] = {
+                "hp": round(hp_base * deep_hp_mult * d["hp"]),
+                "hpMultiplier": round(deep_hp_mult * d["hp"], 6),
+                "poiseTakenBase": round(deep_poise * d["poiseTaken"], 6),
+                "attackRatesBase": {k: round(v * d["attackRate"], 6)
+                                    for k, v in deep_atk.items()},
+                "attackRateBase": round(deep_atk["physical"] * d["attackRate"], 6),
+                "staminaAttackRateBase": round(deep_stam * d["staminaAttackRate"], 6),
+                "depthSpEffectId": d["spEffectId"],
+            }
+
+    mutation_id = mutations.get(row.get("chaosMatchingSpEffectSetParamId", "-1"))
+
     return {
         # hp 是玩家真正要打掉的 1 人血量；hpBase 才是 NpcParam.hp 原始字段
         "hp": round(hp_base * p["hpMultiplier"]),
@@ -668,6 +1200,14 @@ def fight_stats(row: dict, scaling: Scaling, perm: PermScaling) -> dict:
         "deepOfNight": deep,
         "scalingId": scaling_id,
         "scaling": tiers,
+        # ---- schemaVersion 3 新增
+        "attackRateBase": p["attackRateBase"],
+        "attackRatesBase": p["attackRatesBase"],
+        "staminaAttackRateBase": p["staminaAttackRateBase"],
+        "chaosCorrectId": chaos_id,
+        "depthStats": depth_stats,
+        "mutationSetId": mutation_id,
+        "mutationPool": [mutation_id] if mutation_id is not None else [],
     }
 
 
@@ -692,6 +1232,11 @@ def merge_key(stats: dict, extra: tuple) -> tuple:
         tuple(stats["resist"].items()),
         json.dumps(stats["deepOfNight"], sort_keys=True),
         json.dumps(stats["scaling"], sort_keys=True),
+        # schemaVersion 3：深度缩放与变异档位不同的行不能再合并
+        stats["chaosCorrectId"],
+        stats["mutationSetId"],
+        stats["attackRateBase"],
+        stats["staminaAttackRateBase"],
     )
 
 
@@ -699,6 +1244,7 @@ def merge_key(stats: dict, extra: tuple) -> tuple:
 
 
 def build_nightlords(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: PermScaling,
+                     depth: DepthScaling, mutations: Mutations,
                      report: dict) -> tuple[list[dict], set[int]]:
     menu_zh = load_fmg(raw, "zhocn", "menu_dlc01", "CL_MenuText")
     menu_en = load_fmg(raw, "engus", "menu_dlc01", "CL_MenuText")
@@ -757,7 +1303,7 @@ def build_nightlords(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: Pe
                                   or "Enhanced Boss" in name or perm.of(r)["everdarkScaled"])
                 if row_is_variant != is_variant:
                     continue
-                stats = fight_stats(r, scaling, perm)
+                stats = fight_stats(r, scaling, perm, depth, mutations)
                 is_raid = "Raid" in name
                 buckets[merge_key(stats, (is_raid,))].append(r)
 
@@ -779,8 +1325,13 @@ def build_nightlords(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: Pe
                 "labelEn": label_en,
                 "labelUncertain": "?" in (rep["Name"] or ""),
                 "isMain": any(int(r["ID"]) in MAIN_NPC_IDS for r in rows),
+                # schemaVersion 3：行级「不掉任何奖励」，与 nightBosses 的变体同义
+                "noReward": rows_no_reward(rows),
             }
-            fight.update(fight_stats(rep, scaling, perm))
+            fight.update(fight_stats(rep, scaling, perm, depth, mutations))
+            fight["mutationPool"] = sorted({m for r in rows
+                                            for m in [mutations.get(r.get("chaosMatchingSpEffectSetParamId", "-1"))]
+                                            if m is not None})
             fights.append(fight)
             used_npc_ids.update(int(r["ID"]) for r in rows)
         disambiguate(fights)
@@ -801,6 +1352,9 @@ def build_nightlords(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: Pe
             "weakness": weakness,
             "descriptionZh": menu_zh.get(m["descriptionId"], ""),
             "descriptionEn": menu_en.get(m["descriptionId"], ""),
+            # schemaVersion 3：该夜王在深夜深度 1–5 的出现权重（同深度下各夜王的权重相除
+            # 即为相对概率；永夜之王/救世旗手在深度 1 全是 0，也就是深度 1 不会出永夜形态）
+            "depthChanceWeights": {str(d): num(m[f"depth{d}ChanceWeight"]) for d in DEPTHS},
             "fights": fights,
         }
         if not entry["nameZh"]:
@@ -842,73 +1396,283 @@ def nightlord_label(row: dict) -> tuple[str, str]:
 
 
 class NameBook:
-    """NpcName 文本 ID 形如 9 + chrId(5 位) + 3 位序号，用它把 Paramdex 名对上简中名。"""
+    """NpcName 文本 ID 形如 9 + chrId(5 位) + 3 位序号，用它把 Paramdex 名对上简中名。
+
+    规范化规则（schemaVersion 3 起写死成结构性的，不再有手工译名）：
+      * NpcName 的文本 ID = 900000000 + chrId × 1000 + 变体号；
+        chrId = NpcParam 行号 // 10000。
+      * 对照用的键是 norm()：英文小写、只留 a-z0-9 和空格。
+        「Paramdex 行名的基础名」与「engus NpcName」normalize 后相等即算同一敌人。
+      * 同一条英文名有单数和群体两种简中词条时（例如 904480311「米兰达之花」与
+        904480200「米兰达之花群」），优先取不带「群/们/队」后缀的那条。
+      * 只有当 Paramdex 基础名比 NpcName 长、且 NpcName 是它的「中心词」时
+        （norm(base) 以 " " + norm(fmg) 结尾，如 Large Golden Hippopotamus ⊃
+        Golden Hippopotamus）才允许放宽匹配，并标 nameApprox = true。
+        反方向（NpcName 比基础名长）一律不匹配，否则 Troll 会错配成 Troll Knight。
+    """
 
     def __init__(self, raw: Path):
         self.en = load_fmg(raw, "engus", "item_dlc01", "NpcName")
         self.zh = load_fmg(raw, "zhocn", "item_dlc01", "NpcName")
         self.by_chr: dict[int, list[str]] = defaultdict(list)
-        self.by_norm: dict[str, str] = {}
+        self.by_norm: dict[str, list[str]] = defaultdict(list)
         for k, v in self.en.items():
             if len(k) == 9 and k[0] == "9":
                 self.by_chr[int(k[1:6])].append(k)
-            self.by_norm.setdefault(norm(v), k)
+            self.by_norm[norm(v)].append(k)
         for ids in self.by_chr.values():
             ids.sort(key=int)
+        for ids in self.by_norm.values():
+            ids.sort(key=int)
+        # chrId → 该 chrId 自己的 Paramdex 基础名（normalize 过）。用来判断一条全局
+        # 精确命中的 NpcName 到底「属于谁」：904505000「Flying Dragon」所在的 chr 4505
+        # 自己的 Paramdex 名就是 Flying Dragon，那它就是 c4505 的名字，c4500 不能拿；
+        # 而 904601001「Snowfield Troll」所在的 chr 4601 自己叫 Troll Knight，
+        # 这条只是挂在 4601 名字段里的邻居，c4602 可以拿。
+        self.chr_bases: dict[int, set[str]] = {}
 
-    def _pick(self, base: str, chr_id: int) -> str | None:
+    # ---- 挑选
+
+    def _prefer(self, ids: list[str]) -> str | None:
+        """一组候选里挑最合适的：有简中的优先，非「群/们/队」结尾的优先，再按 ID。"""
+        cands = [k for k in ids if self.zh.get(k)] or list(ids)
+        if not cands:
+            return None
+        return min(cands, key=lambda k: ((self.zh.get(k, "") or "").endswith(PLURAL_ZH_SUFFIX),
+                                         int(k)))
+
+    def _exact_in_chr(self, base: str, chr_id: int) -> str | None:
+        nb = norm(base)
+        return self._prefer([k for k in self.by_chr.get(chr_id, []) if norm(self.en[k]) == nb])
+
+    def _owned_by_other_chr(self, k: str, chr_id: int) -> bool:
+        """这条 NpcName 是不是「别的 chrId 自己的名字」。
+
+        只有当本 chrId **自己也有**游戏文本词条时才拦：
+          * c4500 自己有 904500600「Flying Dragon of the Hills」，
+            那 904505000「Flying Dragon」就是隔壁 c4505 的名字，不能抢（→ 丘陵飞龙）；
+          * c4021 自己一条词条都没有，那它借用同一只敌人在 c4020 名下的
+            904020540「Royal Revenant / 王室幽魂」是对的。
+        """
+        if not (len(k) == 9 and k[0] == "9"):
+            return False
+        owner = int(k[1:6])
+        if owner == chr_id or not self.by_chr.get(chr_id):
+            return False
+        return norm(self.en.get(k, "")) in self.chr_bases.get(owner, set())
+
+    def _exact_global(self, base: str, chr_id: int) -> str | None:
+        cands = [k for k in self.by_norm.get(norm(base), [])
+                 if not self._owned_by_other_chr(k, chr_id)]
+        return self._prefer(cands)
+
+    def _loose_in_chr(self, base: str, chr_id: int) -> str | None:
+        """同 chrId 下的单复数 / 扩写匹配（Snowfield Troll ↔ Snowfield Trolls）。"""
         nb = norm(base)
         cands = self.by_chr.get(chr_id, [])
-        for k in cands:                                   # 1) 精确
-            if norm(self.en[k]) == nb:
-                return k
-        for k in cands:                                   # 2) 单复数
-            nk = norm(self.en[k])
-            if (nk.startswith(nb) or nb.startswith(nk)) and abs(len(nk) - len(nb)) <= 2:
-                return k
-        for k in cands:                                   # 3) 「XXX of the YYY」这类扩写
-            nk = norm(self.en[k])
-            if nk.startswith(nb + " ") or nb.endswith(" " + nk):
-                return k
-        return None
+        hit = [k for k in cands
+               if (lambda nk: (nk.startswith(nb) or nb.startswith(nk))
+                   and abs(len(nk) - len(nb)) <= 2)(norm(self.en[k]))]
+        if hit:
+            return self._prefer(hit)
+        hit = [k for k in cands
+               if (lambda nk: nk.startswith(nb + " ") or nb.endswith(" " + nk))(norm(self.en[k]))]
+        return self._prefer(hit)
 
-    def resolve(self, base: str, chr_id: int, name_ids: set[str]) -> tuple[str, str, str, str, bool]:
-        """→ (nameZh, nameEn, nameSource, npcNameId, inferred)
+    def _head_noun_global(self, base: str, chr_id: int) -> str | None:
+        """全局「中心词」匹配：只允许 NpcName 是基础名的后缀（基础名更长）。"""
+        nb = norm(base)
+        best, best_len = None, -1
+        for nk, ids in self.by_norm.items():
+            if nk and nb.endswith(" " + nk) and len(nk) > best_len:
+                k = self._prefer(ids)
+                if k is not None and self.zh.get(k):
+                    best, best_len = k, len(nk)
+        return best
 
-        解析顺序：NpcParam.nameId（该组唯一且 >0 时）→ (chrId, 基础名) 别名表 →
-        基础名别名表 → 同 chrId 精确/近似匹配 → 全局同名 → 手工表 → chrId 独苗。
+    def evidence(self, k: str) -> dict:
+        return {"fmg": "item/NpcName", "id": k,
+                "en": self.en.get(k, ""), "zh": self.zh.get(k, "")}
+
+    # ---- 主流程
+
+    def resolve(self, base: str, chr_id: int, name_ids: set[str],
+                community: dict | None = None) -> dict:
+        """→ {nameZh, nameEn, nameSource, npcNameId, inferred, approx, evidence, note, sourceUrl}
+
+        顺序：NpcParam.nameId（该组唯一且 >0 时）→ (chrId, 基础名) 别名表 → 基础名别名表 →
+        同 chrId 精确 → 全局精确 → 同 chrId 放宽 → 全局中心词 → chrId 独苗 →
+        社区身份（只用来认「这是谁」，中文仍去 NpcName 里取）→ 只有英文 / 只有 chrId。
         NpcParam.nameId 是游戏自己填的「这一行叫什么」，优先级最高：
         610030300「Duchess (Undertaker Remembrance)」的 nameId = 140030「黑夜盗贼」，
         而不是 Paramdex 行名暗示的职业名「女爵」。
         """
+        def done(k: str, source: str, *, name_en: str | None = None, approx: bool = False,
+                 inferred: bool = False, note: str = "", url: str = "") -> dict:
+            return {
+                "nameZh": self.zh.get(k, ""),
+                "nameEn": name_en if name_en is not None else base,
+                "nameSource": source,
+                "npcNameId": k,
+                "inferred": inferred,
+                "approx": approx,
+                "evidence": self.evidence(k),
+                "note": note,
+                "sourceUrl": url,
+            }
+
         if len(name_ids) == 1:
             k = next(iter(name_ids))
             if self.zh.get(k) or self.en.get(k):
-                return self.zh.get(k, ""), self.en.get(k, base), "npcparam-nameid", k, False
+                r = done(k, "npcparam-nameid")
+                r["nameEn"] = self.en.get(k, base)
+                return r
         ck = (chr_id, base)
         if ck in ALIAS_NPCNAME_ID_BY_CHR:
             k = ALIAS_NPCNAME_ID_BY_CHR[ck]
             if self.zh.get(k) or self.en.get(k):
-                return (self.zh.get(k, ""), self.en.get(k, base),
-                        "npcname-alias-chr", k, ck in ALIAS_INFERRED)
+                r = done(k, "npcname-alias-chr", inferred=ck in ALIAS_INFERRED)
+                r["nameEn"] = self.en.get(k, base)
+                return r
         if base in ALIAS_NPCNAME_ID:
-            k = ALIAS_NPCNAME_ID[base]
-            return self.zh.get(k, ""), base, "npcname-alias", k, False
-        k = self._pick(base, chr_id)
+            return done(ALIAS_NPCNAME_ID[base], "npcname-alias")
+        k = self._exact_in_chr(base, chr_id)
         if k is not None and self.zh.get(k):
-            return self.zh[k], base, "npcname", k, False
-        g = self.by_norm.get(norm(base))
-        if g is not None and self.zh.get(g):
-            return self.zh[g], base, "npcname-global", g, False
-        if base in ALIAS_MANUAL_ZH:
-            return ALIAS_MANUAL_ZH[base], base, "manual", "", False
+            return done(k, "npcname")
+        k = self._exact_global(base, chr_id)
+        if k is not None and self.zh.get(k):
+            return done(k, "npcname-global")
+        k = self._loose_in_chr(base, chr_id)
+        if k is not None and self.zh.get(k):
+            return done(k, "npcname", approx=norm(self.en[k]) != norm(base))
+        k = self._head_noun_global(base, chr_id)
+        if k is not None:
+            return done(k, "npcname-relaxed", approx=True,
+                        note=f"游戏文本里没有「{base}」这条词条，取了中心词「{self.en[k]}」"
+                             f"（NpcName {k}）的简中名，仅供参考。")
         only = self.by_chr.get(chr_id, [])
         if len(only) == 1 and self.zh.get(only[0]):
-            return self.zh[only[0]], base, "npcname-chr-only", only[0], False
-        return "", base, "english-only", "", False
+            # 该 chrId 底下只有一条游戏文本词条，但英文对不上基础名（多半是把同一处
+            # 遭遇里的一伙敌人合起来叫的群体名，例如 c3600 的 903600530
+            # 「Stoneskin Lords / 石肤众王」同时盖住雪花石之王和缟玛瑙之王），标 nameApprox
+            return done(only[0], "npcname-chr-only", approx=True,
+                        note=f"游戏文本里 c{chr_id} 只有一条词条"
+                             f"「{self.en.get(only[0], '')}」，英文与 Paramdex 行名"
+                             f"「{base}」对不上，多半是这处遭遇的群体名，仅供参考。")
+        if community:
+            name_en = community.get("nameEn") or base
+            ck2 = self._exact_global(name_en, chr_id) if name_en else None
+            if ck2 is not None and self.zh.get(ck2):
+                return done(ck2, "community-npcname", name_en=name_en,
+                            note=community.get("note", ""), url=COMMUNITY_SOURCE_URL)
+            return {
+                "nameZh": "", "nameEn": name_en, "nameSource": "community",
+                "npcNameId": "", "inferred": False, "approx": False, "evidence": None,
+                "note": community.get("note", ""), "sourceUrl": COMMUNITY_SOURCE_URL,
+            }
+        return {"nameZh": "", "nameEn": base, "nameSource": "english-only", "npcNameId": "",
+                "inferred": False, "approx": False, "evidence": None, "note": "", "sourceUrl": ""}
+
+
+def fallback_zh(name_en: str, name_zh: str) -> tuple[str, str]:
+    """→ (nameZhFallback, nameZhFallbackNote)。
+
+    v2 里按《艾尔登法环》官方简中手工补的译名（nameSource=manual）在 v3 全部移出
+    nameZh，但不丢：只要这一组现在的 nameZh 不等于旧译名，就把旧译名放进
+    nameZhFallback，并在 note 里写清「不是本作的游戏内文本」。
+    （v3 首版只在 nameZh 为空时才写 fallback，导致 4 条被游戏文本名替换掉的旧译名
+    只剩在 notes.nameChanges 里，页面拿不到；这里改成「不相等就写」。）
+    """
+    old = REMOVED_MANUAL_ZH.get(name_en, "")
+    if not old or old == name_zh:
+        return "", ""
+    note = (f"「{old}」**不是本作的游戏内文本**，"
+            f"是按《艾尔登法环》官方简中补的译名（v2 的 nameSource=manual）。"
+            f"全部 FMG 里检索不到完全一致的字符串，因此不进 nameZh；")
+    note += ("页面要显示中文时可以拿它兜底，但请标明不是官方名。" if not name_zh else
+             f"本条的 nameZh「{name_zh}」来自游戏文本，以 nameZh 为准，"
+             f"这里只是保留旧译名备查。")
+    return old, note
+
+
+def name_evidence_rank(entry: dict) -> int:
+    """nameZh 的证据强度，用来在「两张卡同名」时决定谁保留。
+
+    3 = 逐字命中游戏文本（nameApprox = false）；
+    2 = 近似命中，但词条属于本组自己的 chrId（NpcName ID 的 9xxxxx 段 = chrId）；
+    1 = 近似命中，而且词条是从别的 chrId 借来的（中心词 / 群体名）；
+    0 = 没有 nameZh。
+    """
+    if not entry["nameZh"]:
+        return 0
+    if not entry["nameApprox"]:
+        return 3
+    ev = entry["nameEvidence"]
+    key = (ev or {}).get("id", "")
+    if len(key) == 9 and key[0] == "9" and int(key[1:6]) in entry["chrIds"]:
+        return 2
+    return 1
+
+
+def resolve_name_collisions(entries: list[dict], report: dict) -> None:
+    """同一个 nameZh 不允许同时挂在两组首领上。
+
+    v3 首版放宽了 NpcName 的匹配（中心词 / chrId 独苗群体名），结果产生 3 对重名：
+    石肤众王（Alabaster Lord + Onyx Lord）、黄金河马（Large Golden Hippopotamus +
+    Golden Hippopotamus）、蚯蚓脸（Dreg Wormface + Large Wormface）。
+    两端页面都是「有 nameZh 就显示 nameZh」，于是用户会看到两张只有英文小字能区分的同名卡片，
+    而且 Alabaster / Onyx 这一对是拿一个自认低置信的群体名盖掉了两个各自正确的名字。
+
+    规则：按 name_evidence_rank 排序，只有**唯一的最强证据**那一条能留下 nameZh；
+    并列最强（例如同为群体名）则全部让出。让出的一条退回 english-only
+    （两端既有的「仅英文名」徽标会自动挂上），候选词条记进 nameZhRejected 不丢证据。
+    """
+    by_zh: dict[str, list[dict]] = defaultdict(list)
+    for e in entries:
+        if e["nameZh"]:
+            by_zh[e["nameZh"]].append(e)
+    for zh, group in sorted(by_zh.items()):
+        if len(group) < 2:
+            continue
+        ranks = [name_evidence_rank(e) for e in group]
+        top = max(ranks)
+        keeper = group[ranks.index(top)] if ranks.count(top) == 1 else None
+        for e in group:
+            if e is keeper:
+                continue
+            ev = e["nameEvidence"]
+            reason = (f"同一条游戏文本会同时落到 {len(group)} 组首领头上"
+                      f"（{'、'.join(x['nameEn'] for x in group)}），"
+                      + (f"其中「{keeper['nameEn']}」的证据更强（逐字命中或词条属于它自己的 chrId），"
+                         f"本组让出 nameZh。" if keeper else
+                         "几组的证据强度相同（都是近似匹配的群体名/中心词），全部让出 nameZh。"))
+            if ev:
+                e["nameZhRejected"] = {**ev, "reason": reason}
+                note = (f"游戏文本里唯一的候选是 NpcName {ev['id']}"
+                        f"「{ev['en']} / {ev['zh']}」，但{reason}"
+                        f"本组保留英文名，旧译名（如有）在 nameZhFallback。")
+                # 解析阶段那条 note 讲的就是这次被否掉的匹配，直接换掉；
+                # 只有社区来源的说明（讲「这是谁」）才保留并接在后面。
+                e["nameNote"] = (f"{note} {e['nameNote']}".strip()
+                                 if e["nameSourceUrl"] else note)
+            e["nameZh"] = ""
+            e["nameSource"] = "english-only"
+            e["npcNameId"] = None            # 这里的类型是 int|null，不能写成空串
+            e["nameEvidence"] = None
+            e["nameApprox"] = False
+            report["unmatchedNames"].append({"nameEn": e["nameEn"], "chrId": e["chrIds"][0]})
+            report["nameCollisions"].append({
+                "nameZh": zh,
+                "keptBy": f"{keeper['nameEn']}@{keeper['chrIds'][0]}" if keeper else None,
+                "releasedBy": f"{e['nameEn']}@{e['chrIds'][0]}",
+                "chrIds": list(e["chrIds"]),
+                "candidate": e["nameZhRejected"],
+                "reason": reason,
+            })
 
 
 def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: PermScaling,
+                       depth: DepthScaling, mutations: Mutations,
                        claimed: set[int], report: dict) -> list[dict]:
     book = NameBook(raw)
     groups: dict[tuple[str, int], list[tuple[dict, str, str]]] = defaultdict(list)
@@ -934,11 +1698,15 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
         if mpc not in FIELD_THREAT and mpc not in NIGHT_THREAT:
             continue
         chr_id = npc_id // 10000
-        if npc_id < 100000 or npc_id % 10000 == 9999 or num(r["hp"]) <= 0:
-            # 辅助 NPC（[Caligo Raid] Helper）、调试行（…9999）、无血量的场景实体
+        if npc_id < 100000 or npc_id % 10000 == 9999 or num(r["hp"]) <= 0 or is_template(r):
+            # 辅助 NPC（[Caligo Raid] Helper）、调试行（…9999）、无血量的场景实体、
+            # Paramdex 模板行（行名以「- Template」结尾）
             reason = ("辅助/召唤实体（ID < 100000）" if npc_id < 100000 else
                       "调试/模板行（ID 以 9999 结尾）" if npc_id % 10000 == 9999 else
-                      "hp 为 0 的场景实体")
+                      "hp 为 0 的场景实体" if num(r["hp"]) <= 0 else
+                      "Paramdex 模板行（行名以「- Template」结尾，getSoul=0、"
+                      "rewardItemLot/chaosMatchingRewardLotId/itemLotId_enemy 全为 -1，"
+                      "与同组真实行数值相同但 chaosMatchingCorrectParamId 不同，不是实战行）")
             report["skippedRows"].append({"npcId": npc_id, "name": r["Name"] or None,
                                           "chrId": chr_id, "hp": num(r["hp"]),
                                           "scalingId": mpc, "reason": reason})
@@ -956,22 +1724,61 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
                 if fallback:
                     base, base_source = book.en[fallback[0]], "npcname"
                 else:
-                    # Paramdex 与 NpcName 都没有名字：用 chrId 兜底保留，别静默丢掉
-                    # （例如 c4504 的 45040000，有效血量 12440，是守夜档位里最高的几行之一）
-                    base, base_source = f"Unknown Enemy (c{chr_id})", "placeholder"
+                    # Paramdex 与 NpcName 都没有名字：先看社区资料能不能认出这是谁
+                    # （schemaVersion 3；只用来认身份，中文名仍然只从 FMG 取），
+                    # 认不出来就用 chrId 兜底保留，别静默丢掉（例如 c4504 的 45040000，
+                    # 有效血量 12440，是守夜档位里最高的几行之一）。
+                    comm = COMMUNITY_CHR.get(chr_id)
+                    if comm and comm.get("nameEn"):
+                        base, base_source = comm["nameEn"], "community"
+                    else:
+                        base, base_source = f"Unknown Enemy (c{chr_id})", "placeholder"
         base_sources[(base, chr_id)].add(base_source)
         groups[(base, chr_id)].append((r, base, variant))
+
+    # 每个 chrId 自己的 Paramdex 基础名（含没进 groups 的行），供 NameBook 判断归属
+    chr_bases: dict[int, set[str]] = defaultdict(set)
+    for r in npc_rows:
+        if r["Name"]:
+            b = base_and_variant(r["Name"])[0]
+            chr_bases[int(r["ID"]) // 10000].add(norm(BASE_ALIAS.get(b, b)))
+    book.chr_bases = dict(chr_bases)
 
     out: list[dict] = []
     for (base, chr_id), items in groups.items():
         name_ids = {r["nameId"] for r, _, _ in items if r["nameId"] not in ("0", "-1", "")}
-        name_zh, name_en, source, name_id, alias_inferred = book.resolve(base, chr_id, name_ids)
+        comm = COMMUNITY_CHR.get(chr_id)
+        # 社区资料只有在真的给出名字时才参与解析；只有「判断」没有名字的
+        # （c7931 / c7932）走原来的 chrid-fallback，保留「未知敌人 cXXXX」。
+        res = book.resolve(base, chr_id, name_ids, comm if (comm or {}).get("nameEn") else None)
+        name_zh, name_en = res["nameZh"], res["nameEn"]
+        source, name_id = res["nameSource"], res["npcNameId"]
+        note, source_url = res["note"], res["sourceUrl"]
         if base.startswith("Unknown Enemy (c") and source == "english-only":
             name_zh, source = f"未知敌人 c{chr_id}", "chrid-fallback"
+            if comm:
+                note = note or comm.get("note", "")
+                source_url = source_url or COMMUNITY_SOURCE_URL
         if source == "english-only":
             report["unmatchedNames"].append({"nameEn": name_en, "chrId": chr_id})
         srcs = base_sources[(base, chr_id)]
-        inferred = alias_inferred or ("paramdex" not in srcs and "sibling" in srcs)
+        inferred = res["inferred"] or ("paramdex" not in srcs and "sibling" in srcs)
+        # 基础名本身来自社区认定时，即使中文是从 FMG 取到的也要标出来源
+        if "community" in srcs and source.startswith("npcname") and comm:
+            source = "community-npcname"
+            note = note or comm.get("note", "")
+            source_url = source_url or COMMUNITY_SOURCE_URL
+
+        # 「明显不是首领」的判据（结构性，不是手挑）：整组没有任何奖励
+        # （getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全是 0 或 -1），
+        # 并且要么不吃削韧（superArmorDurability <= 0，典型的投射物/部件实体），
+        # 要么连游戏文本带社区资料都认不出是谁，要么社区把它标成杂兵。
+        rows_all = [r for r, _, _ in items]
+        no_reward = rows_no_reward(rows_all)
+        max_poise = max(num(r["superArmorDurability"]) for r in rows_all)
+        comm_role = (comm or {}).get("role")
+        hidden = bool(no_reward and (max_poise <= 0 or source == "chrid-fallback"
+                                     or comm_role == "add"))
 
         buckets: dict[tuple, list[tuple[dict, str]]] = defaultdict(list)
         tiers: set[str] = set()
@@ -979,7 +1786,7 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
             mpc = int(r["multiPlayCorrectionParamId"])
             tier = "night" if mpc in NIGHT_THREAT else "field"
             tiers.add(tier)
-            stats = fight_stats(r, scaling, perm)
+            stats = fight_stats(r, scaling, perm, depth, mutations)
             buckets[merge_key(stats, (tier,))].append((r, variant))
 
         variants = []
@@ -998,8 +1805,14 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
                 "labelEn": variant or "Base",
                 "labelUncertain": "?" in (rep["Name"] or ""),
                 "threat": "night" if mpc in NIGHT_THREAT else "field",
+                # schemaVersion 3：行级「不掉任何奖励」。两端选「代表行」时可以拿它
+                # 把模板行/投射物行排在同血量的实战行之后，而不必去猜 Paramdex 行名。
+                "noReward": rows_no_reward([r for r, _ in rows]),
             }
-            v.update(fight_stats(rep, scaling, perm))
+            v.update(fight_stats(rep, scaling, perm, depth, mutations))
+            v["mutationPool"] = sorted({m for r, _ in rows
+                                        for m in [mutations.get(r.get("chaosMatchingSpEffectSetParamId", "-1"))]
+                                        if m is not None})
             variants.append(v)
         disambiguate(variants)
         variants.sort(key=lambda v: (v["threat"] != "night", -v["hp"], v["npcId"]))
@@ -1014,6 +1827,17 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
             "tier": "night" if "night" in tiers else "field",
             "tiers": sorted(tiers),
             "variants": variants,
+            # ---- schemaVersion 3 新增
+            "nameApprox": res["approx"],
+            "nameEvidence": res["evidence"],
+            "nameNote": note,
+            "nameSourceUrl": source_url,
+            "nameZhFallback": "",
+            "nameZhFallbackNote": "",
+            # schemaVersion 3：被「同名去重」挡下来的候选词条（见 resolve_name_collisions）
+            "nameZhRejected": None,
+            "hidden": hidden,
+            "noReward": no_reward,
         })
 
     # 同名同中文名的组（同一 Boss 分散在多个 chrId）合并成一条
@@ -1028,8 +1852,26 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
         cur["tiers"] = sorted(set(cur["tiers"]) | set(e["tiers"]))
         cur["tier"] = "night" if "night" in cur["tiers"] else "field"
         cur["nameInferred"] = cur["nameInferred"] or e["nameInferred"]
+        cur["nameApprox"] = cur["nameApprox"] or e["nameApprox"]
+        cur["hidden"] = cur["hidden"] and e["hidden"]
+        cur["noReward"] = cur["noReward"] and e["noReward"]
+        cur["nameNote"] = cur["nameNote"] or e["nameNote"]
+        cur["nameSourceUrl"] = cur["nameSourceUrl"] or e["nameSourceUrl"]
+        cur["nameEvidence"] = cur["nameEvidence"] or e["nameEvidence"]
+        cur["nameZhFallback"] = cur["nameZhFallback"] or e["nameZhFallback"]
+        cur["nameZhFallbackNote"] = cur["nameZhFallbackNote"] or e["nameZhFallbackNote"]
+        cur["nameZhRejected"] = cur["nameZhRejected"] or e["nameZhRejected"]
         cur["variants"].extend(e["variants"])
     out = list(merged.values())
+
+    # 【名字·同名去重】必须放在上面的 (nameEn, nameZh) 合并之后：同一只 Boss 分散在
+    # 多个 chrId 时（王室幽魂 c4020+c4021、黑夜人偶十个角色各有 c60003/c61003 两组）
+    # 合并前看起来就是「同名的两组」，在这之前去重会把它们全部误杀。
+    # 合并之后还同名的，才是真正的两只不同 Boss 抢同一条游戏文本。
+    resolve_name_collisions(out, report)
+    for e in out:
+        e["nameZhFallback"], e["nameZhFallbackNote"] = fallback_zh(e["nameEn"], e["nameZh"])
+
     for e in out:                        # 跨 chrId 合并后可能又撞车
         disambiguate(e["variants"])
         e["variants"].sort(key=lambda v: (v["threat"] != "night", -v["hp"], v["npcId"]))
@@ -1045,6 +1887,262 @@ def build_night_bosses(raw: Path, npc_rows: list[dict], scaling: Scaling, perm: 
     return out
 
 
+# schemaVersion 2 里的简中名，只列出本次会变的那几条。写死在这里是为了让
+# notes.nameChanges 可复现（不依赖上一版的 JSON 文件），同时在生成时做自检：
+# 如果新的解析规则跑出来的名字和 "new" 对不上就直接报错，防止悄悄漂移。
+V2_TO_V3_NAMES = [
+    # (id, 旧简中名, 新简中名, 依据)
+    ("Snowfield Troll@4602", "雪原山妖群", "雪原山妖",
+     "旧规则在同 chrId 下只找到群体词条 NpcName 904602000「Snowfield Trolls / 雪原山妖群」；"
+     "新规则先做全局精确匹配，命中 904601001「Snowfield Troll / 雪原山妖」（单数）。"),
+    ("Miranda Blossom@4480", "米兰达之花群", "米兰达之花",
+     "NpcName 904480200 与 904480311 的英文都是「Miranda Blossom」，但前者简中是"
+     "「米兰达之花群」、后者是「米兰达之花」；新规则在同一英文名的候选里优先取"
+     "不带「群/们/队」后缀的那条。"),
+]
+
+
+def name_changes(night_bosses: list[dict]) -> list[dict]:
+    """本次（schemaVersion 2 → 3）的名字变更清单。"""
+    by_id = {e["id"]: e for e in night_bosses}
+    out: list[dict] = []
+
+    # 1) 删掉的 14 条手工译名
+    for e in night_bosses:
+        old_zh = REMOVED_MANUAL_ZH.get(e["nameEn"])
+        if old_zh is None or e["nameSource"] == "manual":
+            continue
+        if e["nameEvidence"]:
+            replacement = (
+                f"改用游戏文本 NpcName {e['nameEvidence']['id']}"
+                f"「{e['nameEvidence']['en']} / {e['nameEvidence']['zh']}」"
+                + ("（中心词近似匹配，已标 nameApprox）。" if e["nameApprox"] else "。"))
+        elif e["nameZhRejected"]:
+            rej = e["nameZhRejected"]
+            replacement = (
+                f"游戏文本里唯一的候选是 NpcName {rej['id']}「{rej['en']} / {rej['zh']}」，"
+                f"但{rej['reason']}为避免两张卡顶同一个中文名，nameZh 留空、只保留 nameEn；"
+                f"旧译名移到 nameZhFallback（已标明不是游戏内文本），候选词条记在 nameZhRejected。")
+        else:
+            replacement = (
+                f"游戏文本里找不到对应词条，nameZh 留空、只保留 nameEn；"
+                f"旧译名移到 nameZhFallback（已标明不是游戏内文本）。")
+        out.append({
+            "id": e["id"], "chrIds": e["chrIds"],
+            "oldNameEn": e["nameEn"], "newNameEn": e["nameEn"],
+            "oldNameZh": old_zh, "newNameZh": e["nameZh"],
+            "oldNameSource": "manual", "newNameSource": e["nameSource"],
+            "nameZhFallback": e["nameZhFallback"],
+            "reason": (
+                f"v2 的「{old_zh}」是按《艾尔登法环》官方简中手工补的译名。"
+                f"在全部 FMG（engus/zhocn、55 个文件）里检索「{old_zh}」与「{e['nameEn']}」"
+                f"都没有完全一致的字符串，按新规则删除。" + replacement
+            ),
+            "evidence": e["nameEvidence"] or e["nameZhRejected"],
+        })
+
+    # 2) 社区认出身份的 7 个 chrId
+    for chr_id, comm in sorted(COMMUNITY_CHR.items()):
+        hit = next((e for e in night_bosses if chr_id in e["chrIds"]), None)
+        if hit is None:
+            continue
+        out.append({
+            "id": hit["id"], "chrIds": hit["chrIds"],
+            "oldNameEn": f"Unknown Enemy (c{chr_id})", "newNameEn": hit["nameEn"],
+            "oldNameZh": f"未知敌人 c{chr_id}", "newNameZh": hit["nameZh"],
+            "oldNameSource": "chrid-fallback", "newNameSource": hit["nameSource"],
+            "reason": (("名字本身没有变（社区资料也认不出这是谁），本次新增的是 hidden 标记与判断说明："
+                        if not comm.get("nameEn") else "") + comm["note"]),
+            "confidence": comm["confidence"],
+            "hidden": hit["hidden"],
+            "sourceUrl": COMMUNITY_SOURCE_URL,
+            "evidence": hit["nameEvidence"],
+        })
+
+    # 3) 匹配规则变严带来的修正（单复数 / 群体词条）
+    for gid, old_zh, new_zh, reason in V2_TO_V3_NAMES:
+        e = by_id.get(gid)
+        if e is None:
+            continue
+        assert e["nameZh"] == new_zh, f"{gid} 期望简中名 {new_zh}，实际 {e['nameZh']}"
+        out.append({
+            "id": gid, "chrIds": e["chrIds"],
+            "oldNameEn": e["nameEn"], "newNameEn": e["nameEn"],
+            "oldNameZh": old_zh, "newNameZh": new_zh,
+            "oldNameSource": "npcname", "newNameSource": e["nameSource"],
+            "reason": reason, "evidence": e["nameEvidence"],
+        })
+    out.sort(key=lambda c: (c["chrIds"][0], c["id"]))
+    return out
+
+
+MULTIPLAYER_SCALING_AUDIT = [
+    "结论：多人**不是**简单地「血量乘人数」。把 MultiPlayCorrectionParam 每一行的 "
+    "client1（双人）/ client2（三人）指向的 SpEffect 整行摊开（scalingTiers.*.fullEffects.fields "
+    "里是全部非默认字段），一共只动这几类：maxHpRate（血量）、saReceiveDamageRate（承受削韧）、"
+    "changeSaRecoveryVelocity（削韧恢复速度）、七种 *DefDamageRate（异常累积量）、"
+    "四种 *DamageRate（异常发动伤害）、以及少数档位的五种 *AttackPowerRate（敌人攻击力）。"
+    "另有四个非数值的作用目标标记位在全部 136 条缩放行上恒为 1："
+    "effectTargetFriendlyTarget / effectTargetOpposeTarget / magParamChange / miracleParamChange，"
+    "再加上 spCategory = 140 与 stateInfo = 282 两个标记——这些都不是倍率，"
+    "fullEffects.fields 里原样带着。"
+    "全表另有 Spirit Creatures（7770–7779）用的 45696/45697 两行带 "
+    "invocationConditionsStateChange1 = 413，这几个档位本数据集一行都没用到，不在 scalingTiers 里。",
+    "血量倍率按档位差别很大，并不都是 ×2 / ×3：最终 Boss（7760–7769）与部分守夜档确实是 "
+    "×2 / ×3；但野外 Boss 常见档 7740 只有 ×1.1 / ×1.2，7743/7749/7750 是 ×1.3 / ×1.6，"
+    "7744/7753/7754/7758 是 ×1.74 / ×2.48，联机突袭档 98818 是 ×1.35 / ×1.7、98822 是 ×1.75 / ×2.5，"
+    "98810/98815（格拉狄乌斯/哈尔莫妮亚突袭）甚至是 ×1 / ×1（完全不加血）。",
+    "**多人会让敌人打得更疼**：7744（野外 Boss）与 7753 / 7754 / 7758（守夜 Boss）四档的缩放行 "
+    "physicsAttackPowerRate = magic = fire = thunder = dark = 1.1（双人）/ 1.2（三人），"
+    "也就是这些 Boss 在多人时攻击力上浮 10% / 20%。其余档位攻击力倍率都是 1。"
+    "staminaAttackRate（对玩家耐力的削减）在所有人数缩放行里都是 1，没有变化。",
+    "**防御侧完全没动**：physicsDiffenceRate / magicDiffenceRate / fireDiffenceRate / "
+    "thunderDiffenceRate / darkDiffenceRate、defEnemyDmgCorrectRate_* 全部保持默认 1，"
+    "也就是多人不会让 Boss 变得更耐打（每一刀的伤害不变，只是血条更长）。"
+    "NpcParam 的 *DamageCutRate（damageRates）也不受人数影响。",
+    "**掉落与卢恩没动**：haveSoulRate、itemDropRate 都是默认值，人数缩放行不碰它们；"
+    "多人时的奖励差异来自别处（MultiSoulBonusRateParam 等），不在本数据集范围内。",
+    "**异常阈值没动**：change*ResistPoint 七项全是 0，多人不改 resist 阈值；"
+    "变的是「累积量倍率」*DefDamageRate（双人 0.85–0.985 / 三人 0.7–0.97，按档位）"
+    "与「发动伤害倍率」*DamageRate（双人 75–98% / 三人 50–97%），两者都往下走，"
+    "所以人越多越难让 Boss 中异常、中了也更弱。",
+    "叠加方式是**相乘不是相加**：人数缩放行的 spCategory = 140，常驻威胁档位与深度缩放行的 "
+    "spCategory = 0，变异个体是 203 —— Paramdex 的 paramdef 说明 spCategory 是"
+    "「决定特殊效果互相覆盖行为的分类」、categoryPriority 是「同一分类内的优先级」，"
+    "分类不同就不会互相覆盖，各自的 maxHpRate 等倍率连乘。同一分类里才会按优先级只留一个"
+    "（双人/三人两行都是 140，正好保证同时只有一档生效）。",
+    "实测核对（Fextralife 各 Boss 页，2026-09）：格拉狄乌斯 11,328 / 22,656 / 33,984、"
+    "永夜之王格拉狄乌斯 17,558 / 35,116 / 52,674、艾德雷 13,140 / 26,280 / 39,420 —— "
+    "与本数据集逐位一致；卡莉果 Fextralife 记 12,007 / 24,014 / 36,021，本数据集 "
+    "12,008 / 24,016 / 36,024，差异来自 hpBase × hpMultiplier = 3392 × 3.54 = 12007.68 "
+    "的取整方式（本数据集四舍五入，Fextralife 截断），不是缩放逻辑的分歧。"
+    "削韧（格拉狄乌斯 120 / 艾德雷 150 / 卡莉果 160）与八系承伤倍率也逐项对上。",
+    "MultiPlayCorrectionParam 还有 client3SpEffectId（4 人档），NIGHTREIGN 整表都是 -1，"
+    "对应游戏最多 3 人；fullEffects.quad 因此恒为 null。",
+]
+
+DEEP_OF_NIGHT_AUDIT = [
+    "深夜（The Deep of Night，CL_MenuText 131150）的「深度」（Depth，131011）1–5 "
+    "是通过 NpcParam.chaosMatchingCorrectParamId → ChaosMatchingCorrectParam 生效的："
+    "该表的 spEffect00..spEffect04 就是深度 1..5 的 SpEffect 行，Paramdex 行名形如"
+    "「[Deep Night Scaling] Tier 3b, Depth 4」。整表 90 行里 ID 0 那行 spEffect00..04 全是 -1"
+    "（没有任何深度效果），其余 89 行按 spEffect00 的 Paramdex 行名归并成 **25 组**档位："
+    "Tier 1 / 2a / 2b / 2c / 2d / 3a / 3b / 3c / 3d / 3e / 3f / 3g / 4a / 5a / 5b / 5c、"
+    "Night Invader、[Gladius Raid]、[Harmonia Raid]、[Caligo Raid]、[Lightning Ball]、"
+    "[Skill - Revenant] Helen / Frederick / Sebastian、[Ultimate - Executor] Beast。"
+    "deepOfNightTiers 只收录数据集实际用到的 22 档，与 22 个不同的 chaosCorrectId 一一对应，"
+    "没有悬空引用。",
+    "深度缩放行自身 stateInfo = 2287，也就是「进入深夜」这个状态是它们打上去的；"
+    "NpcParam 上那些 invocationConditionsStateChange1 = 2287 的"
+    "「[Deep of Night Everdark Scaling] / [DLC Deep of Night Scaling]」行随之点亮，"
+    "作用是把永夜之王/DLC 的加成压回去（例如格拉狄乌斯 ×0.677）。"
+    "三者的 spCategory 各不相同：深度行是 0，[Deep of Night Everdark Scaling]"
+    "（7330–7348/7355/7356）是 20、其中 7342/7344/7355/7356 是 100，"
+    "[DLC Deep of Night Scaling]（7395–7398）是 0。"
+    "分类不同就不互相覆盖，所以它们与常驻威胁档位一起连乘"
+    "（把数据集用到的全部 NpcParam 行逐行扫过，没有任何一行出现两条非中性效果"
+    "共用同一个非 0 spCategory，所以 hpMultiplier 这类连乘是安全的）。",
+    "所以 depthStats[N].hp = NpcParam.hp × 常驻档位倍率 × 深夜修正（有才乘）× 深度 N 的 maxHpRate。"
+    "v2 的 deepOfNight 字段只算到「深夜修正」为止，没有乘深度倍率，"
+    "现在 deepOfNight 保留原义（= 深夜基准，等价于深度倍率为 1 时的值），深度值在 depthStats 里。",
+    "实战夜王走的是 **Tier 4a**（chaosCorrectId = 7767）：数据集里 27 条 isMain 夜王战斗行"
+    "有 26 条是它（只有救世旗手哈尔莫妮亚的永夜虫 46410000 走 7760 = Tier 3f）。"
+    "Tier 4a 深度 1→5 的血量倍率 1.25 / 1.4 / 1.57 / 1.95 / 2.16，"
+    "攻击力倍率 1.25 / 1.55 / 1.92 / 2.83 / 3.31，"
+    "承受削韧 0.88 / 0.87 / 0.86 / 0.85 / 0.84，对玩家耐力削减 1.15 / 1.2 / 1.3 / 1.45 / 1.5。"
+    "注意攻击力涨得比血量快得多——深度 5 的伤害是深度 1 的 2.65 倍。",
+    "**别按 ChaosMatchingCorrectParam 的行名段猜档位**：7760–7769 行名全是「Final Boss Threat」，"
+    "但 7765 = Tier 2c、7766 = Tier 3e、7767 = Tier 4a，只有 7760–7764 / 7768 / 7769 是 Tier 3f"
+    "（×1.3 / 1.378 / 1.461 / 1.636 / 1.718 血，×1.3 / 1.547 / 1.841 / 2.54 / 2.947 攻击）。"
+    "本数据集里 Tier 3f 只挂在夜王的非主战行（召唤物 / 阶段实体）与上面那条永夜虫上。"
+    "一律按每一行自己的 chaosCorrectId 查 deepOfNightTiers。",
+    "档位之间差别不小：杂兵档 Tier 1（7700 段）深度 5 是 ×2.106 血 / ×3.6 伤害，"
+    "守夜大型档 Tier 5a/5b/5c（7753/7754/7758）只有 ×1.6 血 / ×2.22 伤害，"
+    "突袭档（[Gladius Raid] / [Harmonia Raid]）是 ×1.5 血 / ×1.85 伤害，"
+    "[Caligo Raid] 各深度全是 ×1（完全不随深度变强）。"
+    "夜王档 Tier 4a 是 ×2.16 血 / ×3.31 伤害，野外常见档 7740（Tier 3b）是 ×1.718 血 / ×2.947 伤害。",
+    "「红化」在游戏内简中叫**变异个体**（CL_MenuText 138296「打败敌人的次数（变异个体）」、"
+    "338806「已打倒变异个体」）。它走 NpcParam.chaosMatchingSpEffectSetParamId → "
+    "SpEffectSetParam「Set: Deep Night Mutation - VFX + Scaling」："
+    "spEffectId1 是红光 VFX 档位（4480–4483，vfxId 150050–150053），"
+    "spEffectId2 是数值档位（7200/7210/7215/7220/7230/7240/7241），"
+    "少数行还带 spEffectId3 = 4485（vfxId 150055）。",
+    "变异的数值档位共 7 种：×2 血 ×2 伤害 ×2 卢恩（7200/7210）、×2 血 ×1.75 伤害（7215）、"
+    "×1.8 血 ×1.75 伤害（7220）、×1.8 血 ×1.5 伤害（7241）、×1.65 血 ×1.5 伤害 ×1.6 卢恩（7230）、"
+    "×1.15 血 ×1.15 伤害 ×1.35 卢恩（7240）。spCategory = 203，与深度（0）、常驻（0）、"
+    "人数（140）都不同，所以变异倍率是在其它缩放之上**再乘一层**。",
+    "哪些敌人能被变异：NpcParam 里 chaosMatchingSpEffectSetParamId != -1 的行都挂了变异档位"
+    "（本数据集里每个 fight/variant 的 mutationSetId / mutationPool 就是它）。"
+    "多少只会被变异由 ChaosMatchingMutationCategoryParam 决定：它按"
+    "（敌人类别 × 地图）给出每个深度「被变异的个数」，不是百分比概率——"
+    "例如林薇尔德的野外首领（类别 120 / 地图 10）深度 1 是 0 只、深度 2–5 各 5 只，"
+    "封印监牢首领（类别 160）同样深度 1 为 0、深度 2 起才有。"
+    "也就是**深度 1 不会出现变异的野外首领/封印监牢首领**，深度 4 起据点首领的变异数量再上一档。",
+    "ChaosMatchingMutationEnemyTableParam（3067 行）是「地图上哪些刷新点可以被变异」的表"
+    "（categoryId + smallBaseId → SmallBaseMapVariationParam + modifierMapId），"
+    "它按刷新点而不是按 NpcParam 行组织，没法直接对到某只 Boss，本数据集没有收录；"
+    "能确定的只有类别层面的数量，见 mutationCategories。",
+    "每个夜王在各深度的出现权重来自 NightBossMenuParam 的 depth1..5ChanceWeight，"
+    "已写进每个 nightlords 条目的 depthChanceWeights。本体夜王是「深度越深权重越低」"
+    "（1000 → 800 → 650 → 500 → 500），永夜之王/救世旗手则是深度 1 为 0、之后 "
+    "200 → 350 → 500 → 500 —— 深度 1 打不到永夜形态。"
+    "守夜/野外 Boss 没有对应的按深度出现权重表（参数里只有变异数量），已写进 caveats。",
+]
+
+
+def build_depth_overview(raw: Path) -> tuple[dict, list[dict], dict]:
+    """→ (deepOfNightDepths, mutationCategories, deepOfNightText)
+
+    deepOfNightDepths：ChaosMatchingRankControlParam 的 5 行（Paramdex 行名就是
+    「Depth 1」…「Depth 5」），给出每个深度的全局控制值。字段含义来自 Paramdex Defs：
+      cursedUncommonRate / cursedRareRate  诅咒（罕见/稀有）遗物的出现率
+      mapChallengeWeight_Map/_Nightlord/_None  地图挑战类型的权重
+      cataclysmWeight_0/_1/_2              天变（地形变化）数量 0/1/2 的权重
+    这张表里**没有**血量/攻击倍率——那些在 ChaosMatchingCorrectParam 里，按敌人档位分，
+    见 deepOfNightTiers 与每个 fight/variant 的 depthStats。
+    """
+    menu_zh = load_fmg(raw, "zhocn", "menu_dlc01", "CL_MenuText")
+    menu_en = load_fmg(raw, "engus", "menu_dlc01", "CL_MenuText")
+    text = {k: {"zh": menu_zh.get(v, ""), "en": menu_en.get(v, ""), "textId": int(v)}
+            for k, v in DEEP_TEXT_IDS.items()}
+
+    depths: dict[str, dict] = {}
+    for r in read_param(raw, "ChaosMatchingRankControlParam"):
+        d = int(r["ID"])
+        if d not in DEPTHS:
+            continue
+        depths[str(d)] = {
+            "rankId": d,
+            "paramdexName": r["Name"] or None,
+            "labelZh": f'{text["depth"]["zh"]} {d}' if text["depth"]["zh"] else f"深度 {d}",
+            "labelEn": f'{text["depth"]["en"]} {d}' if text["depth"]["en"] else f"Depth {d}",
+            "cursedUncommonRate": num(r["cursedUncommonRate"]),
+            "cursedRareRate": num(r["cursedRareRate"]),
+            "mapChallengeWeight": {"map": num(r["mapChallengeWeight_Map"]),
+                                   "nightlord": num(r["mapChallengeWeight_Nightlord"]),
+                                   "none": num(r["mapChallengeWeight_None"])},
+            "cataclysmWeight": {"0": num(r["cataclysmWeight_0"]),
+                                "1": num(r["cataclysmWeight_1"]),
+                                "2": num(r["cataclysmWeight_2"])},
+        }
+
+    cats: list[dict] = []
+    for r in read_param(raw, "ChaosMatchingMutationCategoryParam"):
+        cid = int(r["categoryId"])
+        mid = int(r["modifierMapId"])
+        czh, cen = MUTATION_CATEGORY_ZH.get(cid, (str(cid), str(cid)))
+        mzh, men = MUTATION_MAP_ZH.get(mid, (str(mid), str(mid)))
+        cats.append({
+            "rowId": int(r["ID"]),
+            "categoryId": cid, "categoryZh": czh, "categoryEn": cen,
+            "mapId": mid, "mapZh": mzh, "mapEn": men,
+            # 注意：这些是「该深度会有多少只这一类敌人被变异」的**个数**，不是百分比概率
+            "mutatedCount": {str(d): num(r[f"depth{d}Count"]) for d in DEPTHS},
+        })
+    cats.sort(key=lambda c: (c["categoryId"], c["mapId"]))
+    return depths, cats, text
+
+
 # ---------------------------------------------------------------- 主流程
 
 
@@ -1057,15 +2155,21 @@ def main() -> None:
     raw: Path = args.raw
     npc_rows = read_param(raw, "NpcParam")
     speffects = load_speffects(raw)
-    scaling = Scaling(raw, speffects)
+    defaults = speffect_defaults(speffects)
+    scaling = Scaling(raw, speffects, defaults)
     perm = PermScaling(speffects)
+    depth = DepthScaling(raw, speffects)
+    mutations = Mutations(raw, speffects)
     report = {"skippedMenuRows": [], "skippedRows": [], "unmatchedNames": [],
               "missingZhNightlord": [], "unmappedNightlords": [],
-              "unknownMenuVariants": [], "unassignedFinalBossRows": []}
+              "unknownMenuVariants": [], "unassignedFinalBossRows": [],
+              "nameCollisions": []}
 
-    nightlords, claimed = build_nightlords(raw, npc_rows, scaling, perm, report)
-    night_bosses = build_night_bosses(raw, npc_rows, scaling, perm, claimed, report)
+    nightlords, claimed = build_nightlords(raw, npc_rows, scaling, perm, depth, mutations, report)
+    night_bosses = build_night_bosses(raw, npc_rows, scaling, perm, depth, mutations, claimed, report)
+    depth_overview, mutation_categories, deep_text = build_depth_overview(raw)
     report["skippedRows"].sort(key=lambda s: s["npcId"])
+    report["unmatchedNames"].sort(key=lambda u: (u["chrId"], u["nameEn"]))
     report["unassignedFinalBossRows"].sort(key=lambda s: s["npcId"])
 
     out = {
@@ -1079,26 +2183,56 @@ def main() -> None:
                 "url": "",
                 "revision": "regulation 10350000 / exe 1.3.3.0",
                 "license": "游戏本体数据，仅用于展示数值",
-                "usage": "NightBossMenuParam / NpcParam / MultiPlayCorrectionParam / SpEffectParam",
+                "usage": "NightBossMenuParam / NpcParam / MultiPlayCorrectionParam / SpEffectParam"
+                         " / SpEffectSetParam / ChaosMatchingCorrectParam"
+                         " / ChaosMatchingRankControlParam / ChaosMatchingMutationCategoryParam",
             },
             {
                 "name": "ELDEN RING NIGHTREIGN 游戏内文本 FMG（简体中文 / 英文）",
                 "url": "",
                 "revision": "regulation 10350000 + DLC1",
                 "license": "游戏本体数据，仅用于展示名称",
-                "usage": "menu/CL_MenuText（夜王名、远征名、说明）、item/NpcName（Boss 名）",
+                "usage": "menu/CL_MenuText（夜王名、远征名、说明、深夜/深度/变异个体）、"
+                         "item/NpcName（Boss 名；所有简中名的唯一来源）",
             },
             {
                 "name": "Smithbox Paramdex (NR)",
                 "url": f"https://github.com/vawser/Smithbox/tree/{PARAMDEX_REV}/src/Smithbox.Data/Assets/PARAM/NR",
                 "revision": PARAMDEX_REV,
                 "license": "MIT",
-                "usage": "paramdef 字段名、行名（Name 列）、EFFECTIVE_AFFINITY 枚举",
+                "usage": "paramdef 字段名、行名（Name 列）、EFFECTIVE_AFFINITY / "
+                         "MUTATION_CATEGORY / PATTERN_MODIFIER 枚举、"
+                         "SpEffectParam 的 spCategory/categoryPriority 字段说明（叠加规则）",
+            },
+            {
+                "name": "4laric/nightreign-enemy-rando",
+                "url": COMMUNITY_SOURCE_URL,
+                "revision": "HEAD（2026-09 访问）",
+                "license": "第三方社区数据，仅用于辨认 Paramdex 与游戏文本都没有名字的 chrId",
+                "usage": "data/nr_enemy_roster.json（all_variants[].variant_name）与 "
+                         "data/nr_enemy_tags.json（name / tier / _confidence）—— "
+                         "c4504 / c4603 / c7711 / c7712 / c7910 的身份判断；"
+                         "简中名仍然只从游戏文本取，社区来源在 nameSourceUrl 里标出",
+            },
+            {
+                "name": "Elden Ring Nightreign Wiki (Fextralife)",
+                "url": "https://eldenringnightreign.wiki.fextralife.com/",
+                "revision": "2026-09 访问",
+                "license": "第三方 wiki，仅作交叉验证",
+                "usage": "格拉狄乌斯 / 永夜之王格拉狄乌斯 / 艾德雷 / 卡莉果 的 1/2/3 人血量、"
+                         "削韧与八系承伤倍率 —— 用来核对本数据集的人数缩放，"
+                         "结果见 notes.multiplayerScalingAudit",
             },
         ],
         "affinityNames": {str(k): {"zh": v[0], "en": v[1]} for k, v in sorted(AFFINITY_NAMES.items())},
         "scalingTiers": {str(k): v for k, v in sorted(scaling.used.items())},
         "permanentScaling": {str(k): v for k, v in sorted(perm.used.items())},
+        # ---- schemaVersion 3 新增的顶层键
+        "deepOfNightText": deep_text,
+        "deepOfNightDepths": depth_overview,
+        "deepOfNightTiers": {str(k): v for k, v in sorted(depth.used.items())},
+        "mutations": {str(k): v for k, v in sorted(mutations.used.items())},
+        "mutationCategories": mutation_categories,
         "caveats": CAVEATS,
         "nightlords": nightlords,
         "nightBosses": night_bosses,
@@ -1107,6 +2241,10 @@ def main() -> None:
             "skippedMenuRows": report["skippedMenuRows"],
             "skippedRows": report["skippedRows"],
             "unassignedFinalBossRows": report["unassignedFinalBossRows"],
+            "nameChanges": name_changes(night_bosses),
+            "nameCollisions": report["nameCollisions"],
+            "multiplayerScalingAudit": MULTIPLAYER_SCALING_AUDIT,
+            "deepOfNightAudit": DEEP_OF_NIGHT_AUDIT,
         },
     }
 

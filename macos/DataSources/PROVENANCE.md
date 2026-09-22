@@ -492,3 +492,117 @@ self_check 新增：stateInfo 枚举与观测值双向相等；selfInflictedStat
 
 **本次修订（2026-09）**
 修了 5 处核验问题：① 随机池的中英文遗物名改为**按遗物 ID 配对**后整体排序（此前中英文各自排序，按下标配对会错译，例如 `端正的光耀暗淡情景` 被配成 `Deep Delicate Burning Scene`，正确是 `Deep Polished Luminous Scene`），并新增 `relicNames: [{zh, en, relicIds}]`；② 新增 `distinctNameCount` 与 caveat，说明 `relicCount`(72 件) 与名字数(12 个)不同量纲；③ 重跑 `sync-data.sh` 让三份副本字节一致；④ 修正 caveats/`derivedRule` 里「只用到 [1,25] 与 [25,50] 两段」的漏写（守护者 12–15 级生命力 54–60 用到 graph 100 的 [50,75] 段），并加 self_check 枚举真正用到的段；⑤ 把 `modifierVerified` 拆成 `modifierAnchorVerified`(true) / `modifierMidLevelsVerified`(false) 并补进外部证据；⑥ 新增 `statModifiers[].poolWeights` / `dlcOnly`，记录学者/送葬者 4 条词条在池 2200000 的基础权重为 0、仅 DLC 权重 40 生效。所有数值内容未变。
+
+### 第二版（bossesSchemaVersion 3）：名字重对照、深夜深度与变异个体、多人缩放核实
+
+（按要求没有改 PROVENANCE.md，以下为 bosses 一节的补充文本，可直接追加）
+
+### bosses 数据集 schemaVersion 3（2026-09-23）
+
+**新增上游参数表**
+- `raw/params/ChaosMatchingCorrectParam.csv`（90 行）——深夜「深度」1–5 的数值缩放。`spEffect00..spEffect04` 依次对应深度 1..5，指向 `[Deep Night Scaling] Tier X, Depth N` 的 SpEffect 行。注意：本表与 `MultiPlayCorrectionParam` 共用同一套行号（7700–7780、98810…），但 `NpcParam.chaosMatchingCorrectParamId` 与 `multiPlayCorrectionParamId` 在 18 组行上**不相等**（如 mpc 7730 / chaos 7753 共 60 行），必须分别查表。
+- `raw/params/ChaosMatchingRankControlParam.csv`（5 行，行名即 Depth 1–5）——每个深度的全局控制：诅咒遗物出现率、地图挑战权重、天变数量权重。**不含**任何血量/攻击倍率。
+- `raw/params/ChaosMatchingMutationCategoryParam.csv`（46 行）——按（敌人类别 × 地图）给出每个深度**被变异的个数**（不是概率）。类别枚举 `MUTATION_CATEGORY`、地图枚举 `PATTERN_MODIFIER`（10–15 段）均来自 Paramdex Param Enums。
+- `raw/params/SpEffectSetParam.csv`——变异个体（玩家口中的「红化」）的 VFX + 数值组合，行名 `Set: Deep Night Mutation - VFX + Scaling`。
+
+**深夜三层链路（新解出）**
+1. `NpcParam.chaosMatchingCorrectParamId` → `ChaosMatchingCorrectParam.spEffect0N` = 深度 N+1 的缩放行，带 `maxHpRate` / 五种 `*AttackPowerRate` / `staminaAttackRate` / `saReceiveDamageRate`，且**自身 `stateInfo = 2287`**。
+2. 该 2287 状态点亮 `NpcParam.spEffectID0..31` 上 `invocationConditionsStateChange1 = 2287` 的 `[Deep of Night Everdark Scaling]` / `[DLC Deep of Night Scaling]` 修正行（把永夜之王/DLC 加成压回去）。
+3. `NpcParam.chaosMatchingSpEffectSetParamId` → `SpEffectSetParam`：`spEffectId1` = 红光 VFX 档位（4480–4483，`SpEffectVfxParam` 150050–150053），`spEffectId2` = 数值档位（7200/7210/7215/7220/7230/7240/7241），少数行另有 `spEffectId3 = 4485`。
+
+四层缩放的 `spCategory` 互不相同（常驻 0 / 深度 0 / 变异 203 / 人数 140）。依据 Paramdex paramdef：`spCategory` =「决定特殊效果互相覆盖行为的分类」，`categoryPriority` =「同一分类内的优先级（低的优先）」——分类不同即不互相覆盖，倍率**连乘**。
+
+**名字来源口径变更（重要）**
+简中名现在**只**来自游戏自带文本（`item/NpcName`、`menu/CL_MenuText`）。schemaVersion 2 里按《艾尔登法环》官方简中手工补的 14 条 `nameSource=manual` 译名，已逐条在 `raw/msg` 下 engus+zhocn 共 55 个 FMG 文件中检索「完全一致字符串」，命中数为 0，全部移出 `nameZh`，改挂在新字段 `nameZhFallback`（并由 `nameZhFallbackNote` 声明「不是本作游戏内文本」）。对照规则写死为结构性的：`NpcName` 文本 ID = 900000000 + chrId×1000 + 变体号（chrId = NpcParam 行号 // 10000），匹配键为 `norm()`（小写、只留 a-z0-9 和空格）；同英文名有单复数两种简中词条时优先取非「群/们/队」；全局命中的词条若是**别的 chrId 自己的 Paramdex 名**且本 chrId 另有词条则不许借用；放宽匹配只允许「游戏文本是 Paramdex 基础名的中心词」一个方向。每条名字都带 `nameEvidence`（fmg 文件 + 文本 ID + 原文）。
+
+**新增第三方来源**
+- `4laric/nightreign-enemy-rando`（`data/nr_enemy_roster.json` 的 `all_variants[].variant_name`、`data/nr_enemy_tags.json` 的 `name / tier / _confidence`，HEAD，2026-09 访问）——**只用于辨认** Paramdex 与游戏文本都没有名字的 chrId：c4504 = Elder Dragon Greyoll（confidence high）、c4603 = Stonedigger Troll、c7711/c7712 = Centipede Grub（tier grunt）、c7910 = Storm King（confidence auto/low）。c7931 / c7932 社区亦无名，保留「未知」。中文名仍只从游戏文本取，社区来源在 `nameSourceUrl` 标出。
+- `Elden Ring Nightreign Wiki (Fextralife)`（2026-09 访问）——人数缩放交叉验证：格拉狄乌斯 11,328 / 22,656 / 33,984、永夜之王格拉狄乌斯 17,558 / 35,116 / 52,674、艾德雷 13,140 / 26,280 / 39,420 与本数据集逐位一致（削韧与八系承伤倍率同样逐项对上）；卡莉果 12,007 / 24,014 / 36,021 vs 本数据集 12,008 / 24,016 / 36,024，差异来自 `3392 × 3.54 = 12007.68` 的取整口径（本数据集四舍五入，Fextralife 截断），不是算法分歧。
+
+**SpEffect 默认值口径**
+`fullEffects.fields` 列出「与默认值不同」的字段。因为 `raw/` 下没有保存 Paramdex 的 Param Meta，默认值取 `SpEffectParam` 全表各列的**众数**——该表上万行、绝大多数列压倒性地是同一个值，在所有用到的列上与 Meta 的 `DefaultValue` 一致，且只依赖 CSV 本身，结果可复现（已验证连跑两次字节级一致）。
+
+**常驻缩放判定修正**
+常驻 SpEffect 的「是否中性」判定补上了五种 `*AttackPowerRate` 与 `staminaAttackRate`，因此 `permScalingIds` / `deepOfNight.permScalingIds` 在 27 处多出真实存在的「只改攻击力」的行（7799 Noklateo Lesser Threat ×1.2 攻击、7783 Mountaintop Giant Crow ×2.45 攻击、62750/62751 ×1.15 耐力削减等）。`hp` / `hpMultiplier` / `poise` / `damageRates` / `resist` / `scaling` 等既有数值零改动。常驻档位里存在只加物理的行（16178「×2.42 血 ×1.1 物理」），故攻击力按五属性分开记录。
+
+#### 核验修复补充
+
+（按要求没有改 PROVENANCE.md，以下是 bosses 一节可直接追加的文本。）
+
+---
+
+### bosses：schemaVersion 3 核验后的修订（1.03.5，本轮）
+
+上一轮 schemaVersion 2 → 3 的产出经交叉核验发现 10 处问题，全部成立并已修复。生成器
+`macos/DataSources/generate_bosses.py`，重新生成后跑 `zsh scripts/sync-data.sh`；
+data/ 与 windows/resources/、macos/…/Resources/ 三份 sha256 一致，生成器两次运行除
+`generatedAt` 外逐字节相同。结构相对 v2 仍为纯增量。
+
+**1. Paramdex 模板行不再收录。** NpcParam 的 600030000 / 600030100 / … / 600030900 共 10 行
+Paramdex 名以「- Template」结尾，是黑夜人偶十个角色的模板：数值与配对的真实行
+（…0010 / …0110 / …）完全相同，但 getSoul = 0、rewardItemLot_1/2 = -1（真实行 getSoul 1000、
+rewardItemLot 13xxxxxx），chaosMatchingCorrectParamId 也不同（模板 7740 / 真实 7780）。
+schemaVersion 3 的 merge_key 加入 chaosCorrectId 后它们被拆成独立变体，且 npcId 更小，
+会按「血量最高、同血量取 npcId 较小」的代表行规则抢走卡头并带错深度倍率
+（复仇者深度 5 血量偏高 7.4%、攻击力偏高 33%）。现按与 …9999 调试行同一口径进
+`notes.skippedRows`（4 → 14 行）。另给每个 fight/variant 新增 `noReward` 布尔，
+供两端代表行排序使用。数值行合计 404 → 394。
+
+**2. 深度档位结论修正：实战夜王是 Tier 4a，不是 Tier 3f。** ChaosMatchingCorrectParam
+7760–7769 的 Paramdex 行名都是「Final Boss Threat」，但指向的深度档位不同：
+7765 = Tier 2c、7766 = Tier 3e、7767 = Tier 4a，其余（7760–7764 / 7768 / 7769）才是 Tier 3f。
+数据集 27 条 isMain 夜王战斗行里 26 条 chaosCorrectId = 7767（Tier 4a），仅救世旗手
+哈尔莫妮亚的永夜虫 46410000 走 7760。Tier 4a 深度 1→5：血量 ×1.25 / 1.4 / 1.57 / 1.95 / 2.16，
+攻击力 ×1.25 / 1.55 / 1.92 / 2.83 / 3.31，承受削韧 0.88 → 0.84，对玩家耐力削减 1.15 → 1.5。
+caveats 与 notes.deepOfNightAudit 已按此改写，并新增一条提醒「不要按行名段推档位」。
+depthStats 本身此前即正确（394 行逐行重算，0 处不符）。
+
+**3. 简中名唯一性规则（新）。** nameZh 是两端卡片的主显示名，不允许同时挂在两组首领上。
+放宽匹配（中心词 / chrId 独苗群体名）曾产生 3 对重名。现按证据强度裁决：
+逐字命中 > 近似但 NpcName 词条属于本组自己的 chrId > 借别的 chrId 的词条；
+唯一最强者保留 nameZh，其余退回 nameSource = english-only，被挡下的候选存入新字段
+`nameZhRejected`，裁决记录见新键 `notes.nameCollisions`。结果：
+黄金河马归 Golden Hippopotamus@5011（NpcName 905011000 逐字命中），
+蚯蚓脸归 Large Wormface@4580（904580600 属于 c4580 自己），
+石肤众王（903600530「Stoneskin Lords」）对 Alabaster Lord 与 Onyx Lord 强度相同、
+本身就是群体名，两组都让出。重名 3 对 → 0 对；有简中名的组 101 → 97。
+实现上这一步必须放在 (nameEn, nameZh) 合并之后，否则会把「同一只 Boss 分散在多个 chrId」
+的正常组（王室幽魂 c4020+c4021、黑夜人偶 c60003+c61003）误判为重名。
+
+**4. nameZhFallback 补全。** v2 那 14 条 manual 手工译名（《艾尔登法环》官方简中）此前只有
+10 条进了 nameZhFallback，另外 4 条（雪花石之王 / 缟玛瑙之王 / 大型黄金河马 / 废弃物蚯蚓脸）
+只留在 notes.nameChanges 里、页面拿不到。规则改为「现在的 nameZh 不等于旧译名就写」，
+并在同名去重后重算，现 14 条齐全。nameZh + nameSource 仍是「这名字是不是游戏里的」唯一判据。
+
+**5. 事实性更正（不影响数值）。**
+- ChaosMatchingCorrectParam 90 行里 ID 0 那行 spEffect00..04 全为 -1；其余 89 行归并成
+  **25** 组档位（原文写 26）。deepOfNightTiers 收录 22 档，与数据集实际用到的 22 个
+  chaosCorrectId 一一对应，无悬空引用。
+- 深夜修正行与深度行的 spCategory 并非「都是 0」：深度行 877xxx 是 0，
+  [Deep of Night Everdark Scaling] 7330–7348/7355/7356 是 20（7342/7344/7355/7356 为 100），
+  [DLC Deep of Night Scaling] 7395–7398 是 0。分类互不相同 → 互不覆盖 → 连乘，结论不变。
+  另复核：数据集用到的全部 NpcParam 行里，没有任何一行出现两条非中性效果共用同一个
+  非 0 spCategory，hpMultiplier 连乘安全。
+- 人数缩放 SpEffect 的非默认字段集合补齐：除已列出的倍率类外，还有
+  effectTargetFriendlyTarget / effectTargetOpposeTarget / magParamChange / miracleParamChange
+  四个作用目标标记位（136/136 恒为 1）与 spCategory = 140 / stateInfo = 282；
+  Spirit Creatures（7770–7779）的 45696/45697 两行带 invocationConditionsStateChange1 = 413，
+  该档位本数据集未使用。均非数值，结论不变。
+- mutationCategories 的 categoryZh / mapZh 与 mutations 的「变异个体」是按 Paramdex 的
+  MUTATION_CATEGORY / PATTERN_MODIFIER 枚举与 CL_MenuText 语义译出的**标签**，
+  游戏文本里没有这些独立词条（已检索全部 zhocn FMG）。caveats 里「简中名只来自游戏文本」
+  只约束 nightBosses.nameZh 与 nightlords 的名字。categoryEn / mapEn 与枚举逐字一致。
+
+**6. 两端数据自检同步。** 数据契约变更必须同步的断言已更新（未改页面逻辑）：
+`windows/tests/bosses.test.mjs`（schema 2→3；manual 样本替换；counts.night 51→50、
+counts.rows 384→394；「河马」搜索断言改按英文名并校验 nameZhFallback）与
+`macos/Sources/RelicCoreChecks/BossDataChecks.swift`（unmatchedNames 2→16；
+Cemetery Shade 徽标 manual→englishOnly；chrid-fallback 样本 c4504→c7931；
+inventorySummary 守夜 51→50、数值行 384→394）。
+现状：Windows 8 个测试文件全绿，macOS RelicCoreChecks 11718 项全过。
+
+**7. 已知未尽项。** 血斑巨乌鸦 c4561 与冰霜螯虾 c4420 两组里，没有 Paramdex 行名的真实行
+因 npcId 较小而顶上卡头、标签显示为「基准」（两行数值一致，只差能否变异）；
+彻底解决需要两端代表行排序在同 hp 时优先取 paramdexName 非空或 noReward = false 的行，
+本轮未动页面代码，已在 caveats 里点名。另外 4 组让出 nameZh 后不再能用中文搜到
+（搜索串不索引 nameZhFallback），同属页面侧待办。
