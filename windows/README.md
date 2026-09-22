@@ -65,7 +65,7 @@ go-winres make --arch 386,amd64
 node --test tests/*.test.mjs
 ```
 
-当前覆盖 `tests/` 下六个文件：`core_audit`（存档审计规则，用例取自仓库根
+当前覆盖 `tests/` 下七个文件：`core_audit`（存档审计规则，用例取自仓库根
 `testdata/`，与 macOS 端对拍）、`save_report` / `save_diff`（报告导出与存档对比，
 口径与 macOS 端 `SaveReport.swift` / `SaveCompare.swift` 逐行一致）、
 `bosses` / `lookup_index` / `ranker`（三个新页面的纯逻辑层）。
