@@ -294,3 +294,43 @@ Paramdex 文件为本次临时 `curl` 到 `/private/tmp` 查阅，未写入仓�
 3. 少数 `direction: "decrease"` 的条目其实是挂给敌人的 debuff（如「酸蚀喷雾」physicsAttackRate 0.85），本数据集不区分施加对象，页面应按 `direction` 过滤。
 4. 8 条 buff 的来源超过 40 个（匕首／曲剑等大批武器共享同一出血被动），已截断并用 `sourcesTruncated` 标出真实条数。
 5. 未覆盖：AtkParam_Pc 层面的攻击力倍率修正（`spEffectAtkPowerCorrectRate_*`）、多人缩放、敌人属性弱点；这些属于其他数据集的范围。
+
+### 第二轮核验修复补充（skills）
+
+（补进 nightreign-skills 一节）
+
+第二轮核验修复（regulation 10350000，schemaVersion 仍为 2，纯增字段、无破坏性改动）：
+
+1. **武器物理伤害类型落地**。weapons[] 新增 `atkAttribute` / `atkAttributeZh` / `atkAttribute2` / `atkAttribute2Zh`（取自 EquipParamWeapon 同名列，枚举复用 enums.atkAttribute）。此前 2205 段命中里有 1065 段（48%）的 AtkParam_Pc.atkAttribute 是 253 / 252 的间接引用（「沿用武器的 atkAttribute / atkAttribute2」），数据集内无处可查，「按伤害类型加权做增伤排名」这一核心用途对这些段走不通。新增 usage["伤害类型（斩 / 打 / 突）"] 与 fieldNotes.weaponAtkAttribute 说明解析步骤，并指明与 bosses 数据集 fights[].damageRates（standard / slash / strike / pierce）的对接方式。为省 96 KB 体积未重复写英文名，英文名查 enums.atkAttribute[str(值)].en。
+
+2. **overrideAecId 悬空引用不再写出**。生成时以 AttackElementCorrectParam 的 ID 列校验 AtkParam_Pc.overwriteAttackElementCorrectId；本版本 1001 火焰唾球的两段（303215900 / 303215901）指向不存在的 AEC 行 1005，已不写出该字段（记入 caveats）。写出的 overrideAecId 保证在表中存在。AttackElementCorrectParam 本身仍不收录，只读其 ID 列作校验。
+
+3. **跨条目误配段统一丢弃**。SwordArtsParam / Magic 的 atkParamId 锚点与子弹链存在指向别的战技 / 法术的残留引用。判据为「该 AtkParam 行的 Paramdex 行名点名的技能与本条目的名字键完全不相交」，行名匹配路线（source 含 n）与 "A/B/C - Slash" 式真共用行不受影响。本版本丢弃 4 段：308 突进冲击←300000870 '[AoW] Spectral Lance'、1051 米凯拉的光环←301604902 '[AoW Cleanrot Spear] Sacred Phalanx'、1200 风暴管束者←300000700 '[AoW] Square Off - R1'、4381 罗蕾塔的绝招←43810 "[Sorcery] Loretta's Greatbow"。这 4 段原本就不在任何 variant 内，影响的只是 weaponIds 为空的条目所走的「显示全部 hits」回退路径。counts.hits 2205→2201、sharedAtkRows 13→9（uniqueAtkIds 仍 2191）。
+
+4. **不可达动作套显式标记**。hits[] 新增 `noVariant: true`：该战技有 variants、但这个 atkId 不在任何 variant 内，即参数表里存着、本作却没有任何武器会打出的动作套（本版本 550 段，其中 441 段带 motion / flat；大头是 650 野蛮咆哮 268 段、651 战吼 246 段）。新增 counts.hitsWithoutVariant / hitsWithoutVariantDamaging 与 coverage.hitsWithoutVariantNote。没有 variants 的战技其 hits 不做标记。
+
+5. **usage 里的统计数字改为生成时实测**，不再写死：按 ctx 取并集会翻倍的武器 173 把（原文案写 175）、旧 ctx 单选口径取不到段的武器 52 把（原文案写 51，漏算 1166 那把）。
+
+本轮产物实测：紧凑 1,559,196 字节（1.49 MiB），--pretty 2,146,116 字节（2.05 MiB，仅人读、不入包）。counts：weapons 1793、skills 187（有命中 166）、spells 160（有命中 139）、hits 2201、uniqueAtkIds 2191、sharedAtkRows 9、variants 130、weaponsWithVariant 1150。（上一版自述中的 1,180,059 字节 / 2200 段为笔误；另回归说明里把 14010000 称作「高地斧」有误，该 ID 是分岔手斧 / Forked Hatchet，14080000 才是冻壳斧 / Icerind Hatchet。）
+
+### 第二轮核验修复补充（buffs）
+
+（以下为建议补进 PROVENANCE.md 的说明，本轮未改该文件）
+
+## nightreign-buffs-v1.03.5.json — schema v3（增伤手段数据集）
+
+生成器：macos/DataSources/generate_buffs.py（离线运行，不联网）。数据来源与 v1/v2 相同：本地导出的 regulation 1.03.5（container 10350000）参数表 raw/params/*.csv、简中(zhocn)＋英文(engus) FMG 文本（基础档与 _dlc01 增量合并），以及转写进脚本常量表的 Smithbox Paramdex（NR，commit f5969c060cea240476e9dd4d6a64eafa9dbafaab）字段默认值与枚举。本轮未引入任何新数据源，未新增网络依赖。
+
+v3 相对 v2 的变化（完整机读版见产物内的 payload.schemaChangelog）：
+
+1. 新增 `buffs[].activation`（passive / conditional / activated）与 `buffs[].activationSource`。v2 的 notes.ranking 要求页面用 `conditions` / `triggered` 过滤掉有发动条件的 buff，但表中最大的几个倍率由 ESD/EMEVD 脚本开关、参数列里查不到条件，导致那一步在最需要它的条目上是空转的（704301「残血 25% 以下 ×1.5」、8300000-2「双手共持 +12/15/18%」、8310000-2「双手各持 +12/15/18%」、707201-215「处刑人绝招兽化 ×1.62–3.55」的 conditions 与 triggered 全为 null）。判定完全由数据推出、无写死 ID 名单：行名 `[...]` 前缀为 Ultimate/Skill/AoW → activated；行名含 while/whenever/when/upon/during/below/above/alongside/two-hand/wielding/stack → conditional（刻意不含 counter/critical/charged/chain——那是作用范围而非发动条件）；conditions 非空 / triggered / 「全部来源 inferred 且持续时间有限」→ conditional；其余 passive。**增伤排名默认只能乘 activation="passive" 的条目。**
+
+2. 修正 `target` 判定对链式投递的漏判。Bullet 命中槽的识别正则原本带 `$` 锚，形如 `refId1->Bullet10631000.spEffectId0->cycleOccurrenceSpEffectId` 的链式 via 匹配不到，使 1631001『授血（血炎出血）』这条挂在被命中敌人身上的出血累积被标成 target="self"。证据：弹道 10631000/10631005 的 atkId_Bullet 均为 63100，AtkParam_Pc.63100 五个 atk*Correction 全为 100（攻击弹道），SpEffect 1631001 selfTarget=1/opposeTarget=1，按既有规则应判 enemy。现已改判为 target="enemy" / targetSource="bulletHitOffensiveBullet"，与同类的『冰雾』『毒雾』一致。全表仅此 1 条受影响。
+
+3. 排除一条哨兵值行。704000『[Skill - Raider] Retaliate (Defense and Immortality)』的 characterSkillCooldownReduction=0 且 effectEndurance=0，真正负载是本数据集不读的 DamageCutRate=0.25 一组（无赖反击那一瞬的免伤窗口），按字面展示会变成「技艺冷却 -100%」并与真正的遗物档位 0.95/0.925/0.9 混列。排除规则刻意收窄为「全部合格数值都是 valueKind=multiplier 的 economy 字段且为 0，同时 effectEndurance=0」，因此 511060/708920『青露的秘密滴泪』与 1801400『魔法帷幕』（同样带 ×0 消耗倍率但有 15/20/8 秒持续时间、确实让施法免费）不受影响。被排除的行记入 diagnostics.sentinelOnlyRows，不再静默丢弃。
+
+4. `enums.targetSource.bulletHitOpposeOnly` / `bulletHitFriendlyOnly` 的说明改写。effectTargetSelfTarget / effectTargetOpposeTarget 是「异常累积允许打给哪个阵营」的过滤位，不是「SpEffect 挂在谁身上」的证据：SpEffectParam 3176『[Item] Poison Grease (Right) - Poison』同样是 selfTarget=0/opposeTarget=1，却是玩家抹在自己武器上的油脂。这两个位只有在「该 SpEffect 的全部来源都只能由 Bullet 命中槽投递」的前提下才有判定力。判定代码本身一直是对的（本版本 13 条 bulletHitOpposeOnly 结论全部正确），改的是说明文字，以免后续维护者把规则推广到非弹道来源。
+
+5. `displayNameZh` / `displayNameEn` 的消歧顺序调整（全表唯一性保证不变，生成时仍有断言）。新顺序：本地化来源名 → 强度档位 → 武器槽 → 来源类别（武器/遗物/护符/道具/战技/祷告/魔法/技艺/绝招/被动，取自行名 `[...]` 前缀，v3 新增的一级）→ 首个 rates 数值 → 原始英文 Paramdex 行名 → `#spEffectId`。同族（Paramdex 行名词干相同）的条目强制取相同的限定词组合。v2 里有 261 条中文名挂着英文行名做限定词（v3 降至 68 条），且同一档位序列会出现两种风格；v3 修掉了这两点，代价是 `#spEffectId` 兜底由 52 条升到 58 条（同族只要有一个成员需要 ID，全组都带）。实测数量见 counts.displayNameZhFallingBackToSpEffectId，完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId。
+
+生成时自检（self_check，每次生成自动运行，违反即抛错）在 v2 各项之外新增：activation / activationSource 必须落在 enums 内；有 conditions 或 triggered 的 buff 其 activation 不得为 passive；全部 via 都是 Bullet 命中槽的 buff 其 targetSource 不得为 "default"；不得输出「只靠 ×0 且无持续时间的 economy 哨兵值」入选的行。连续两次生成除 generatedAt 外输出完全一致。

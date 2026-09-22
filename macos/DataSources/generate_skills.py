@@ -17,9 +17,12 @@
 
 用到的表与字段
 --------------
-  EquipParamWeapon   武器：wepType / rarity / attackBase* / saWeaponDamage /
+  EquipParamWeapon   武器：wepType / rarity / attackBase* / attackBaseStamina /
+                     saWeaponDamage / correct* / atkAttribute / atkAttribute2 /
                      swordArtsParamId / attackElementCorrectId / reinforceTypeId /
                      behaviorVariationId
+                     （atkAttribute / atkAttribute2 是 AtkParam.atkAttribute = 253 / 252
+                       那 1064 段的实际物理伤害类型来源，见 usage.伤害类型）
   SwordArtsParam     战技：textId → ArtsName；atkParamId（代表攻击）；
                      enableSparringGrounds；sparringGroundsWeaponId
   Magic              法术：ID → MagicName；mp；atkParamId；
@@ -31,6 +34,8 @@
                      atkStam(Correction) / atkAttribute / isAddBaseAtk /
                      overwriteAttackElementCorrectId
   Bullet             子弹：atkId_Bullet → AtkParam_Pc；HitBulletID / intervalCreateBulletId 子链
+  AttackElementCorrectParam  只读 ID 列，用来校验 overwriteAttackElementCorrectId
+                     是不是悬空引用（本表内容不收录，见 usage.本数据集的边界）
   BehaviorParam_PC   两个用途：
                      (1) 兜底：variationId == 武器 behaviorVariationId 且
                          behaviorJudgeId ∈ [900,950) 的行是「该武器专属战技」的攻击槽
@@ -195,6 +200,18 @@ ATK_ATTR_ZH = {
 # Paramdex 枚举 MAGIC_CATEGORY（Magic.ezStateBehaviorType）
 MAGIC_KIND = {0: "sorcery", 1: "incantation", 2: "pyromancy"}
 MAGIC_KIND_ZH = {"sorcery": "魔法", "incantation": "祷告", "pyromancy": "火焰术"}
+
+# EquipParamWeapon 的物理伤害类型字段（枚举同 ATKPARAM_ATKATTR_TYPE 的 0-3）。
+# AtkParam_Pc.atkAttribute = 253 / 252 的段（本作 1065 段，占全部命中的 48%）
+# 不自带伤害类型，而是「沿用武器的 atkAttribute / atkAttribute2」，
+# 必须回武器行上取，否则这些段落不到具体的斩 / 打 / 突 / 标准，
+# 也就没法按 boss 的 slash/blow/thrustDamageCutRate 加权。
+# 只写 int + 中文名：英文名用 enums.atkAttribute[str(int)].en 查即可，
+# 1793 把武器 × 2 个英文名 ≈ 96 KB，不值得为一次查表付这个体积。
+WEP_ATK_ATTR_FIELDS = (
+    ("atkAttribute", "atkAttributeZh"),
+    ("atkAttribute2", "atkAttribute2Zh"),
+)
 
 # EquipParamWeapon 属性补正字段（游戏内「能力值补正」）
 WEP_CORRECT_FIELDS = {
@@ -615,7 +632,8 @@ def bullet_chain(bullets: dict[str, dict], root: str, limit: int = 64) -> list[s
 # ------------------------------------------------------------------- hit 构造
 def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
               bullet_ids: list[str], ctx: str = "", ctx_zh: str = "",
-              ctx_kind: str = "") -> dict | None:
+              ctx_kind: str = "", aec_ids: frozenset[str] = frozenset(),
+              aec_dangling: Counter | None = None) -> dict | None:
     """把一行 AtkParam_Pc 变成一个 hit。
     全零（无伤害、无削韧、无耐力）的行：若只是子弹链/锚点顺带捞到的辅助行（Blank、
     No Target、Spell Helper 之类）就丢弃；若是行名直接点名的攻击行（source 含 n），
@@ -673,7 +691,13 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
         hit["addBaseAtk"] = True
     over = to_int(atk_row.get("overwriteAttackElementCorrectId", "-1"), -1)
     if over != -1:
-        hit["overrideAecId"] = over
+        # 参数表里存在悬空引用（本作 1001 火焰唾球的两段指向不存在的 AEC 行 1005）。
+        # 消费方会照着 usage 去查 AttackElementCorrectParam 然后拿到空值，
+        # 所以查不到的一律不写出这个字段，只在 caveats 里记一笔。
+        if str(over) in aec_ids:
+            hit["overrideAecId"] = over
+        elif aec_dangling is not None:
+            aec_dangling[over] += 1
     hit["source"] = "".join(sorted(sources))
     return hit
 
@@ -718,6 +742,8 @@ def main() -> None:
     atk_raw = read_param(args.params, "AtkParam_Pc")
     bullet_raw = read_param(args.params, "Bullet")
     behavior_raw = read_param(args.params, "BehaviorParam_PC")
+    # 只用来校验 hits[].overrideAecId 是否真的存在（本表本身不收录，见 usage.本数据集的边界）
+    aec_ids = frozenset(row["ID"] for row in read_param(args.params, "AttackElementCorrectParam"))
 
     wep_zh = read_fmg(args.msg, "zhocn", "item", "WeaponName")
     wep_en = read_fmg(args.msg, "engus", "item", "WeaponName")
@@ -822,6 +848,12 @@ def main() -> None:
                         if to_num(row.get(f, "0"))},
             "poiseDamageBase": to_num(row.get("saWeaponDamage", "0")),
             "swordArtsParamId": arts_id,
+        }
+        for src, key_zh in WEP_ATK_ATTR_FIELDS:
+            val = to_int(row.get(src, "3"), 3)
+            entry[src] = val
+            entry[key_zh] = ATK_ATTR_ZH.get(val, ("unknown", "未知"))[1]
+        entry |= {
             "attackElementCorrectId": to_int(row.get("attackElementCorrectId", "-1"), -1),
             "reinforceTypeId": to_int(row.get("reinforceTypeId", "0")),
         }
@@ -1044,12 +1076,17 @@ def main() -> None:
                         skill_hits[sid].add(atk_id, "", "w", bid)
 
     # ---------------------------------------------------------------- 落地 hits
-    def finalize(entries: list[dict], collectors: dict[str, HitCollector]) -> tuple[int, list[str]]:
+    aec_dangling: Counter = Counter()
+    foreign_drops: list[str] = []
+
+    def finalize(entries: list[dict], collectors: dict[str, HitCollector],
+                 index: NameIndex) -> tuple[int, list[str]]:
         with_hits = 0
         missing: list[str] = []
         for entry in entries:
             rid = entry["_rowId"]
             raw = collectors.get(rid)
+            entry_keys = index.keys_of.get(rid, set())
             hits: list[dict] = []
             if raw:
                 for atk_id in sorted(raw.by_atk, key=int):
@@ -1063,10 +1100,23 @@ def main() -> None:
                         ctx, is_chr = self_info["ctx"], self_info["chr"]
                         if self_info["label"] and not label:
                             label = self_info["label"]
+                        # 跨条目误配：这一行的行名点名的是**另一个**已知战技 / 法术
+                        # （SwordArtsParam.atkParamId / Magic.atkParamId 里的残留锚点，
+                        # 以及子弹链顺带捞到的别家的段）。行名匹配路线 n 永远不会把
+                        # 这种行分给本条目——n 路线按行名匹配到的名字键去分发——
+                        # 所以「行名匹配到了名字键、但与本条目的名字键完全不相交」
+                        # 就是误配的充要判据，直接丢弃。
+                        if self_info["keys"] and not (self_info["keys"] & entry_keys):
+                            foreign_drops.append(
+                                f'{entry["id"]} {entry["nameZh"]} ← {atk_id} '
+                                f'{atk_by_id[atk_id].get("Name", "")}'
+                                f'（source={"".join(sorted(info["sources"]))}）')
+                            continue
                     no_fp = bool(re.search(r"\bNo\s*FP\b", label, flags=re.I))
                     ctx_kind, ctx_zh = classify_ctx(ctx, is_chr)
                     hit = build_hit(atk_by_id[atk_id], label, no_fp, info["sources"],
-                                    info["bullets"], ctx, ctx_zh, ctx_kind)
+                                    info["bullets"], ctx, ctx_zh, ctx_kind,
+                                    aec_ids, aec_dangling)
                     if hit:
                         hits.append(hit)
             entry["hits"] = hits
@@ -1077,8 +1127,8 @@ def main() -> None:
                 missing.append(f'{entry["id"]} {entry["nameZh"]}／{entry["nameEn"]}')
         return with_hits, missing
 
-    skills_with_hits, skills_missing = finalize(skills, skill_hits)
-    spells_with_hits, spells_missing = finalize(spells, spell_hits)
+    skills_with_hits, skills_missing = finalize(skills, skill_hits, skill_index)
+    spells_with_hits, spells_missing = finalize(spells, spell_hits, spell_index)
 
     # ---------------------------------------------------- 每把武器用哪一套动作
     # 通用战技（战吼 / 野蛮咆哮 / 回旋斩 / 盲击…）在参数里同时存在「不分武器的默认套」
@@ -1229,6 +1279,27 @@ def main() -> None:
     for wep in weapons:
         wep.pop("_behaviorVariationId", None)
 
+    # ---- 标记「本作没有任何武器会打出」的动作套 ------------------------------
+    # 参数表里一个通用战技往往存着比本作实际用得到的更多的动作套
+    # （例如 650 野蛮咆哮存了 '[AoW Straight Sword] Barbaric Roar' 一整套，
+    # 但本作没有任何直剑把 650 配为战技）。这些段行名确实点名了本战技，数据没错，
+    # 但按 usage 的选段算法（variants → atkIds）永远取不到。
+    # 给它们打上 noVariant=true，方便页面/体积裁剪时区分，不改变既有字段语义。
+    no_variant_hits = 0
+    no_variant_damaging = 0
+    for skill in skills:
+        if not skill.get("variants"):
+            continue
+        covered: set[int] = set()
+        for v in skill["variants"]:
+            covered |= set(v["atkIds"])
+        for hit in skill["hits"]:
+            if hit["atkId"] not in covered:
+                hit["noVariant"] = True
+                no_variant_hits += 1
+                if hit.get("motion") or hit.get("flat"):
+                    no_variant_damaging += 1
+
     skills.sort(key=lambda e: e["id"])
     spells.sort(key=lambda e: e["id"])
 
@@ -1240,6 +1311,28 @@ def main() -> None:
     shared_atk_rows = sum(1 for v in atk_id_uses.values() if v > 1)
     total_variants = sum(len(e.get("variants", ())) for e in skills)
     weapons_with_variant = sum(1 for w in weapons if "skillVariant" in w)
+
+    # usage.选段 里那两个数字一律实测，避免改了归组逻辑后文字漂移：
+    #   ctx_union_dup —— 该武器的战技同时存在「ctx 缺失的默认套」与「ctx == 自己 wepTypeEn 的类别套」，
+    #                    按 ctx 取并集会把两套一起算进去（段数与伤害翻倍）；
+    #   ctx_pick_miss —— 旧的「ctx == 武器名 → ctx == wepTypeEn → ctx 缺失」单选口径一段都取不到
+    #                    （动作组别名 Small Weapon / Large Weapon / Polearm 不在 WEP_TYPE 里）。
+    skills_by_id = {s["id"]: s for s in skills}
+    ctx_union_dup = 0
+    ctx_pick_miss = 0
+    for wep in weapons:
+        skill = skills_by_id.get(wep["swordArtsParamId"])
+        if not skill or not skill["hits"]:
+            continue
+        ctxs = {h.get("ctx", "") for h in skill["hits"]}
+        if "" in ctxs and wep["wepTypeEn"] in ctxs:
+            ctx_union_dup += 1
+        if not ({"", wep["wepTypeEn"], wep["nameEn"]} & ctxs):
+            ctx_pick_miss += 1
+
+    # 有多少段的伤害类型要回武器上取（attribute = 253 / 252）
+    wep_attr_hits = sum(1 for e in skills + spells for h in e["hits"]
+                        if h["attribute"] in ("WeaponAtkAttribute", "WeaponAtkAttribute2"))
 
     payload = {
         "schemaVersion": SCHEMA_VERSION,
@@ -1280,18 +1373,32 @@ def main() -> None:
             "sharedAtkRows": shared_atk_rows,
             "variants": total_variants,
             "weaponsWithVariant": weapons_with_variant,
+            "hitsWithoutVariant": no_variant_hits,
+            "hitsWithoutVariantDamaging": no_variant_damaging,
         },
         "coverage": {
             "note": "下面这些战技 / 法术在参数里找不到任何带数值的攻击行，"
                     "基本都是纯增益、闪避、格挡或只改弓箭的技能。",
             "skillsWithoutHits": skills_missing,
             "spellsWithoutHits": spells_missing,
+            "hitsWithoutVariantNote":
+                f"skills[].hits 是该战技在参数表里的**全部**动作套，"
+                f"其中只有 variants 覆盖到的那些才会被本作的武器真正打出。"
+                f"本版本有 {no_variant_hits} 段（其中 {no_variant_damaging} 段带 motion / flat）"
+                f"不属于该战技的任何一个 variant，已逐段标 noVariant=true——"
+                f"多为「参数表里存着某个武器类别的动作套，但本作没有任何该类别的武器配了这个战技」"
+                f"（例 650 野蛮咆哮的 '[AoW Straight Sword] Barbaric Roar'、"
+                f"108 鲜血征收的 '[AoW Dagger] Blood Tax'）。"
+                f"这些段数据本身没错，但按 usage 的选段算法取不到；"
+                f"想裁体积或只看「本作打得出的段」时按 noVariant 过滤即可。"
+                f"注意：没有 variants 的战技（没有武器引用它）其 hits 不会被标记。",
         },
         "fieldNotes": {
             "省略即默认值": "为控制体积，所有等于默认值的字段都被省略。"
                         "motion / flat 里只保留非 0 的属性键，整体为空则该键不存在；"
                         "poise / poiseMv / stamina / staminaMv / isBullet / bulletIds / noFp / "
-                        "noDamage / addBaseAtk / overrideAecId 缺失即表示 0 / false / -1；"
+                        "noDamage / noVariant / addBaseAtk / overrideAecId 缺失即表示 0 / false / -1；"
+                        "weapons.atkAttribute / atkAttribute2（及其 ...Zh）是例外，四项恒存在；"
                         "weapons.attackBase / weapons.correct 同理（缺失的键 = 0）；"
                         "weapons.skillVariant 缺失表示这把武器的战技没有命中段；"
                         "skills.variants 缺失表示没有武器引用这个战技（或它没有命中段）。",
@@ -1310,7 +1417,18 @@ def main() -> None:
                   "（如 5.5、10.175、262.5），这里原样保留；其余数值字段都是整数。",
             "attribute": "AtkParam_Pc.atkAttribute（枚举 ATKPARAM_ATKATTR_TYPE）："
                          "Slash 斩击 / Strike 打击 / Pierce 突刺 / Standard 标准 / None 无；"
-                         "252、253 表示沿用武器的 atkAttribute2 / atkAttribute。",
+                         "252、253 表示沿用武器的 atkAttribute2 / atkAttribute——"
+                         "此时**必须**回到 weapons[] 上读 atkAttribute2 / atkAttribute"
+                         "（见 fieldNotes.weaponAtkAttribute），本数据集 48% 的段是这种间接引用。",
+            "weaponAtkAttribute": "weapons[].atkAttribute / atkAttribute2 = EquipParamWeapon 的同名字段，"
+                                  "枚举与 hits[].attribute 共用 enums.atkAttribute（0 斩击 / 1 打击 / "
+                                  "2 突刺 / 3 标准）；atkAttributeZh / atkAttribute2Zh 是对应中文名，"
+                                  "四项恒存在；英文名请查 enums.atkAttribute[str(值)].en（省体积没重复写）。"
+                                  "hits[].attribute == \"WeaponAtkAttribute\"（253）的段实际伤害类型 = "
+                                  "该武器的 atkAttribute；== \"WeaponAtkAttribute2\"（252）的段 = "
+                                  "该武器的 atkAttribute2。多数武器两者不同"
+                                  "（例 9040000 尸山血海：atkAttribute=0 斩击、atkAttribute2=2 突刺），"
+                                  "所以不能只看其中一个。",
             "source": "这段命中是怎么找到的，字母可叠加："
                       "n=AtkParam_Pc 行名匹配，b=经由 Bullet（含 Magic.refCategory=1 与子弹链），"
                       "r=Magic.refCategory=0 的 refId，a=SwordArtsParam/Magic 的 atkParamId 锚点，"
@@ -1350,12 +1468,19 @@ def main() -> None:
                        "辉石魔杖与圣印记的法术强度就挂在这里（如辉石杖 intelligence=100）。",
             "staminaBase": "weapons[].staminaBase = EquipParamWeapon.attackBaseStamina，"
                            "hits[].staminaMv 乘的就是它。",
+            "noVariant": "hits[].noVariant=true 表示：这一段确实属于该战技（行名点名），"
+                         "但它所在的动作套在本作没有任何武器会用到——"
+                         "该战技有 variants，而这个 atkId 不在其中任何一个的 atkIds 里。"
+                         "按 usage 的选段算法它永远取不到，只在「显示该战技的全部段」时才会出现。"
+                         "缺失表示可达，或该战技根本没有 variants（没有武器引用它，无从判断）。"
+                         "详见 coverage.hitsWithoutVariantNote。",
         },
         "usage": {
             "选段（必读）": "先确定这把武器用哪一套：v = skills[i].variants[weapon.skillVariant]，"
                        "段 = hits 中 atkId ∈ v.atkIds 的那些。**不要**按 ctx 字符串取并集——"
-                       "默认套与动作组套是互斥变体，取并集会让 175 把武器的段数与伤害翻倍，"
-                       "而 51 把斧 / 镰类武器因为动作组名（Small Weapon / Large Weapon / Polearm）"
+                       f"默认套与动作组套是互斥变体，取并集会让 {ctx_union_dup} 把武器的段数与伤害翻倍，"
+                       f"而 {ctx_pick_miss} 把斧 / 镰 / 戟类武器因为动作组名"
+                       "（Small Weapon / Large Weapon / Polearm）"
                        "不在 WEP_TYPE 枚举里而一段都取不到。"
                        "skills[].variants 缺失（多见于没有任何武器引用的战技）时，"
                        "退回「先 ctx == 武器 nameEn，没有再 ctx == wepTypeEn，再没有才用 ctx 缺失的那组」"
@@ -1365,7 +1490,20 @@ def main() -> None:
                      "+ flat[el]；addBaseAtk=true 的段额外再加一份武器该属性攻击力"
                      "（AtkParam.isAddBaseAtk=1）。"
                      "overrideAecId 存在时，这一段改用该 ID 指向的 AttackElementCorrectParam "
-                     "计算能力值补正，而不是武器自己的 attackElementCorrectId。",
+                     "计算能力值补正，而不是武器自己的 attackElementCorrectId"
+                     "（写出前已校验该 ID 在 AttackElementCorrectParam 里真实存在，"
+                     "参数表里的悬空引用不会写出这个字段，见 caveats）。",
+            "伤害类型（斩 / 打 / 突）": "先看 hits[].attribute："
+                            "Slash / Strike / Pierce / Standard 就是这一段自己的物理伤害类型；"
+                            "若为 \"WeaponAtkAttribute\" 则改读 weapons[].atkAttribute，"
+                            "若为 \"WeaponAtkAttribute2\" 则改读 weapons[].atkAttribute2"
+                            "（各自带 ...Zh 中文名，英文名查 enums.atkAttribute）；"
+                            "\"None\" 表示这一段不吃物理减伤类型（多为纯属性伤害或挂状态段）。"
+                            f"本版本 {total_hits} 段里有 {wep_attr_hits} 段"
+                            f"（{wep_attr_hits * 100 // max(total_hits, 1)}%）走 Weapon* 间接引用，"
+                            "要按 boss 数据集的 fights[].damageRates"
+                            "（standard / slash / strike / pierce，键名就是 enums.atkAttribute 的 en 小写）"
+                            "加权就必须走这一步。",
             "法术 / 子弹段": "法术段的 motion 在参数表里几乎都是五属性同值 100（420 段里 327 段如此），"
                         "那是「照抄武器攻击力 100%」的占位写法，**不要**把它乘到施法器的 "
                         "attackBase 上——辉石魔杖 / 圣印记的 attackBase 只有 physical"
@@ -1404,9 +1542,20 @@ def main() -> None:
             "该武器 behaviorVariationId=906 在战技槽（base 300000000，judge 900-915）上"
             "全部是 refType=0 的直接 AtkParam 引用，12 段（6 段带 FP + 6 段 No FP）就是全部；"
             "血刀气的判定包含在这 12 段的 AtkParam 里，没有可标注的子弹 ID。",
-            "1051 米凯拉的光环 的 atkParamId 锚点指向 301604902 "
-            "'[AoW Cleanrot Spear] Sacred Phalanx'，那是参数里的残留引用，不是这招的段。"
-            "它仍以 source=\"a\"、ctx=\"Cleanrot Spear\" 保留，但不会进入 Halo Scythe 的 variant。",
+            "跨条目误配段已统一丢弃：SwordArtsParam / Magic 的 atkParamId 锚点与子弹链里存在"
+            "指向**别的**战技 / 法术的残留引用，本版本共 "
+            f"{len(foreign_drops)} 段被丢弃——"
+            + "；".join(foreign_drops) +
+            "。判据是「该 AtkParam 行的 Paramdex 行名点名的技能与本条目的名字完全不相交」，"
+            "行名匹配（source 含 n）路线得到的段不受影响。"
+            "这几段原先都没有进入任何 variant，走 skillVariant 的页面本就取不到；"
+            "丢弃是为了让「显示全部 hits」的回退路径（weaponIds 为空的条目只能走这条）也不再出现假段。",
+            "AttackElementCorrectParam 悬空引用：AtkParam_Pc.overwriteAttackElementCorrectId "
+            "在参数表里可能指向不存在的行"
+            + ("（本版本：" + "、".join(f"AEC 行 {k} 被 {v} 段引用" for k, v in sorted(aec_dangling.items()))
+               + "，来自 1001 火焰唾球）" if aec_dangling else "（本版本无）")
+            + "。这类值不会写成 hits[].overrideAecId，以免消费方照 usage 去查表拿到空值；"
+            "写出的 overrideAecId 保证在 AttackElementCorrectParam 里存在。",
         ],
         "enums": {
             "wepType": {str(k): {"en": v[0], "zh": v[1]} for k, v in sorted(WEP_TYPE_ZH.items())},
@@ -1438,13 +1587,26 @@ def main() -> None:
         text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     args.out.write_text(text, encoding="utf-8")
 
-    print(f"写入 {args.out}（{args.out.stat().st_size / 1024:.1f} KB）")
+    size = args.out.stat().st_size
+    print(f"写入 {args.out}（{size} 字节 = {size / 1024:.1f} KiB = {size / 1024 / 1024:.2f} MiB"
+          f"{'，--pretty' if args.pretty else '，紧凑'}）")
     print(f"武器 {len(weapons)}；战技 {len(skills)}（有命中 {skills_with_hits}）；"
           f"法术 {len(spells)}（有命中 {spells_with_hits}）；命中段共 {total_hits}")
     print(f"命中段去重后 {len(atk_id_uses)} 个 atkId，其中 {shared_atk_rows} 行被多个条目共用"
           f"（行名写作 'A/B/C - Slash' 的共用行），共多出 {total_hits - len(atk_id_uses)} 条目。")
     print(f"动作套 variants {total_variants} 组，覆盖武器 {weapons_with_variant} 把"
           f"（按 via：{dict(variant_stats)}）")
+    print(f"不属于任何 variant 的段（已标 noVariant）{no_variant_hits}，"
+          f"其中带 motion/flat 的 {no_variant_damaging}")
+    print(f"ctx 并集会翻倍的武器 {ctx_union_dup} 把；ctx 单选取不到段的武器 {ctx_pick_miss} 把"
+          f"（两数已写进 usage.选段）")
+    print(f"伤害类型需回武器上取（attribute=253/252）的段 {wep_attr_hits}")
+    if aec_dangling:
+        print(f"⚠ overrideAecId 悬空（已不写出）：{dict(aec_dangling)}")
+    if foreign_drops:
+        print(f"丢弃跨条目误配段 {len(foreign_drops)}：")
+        for line in foreign_drops:
+            print(f"  - {line}")
     if variant_gaps:
         print(f"⚠ 有战技命中但选不出动作套的武器 {len(variant_gaps)}：{variant_gaps[:10]}")
     print(f"AtkParam 行名匹配 {stats['atkRowsMatched']}，未匹配 {stats['atkRowsUnmatched']}；"

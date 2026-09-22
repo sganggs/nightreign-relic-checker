@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,7 +88,7 @@ PARAM_DIR = HERE / "raw" / "params"
 MSG_DIR = HERE / "raw" / "msg"
 DEFAULT_OUT = ROOT / "data" / "nightreign-buffs-v1.03.5.json"
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 SMITHBOX_COMMIT = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
@@ -95,6 +96,53 @@ SMITHBOX_COMMIT = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
 CHAIN_DEPTH = 3
 MAX_SOURCES_PER_BUFF = 40
 CHAIN_INHERIT_LIMIT = 4
+
+# What changed between published schema versions.  Exported as
+# payload["schemaChangelog"] so a consumer can tell *programmatically* that the
+# meaning of a field it already reads has been tightened (a pure "add a field"
+# bump would not need this, but v1 -> v2 also narrowed countsAsDamage and
+# affectsAllies, which silently changes any ranking built on v1).
+SCHEMA_CHANGELOG: list[dict[str, Any]] = [
+    {
+        "version": 3,
+        "zh": "① **新增 buffs[].activation（passive／conditional／activated）与 activationSource**，"
+              "配套 enums.activation／enums.activationSource、counts.buffsByActivation、notes.activation。"
+              "v2 的 notes.ranking 第 ③ 步要求页面用 conditions／triggered 过滤发动条件型 buff，"
+              "但榜首的 704301（残血 ×1.5）、8300000-2（双手持 +18%）、8310000-2（双持 +18%）、"
+              "707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是 null，那一步是空转的。"
+              "**排名默认只能乘 activation=\"passive\" 的条目。**"
+              "② **buffs[].target 修正一条**：1631001『授血（血炎出血）』的 via 形如 "
+              "`refId1->Bullet10631000.spEffectId0->cycleOccurrenceSpEffectId`，"
+              "旧正则带 `$` 锚匹配不到链式后缀，导致这条挂在敌人身上的出血累积被标成 self；"
+              "现已按规则重算为 target=\"enemy\"／targetSource=\"bulletHitOffensiveBullet\"，"
+              "与同类的『冰雾』『毒雾』一致（status 组 countsAsDamage=false，不影响伤害乘积）。"
+              "③ **buffs 少一条（704000）**：它唯一的合格数值是 characterSkillCooldownReduction=0 "
+              "且 effectEndurance=0，是无赖反击免伤窗口里的哨兵值而非『冷却 -100%』；"
+              "改为记进 diagnostics.sentinelOnlyRows 而不是当成 buff 输出。"
+              "④ **displayNameZh／En 的消歧顺序变了**（唯一性保证不变）：原始英文 Paramdex 行名由第一级"
+              "降到倒数第二级，中间新增『来源类别』一级，并强制同族条目取相同的限定词组合；"
+              "依赖 displayName 字符串做键的消费方需要重取。"
+              "⑤ enums.targetSource 里 bulletHitOpposeOnly／bulletHitFriendlyOnly 的说明改写："
+              "阵营过滤位必须在『全部来源只由 Bullet 命中槽投递』的前提下才有判定力"
+              "（3176 毒油脂同样是 selfTarget=0／opposeTarget=1，却是挂在玩家身上的）。",
+    },
+    {
+        "version": 2,
+        "zh": "① countsAsDamage 收紧为『通用血量伤害』：stance／status／special／flag／economy 之外，"
+              "weakness（特攻）与 critical（致命一击）也改为 false，改由新增的 conditionalDamage=true 标记"
+              "——它们确实改血量伤害，但只在选定敌人类型／打出致命一击后才成立，不能无条件乘进通用排名。"
+              "② 新增 buffs[].target（self／ally／summon／enemy）与 targetSource：数据集里存在挂在敌人身上的减益、"
+              "魅惑敌人的增伤、复仇者家人（召唤物）自身的数值缩放，排名必须先按 target 过滤。"
+              "③ affectsAllies 由 effectTargetFriend 原始位（827 条里 817 条为 true，等于无信息）改为按"
+              "『友方 AoE 弹道投递』或『行名明示 Allies』判定；原始位保留在新字段 effectTargetFriendRaw。"
+              "④ displayNameZh／displayNameEn 现在保证全表唯一（生成时断言）。"
+              "⑤ economy 组（消耗／冷却／绝招量表／弓射程）改为 qualifies=true，这些真实的输出效率手段不再被整条丢弃。",
+    },
+    {
+        "version": 1,
+        "zh": "初版：rateFields / rateFieldGroups / valueKind / observedCount / displayName / sourceIdContract。",
+    },
+]
 
 SOURCE_KIND_ORDER = {
     "relicAffix": 0, "accessory": 1, "goods": 2, "spell": 3,
@@ -169,21 +217,34 @@ RATE_FIELDS: list[dict[str, Any]] = [
          group="attackPowerFlat", appliesTo="圣（dark）攻击力的固定加减。"),
     # --- 特攻 ----------------------------------------------------------------
     dict(key="weakDmgRateA", zh="特攻Ａ倍率", en="Weakness A damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ａ」类敌人的额外倍率（敌人侧由 EquipParamWeapon/NpcParam 的 weakA 判定）。"),
+         group="weakness",
+         appliesTo="对「特攻Ａ」类敌人的额外倍率（敌人侧由 EquipParamWeapon/NpcParam 的 weakA 判定），"
+                   "对其它敌人恒为 1；conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     dict(key="weakDmgRateB", zh="特攻Ｂ倍率", en="Weakness B damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ｂ」类敌人的额外倍率。"),
+         group="weakness",
+         appliesTo="对「特攻Ｂ」类敌人的额外倍率，对其它敌人恒为 1；"
+                   "conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     dict(key="weakDmgRateC", zh="特攻Ｃ倍率", en="Weakness C damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ｃ」类敌人的额外倍率。"),
+         group="weakness",
+         appliesTo="对「特攻Ｃ」类敌人的额外倍率，对其它敌人恒为 1；"
+                   "conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     dict(key="weakDmgRateD", zh="特攻Ｄ倍率", en="Weakness D damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ｄ」类敌人的额外倍率。"),
+         group="weakness",
+         appliesTo="对「特攻Ｄ」类敌人的额外倍率，对其它敌人恒为 1；"
+                   "conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     dict(key="weakDmgRateE", zh="特攻Ｅ倍率", en="Weakness E damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ｅ」类敌人的额外倍率。"),
+         group="weakness",
+         appliesTo="对「特攻Ｅ」类敌人的额外倍率，对其它敌人恒为 1；"
+                   "conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     dict(key="weakDmgRateF", zh="特攻Ｆ倍率", en="Weakness F damage rate", default=1.0,
-         group="weakness", appliesTo="对「特攻Ｆ」类敌人的额外倍率。"),
+         group="weakness",
+         appliesTo="对「特攻Ｆ」类敌人的额外倍率，对其它敌人恒为 1；"
+                   "conditionalDamage=true，必须先选定目标敌人类型才能计入伤害乘积。"),
     # --- 致命一击 ------------------------------------------------------------
     dict(key="vitalSpotChangeRate", zh="致命一击伤害倍率", en="Critical (sweet spot) rate", default=1.0,
          group="critical",
-         appliesTo="要害／致命一击（背刺、破防处决）的伤害倍率，默认 1＝不改写。"
+         appliesTo="要害／致命一击（背刺、破防处决）的伤害倍率，默认 1＝不改写；只在那一击上成立，"
+                   "不能乘进通用伤害排名（conditionalDamage=true）。"
                    "本版本 SpEffectParam 全表 13472 行该字段恒为 1，没有任何非默认值，"
                    "因此本数据集不会出现该字段（rateFields 里的 observedCount 为 0），页面无需为它写逻辑。"),
     # --- 削韧 / 精力 ---------------------------------------------------------
@@ -286,49 +347,82 @@ RATE_FIELDS: list[dict[str, Any]] = [
          group="economy", appliesTo="角色技艺可用次数的追加。"),
     dict(key="magicEffectTimeChange", zh="法术效果时间增减", en="Magic effect time change", default=0,
          group="economy", appliesTo="魔法／祷告增益效果持续时间的加减（秒）。"),
-    dict(key="bowDistRate", zh="弓射程修正", en="Bow distance rate", default=0,
-         group="economy", appliesTo="弓类武器射程修正值（加算百分比）。"),
+    dict(key="bowDistRate", zh="远程伤害衰减减少", en="Bow distance rate", default=0,
+         group="economy",
+         appliesTo="远程武器（弓／弩）的伤害距离衰减减少量（加算百分比，+50＝衰减起点／幅度大幅放宽）。"
+                   "这是字面意义上的增伤——同一发箭在远距离能打出更高伤害——但只在超过衰减距离时兑现，"
+                   "因此标了 conditionalDamage=true 而不是 countsAsDamage=true，近战与贴脸射击完全用不到。"),
     dict(key="regainRate", zh="回复量表倍率", en="Regain rate", default=1.0,
-         group="economy", appliesTo="Regain（受伤后可回收血量）倍率。"),
+         group="economy",
+         appliesTo="Regain（受伤后可通过攻击回收血量）倍率。这是生存／续航向的字段，不改变输出，"
+                   "只是与其它 economy 字段同属『不直接增伤』一类才放在这一组。"),
 ]
 
 # key, zh, qualifies (a non-default value alone keeps the SpEffect),
-# countsAsDamage (the value may be folded into a damage total), note
+# countsAsDamage (the value may be folded into the *unconditional* damage
+# product), conditionalDamage (it really is HP damage, but only after the user
+# pins down a condition the data cannot know: the target's weakness type, or
+# landing a critical), note
+#
+# countsAsDamage and conditionalDamage are mutually exclusive by construction:
+# a group is either always-on damage, conditionally-on damage, or not damage.
 RATE_FIELD_GROUPS: list[dict[str, Any]] = [
-    dict(key="damage", zh="最终伤害倍率", qualifies=True, countsAsDamage=True,
+    dict(key="damage", zh="最终伤害倍率", qualifies=True, countsAsDamage=True, conditionalDamage=False,
          note="减算防御之后的伤害乘数，可直接相乘。"),
-    dict(key="attackPower", zh="攻击力倍率", qualifies=True, countsAsDamage=True,
+    dict(key="attackPower", zh="攻击力倍率", qualifies=True, countsAsDamage=True, conditionalDamage=False,
          note="减算防御之前的攻击力乘数，与 damage 组分属两层，两层各自相乘后再相乘。"),
-    dict(key="attackPowerFlat", zh="攻击力加算", qualifies=True, countsAsDamage=True,
+    dict(key="attackPowerFlat", zh="攻击力加算", qualifies=True, countsAsDamage=True, conditionalDamage=False,
          note="攻击力点数加算（默认 0），必须先加进攻击力再乘倍率，不能当乘数用。"),
-    dict(key="weakness", zh="特攻倍率", qualifies=True, countsAsDamage=True,
-         note="只对被标记为对应特攻类型的敌人生效，默认不计入通用排名。"),
-    dict(key="critical", zh="致命一击", qualifies=True, countsAsDamage=True,
-         note="致命一击／要害倍率。本版本参数表无任何非默认值（observedCount=0）。"),
-    dict(key="stance", zh="削韧／精力", qualifies=True, countsAsDamage=False,
+    dict(key="weakness", zh="特攻倍率（需先选定敌人类型）", qualifies=True,
+         countsAsDamage=False, conditionalDamage=True,
+         note="只对被标记为对应特攻类型（weakA..weakF，例如不死类）的敌人生效，对其它敌人恒为 1。"
+              "**countsAsDamage=false**：本版本最大值是『纠死圣律』weakDmgRateB=10（仅对不死类敌人），"
+              "无条件乘进通用排名会让它以 ×10 压在榜首，远超真正的通用 buff（最高约 ×1.2）。"
+              "页面必须先让用户选定目标敌人（或在『对某类敌人』分区里单独排名）才能把它乘进去。"),
+    dict(key="critical", zh="致命一击（需打出致命一击）", qualifies=True,
+         countsAsDamage=False, conditionalDamage=True,
+         note="致命一击／要害倍率，只在背刺、破防处决那一击上成立，不改变普通命中的伤害，"
+              "因此同样不计入通用乘积。本版本参数表无任何非默认值（observedCount=0）。"),
+    dict(key="stance", zh="削韧／精力", qualifies=True, countsAsDamage=False, conditionalDamage=False,
          note="削韧（SA）与削精力倍率，影响打出失衡的速度，不改变血量伤害，另算一条轴。"),
-    dict(key="status", zh="异常状态累积", qualifies=True, countsAsDamage=False,
-         note="异常状态累积的加算点数与倍率，不改变直接伤害，另算一条轴。"),
-    dict(key="special", zh="本作特有（各自独立语义，禁止相乘）", qualifies=True, countsAsDamage=False,
+    dict(key="status", zh="异常状态累积", qualifies=True, countsAsDamage=False, conditionalDamage=False,
+         note="异常状态累积的加算点数与倍率，不改变直接伤害，另算一条轴。"
+              "注意 target=\"enemy\" 的条目（例如毒雾、发狂祷告）是直接把累积值加在被命中的敌人身上，"
+              "而不是『让玩家的攻击多附带累积』，两者不可混在同一条轴上排名。"),
+    dict(key="special", zh="本作特有（各自独立语义，禁止相乘）", qualifies=True,
+         countsAsDamage=False, conditionalDamage=False,
          note="currentHealthAttackRate 是随血量换算的加成系数、restageAttackRate 是女爵『再演』复制那一份的伤害占比。"
               "两者都不是对玩家整体伤害的乘数：把 0.4／0.6 乘进伤害乘积会得出 -60%／-40% 的反向结论。"
               "页面只能单独展示（或按各自机制单独建模），绝不可参与乘算或加权汇总。"),
-    dict(key="flag", zh="开关（非倍率）", qualifies=False, countsAsDamage=False,
+    dict(key="flag", zh="开关（非倍率）", qualifies=False, countsAsDamage=False, conditionalDamage=False,
          note="0/1 开关，标记该 SpEffect 是否套用 AtkParam 侧的修正，单独出现不算增伤。"),
-    dict(key="economy", zh="消耗与量表（不直接增伤）", qualifies=False, countsAsDamage=False,
-         note="专注值消耗、绝招量表、技艺冷却等；只在该 buff 已因其他字段入选时顺带输出。"
-              "带 lowerIsBetter=true 的字段是数值越低越好。"),
+    dict(key="economy", zh="消耗／冷却／量表／射程／Regain（不直接改单次伤害）",
+         qualifies=True, countsAsDamage=False, conditionalDamage=False,
+         note="专注值消耗、技艺冷却、追加次数、绝招量表、弓射程衰减等。"
+              "**qualifies=true**：这些是真实的 DPS 手段（『技艺冷却 -7.5%』『技艺追加 1 次』"
+              "『远程伤害衰减减少』），v1 里因为 qualifies=false 而被整条丢弃，页面拿不到任何条目；"
+              "现在它们会作为独立条目进入数据集，请单开一个『输出效率』分区，不要并进伤害乘积。"
+              "带 lowerIsBetter=true 的字段是数值越低越好；bowDistRate 另带 conditionalDamage=true"
+              "（远距离才兑现为伤害）。"),
 ]
 RATE_FIELD_GROUP_BY_KEY = {group["key"]: group for group in RATE_FIELD_GROUPS}
 
 QUALIFY_GROUPS = {g["key"] for g in RATE_FIELD_GROUPS if g["qualifies"]}
 COUNTS_AS_DAMAGE_GROUPS = {g["key"] for g in RATE_FIELD_GROUPS if g["countsAsDamage"]}
+CONDITIONAL_DAMAGE_GROUPS = {g["key"] for g in RATE_FIELD_GROUPS if g["conditionalDamage"]}
 GROUP_LABELS = {g["key"]: g["zh"] for g in RATE_FIELD_GROUPS}
 
-# groups whose non-default value is an actual change to HP damage (as opposed
-# to poise damage / status buildup / a mechanic of its own) -- the same set the
-# `countsAsDamage` flag exports, kept under the old name for readability.
-DAMAGE_GROUPS = COUNTS_AS_DAMAGE_GROUPS
+# Groups whose non-default value is a change to HP damage *at all* -- always-on
+# plus conditional.  This is only used to decide whether a pure downgrade is
+# worth keeping in the dataset; it is deliberately wider than
+# COUNTS_AS_DAMAGE_GROUPS so that narrowing countsAsDamage (v1 -> v2) does not
+# silently drop rows that used to qualify.
+DAMAGE_GROUPS = COUNTS_AS_DAMAGE_GROUPS | CONDITIONAL_DAMAGE_GROUPS
+
+# field-level overrides for conditionalDamage (the group default is used
+# otherwise).  bowDistRate literally raises the damage a ranged attack lands
+# for, but only past the falloff distance.
+CONDITIONAL_DAMAGE_FIELDS = {"bowDistRate"}
 
 
 def value_kind(field: dict[str, Any]) -> str:
@@ -348,6 +442,9 @@ def value_kind(field: dict[str, Any]) -> str:
 
 for _field in RATE_FIELDS:
     _field["valueKind"] = value_kind(_field)
+    _field["countsAsDamage"] = _field["group"] in COUNTS_AS_DAMAGE_GROUPS
+    _field["conditionalDamage"] = (_field["key"] in CONDITIONAL_DAMAGE_FIELDS
+                                   or _field["group"] in CONDITIONAL_DAMAGE_GROUPS)
 
 RATE_FIELD_BY_KEY = {field["key"]: field for field in RATE_FIELDS}
 
@@ -624,6 +721,153 @@ BULLET_SPEFFECT_FIELDS = [
     "spEffectId2", "spEffectId3", "spEffectId4",
 ]
 
+# --------------------------------------------------------------------------
+# who the SpEffect actually lands on
+# --------------------------------------------------------------------------
+# Being reachable from a player item does NOT mean the effect sits on the
+# player.  Bullet.spEffectId0..4 are the *hit target* slots, so a thrown pot's
+# poison and a debuff aura land on whoever the bullet hits; the Revenant's
+# family are separate characters with their own stat-scaling rows.  v1 treated
+# all of those as player buffs, which put "[Item - Level 3] Bewitching Branch
+# (Attack Boost on Charmed)" (x2.0 on a charmed *enemy*) at the top of the
+# damage ranking and read "[Skill - Revenant] Sebastian - Damage/Defense
+# Change" (x0.15 on the summon) as "the player deals 15% damage".
+# NOTE the `(?:->|$)` tail instead of a bare `$` anchor.  A via string does not
+# always *end* at the hit slot: when the payload is reached through one more
+# chain field the route reads
+#   "refId1->Bullet10631000.spEffectId0->cycleOccurrenceSpEffectId"
+# (『授血』 1631001 = Bloodboon's bloodflame tick).  Anchored at `$` that route
+# did not match, so a blood-loss buildup that is stacked on the *enemy* standing
+# in the flame fell through to target="self" -- i.e. onto the exact axis whose
+# group note forbids mixing the two.  Matching the slot wherever it appears in
+# the chain fixes it; the capture group carries the Bullet id.
+BULLET_HIT_VIA_RE = re.compile(r"Bullet(\d+)\.spEffectId[0-4](?:->|$)")
+BULLET_SHOOTER_VIA_RE = re.compile(r"Bullet\d+\.spEffectIDForShooter(?:->|$)")
+
+# Revenant family (Helen / Frederick / Sebastian) stat scaling: these rows are
+# applied to the summons, not to the player.
+SUMMON_ROW_RE = re.compile(
+    r"^\[Skill - Revenant\].*(Spirit Stat Change|Helen|Frederick|Sebastian)")
+
+# Paramdex row names that state outright that the effect is handed to teammates.
+# "family" alone is deliberately excluded: "[Relic - Revenant] Power up while
+# fighting alongside family" buffs the *player* while the family is out.
+ALLIES_ROW_RE = re.compile(r"\ballies\b|\ballied\b", re.IGNORECASE)
+
+# AtkParam correction columns.  A bullet whose AtkParam zeroes every damage
+# correction cannot hurt anything -- it is a support/aura bullet (Golden Vow,
+# the aromatics), so its spEffectId0..4 payload goes to the caster's own side.
+# An offensive projectile (Kukri, Glintstone Icecrag, Bewitching Branch) keeps
+# them at 100 and its payload goes to the enemy it hits.
+ATK_CORRECTION_FIELDS = [
+    "atkPhysCorrection", "atkMagCorrection", "atkFireCorrection",
+    "atkThunCorrection", "atkDarkCorrection",
+]
+
+TARGET_LABELS = {
+    "self": ("只作用于玩家自己", "Player only"),
+    "ally": ("作用于自己与／或附近队友（友方 AoE、团队增益）", "Player and/or nearby allies"),
+    "summon": ("作用在召唤物／复仇者家人自己身上，不是玩家的倍率", "The summon's own stats, not the player's"),
+    "enemy": ("挂在被命中的敌人身上（减益，或魅惑后敌人自己的增伤）", "Applied to the enemy that was hit"),
+}
+TARGET_SOURCE_LABELS = {
+    "default": "没有命中目标槽位的证据，按『挂在玩家自己身上』处理（遗物词条／护符／武器被动／永久强化等）",
+    "revenantFamilyRow": "Paramdex 行名表明这是复仇者家人（召唤物）自身的数值缩放行",
+    "alliesRow": "Paramdex 行名明示效果发给 allies（队友）",
+    "bulletHitOpposeOnly":
+        "**前提是**这条 SpEffect 的全部来源都只能由 Bullet 的命中槽（spEffectId0..4）投递；"
+        "在这个前提下，再用阵营过滤位 effectTargetSelfTarget=0／effectTargetOpposeTarget=1 "
+        "区分它投给敌方还是己方，判定为敌方。"
+        "⚠️ 这两个位**单独出现不足以判定 target**：它们的语义是『这份异常累积／效果允许打给哪个阵营』，"
+        "不是『这条 SpEffect 挂在谁身上』。SpEffectParam 3176『[Item] Poison Grease (Right) - Poison』"
+        "同样是 selfTarget=0／opposeTarget=1（与 1722000『毒雾』一模一样），"
+        "但它是玩家抹在自己武器上的毒油脂，本数据集正确地把它标成 target=\"self\"——"
+        "因为它的来源是 EquipParamGoods，根本没走 Bullet 命中槽，不满足上面的前提。"
+        "下一轮维护者若把这条规则推广到非弹道来源上，会把大量玩家自身的异常累积 buff 误判成 enemy。",
+    "bulletHitFriendlyOnly":
+        "**前提同上**（全部来源都只能由 Bullet 的命中槽投递）；在这个前提下 effectTargetOpposeTarget=0 "
+        "说明这份效果只允许打给己方阵营，判定为 ally。"
+        "同样地，effectTargetOpposeTarget=0 单独出现不足以判定 target，必须先满足『只由命中槽投递』的前提。",
+    "bulletHitSupportBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 伤害修正全为 0（纯辅助弹道，只会罩到己方）",
+    "bulletHitStatusMist": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，弹道本身不造成伤害，且效果只有异常状态累积（站在雾里的人吃累积，视为敌人侧）",
+    "bulletHitOffensiveBullet": "只能由 Bullet 的命中槽投递，阵营过滤两侧都开，但该 Bullet 的 AtkParam 是会造成伤害的攻击弹道（命中的是敌人）",
+}
+
+# --------------------------------------------------------------------------
+# does the buff need something to happen before it applies?
+# --------------------------------------------------------------------------
+# `conditions` / `triggered` only cover the conditions that are *spelled out in
+# SpEffectParam columns* (conditionHp, wepTypeTrigger, invocationConditions...).
+# The biggest multipliers in the table are gated by things the param row cannot
+# express, because an event script switches them on:
+#   704301  "[Passive - Raider] Attack Boost when below 25% Health"  x1.50
+#   8300000 "[Weapon] Improved Attack Power when Two-Handing"        x1.12..1.18
+#   8310000 "[Weapon] Attack Up when Wielding Two Armaments"         x1.12..1.18
+#   707215  "[Ultimate - Executor] Beast Attack Boost - Level 15"    x3.55
+# all had conditions=null AND triggered=null, so "filter by conditions" -- the
+# step notes.ranking asked the page to perform -- was a no-op on exactly the
+# rows that need it most.  `activation` is the machine-readable answer.
+#
+#   passive      no activation condition: equip the relic / drink the item and
+#                the multiplier is on.  Only these may be multiplied by default.
+#   conditional  the multiplier exists but a game state must hold (low HP,
+#                two-handing, a stack count, an on-hit trigger).  The user has
+#                to tick it.
+#   activated    the multiplier only exists while a skill / ultimate art / ash
+#                of war is running.  The user has to tick it, and it is usually
+#                a burst window rather than a sustained rate.
+ACTIVATION_ORDER = {"passive": 0, "conditional": 1, "activated": 2}
+
+# Paramdex "[...]" categories that are an art the player has to fire off.
+# "Passive - X" is deliberately NOT here: a hero passive can be genuinely
+# always-on, and the Raider's is gated on HP (caught by the row-name rule
+# below), so lumping it in with the Ultimate Arts would be wrong in both
+# directions.
+ACTIVATED_ROW_CATEGORY_RE = re.compile(r"^(Ultimate|Skill|AoW)\b")
+
+# Row-name words that state an activation condition.  Deliberately excludes the
+# words that describe *scope* rather than a condition -- "Improved Guard
+# Counters", "Improved Critical Hits", "Improved Charged Sorceries", "Improved
+# Chain Attack Finishers" are ordinary always-on affixes whose rates are gated
+# by scope.subCategories (ranking step ④), not by a state the user must reach.
+CONDITION_ROW_NAME_RE = re.compile(
+    r"\b(while|whenever|when|upon|during|below|above|alongside|two-hand|wielding|stack)",
+    re.IGNORECASE)
+
+ACTIVATION_LABELS = {
+    "passive": ("装备／饮用后即生效，没有额外的发动条件，可默认计入乘积",
+                "Always on once the source is equipped or used"),
+    "conditional": ("需要满足某个游戏状态才成立（残血、双手持、叠层、命中触发等），"
+                    "必须由用户勾选，默认不计入乘积",
+                    "Requires a game state; must be opted in"),
+    "activated": ("只在技艺／绝招／战技发动期间存在，必须由用户勾选，默认不计入乘积",
+                  "Only while a skill / ultimate art / ash of war is running"),
+}
+ACTIVATION_SOURCE_LABELS = {
+    "noEvidence": "没有任何发动条件的证据：来源行名不含条件词、conditions 为空、triggered 为假，"
+                  "且不是技艺／绝招／战技行。注意 passive 的含义是『没有额外的发动条件』，"
+                  "不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
+    "paramRowCategoryArt": "Paramdex 行名的 [...] 前缀是 Ultimate／Skill／AoW，"
+                           "即这条 SpEffect 只在绝招／角色技艺／战技发动期间挂在身上"
+                           "（例：707215『[Ultimate - Executor] Beast Attack Boost - Level 15』×3.55 "
+                           "只存在于处刑人绝招兽化期间）。",
+    "paramRowNameCondition": "Paramdex 行名里写明了发动条件（while／when／upon／during／below／above／"
+                             "alongside／two-handing／wielding／stack）"
+                             "（例：704301『Attack Boost when below 25% Health』×1.5、"
+                             "8300000『Improved Attack Power when Two-Handing』、"
+                             "8310000『Attack Up when Wielding Two Armaments』——"
+                             "后两者还彼此互斥，不能同时计入）。"
+                             "刻意不含 counter／critical／charged／chain 这类词：那是作用范围（scope.subCategories）"
+                             "而不是发动条件，「强化防御反击」是常驻词条。",
+    "conditionFields": "SpEffectParam 自带的条件列非默认（见 buffs[].conditions 与 conditionFields）。",
+    "onHitTrigger": "来源是 AttachEffectParam.onHitSpEffect（命中时才挂上），同 buffs[].triggered。",
+    "eventScriptTimedBuff": "这条 SpEffect 没有任何参数列指向它（全部来源都是 inferred=true，由游戏脚本挂载），"
+                            "且持续时间有限（effectEndurance ≠ -1）——脚本必然是在某个时刻才把它打开的，"
+                            "只是那个时刻写在 ESD／EMEVD 里、参数表看不到"
+                            "（例：8980002『Power of Night and Flame: Magic Damage Buff』30 秒、"
+                            "7035703『Switching Weapons Adds an Affinity Attack』10 秒）。",
+}
+
 STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构（SpEffectParam 的 spCategory / categoryPriority / saveCategory / stateInfo 四个字段）推断出来的，未经木桩全面实测，请当作「参数层面的默认规则」而不是最终结论。
 
 1. spCategory 是主判定字段，决定同类效果之间怎么处理：
@@ -651,7 +895,10 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
 4b. rates 不能一律相乘：先看 rateFields[key].valueKind。multiplier 才是乘数；flat 是点数加算（先加进攻击力再乘倍率）；
    flag 只是开关；special 组（currentHealthAttackRate 随血量的加成系数、restageAttackRate 女爵「再演」复制那一份的伤害占比）
    语义各自独立，**一律不得参与乘算或加权汇总**——把 restageAttackRate=0.6 当乘数会把「提升技艺伤害」算成 -40%，排名完全反向。
-   rateFieldGroups[].countsAsDamage=false 的组（stance 削韧、status 异常累积、special、flag、economy）都不进伤害乘积，只能单独展示。
+   countsAsDamage=true 的组（damage／attackPower／attackPowerFlat）才是无条件的血量伤害；
+   conditionalDamage=true 的（weakness 特攻、critical 致命一击、economy 里的 bowDistRate）要先满足条件才成立，
+   不得无条件乘进通用排名（『纠死圣律』weakDmgRateB=10 只对不死类敌人生效）；
+   两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）都不进伤害乘积，只能单独展示。
 
 5. 不同层之间的关系：xxxAttackPowerRate（攻击力倍率，减算防御前）与 xxxAttackRate（最终伤害倍率，减算防御后）属于两个不同的计算层，两者相乘；同一层内不同属性（物理／魔力／火／雷／圣）各自只作用于对应属性的伤害分量；物理攻击类型倍率（slash/blow/thrust/neutral）与 physics 倍率同时生效、相乘。
 
@@ -767,6 +1014,89 @@ def clean_param_name(name: str) -> str:
     return name
 
 
+def param_stem(name: str) -> str:
+    """The Paramdex row name without its per-step suffix.
+
+    "[Relic] Starting armament deals magic damage - Damage Adjustment - Potency 1"
+    and "[Relic] Starting armament deals magic damage - Apply State Info" share
+    the stem "Starting armament deals magic damage", so they really are two
+    rows of one affix.  "[Weapon] Improved Sorceries and Incantations - Potency 2"
+    and "[Weapon] Improved Incantations - Potency 1" do NOT (their stems differ),
+    which is exactly the pair v1 confused.  The "[...]" prefix is stripped first
+    so that "[Relic - Duchess] ..." is not split on its own dash.
+    """
+    return clean_param_name(name).split(" - ")[0].strip().casefold()
+
+
+ROW_CATEGORY_RE = re.compile(r"^\[([^\]]+)\]")
+
+
+def row_category(name: str | None) -> str:
+    """The "[...]" prefix of a Paramdex row name ("Relic - Duchess", "AoW")."""
+    match = ROW_CATEGORY_RE.match((name or "").strip())
+    return match.group(1).strip() if match else ""
+
+
+# "[...]" prefix -> a short zh/en word usable as a display-name qualifier.
+# Longest prefix wins, so "Weapon Power" beats "Weapon" and "Relic - Duchess"
+# is matched by "Relic".
+ROW_CATEGORY_LABELS: list[tuple[str, tuple[str, str]]] = [
+    ("Weapon Power", ("武器固有", "Weapon Power")),
+    ("Weapon", ("武器", "Weapon")),
+    ("Relic", ("遗物", "Relic")),
+    ("Talisman", ("护符", "Talisman")),
+    ("Magic Cocktail", ("调合", "Cocktail")),
+    ("Item", ("道具", "Item")),
+    ("AoW", ("战技", "AoW")),
+    ("Incantation", ("祷告", "Incantation")),
+    ("Sorcery", ("魔法", "Sorcery")),
+    ("Ultimate", ("绝招", "Ultimate")),
+    ("Skill", ("技艺", "Skill")),
+    ("Passive", ("被动", "Passive")),
+    ("Arrow", ("箭矢", "Arrow")),
+    ("Bow", ("弓", "Bow")),
+    ("Serpent Bow", ("弓", "Bow")),
+    ("Flail", ("连枷", "Flail")),
+    ("Interactable Effect", ("场景互动", "Interactable")),
+    ("Libra Deal", ("天秤契约", "Libra Deal")),
+]
+
+
+def row_category_label(name: str | None, is_zh: bool) -> str | None:
+    category = row_category(name)
+    if not category:
+        return None
+    best: tuple[str, str] | None = None
+    best_len = 0
+    for prefix, labels in ROW_CATEGORY_LABELS:
+        if (category == prefix or category.startswith(prefix + " ")) and len(prefix) > best_len:
+            best, best_len = labels, len(prefix)
+    if best is None:
+        return None
+    return best[0] if is_zh else best[1]
+
+
+# Scope columns that must agree before one SpEffect may borrow another's name.
+NAME_BORROW_SCOPE_FIELDS = (
+    "wepParamChange", "magParamChange", "miracleParamChange",
+    "shamanParamChange", "throwAttackParamChange",
+    "atkAttribute", "spAttribute",
+    "magicSubCategoryChange1", "magicSubCategoryChange2", "magicSubCategoryChange3",
+)
+
+
+def same_scope(a: dict[str, str], b: dict[str, str]) -> bool:
+    return all(a.get(f) == b.get(f) for f in NAME_BORROW_SCOPE_FIELDS)
+
+
+# Per-step markers used to tell otherwise identically named buffs apart.
+POTENCY_RE = re.compile(r"\b(?:Potency|Level|Lv|Stack|Step|Tier|Phase)\s*(\d+)", re.IGNORECASE)
+# a display name that had to fall back to "#<spEffectId>" as its last qualifier
+DISPLAY_ID_TAIL_RE = re.compile(r"#\d+[）)]$")
+PERCENT_RE = re.compile(r"\(([+-]?\d+(?:\.\d+)?)\s*%\)")
+SIDE_RE = re.compile(r"\b(Right|Left)\b")
+
+
 # --------------------------------------------------------------------------
 # main build
 # --------------------------------------------------------------------------
@@ -790,7 +1120,24 @@ def build() -> dict[str, Any]:
     weapons = read_param("EquipParamWeapon")
     magics = read_param("Magic")
     bullets = index_param(read_param("Bullet"))
+    atk_pc = index_param(read_param("AtkParam_Pc"))
     permanents = read_param("PermanentBuffParam")
+
+    def bullet_is_support(bullet_id: str) -> bool | None:
+        """True when the bullet cannot damage anything (a buff/aura bullet).
+
+        Unknown (None) when the Bullet or its AtkParam row is missing.
+        """
+        bullet = bullets.get(bullet_id)
+        if bullet is None:
+            return None
+        atk = atk_pc.get((bullet.get("atkId_Bullet") or "").strip())
+        if atk is None:
+            return None
+        try:
+            return all(float(atk[f]) == 0.0 for f in ATK_CORRECTION_FIELDS)
+        except (KeyError, ValueError):
+            return None
 
     zh = {
         "attach": read_fmg("item", "AttachEffectName", "zhocn"),
@@ -814,6 +1161,17 @@ def build() -> dict[str, Any]:
 
     missing_zh: list[str] = []
     missing_item_zh: list[str] = []
+    # rows in a source table that were skipped because the FMG has no name for
+    # them at all (unused/placeholder rows).  Recorded so that a future
+    # regulation adding those names shows up as a diff instead of silently
+    # changing the buff count.
+    skipped_unnamed: dict[str, list[str]] = defaultdict(list)
+    skipped_unnamed_targets: dict[str, set[str]] = defaultdict(set)
+
+    def note_skipped(table: str, row_id: str, targets: list[str]) -> None:
+        skipped_unnamed[table].append(row_id)
+        for target in targets:
+            skipped_unnamed_targets[table].add(target)
 
     def classify(sp_id: str) -> tuple[bool, str] | tuple[bool, None]:
         """(qualifies, direction) for an SpEffect row."""
@@ -900,49 +1258,118 @@ def build() -> dict[str, Any]:
         decade (then the century) and reuse the affix's own name.
         """
         value = int(sp_id)
+        own_row = sp.get(sp_id) or {}
+        own_stem = param_stem(own_row.get("Name", ""))
         for base in (value - value % 10, value - value % 100):
             if base == value:
                 continue
             attach_row = attach.get(str(base))
             if attach_row is None:
                 continue
+            # Guard: the decade/century neighbour must be the SAME affix, not
+            # merely a numeric neighbour.  8330104 "[Weapon] Improved Sorceries
+            # and Incantations - Potency 2" used to borrow the name of
+            # 8330100 "[Weapon] Improved Incantations - Potency 1", which turned
+            # a sorcery+incantation buff into 「强化祷告」 and produced two
+            # different 1.11 entries both called 「强化祷告」.
+            sibling_sp = sp.get(str(base))
+            if own_stem:
+                sibling_stem = param_stem(
+                    (sibling_sp or {}).get("Name") or attach_row.get("Name", ""))
+                if sibling_stem and sibling_stem != own_stem:
+                    continue
             sibling_zh, sibling_en = attach_names(attach_row)
             if sibling_zh:
                 return sibling_zh, sibling_en
         return None, None
 
-    def display_name(base: str | None, src_list: list[dict[str, Any]],
-                     zh: bool, param_name: str | None) -> str | None:
-        """"状态名（来源物品名）" -- what a ranking row should actually print.
+    def origin_labels(src_list: list[dict[str, Any]], is_zh: bool,
+                      param_name: str | None) -> tuple[str | None, str | None]:
+        """(localized origin, raw origin).
+
+        The *localized* origin is a real FMG item / affix name in the language
+        being built.  The *raw* origin is the community Paramdex row name (or an
+        English source name while building the Chinese list) -- always English,
+        often a mouthful, and it is what produced
+        「强化魔法、祷告（Improved Sorceries and Incantations (+11%)）」 next to its
+        own sibling 「强化魔法、祷告（档位1・×1.07）」.  Splitting them lets the
+        localized one stay first (it is the most informative qualifier there is)
+        while the raw one drops behind the potency / side / category / rate
+        tokens, so a family is only spelled out in English when nothing else can
+        tell its members apart.
+        """
+        def pick(keys: tuple[str, ...]) -> str | None:
+            for entry in src_list:
+                value = next((entry[key] for key in keys if entry.get(key)), None)
+                if value:
+                    return value
+            return None
+
+        raw_name = clean_param_name(param_name or "") or None
+        if is_zh:
+            return pick(("nameZh", "effectNameZh")), (pick(("nameEn", "effectNameEn"))
+                                                      or raw_name)
+        return pick(("nameEn", "effectNameEn")), raw_name
+
+    def display_head(base: str, src_list: list[dict[str, Any]], is_zh: bool,
+                     param_name: str | None) -> tuple[str, str | None, str | None]:
+        """(head, localized origin qualifier, raw origin qualifier).
 
         nameZh is the status-bar text, which repeats a lot (92 buffs are called
-        "提升攻击力"), so it is useless on its own in a list.  When no source has
-        a Chinese name (event-script weapon/AoW buffs) the English source name,
-        then the Paramdex row name, is used instead -- an ugly disambiguator
-        beats 85 identical rows.
+        "提升攻击力"), so it is useless on its own in a list.
         """
-        if not base:
-            return None
-        key_sets = [("nameZh", "effectNameZh"), ("nameEn", "effectNameEn")]
-        if not zh:
-            key_sets = key_sets[1:]
-        origin = None
-        for keys in key_sets:
-            for entry in src_list:
-                origin = next((entry[key] for key in keys if entry.get(key)), None)
-                if origin:
-                    break
-            if origin:
-                break
-        if not origin:
-            origin = clean_param_name(param_name or "") or None
-        if not origin or origin == base or origin in base:
-            return base
-        if base in origin:
+        localized, raw = origin_labels(src_list, is_zh, param_name)
+        head = base
+
+        def usable(origin: str | None) -> str | None:
+            if not origin or origin == head or origin in head:
+                return None
+            return origin
+
+        localized = usable(localized)
+        if localized and head in localized:
             # the source name is the same statement, spelled out
             # ("提升攻击力" vs "装备三把以上类别为短剑的武器，能提升攻击力")
-            return origin
-        return f"{base}（{origin}）" if zh else f"{base} ({origin})"
+            head, localized = localized, None
+        return head, localized, usable(raw)
+
+    def step_token(param_name: str | None, is_zh: bool) -> str | None:
+        match = PERCENT_RE.search(param_name or "")
+        if match:
+            return f"{match.group(1)}%"
+        match = POTENCY_RE.search(param_name or "")
+        if match:
+            return f"档位{match.group(1)}" if is_zh else f"Lv{match.group(1)}"
+        return None
+
+    def side_token(scope: dict[str, Any], param_name: str | None,
+                   is_zh: bool) -> str | None:
+        slot = scope.get("weaponSlot")
+        if slot in (1, 2):
+            labels = WEP_CHANGE_PARAM[slot]
+            return labels[0] if is_zh else labels[1]
+        match = SIDE_RE.search(param_name or "")
+        if match:
+            side = match.group(1)
+            return ("右手" if side == "Right" else "左手") if is_zh else side
+        return None
+
+    def rate_token(rates: dict[str, Any], is_zh: bool) -> str | None:
+        if not rates:
+            return None
+        key = next(iter(rates))
+        field = RATE_FIELD_BY_KEY[key]
+        value = rates[key]
+        if field["valueKind"] == "multiplier":
+            return f"×{value}"
+        label = field["zh"] if is_zh else field["en"]
+        return f"{label}{value:+g}" if isinstance(value, (int, float)) else f"{label}{value}"
+
+    def assemble(head: str, quals: list[str], is_zh: bool) -> str:
+        if not quals:
+            return head
+        inner = "・".join(quals) if is_zh else ", ".join(quals)
+        return f"{head}（{inner}）" if is_zh else f"{head} ({inner})"
 
     # (a) relic affixes -- AttachEffectParam rows that appear in a relic pool
     for row in attach_rows:
@@ -969,6 +1396,9 @@ def build() -> dict[str, Any]:
         name_zh = zh["accessory"].get(acc_id)
         name_en = en["accessory"].get(acc_id) or clean_param_name(row.get("Name", "")) or None
         if not (name_zh or name_en):
+            note_skipped("EquipParamAccessory", acc_id,
+                         [t for t in (ref(row.get(f)) for f in
+                                      ("spEffectId_1", "spEffectId_2", "spEffectId_3")) if t])
             continue
         for field in ("spEffectId_1", "spEffectId_2", "spEffectId_3"):
             attach_id = ref(row.get(field))
@@ -999,6 +1429,9 @@ def build() -> dict[str, Any]:
         name_zh = zh["goods"].get(goods_id)
         name_en = en["goods"].get(goods_id) or clean_param_name(row.get("Name", "")) or None
         if not (name_zh or name_en):
+            note_skipped("EquipParamGoods", goods_id,
+                         [t for t in (ref(row.get(f)) for f in
+                                      goods_fields + ["carrySpEffectId", "emptySpEffectId"]) if t])
             continue
         category = row.get("refCategory", "0")
         targets: list[tuple[str, str]] = []
@@ -1033,6 +1466,8 @@ def build() -> dict[str, Any]:
         name_zh = zh["weapon"].get(str(weapon_id)) or zh["weapon"].get(str(base_id))
         name_en = en["weapon"].get(str(weapon_id)) or en["weapon"].get(str(base_id))
         if not (name_zh or name_en):
+            note_skipped("EquipParamWeapon", str(weapon_id),
+                         [t for t in (ref(row.get(f)) for f in weapon_fields) if t])
             continue
         for field in weapon_fields:
             target = ref(row.get(field))
@@ -1042,11 +1477,26 @@ def build() -> dict[str, Any]:
             add_source(target, "weaponPassive", str(base_id), name_zh, name_en, field)
 
     # (e) spells -- Magic (direct SpEffect, or through a Bullet)
+    #
+    # A handful of Magic rows carry a *relic* effect in one of their refId
+    # slots: Magic.refId10 = 7037001 on all 30 assist incantations is the hook
+    # for the Undertaker relic "[Relic - Undertaker] Physical attacks boosted
+    # while assist effect from incantation is active for self", and the SpEffect
+    # only fires when the player actually has that affix equipped
+    # (invocationConditionsStateChange1 = 2065).  Writing 30 kind="spell"
+    # sources for it made the page claim every assist incantation grants +19%,
+    # and made its displayNameZh 「提升物理攻击力（火焰啊，赐予我力量！）」 -- the
+    # same label as the real 1605000『火焰啊，赐予我力量！』.  Those mounts are
+    # collected here and emitted as ONE relicAffix source instead.
+    relic_mounts: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
     for row in magics:
         magic_id = row["ID"]
         name_zh = zh["magic"].get(magic_id)
         name_en = en["magic"].get(magic_id) or clean_param_name(row.get("Name", "")) or None
         if not (name_zh or name_en):
+            note_skipped("Magic", magic_id,
+                         [t for t in (ref(row.get(f"refId{i}")) for i in range(1, 11)) if t])
             continue
         for index in range(1, 11):
             category = row.get(f"refCategory{index}", "-1")
@@ -1066,7 +1516,35 @@ def build() -> dict[str, Any]:
                         targets.append((inner, f"refId{index}->Bullet{value}.{bullet_field}"))
             for target, via in targets:
                 seeds.add(target)
+                target_row = sp.get(target)
+                if (target_row or {}).get("Name", "").startswith("[Relic"):
+                    relic_mounts[target].append((magic_id, via))
+                    continue
                 add_source(target, "spell", magic_id, name_zh, name_en, via)
+
+    for target, mounts in relic_mounts.items():
+        target_row = sp.get(target) or {}
+        value = int(target)
+        affix_id: str | None = None
+        affix_zh = affix_en = None
+        for base in (value - value % 10, value - value % 100):
+            attach_row = attach.get(str(base))
+            if attach_row is None:
+                continue
+            affix_id = str(base)
+            affix_zh, affix_en = attach_names(attach_row)
+            break
+        slots = sorted({via for _magic_id, via in mounts})
+        add_source(
+            target, "relicAffix", affix_id, affix_zh,
+            affix_en or clean_param_name(target_row.get("Name", "")) or None,
+            f"Magic.{'/'.join(slots)}",
+            extra={
+                "relicMount": True,
+                "mountedOnSpellCount": len({magic_id for magic_id, _via in mounts}),
+                "mountedOnSpellIds": sorted({int(magic_id) for magic_id, _via in mounts})[:40],
+            },
+        )
 
     # (f) permanent buffs -- PermanentBuffParam
     permanent_en_index: dict[str, str] = {}
@@ -1160,8 +1638,65 @@ def build() -> dict[str, Any]:
         add_source(sp_id, kind, None, None, clean_param_name(param_name) or None,
                    "paramRowName", extra={"inferred": True, "paramRowCategory": prefix})
 
+    # --- who does the effect land on? -------------------------------------
+    def classify_target(sp_id: str, row: dict[str, str],
+                        all_sources: list[dict[str, Any]],
+                        rate_groups: set[str]) -> tuple[str, str]:
+        name = row.get("Name") or ""
+        if SUMMON_ROW_RE.match(name):
+            return "summon", "revenantFamilyRow"
+        vias = [entry["via"] for entry in all_sources]
+        if vias and all(BULLET_HIT_VIA_RE.search(via) for via in vias):
+            # every route to this SpEffect is a bullet's *hit target* slot, so
+            # it lands on whoever the bullet hit, never on the caster.
+            self_side = row.get("effectTargetSelfTarget") == "1"
+            oppose_side = row.get("effectTargetOpposeTarget") == "1"
+            if oppose_side and not self_side:
+                return "enemy", "bulletHitOpposeOnly"
+            if self_side and not oppose_side:
+                return "ally", "bulletHitFriendlyOnly"
+            # both faction filters open -- fall back to what the bullet is:
+            # a damaging projectile hits enemies, a zero-damage aura bullet
+            # (Golden Vow, the aromatics) only ever covers your own side.
+            bullet_ids = {BULLET_HIT_VIA_RE.search(via).group(1) for via in vias}
+            support = {bullet_is_support(bullet_id) for bullet_id in bullet_ids}
+            if support == {True} and rate_groups - {"status", "flag"}:
+                return "ally", "bulletHitSupportBullet"
+            if support == {True}:
+                # a zero-damage bullet whose whole payload is ailment buildup is
+                # a mist/cloud that stacks the ailment on whoever stands in it
+                # (Freezing Mist), not a party buff.
+                return "enemy", "bulletHitStatusMist"
+            return "enemy", "bulletHitOffensiveBullet"
+        if ALLIES_ROW_RE.search(name):
+            return "ally", "alliesRow"
+        return "self", "default"
+
+    # --- does something have to happen first? -----------------------------
+    def classify_activation(row: dict[str, str], all_sources: list[dict[str, Any]],
+                            has_conditions: bool, has_trigger: bool,
+                            duration: float) -> tuple[str, str]:
+        """(activation, activationSource) -- entirely data driven, no id lists.
+
+        Checked strongest-first so the label is never weaker than the evidence:
+        an art window beats a state condition beats "no evidence".
+        """
+        name = row.get("Name") or ""
+        if ACTIVATED_ROW_CATEGORY_RE.match(row_category(name)):
+            return "activated", "paramRowCategoryArt"
+        if CONDITION_ROW_NAME_RE.search(clean_param_name(name)):
+            return "conditional", "paramRowNameCondition"
+        if has_conditions:
+            return "conditional", "conditionFields"
+        if has_trigger:
+            return "conditional", "onHitTrigger"
+        if all_sources and all(s.get("inferred") for s in all_sources) and duration != -1.0:
+            return "conditional", "eventScriptTimedBuff"
+        return "passive", "noEvidence"
+
     # --- emit buffs -------------------------------------------------------
     buffs: list[dict[str, Any]] = []
+    sentinel_rows: list[dict[str, Any]] = []
     display_inputs: dict[int, tuple[list[dict[str, Any]], str | None]] = {}
     for sp_id in sorted(sources, key=int):
         row = sp.get(sp_id)
@@ -1175,6 +1710,40 @@ def build() -> dict[str, Any]:
             key = field["key"]
             if key in row and not is_default(row, key):
                 rates[key] = as_number(row[key])
+
+        # --- drop "×0" economy sentinels --------------------------------
+        # 704000 "[Skill - Raider] Retaliate (Defense and Immortality)" is the
+        # Raider's counter i-frame window: effectEndurance=0 and its real
+        # payload is the slash/blow/.../DamageCutRate=0.25 columns this dataset
+        # does not read.  Its one readable value is
+        # characterSkillCooldownReduction=0, which -- the field being a
+        # multiplier with lowerIsBetter -- renders as 「技艺冷却 ×0（-100%）」,
+        # a fake infinite cooldown reduction sitting next to the real relic
+        # steps 0.95 / 0.925 / 0.9.  The 0 is a sentinel for "no cooldown
+        # bookkeeping inside this window", not a displayable rate.
+        #
+        # The rule is kept deliberately narrow so it cannot eat real data:
+        # 青露的秘密滴泪 (511060 / 708920) and 魔法帷幕 (1801400) also carry ×0
+        # consumption rates, but they run for 15 / 20 / 8 seconds and really do
+        # make casting free, so effectEndurance != 0 keeps them in.
+        qualifying_keys = {k for k in rates
+                           if RATE_FIELD_BY_KEY[k]["group"] in QUALIFY_GROUPS}
+        sentinel_keys = {k for k in qualifying_keys
+                         if RATE_FIELD_BY_KEY[k]["group"] == "economy"
+                         and RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier"
+                         and float(rates[k]) == 0.0}
+        if (qualifying_keys and qualifying_keys == sentinel_keys
+                and float(row["effectEndurance"]) == 0.0):
+            sentinel_rows.append({
+                "spEffectId": int(sp_id),
+                "paramName": row.get("Name") or None,
+                "rates": dict(rates),
+                "duration": as_number(row["effectEndurance"]),
+                "why": "唯一的合格数值是 valueKind=multiplier 的 economy 字段且取值为 0，"
+                       "同时 effectEndurance=0（没有持续时间）——这是哨兵值而不是可展示的倍率，"
+                       "按 -100% 展示会得出错误结论，故不作为 buff 输出。",
+            })
+            continue
 
         text_ids = [ref(row.get(f"spEffectTextId_{i}")) for i in range(1, 5)]
         text_ids = [t for t in text_ids if t]
@@ -1222,6 +1791,7 @@ def build() -> dict[str, Any]:
                     name_en = entry[key]
                     break
         inferred_name = False
+        inferred_name_from: str | None = None
         if not name_zh:
             # Last resort for the event-script / "potency step" SpEffects: the
             # relic affix they belong to is the AttachEffectParam row at the
@@ -1233,6 +1803,7 @@ def build() -> dict[str, Any]:
                 name_zh = sibling_zh
                 name_source = "attachEffectName"
                 inferred_name = True
+                inferred_name_from = "attachEffectSibling"
                 # nameEn keeps whatever it already had (usually the Paramdex row
                 # name, which spells out the potency step and so is strictly
                 # more informative than the affix name).
@@ -1241,8 +1812,11 @@ def build() -> dict[str, Any]:
         if not name_en:
             name_en = clean_param_name(row.get("Name", "")) or None
         if not name_zh:
-            missing_zh.append(f"{sp_id} {row.get('Name') or ''} -> {name_en}".strip())
             name_source = None
+
+        buff_target, buff_target_source = classify_target(
+            sp_id, row, sources[sp_id],
+            {RATE_FIELD_BY_KEY[key]["group"] for key in rates})
 
         sp_category = int(row["spCategory"])
         behaviour, _behaviour_zh = spcategory_behaviour(sp_category)
@@ -1285,6 +1859,11 @@ def build() -> dict[str, Any]:
             if target:
                 chain.append({"field": key, "spEffectId": int(target)})
 
+        has_trigger = any(item.get("trigger") for item in src_list)
+        buff_activation, buff_activation_source = classify_activation(
+            row, sources[sp_id], bool(conditions), has_trigger,
+            float(row["effectEndurance"]))
+
         fallback_name = name_en or clean_param_name(row.get("Name", "")) or None
         entry: dict[str, Any] = {
             "spEffectId": int(sp_id),
@@ -1312,10 +1891,31 @@ def build() -> dict[str, Any]:
             },
             "duration": as_number(row["effectEndurance"]),
             "permanent": float(row["effectEndurance"]) == -1.0,
-            "affectsAllies": row["effectTargetFriend"] == "1",
+            # v1 exported the raw effectTargetFriend bit here.  That column is
+            # a template default (9360 of 13472 SpEffectParam rows have it set)
+            # and produced affectsAllies=true on 817 of 827 buffs, including
+            # every pure self relic affix -- a badge that lights up on almost
+            # every row carries no information.  The raw bit is kept under
+            # effectTargetFriendRaw; affectsAllies now means "this really is
+            # handed to teammates", i.e. the effect is delivered by a friendly
+            # AoE bullet or the Paramdex row name says "Allies".
+            "affectsAllies": buff_target == "ally",
+            "effectTargetFriendRaw": row["effectTargetFriend"] == "1",
+            "target": buff_target,
+            "targetSource": buff_target_source,
+            # v3.  `conditions` / `triggered` only see the SpEffectParam
+            # condition columns, and the four biggest multipliers in the table
+            # (Beast form x3.55, "below 25% Health" x1.5, two-handing +18%,
+            # dual-wielding +18%) have neither, so the "filter by conditions"
+            # ranking step was a no-op on exactly the rows it existed for.
+            # `activation` is the field the page must branch on first; see
+            # enums.activation / enums.activationSource and notes.activation.
+            "activation": buff_activation,
+            "activationSource": buff_activation_source,
         }
         if inferred_name:
             entry["inferredName"] = True
+            entry["inferredNameFrom"] = inferred_name_from
         if labels_zh:
             entry["statusLabelsZh"] = labels_zh
         if labels_en:
@@ -1329,7 +1929,7 @@ def build() -> dict[str, Any]:
             entry["chainSpEffectId"] = chain
         if len(sources[sp_id]) > MAX_SOURCES_PER_BUFF:
             entry["sourcesTruncated"] = len(sources[sp_id])
-        if any(item.get("trigger") for item in src_list):
+        if has_trigger:
             entry["triggered"] = True
         for item in src_list:
             if not item.get("nameZh") and not item.get("inferred"):
@@ -1338,21 +1938,167 @@ def build() -> dict[str, Any]:
         buffs.append(entry)
         display_inputs[int(sp_id)] = (src_list, row.get("Name"))
 
+    # --- borrow a name from an identical sibling step ---------------------
+    # Some potency steps have no text of their own: SpEffect 8330104
+    # "[Weapon] Improved Sorceries and Incantations - Potency 2" only has an
+    # English PermanentBuffParam name, while 8330103 (Potency 1 of the very
+    # same affix, identical scope columns) does have 「强化魔法、祷告」.  Borrow
+    # across steps only when the Paramdex stem AND every scope column match,
+    # and flag it so a consumer knows the text is not this row's own.
+    stem_names: dict[tuple[Any, ...], tuple[str, str | None]] = {}
+    for buff in buffs:
+        if not buff["nameZh"] or buff.get("inferredName"):
+            continue
+        row = sp[str(buff["spEffectId"])]
+        stem = param_stem(row.get("Name", ""))
+        if not stem:
+            continue
+        key = (stem,) + tuple(row.get(f) for f in NAME_BORROW_SCOPE_FIELDS)
+        stem_names.setdefault(key, (buff["nameZh"], buff["nameSource"]))
+    for buff in buffs:
+        if buff["nameZh"]:
+            continue
+        row = sp[str(buff["spEffectId"])]
+        stem = param_stem(row.get("Name", ""))
+        if not stem:
+            continue
+        key = (stem,) + tuple(row.get(f) for f in NAME_BORROW_SCOPE_FIELDS)
+        borrowed = stem_names.get(key)
+        if not borrowed:
+            continue
+        buff["nameZh"] = borrowed[0]
+        buff["nameSource"] = borrowed[1]
+        buff["inferredName"] = True
+        buff["inferredNameFrom"] = "siblingSpEffect"
+        buff["displayNameZh"] = borrowed[0]
+
+    missing_zh = [
+        f"{buff['spEffectId']} {sp[str(buff['spEffectId'])].get('Name') or ''} "
+        f"-> {buff['nameEn']}".strip()
+        for buff in buffs if not buff["nameZh"]
+    ]
+
     # --- display names ----------------------------------------------------
-    # Only names that actually collide get the "（来源）" suffix: a unique name
-    # such as 「【女爵】提升技艺造成的伤害」 stays clean, while the 92 buffs called
-    # 「提升攻击力」 all get told apart.
+    # Only names that actually collide get a qualifier: a unique name such as
+    # 「【女爵】提升技艺造成的伤害」 stays clean, while the 92 buffs called
+    # 「提升攻击力」 all get told apart.  v1 stopped after one qualifier (the
+    # source name) and still left 323 of 827 buffs sharing a display name --
+    # 「提升火属性攻击力（火油脂）」 covered six rows whose only difference was the
+    # grease level and the weapon slot.  The qualifiers are therefore applied
+    # in escalating order until every name in the whole list is unique, and
+    # that uniqueness is asserted below.
+    # Level order.  The raw English Paramdex row name used to sit at level 0,
+    # which is why 261 Chinese names carried an English qualifier and why one
+    # member of a potency family could be spelled out in English while its
+    # siblings got a tidy 「档位N」.  It now sits second to last, after the
+    # tokens that read well in either language.
+    LEVEL_KEYS = ("localizedOrigin", "potency", "weaponSide",
+                  "rowCategory", "rate", "rawOrigin", "spEffectId")
+    LEVEL_COUNT = len(LEVEL_KEYS)
+
     for field, is_zh in (("displayNameZh", True), ("displayNameEn", False)):
-        counts = defaultdict(int)
-        for buff in buffs:
-            if buff[field]:
-                counts[buff[field]] += 1
+        heads: dict[int, str] = {}
+        levels: dict[int, list[str | None]] = {}
+        used: dict[int, set[int]] = {}
         for buff in buffs:
             base = buff[field]
-            if not base or counts[base] < 2:
+            sp_key = buff["spEffectId"]
+            if not base:
+                heads[sp_key] = ""
+                levels[sp_key] = [None] * LEVEL_COUNT
+                used[sp_key] = set()
                 continue
-            src_list, param_name = display_inputs[buff["spEffectId"]]
-            buff[field] = display_name(base, src_list, zh=is_zh, param_name=param_name)
+            src_list, param_name = display_inputs[sp_key]
+            head, localized, raw = display_head(base, src_list, is_zh, param_name)
+            heads[sp_key] = head
+            used[sp_key] = set()
+            levels[sp_key] = [
+                localized,
+                step_token(param_name, is_zh),
+                side_token(buff["scope"], param_name, is_zh),
+                row_category_label(param_name, is_zh),
+                rate_token(buff["rates"], is_zh),
+                raw,
+                f"#{sp_key}",
+            ]
+
+        named = [b for b in buffs if b[field]]
+
+        def render(sp_key: int) -> str:
+            tokens = []
+            for index in sorted(used[sp_key]):
+                token = levels[sp_key][index]
+                if token and token not in tokens:
+                    tokens.append(token)
+            return assemble(heads[sp_key], tokens, is_zh)
+
+        def collisions() -> dict[str, int]:
+            counts: dict[str, int] = defaultdict(int)
+            for buff in named:
+                counts[render(buff["spEffectId"])] += 1
+            return counts
+
+        def escalate() -> None:
+            for level in range(LEVEL_COUNT):
+                counts = collisions()
+                if all(count == 1 for count in counts.values()):
+                    return
+                for buff in named:
+                    sp_key = buff["spEffectId"]
+                    if counts[render(sp_key)] < 2:
+                        continue
+                    if levels[sp_key][level]:
+                        used[sp_key].add(level)
+
+        escalate()
+
+        # --- keep a family spelled the same way ---------------------------
+        # Members of one affix family (same Paramdex stem) used to end up in
+        # different styles: 8330101 got 「强化祷告（档位2）」 while its own
+        # 8330100 needed 「（档位1・×1.05・#8330100）」 because it collided with
+        # the [Relic] copy of the same affix.  Give every member of a family the
+        # union of the levels any member needed, so one relic set reads as one
+        # block in the list.
+        families: dict[str, list[int]] = defaultdict(list)
+        for buff in named:
+            _src, param_name = display_inputs[buff["spEffectId"]]
+            stem = param_stem(param_name or "")
+            if stem:
+                families[stem].append(buff["spEffectId"])
+        for members in families.values():
+            if len(members) < 2:
+                continue
+            union = set().union(*(used[sp_key] for sp_key in members))
+            for sp_key in members:
+                used[sp_key] |= union
+        # the union only ever adds tokens, so it cannot break a family apart,
+        # but it can collide a family member with an unrelated buff -- escalate
+        # once more (the last level is #spEffectId, which always separates).
+        escalate()
+
+        # Once a name carries #spEffectId it is unique on that alone, so the raw
+        # English row name is pure noise at that point -- and it is the longest,
+        # ugliest token of the lot.  Dropping it keeps
+        # 「米莉森的义手（护符・×1.11・#312507）」 readable instead of
+        # 「米莉森的义手（护符・×1.11・Millicent's Prosthesis・#312507）」.
+        raw_level = LEVEL_KEYS.index("rawOrigin")
+        id_level = LEVEL_KEYS.index("spEffectId")
+        for buff in named:
+            sp_key = buff["spEffectId"]
+            if id_level in used[sp_key]:
+                used[sp_key].discard(raw_level)
+
+        for buff in named:
+            buff[field] = render(buff["spEffectId"])
+
+        seen_display: dict[str, int] = {}
+        for buff in named:
+            value = buff[field]
+            if value in seen_display:
+                raise AssertionError(
+                    f"{field} is not unique: {value!r} used by "
+                    f"{seen_display[value]} and {buff['spEffectId']}")
+            seen_display[value] = buff["spEffectId"]
 
     # --- counts -----------------------------------------------------------
     kind_counts: dict[str, int] = defaultdict(int)
@@ -1372,6 +2118,7 @@ def build() -> dict[str, Any]:
     payload["gameVersion"] = GAME_VERSION
     payload["dataVersion"] = DATA_VERSION
     payload["generatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload["schemaChangelog"] = SCHEMA_CHANGELOG
     payload["sources"] = [
         {
             "name": "ELDEN RING NIGHTREIGN regulation params",
@@ -1399,21 +2146,87 @@ def build() -> dict[str, Any]:
         },
     ]
     payload["notes"] = {
-        "zh": "只收录「能提升玩家自身输出」且能从玩家可获得的物品／法术／永久强化追溯到的 SpEffect。"
+        "zh": "收录「能改变输出数值」且能从玩家可获得的物品／法术／永久强化／遗物词条追溯到的 SpEffect。"
+              "**注意：能追溯到玩家物品 ≠ 挂在玩家身上**——投掷道具与法术的 Bullet 命中槽（spEffectId0..4）"
+              "把效果挂在被命中的对象上，复仇者的家人（海伦／弗雷德里克／塞巴斯蒂安）另有自己的数值缩放行。"
+              "因此每条 buff 都带 `target`（self／ally／summon／enemy），排名前必须先按它过滤。"
               "本作没有独立的『战技伤害 +x%』类字段，针对战技／跳跃攻击／防御反击／绝招等的强化"
               "都是普通的 AttackRate 字段 + magicSubCategoryChange 子类过滤，见每条 buff 的 scope。",
+        "target": "`target` 说明这条 SpEffect 实际挂在谁身上：self＝只作用于玩家自己；ally＝自己与／或附近队友"
+                  "（友方 AoE 弹道，如黄金树立誓、振奋香，或行名明示 Allies 的团队增益）；"
+                  "summon＝复仇者家人等召唤物**自己**的数值缩放（296220『塞巴斯蒂安』的 0.15 是召唤物的伤害系数，"
+                  "不是让玩家伤害变成 15%）；enemy＝挂在被命中的敌人身上（酸蚀喷雾、桂奥尔的咆哮这类减益，"
+                  "或『魅惑树枝』让被魅惑的敌人攻击力 ×2）。"
+                  "**增伤排名只能对 target 为 self／ally 的条目做乘算**；enemy 条目的 `direction` 描述的是"
+                  "敌人数值的增减（decrease＝把敌人削弱，对玩家有利），语义与 self 条目相反，"
+                  "summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。",
+        "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。"
+                      "`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，"
+                      "而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，"
+                      "所以 v2 里 704301『残血 25% 以下 ×1.5』、8300000-2『双手持 +12/15/18%』、"
+                      "8310000-2『双持 +12/15/18%』、707201-215『处刑人绝招兽化 ×1.62–3.55』"
+                      "的 conditions 与 triggered 全是 null。"
+                      "**只有 activation=\"passive\" 的条目才允许默认乘进通用排名**；"
+                      "conditional 与 activated 必须由用户显式勾选（默认不计入）。"
+                      "另外请注意互斥：8300000-2（双手共持）与 8310000-2（双手各持）不可能同时成立，"
+                      "同理 707201-215 是绝招兽化的 15 个等级，同一时刻只有一层。"
+                      "判定依据逐条写在 `activationSource`，中文解释见 enums.activationSource；"
+                      "passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——"
+                      "消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事。",
+        "conditions": "带 `conditions` / `triggered` 的 buff 有发动条件（武器种类、血量、自身状态、概率、命中触发等），"
+                      "例如 7037001 是送葬者遗物词条，只有装备该词条并且身上有祷告辅助效果时才给 +19%——"
+                      "它挂在 30 个辅助祷告的 Magic.refId10 上，并不代表任何人施放这些祷告都能拿到。"
+                      "排名时必须让用户勾选是否满足条件，**默认不计入乘积**。"
+                      "本版本 conditions 字段的中文含义见 conditionFields。",
         "damageTypeNaming": "参数里的 dark 槽位在本作即『圣』属性；physics 为物理总量，slash/blow/thrust/neutral 是物理攻击类型细分。",
+        "ranking": "增伤排名的推荐步骤（顺序不能省）："
+                   "① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、"
+                   "enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；"
+                   "② 按 `direction` 过滤（只要 increase／mixed）；"
+                   "③ **先看 `activation`，再看 `conditions`／`triggered`**："
+                   "只有 activation=\"passive\" 才允许默认计入乘积；"
+                   "conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）"
+                   "一律由用户勾选，默认不计入。"
+                   "顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、"
+                   "8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，"
+                   "那一步在最需要它的条目上是空转的。"
+                   "拿到具体条件字段仍然看 `conditions`（含义见 conditionFields）与 `triggered`；"
+                   "④ 按 `scope` 判断是否作用于目标攻击（affectsSorcery／affectsIncantation／affectsShaman／"
+                   "affectsThrow／weaponSlot／spAttribute／subCategories）；"
+                   "⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` "
+                   "决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，"
+                   "attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，"
+                   "stance／status 另开一条轴，special／flag／economy 只展示不乘；"
+                   "⑥ 用 `stacking.group` 分组去重（同组按 `spCategoryBehavior` 处理）后跨组相乘；"
+                   "⑦ 列表一律显示 `displayNameZh`（已保证唯一）。",
         "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind："
                          "multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；"
                          "flag 只是开关，不参与计算；special 的每个字段语义各不相同、"
                          "**一律不得相乘**（restageAttackRate=0.6 指女爵『再演』复制那一份占 60%，"
-                         "不是 -40% 伤害）。另可用 rateFieldGroups[].countsAsDamage 做粗筛："
-                         "false 的组（stance 削韧、status 异常累积、special、flag、economy）不进伤害乘积，只单独展示。",
+                         "不是 -40% 伤害）。再用两个布尔做粗筛："
+                         "`countsAsDamage=true` 的组（damage／attackPower／attackPowerFlat）是**无条件**的血量伤害，"
+                         "可以进通用乘积；`conditionalDamage=true` 的组与字段（weakness 特攻、critical 致命一击、"
+                         "以及 economy 里的 bowDistRate 远程衰减）确实改血量伤害，但要先满足条件才成立，"
+                         "**不得无条件乘进通用排名**——『纠死圣律』weakDmgRateB=10 只对不死类敌人生效，"
+                         "无条件相乘会让它以 ×10 稳居榜首；页面应在『指定敌人类型』或『远程／致命一击』分区里另算。"
+                         "两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）"
+                         "不进伤害乘积，只单独展示或另开轴。",
         "displayName": "nameZh 取自状态栏文本，重名极多（『提升攻击力』92 条、『异常状态：冻伤』53 条），"
-                       "**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn："
-                       "名字本身唯一时它就等于 nameZh，出现重名时会自动补上来源（『提升攻击力（黄金树立誓）』），"
-                       "来源没有中文名时退化为英文名或 Paramdex 行名。仍有极少数同名条目是同一道具的不同强度档位"
-                       "（如六级『结冰油脂』），用 rates 的数值区分即可。",
+                       "**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，"
+                       "**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。"
+                       "消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补"
+                       "① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%）、"
+                       "③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，"
+                       "取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、"
+                       "⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。"
+                       "因此『提升火属性攻击力（火油脂・档位2・右手）』这种长名字是刻意的："
+                       "六个油脂档位×左右手原本完全同名。"
+                       "v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，"
+                       "还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；"
+                       "同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，"
+                       "避免同一组遗物一条带 #id、一条不带。"
+                       "实际退到 `#spEffectId` 的条数见 counts.displayNameZhFallingBackToSpEffectId，"
+                       "完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId（v2 为 52 条）。",
     }
     rate_field_usage: dict[str, int] = defaultdict(int)
     for buff in buffs:
@@ -1425,6 +2238,7 @@ def build() -> dict[str, Any]:
             "key": group["key"],
             "zh": group["zh"],
             "countsAsDamage": group["countsAsDamage"],
+            "conditionalDamage": group["conditionalDamage"],
             "qualifies": group["qualifies"],
             "note": group["note"],
         }
@@ -1438,7 +2252,8 @@ def build() -> dict[str, Any]:
             "default": field["default"],
             "group": field["group"],
             "valueKind": field["valueKind"],
-            "countsAsDamage": field["group"] in COUNTS_AS_DAMAGE_GROUPS,
+            "countsAsDamage": field["countsAsDamage"],
+            "conditionalDamage": field["conditionalDamage"],
             "observedCount": rate_field_usage.get(field["key"], 0),
             **({"lowerIsBetter": True} if field.get("lowerIsBetter") else {}),
             "appliesTo": field["appliesTo"],
@@ -1469,6 +2284,16 @@ def build() -> dict[str, Any]:
             "heroSkill": "角色技艺／绝招／被动",
             "other": "其他（未归入遗物词条池的 AttachEffect、链式来源或仅凭 Paramdex 行名推断的条目）",
         },
+        "sourceRelicMount": "sources[] 里带 relicMount=true 的条目表示：这条 SpEffect 是挂在一批法术的 "
+                            "Magic.refIdN 槽位上的**遗物词条**效果（所有辅助祷告共用同一个挂载槽），"
+                            "mountedOnSpellCount / mountedOnSpellIds 记录了共用它的法术数量与 ID。"
+                            "它不是这些法术本身的增益，必须同时满足该词条已装备与 conditions 里的发动条件。",
+        "target": {key: {"zh": labels[0], "en": labels[1]}
+                   for key, labels in TARGET_LABELS.items()},
+        "targetSource": dict(TARGET_SOURCE_LABELS),
+        "activation": {key: {"zh": labels[0], "en": labels[1]}
+                       for key, labels in ACTIVATION_LABELS.items()},
+        "activationSource": dict(ACTIVATION_SOURCE_LABELS),
         "sourceIdContract": "sources[].id 是来源表的行 ID，可以按 (kind, id) 联表；"
                             "但 inferred=true 的条目在参数表里根本没有对应行（由游戏脚本挂载），"
                             "其 id 恒为 null，消费方看到 inferred:true 必须只用 nameEn / paramRowCategory 展示，不得联表。",
@@ -1476,16 +2301,41 @@ def build() -> dict[str, Any]:
     payload["conditionFields"] = [{"key": key, "zh": label} for key, label in CONDITION_FIELDS]
     payload["chainFields"] = [{"key": key, "zh": label} for key, label in CHAIN_FIELDS]
     payload["stackingRules"] = {"zh": STACKING_RULES_ZH}
+    target_counts: dict[str, int] = defaultdict(int)
+    for buff in buffs:
+        target_counts[buff["target"]] += 1
+    activation_counts: dict[str, int] = defaultdict(int)
+    activation_source_counts: dict[str, int] = defaultdict(int)
+    for buff in buffs:
+        activation_counts[buff["activation"]] += 1
+        activation_source_counts[buff["activationSource"]] += 1
+    display_id_fallback = [
+        buff["spEffectId"] for buff in buffs
+        if buff["displayNameZh"] and DISPLAY_ID_TAIL_RE.search(buff["displayNameZh"])
+    ]
     payload["counts"] = {
         "buffs": len(buffs),
         "sourceLinksByKind": dict(sorted(kind_counts.items())),
         "buffsByKind": {k: len(v) for k, v in sorted(kind_buffs.items())},
         "buffsByRateGroup": dict(sorted(group_counts.items())),
+        "buffsByTarget": dict(sorted(target_counts.items())),
+        "buffsByActivation": dict(sorted(activation_counts.items())),
+        "buffsByActivationSource": dict(sorted(activation_source_counts.items())),
+        "displayNameZhFallingBackToSpEffectId": len(display_id_fallback),
+        "buffsAffectingAllies": sum(1 for b in buffs if b["affectsAllies"]),
         "buffsWithoutChineseName": sum(1 for b in buffs if not b["nameZh"]),
         "buffsOnlyInferredFromParamRowName": sum(
             1 for b in buffs if b["sources"] and all(s.get("inferred") for s in b["sources"])
         ),
     }
+    inferred_name_origins: dict[str, int] = defaultdict(int)
+    for buff in buffs:
+        if buff.get("inferredName"):
+            inferred_name_origins[buff.get("inferredNameFrom") or "unknown"] += 1
+    non_self_targets: dict[str, list[int]] = defaultdict(list)
+    for buff in buffs:
+        if buff["target"] != "self":
+            non_self_targets[buff["target"]].append(buff["spEffectId"])
     unique_missing = sorted(set(missing_zh))
     unique_missing_items = sorted(set(missing_item_zh))
     unused_rate_fields = [f["key"] for f in RATE_FIELDS if not rate_field_usage.get(f["key"])]
@@ -1500,12 +2350,92 @@ def build() -> dict[str, Any]:
         "sourceItemsWithoutChineseName": unique_missing_items[:40],
         "note": "没有简体中文名的 buff：绝大多数是只能靠 Paramdex 行名推断出来的战技／技艺／武器 buff（游戏内没有对应的 FMG 文本），已保留英文名与 paramName。",
         "buffsWithInferredName": sum(1 for b in buffs if b.get("inferredName")),
-        "inferredNameNote": "inferredName=true 的 buff，其 nameZh 借用的是同族遗物词条（AttachEffectParam id-id%10 / id-id%100）的名字，"
-                            "是同一条词条的不同档位，名字正确但不是该 SpEffect 自己的文本。",
+        "buffsWithInferredNameByOrigin": dict(sorted(inferred_name_origins.items())),
+        "inferredNameNote": "inferredName=true 的 buff，其 nameZh 不是该 SpEffect 自己的文本，而是借来的，"
+                            "来源写在 inferredNameFrom："
+                            "attachEffectSibling＝同族遗物词条（AttachEffectParam id-id%10 / id-id%100）的名字；"
+                            "siblingSpEffect＝同一条目的另一个强度档位（Paramdex 行名去掉『- Potency N』后的词干相同，"
+                            "且 wepParamChange/magParamChange/miracleParamChange/shamanParamChange/throwAttackParamChange/"
+                            "atkAttribute/spAttribute/magicSubCategoryChange1-3 全部一致）。"
+                            "两种借用都做了词干＋作用范围校验：v1 把 8330104"
+                            "『Improved Sorceries and Incantations - Potency 2』误标成 8330100 的「强化祷告」，"
+                            "现在它会正确借到 8330103 的「强化魔法、祷告」。",
+        "nonSelfTargetBuffs": {
+            key: sorted(value)[:60]
+            for key, value in sorted(non_self_targets.items())
+        },
+        "activationNote": "activation 的三态判定完全由数据推出，没有写死的 ID 名单，判定依据逐条写在 "
+                          "buffs[].activationSource（中文解释见 enums.activationSource）。"
+                          "本版本取值分布见 counts.buffsByActivation／buffsByActivationSource。"
+                          "**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**："
+                          "v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、"
+                          "8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）"
+                          "的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。",
+        "topUnconditionalMultipliers": [
+            {
+                "spEffectId": buff["spEffectId"],
+                "displayNameZh": buff["displayNameZh"],
+                "paramName": buff["paramName"],
+                "maxMultiplier": max(
+                    value for key, value in buff["rates"].items()
+                    if RATE_FIELD_BY_KEY[key]["countsAsDamage"]
+                    and RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"),
+                "activation": buff["activation"],
+            }
+            for buff in sorted(
+                (b for b in buffs
+                 if b["target"] in ("self", "ally") and b["activation"] == "passive"
+                 and any(RATE_FIELD_BY_KEY[k]["countsAsDamage"]
+                         and RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier"
+                         and v > 1 for k, v in b["rates"].items())),
+                key=lambda b: -max(
+                    value for key, value in b["rates"].items()
+                    if RATE_FIELD_BY_KEY[key]["countsAsDamage"]
+                    and RATE_FIELD_BY_KEY[key]["valueKind"] == "multiplier"))[:15]
+        ],
+        "topUnconditionalMultipliersNote": "按 target∈{self,ally} ＋ activation=passive ＋ countsAsDamage 倍率"
+                                           "筛出的前 15 条，也就是页面默认会无条件乘进排名的那一批。"
+                                           "这份清单是给维护者做人工抽查用的：如果哪天有明显需要发动条件的"
+                                           "条目出现在这里，说明 activation 判定漏了一条规则。",
+        "sentinelOnlyRows": sentinel_rows,
+        "sentinelOnlyRowsNote": "这些 SpEffect 满足入选条件，但它们唯一的合格数值是一个『×0』的 economy 倍率"
+                                "并且没有持续时间（effectEndurance=0），属于哨兵值而不是可展示的倍率，"
+                                "因此**不作为 buff 输出**，只记在这里。"
+                                "本版本唯一实例 704000『[Skill - Raider] Retaliate (Defense and Immortality)』"
+                                "是无赖反击那一瞬的免伤／无敌窗口（真正的负载是本数据集不读的 "
+                                "slash/blow/thrust/neutral/magic/fire/thunder/dark DamageCutRate=0.25），"
+                                "它的 characterSkillCooldownReduction=0 若按字面展示就是『技艺冷却 -100%』，"
+                                "会与真正的遗物档位 0.95／0.925／0.9 混在同一个『输出效率』列表里。"
+                                "注意排除规则刻意收得很窄：青露的秘密滴泪（511060／708920）与魔法帷幕（1801400）"
+                                "同样带 ×0 的消耗倍率，但它们有 15／20／8 秒的持续时间、确实让施法免费，仍然保留。",
+        "nonSelfTargetNote": "target 不是 self 的 buff：summon＝复仇者家人自身的数值缩放行（不是玩家倍率）；"
+                             "enemy＝通过 Bullet 命中槽挂到被命中对象身上的效果（减益或魅惑后的敌人增伤）；"
+                             "ally＝友方 AoE／团队增益。它们仍然保留在数据集里（有各自的展示价值），"
+                             "但**增伤排名必须先按 target 过滤**。",
+        "skippedUnnamedSourceRows": {
+            table: {
+                "rows": len(row_ids),
+                "rowIdsSample": sorted(row_ids, key=int)[:40],
+                "spEffectIdsQualifying": sorted(
+                    (int(t) for t in skipped_unnamed_targets[table] if qualifies(t)))[:60],
+            }
+            for table, row_ids in sorted(skipped_unnamed.items())
+        },
+        "skippedUnnamedSourceRowsNote": "这些来源表行在简中与英文 FMG 里都查不到名字（多为未启用的箭矢／弩矢等占位行），"
+                                        "整行跳过、不作为 buff 来源。跳过本身大概率是对的，但记录下来是为了让下个版本"
+                                        "FromSoft 补上名字时，数量变化能被 diff 出来，而不是无声发生。"
+                                        "spEffectIdsQualifying 是这些被跳过的行指向、且本身满足入选条件的 SpEffect。",
+        "displayNameZhFallingBackToSpEffectId": sorted(display_id_fallback),
+        "displayNameNote": "这些条目的 displayNameZh 以『#spEffectId』结尾——来源名、强度档位、武器槽、"
+                           "来源类别（武器／遗物／护符…）、首个 rates 数值、原始英文行名全部用完仍然重名，"
+                           "只能退到 ID。v2 是 52 条且同族内风格分裂（8330100 带 #id、8330101 不带）；"
+                           "v3 新增了『来源类别』一级并强制同族（param_stem 相同）取相同的限定词组合，"
+                           "所以同一组遗物在列表里要么都带 #id、要么都不带。",
         "unusedRateFields": unused_rate_fields,
-        "unusedRateFieldsNote": "这些 rateFields 在本版本 827 条 buff 里 observedCount=0，页面无需为它们写分支；"
-                                "保留是因为它们在 SpEffectParam 里确实存在（economy 组的字段在护符／道具上有非默认值，"
-                                "只是那些 SpEffect 本身没有增伤字段、不在本数据集内），便于下个版本命中时自动出现。",
+        "unusedRateFieldsNote": "这些 rateFields 在本版本的 buff 里 observedCount=0，页面无需为它们写分支；"
+                                "保留是因为它们在 SpEffectParam 里确实存在，便于下个版本命中时自动出现。"
+                                "v2 起 economy 组已改为 qualifies=true，因此技艺冷却／追加次数／绝招量表／"
+                                "弓射程衰减这类条目会真正进入数据集，不再整条缺席。",
         "unusedScopeKeys": unused_scope_keys,
         "unusedScopeKeysNote": "本版本所有 buff 的 atkAttribute 都是 254（不限），因此 scope.atkAttribute 不会出现；"
                                "enums.atkAttribute 仍保留以备后续版本。",
@@ -1515,7 +2445,77 @@ def build() -> dict[str, Any]:
                           "spCategory 205/206/1007/1008 虽未出现在 Paramdex 枚举里，但已按所在区间（200 系＝removePrevious、1000 系＝applyHighest）归类。",
     }
     payload["buffs"] = buffs
+    self_check(payload)
     return payload
+
+
+def self_check(payload: dict[str, Any]) -> None:
+    """Invariants the page is allowed to rely on.  Raises on violation."""
+    buffs = payload["buffs"]
+    field_by_key = {f["key"]: f for f in payload["rateFields"]}
+    group_by_key = {g["key"]: g for g in payload["rateFieldGroups"]}
+
+    for group in payload["rateFieldGroups"]:
+        assert not (group["countsAsDamage"] and group["conditionalDamage"]), \
+            f"group {group['key']} is both unconditional and conditional damage"
+    for field in payload["rateFields"]:
+        assert not (field["countsAsDamage"] and field["conditionalDamage"]), \
+            f"field {field['key']} is both unconditional and conditional damage"
+        assert field["group"] in group_by_key, field["key"]
+
+    ids = [b["spEffectId"] for b in buffs]
+    assert ids == sorted(ids), "buffs must stay sorted by spEffectId"
+    assert len(set(ids)) == len(ids), "duplicate spEffectId"
+
+    behaviours = {entry["code"] for entry in payload["enums"]["spCategoryBehavior"]}
+    for name in ("displayNameZh", "displayNameEn"):
+        values = [b[name] for b in buffs if b[name]]
+        assert len(set(values)) == len(values), f"{name} is not unique"
+
+    bullet_hit = re.compile(r"Bullet\d+\.spEffectId[0-4](?:->|$)")
+    for buff in buffs:
+        sp_id = buff["spEffectId"]
+        assert buff["target"] in payload["enums"]["target"], (sp_id, buff["target"])
+        assert buff["targetSource"] in payload["enums"]["targetSource"], (sp_id, buff["targetSource"])
+        assert buff["activation"] in payload["enums"]["activation"], (sp_id, buff["activation"])
+        assert buff["activationSource"] in payload["enums"]["activationSource"], \
+            (sp_id, buff["activationSource"])
+        # an activated / conditional label must never be *weaker* than the
+        # explicit condition columns the row already carries
+        if buff.get("conditions") or buff.get("triggered"):
+            assert buff["activation"] != "passive", (sp_id, "condition columns but passive")
+        # a buff every one of whose routes is a bullet *hit* slot lands on the
+        # thing that was hit, so it can never be the "no evidence" default --
+        # this is the invariant the `$`-anchored via regex used to violate
+        # (1631001 『授血』 reached through ...spEffectId0->cycleOccurrenceSpEffectId)
+        vias = [entry["via"] for entry in buff["sources"]]
+        if vias and all(bullet_hit.search(via) for via in vias):
+            assert buff["targetSource"] != "default", (sp_id, vias)
+        # no shipped buff may rest solely on a "×0 with no duration" sentinel
+        sentinel = [key for key, value in buff["rates"].items()
+                    if field_by_key[key]["group"] == "economy"
+                    and field_by_key[key]["valueKind"] == "multiplier"
+                    and float(value) == 0.0]
+        if sentinel and buff["duration"] == 0:
+            qualifying_here = [key for key in buff["rates"]
+                               if group_by_key[field_by_key[key]["group"]]["qualifies"]]
+            assert set(qualifying_here) - set(sentinel), (sp_id, "sentinel-only row shipped")
+        assert buff["affectsAllies"] == (buff["target"] == "ally"), sp_id
+        assert isinstance(buff["effectTargetFriendRaw"], bool), sp_id
+        assert buff["stacking"]["spCategoryBehavior"] in behaviours, sp_id
+        for key in buff["rates"]:
+            assert key in field_by_key, (sp_id, key)
+        assert buff["rateGroups"] == sorted({field_by_key[k]["group"] for k in buff["rates"]}), sp_id
+        for entry in buff["sources"]:
+            if entry.get("inferred"):
+                assert entry["id"] is None, (sp_id, entry)
+        if buff.get("inferredName"):
+            assert buff.get("inferredNameFrom") in ("attachEffectSibling", "siblingSpEffect"), sp_id
+
+    # every buff must keep at least one rate that justified its inclusion
+    qualifying = {g["key"] for g in payload["rateFieldGroups"] if g["qualifies"]}
+    for buff in buffs:
+        assert any(group in qualifying for group in buff["rateGroups"]), buff["spEffectId"]
 
 
 def main() -> None:
