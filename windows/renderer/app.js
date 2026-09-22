@@ -491,7 +491,15 @@
     { key: "deep", label: "深夜遗物" }
   ];
   var RELIC_COLOR_PILLS = ["red", "blue", "amber", "green", "gray"];
-  var normId = function (value) { return value == null || value === 0 || value === -1 || value === 4294967295 ? -1 : value; };
+  // 存档页自用的空词条归一。口径必须与导出报告（savereport.js 的 normId）、
+  // 存档对比（savediff.js 的 normalizeEffectId）、macOS 的 RelicAudit.padded() /
+  // SaveRelicIdentity.normalized() 完全一致：`<= 0 或 0xFFFFFFFF 都是空槽`。
+  //
+  // 这里原来只认 0 与 -1，于是 effects = [7000000, -2, 0] 这种坏数据在同一个
+  // Windows 版里给出两个答案：页面上第 2 行渲染成「未知词条 #-2」，同一份存档
+  // 导出的 TXT / CSV 却写「（空）」，而 macOS 的页面与报告都写「（空）」。
+  // 三处归一由 windows/tests/save_diff.test.mjs 锁在一起。
+  var normId = function (value) { return value == null || value <= 0 || value === 0xFFFFFFFF ? -1 : value; };
 
   function setSaveMessage(message, isError) {
     var element = test("save-message");
@@ -623,22 +631,25 @@
       return "<div class='issue-row issue-row--warning'><span class='issue-symbol'>△</span><div><strong>" + esc(issue.title) + "</strong><p>" + esc(issue.detail) + "</p></div></div>";
     }).join("");
 
+    // 两块的先后顺序两端必须一致，也要和导出报告一致（报告里先写
+    // 「官方固定词条（可据此改回）」再写「正确的词条顺序」）：先给「原样长什么样」，
+    // 再给「顺序该怎么排」。macOS 端 SaveRelicCard 是同一个顺序。
     var orderBlock = "";
-    var hasWrongOrder = (audit.issues || []).some(function (issue) { return issue.kind === "wrongOrder"; });
-    if (hasWrongOrder && audit.orderedEffects) {
-      var orderedRows = audit.orderedEffects.map(function (effectId, index) {
-        return "<div class='ordered-row'><span class='order-index'>" + (index + 1) + "</span><span class='order-name'>" +
-          (effectId === -1 ? "（空）" : esc(saveAffixName(effectId))) + "</span></div>";
-      }).join("");
-      orderBlock = "<div class='order-block'><div class='order-heading'><strong>正确的词条顺序</strong><span>sortId → effectId</span></div><div class='order-list'>" + orderedRows + "</div></div>";
-    }
     if (audit.officialEffects) {
       var officialRows = audit.officialEffects.filter(function (effectId) { return effectId !== -1; })
         .map(function (effectId, index) {
           return "<div class='ordered-row'><span class='order-index'>" + (index + 1) + "</span><span class='order-name'>" +
             esc(saveAffixName(effectId)) + " <span class='order-id'>(" + effectId + ")</span></span></div>";
         }).join("");
-      orderBlock += "<div class='order-block'><div class='order-heading'><strong>该遗物的官方固定词条</strong><span>可据此改回</span></div><div class='order-list'>" + officialRows + "</div></div>";
+      orderBlock = "<div class='order-block'><div class='order-heading'><strong>该遗物的官方固定词条</strong><span>可据此改回</span></div><div class='order-list'>" + officialRows + "</div></div>";
+    }
+    var hasWrongOrder = (audit.issues || []).some(function (issue) { return issue.kind === "wrongOrder"; });
+    if (hasWrongOrder && audit.orderedEffects) {
+      var orderedRows = audit.orderedEffects.map(function (effectId, index) {
+        return "<div class='ordered-row'><span class='order-index'>" + (index + 1) + "</span><span class='order-name'>" +
+          (effectId === -1 ? "（空）" : esc(saveAffixName(effectId))) + "</span></div>";
+      }).join("");
+      orderBlock += "<div class='order-block'><div class='order-heading'><strong>正确的词条顺序</strong><span>sortId → effectId</span></div><div class='order-list'>" + orderedRows + "</div></div>";
     }
 
     return "<article class='save-relic save-relic--" + status.key + (meta ? " save-relic--c" + meta.color : "") + "' data-testid='save-relic'>" +

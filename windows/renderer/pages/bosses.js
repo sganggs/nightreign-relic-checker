@@ -44,6 +44,22 @@
     "Final Boss Threat": "最终首领威胁档"
   };
 
+  // 数据里还有 group = null 的档位（98810 / 98815 / 98818 / 98822）：它们与
+  // 三个威胁档一样要有名字，否则展开态的「多人缩放」只写个档位号，
+  // 和底部档位表里的「其它档位」对不上。与 macOS 端
+  // BossScalingGroup.title(for:) 同一条规则（含空串也算缺失）。
+  var TIER_GROUP_FALLBACK = "其它档位";
+
+  // 行没有 scalingId 时展开态「多人缩放明细」的档位说明。
+  // 与 macOS 端 BossRowText.scalingCaption 的同一支逐字一致：此前 Windows 给空串，
+  // 整段说明直接不出现，两端一个有话一个空白。
+  var TIER_NO_SCALING = "无缩放档位";
+
+  // 行内徽标 / 卡头计数的统一文案，两端逐字相同（macOS 端 BossFightRowView
+  // 与 BossCardView 用同样的三串）。
+  var BADGE_LABEL_UNCERTAIN = "标签为社区推测";
+  var BADGE_DEEP_ROW = "深夜数值";
+
   // 分组名两端一致（macOS 端 BossCard.Group.title）：顶部筛选、卡头徽标都用它。
   // 行内的威胁档位徽标另用短名「守夜 / 野外」，与 macOS 的 threatTitle 对应。
   var GROUP_TITLES = {
@@ -79,17 +95,71 @@
     return null;
   }
 
+  // 档位分组的中文名。group 缺失（数据里的 4 个 group = null 档位）时写
+  // 「其它档位」——展开态的「多人缩放」标题与底部档位表用同一个名字，
+  // 与 macOS 端 BossScalingGroup.title(for:) 逐字一致。
+  function tierGroupLabel(group) {
+    if (!group) return TIER_GROUP_FALLBACK;
+    return GROUP_LABELS[group] || String(group);
+  }
+
+  // 展开态「多人缩放」标题里的档位说明。三支与 macOS 端
+  // BossRowText.scalingCaption(scalingID:groupTitle:) 逐字一致：
+  //   没有 scalingId → 「无缩放档位」（此前 Windows 给空串，整段不出现）；
+  //   查不到档位     → 「档位 #<id>」；
+  //   查得到         → 「档位 #<id> · <分组名>」。
+  // id 前面的「#」跟 macOS 走：macOS 底部档位表也写 #<id>，本页底部档位表
+  // 同步改成 #<id>，两端内部与相互都自洽。
+  function scalingCaption(entry, tiers) {
+    var id = entry && entry.scalingId;
+    if (id === null || id === undefined) return TIER_NO_SCALING;
+    var meta = tiers ? tiers[String(id)] : null;
+    if (!meta) return "档位 #" + id;
+    return "档位 #" + id + " · " + tierGroupLabel(meta.group);
+  }
+
+  // 卡头右侧的数值行计数。两端同一串（macOS 端 BossCardView 的同一行）。
+  function rowCountText(count) {
+    return count + " 条数值行";
+  }
+
+  // 一条数值行的徽标文案（不含 DOM）：顺序即渲染顺序。
+  function entryBadgeTexts(item, entry, stats) {
+    var out = [];
+    if (entry && entry.isMain) out.push("主战");
+    if (item && item.kind === "boss" && entry && entry.threat) {
+      out.push(entry.threat === "night" ? "守夜" : "野外");
+    }
+    if (entry && entry.labelUncertain) out.push(BADGE_LABEL_UNCERTAIN);
+    if (stats && stats.isDeep) out.push(BADGE_DEEP_ROW);
+    return out;
+  }
+
+  // 数值字段的取值：只有「缺字段 / 不是有限数」才回落到默认值。
+  // 不能写成 `Number(x) || fallback`——那会把数据里真实的 0 也改写成 1，
+  // 于是「承受削韧倍率 = 0」这种异常在 Windows 端永远出不来，
+  // 而 macOS 端（Codable 的 default: 只在缺字段时生效）照原样显示，两端就对不上了。
+  // 还要先排掉 null / undefined / 空串：Number(null) === 0、Number("") === 0 都是
+  // 有限数，会被当成「数据里真实的 0」；而 macOS 的 bossDouble 走
+  // decodeIfPresent，JSON null 与空串都解不出来，落到 default。不先排掉这三种，
+  // 「只在缺字段时回落」这条口径落到 Windows 就会在 null 这一格反过来与 macOS 不一致。
+  function numberOr(value, fallback) {
+    if (value === null || value === undefined || value === "") return fallback;
+    var number = Number(value);
+    return isFinite(number) ? number : fallback;
+  }
+
   // 深夜模式下换用 deepOfNight 里的同一组数值；没有深夜专属缩放时回落到常规值。
   function numbersFor(entry, deep) {
     var deepNums = deep && entry && entry.deepOfNight ? entry.deepOfNight : null;
     var source = deepNums || entry || {};
     return {
       isDeep: Boolean(deepNums),
-      hp: Number(source.hp) || 0,
-      hpMultiplier: Number(source.hpMultiplier) || 1,
-      poiseTakenBase: Number(source.poiseTakenBase) || 1,
-      poiseRecoverMultiplier: Number(source.poiseRecoverMultiplier) || 1,
-      ailmentDamageRateBase: Number(source.ailmentDamageRateBase) || 0,
+      hp: numberOr(source.hp, 0),
+      hpMultiplier: numberOr(source.hpMultiplier, 1),
+      poiseTakenBase: numberOr(source.poiseTakenBase, 1),
+      poiseRecoverMultiplier: numberOr(source.poiseRecoverMultiplier, 1),
+      ailmentDamageRateBase: numberOr(source.ailmentDamageRateBase, 0),
       permScalingIds: Array.isArray(source.permScalingIds) ? source.permScalingIds : []
     };
   }
@@ -105,17 +175,20 @@
   function computeStats(entry, party, deep) {
     var nums = numbersFor(entry, deep);
     var tier = scalingFor(entry, party);
-    var hpMul = tier ? Number(tier.hp) || 1 : 1;
-    var poiseTakenMul = tier ? Number(tier.poiseTaken) || 1 : 1;
-    var poiseRecoverMul = tier ? Number(tier.poiseRecover) || 1 : 1;
-    var buildupMul = tier ? Number(tier.buildupRate) || 1 : 1;
-    var ailmentMul = tier ? Number(tier.ailmentDamageRate) || 1 : 1;
+    var hpMul = tier ? numberOr(tier.hp, 1) : 1;
+    var poiseTakenMul = tier ? numberOr(tier.poiseTaken, 1) : 1;
+    var poiseRecoverMul = tier ? numberOr(tier.poiseRecover, 1) : 1;
+    var buildupMul = tier ? numberOr(tier.buildupRate, 1) : 1;
+    var ailmentMul = tier ? numberOr(tier.ailmentDamageRate, 1) : 1;
     var poiseTakenTotal = nums.poiseTakenBase * poiseTakenMul;
     var poise = Number(entry && entry.poise);
     // poise < 0（数据集 caveat 3：一般是子弹/投射物实体）= 不吃削韧；
     // poise === 0 是另一回事（该实体没有削韧槽），不能和 -1 一起显示成「有效韧性 0」。
     var poiseKind = !isFinite(poise) || poise < 0 ? "none" : (poise === 0 ? "zero" : "value");
     var noPoise = poiseKind !== "value";
+    // 分母必须是正的有限数，否则算不出有效韧性（口径与 macOS 端
+    // BossFight.effectivePoise(for:deepOfNight:) 的 `factor > 0, factor.isFinite` 一致）。
+    var poiseTakenOk = isFinite(poiseTakenTotal) && poiseTakenTotal > 0;
     return {
       isDeep: nums.isDeep,
       tier: tier,
@@ -125,13 +198,17 @@
       hpBase: Number(entry && entry.hpBase) || 0,
       hpMultiplier: nums.hpMultiplier,
       poise: noPoise ? null : poise,
+      // 原始 superArmorDurability：poiseCaption 的 none / zero 两支要把它写出来。
+      // 缺字段 / 非数字时取 -1，与 macOS 端 `bossDouble(.poise, default: -1)` 同一个回落值。
+      poiseRaw: isFinite(poise) ? poise : -1,
       poiseKind: poiseKind,
       poiseTakenTotal: poiseTakenTotal,
-      effectivePoise: noPoise || !poiseTakenTotal ? null : poise / poiseTakenTotal,
-      poiseRecover: (Number(entry && entry.poiseRecover) || 0) * nums.poiseRecoverMultiplier * poiseRecoverMul,
+      poiseTakenOk: poiseTakenOk,
+      effectivePoise: noPoise || !poiseTakenOk ? null : poise / poiseTakenTotal,
+      poiseRecover: numberOr(entry && entry.poiseRecover, 0) * nums.poiseRecoverMultiplier * poiseRecoverMul,
       ailmentDamageRate: nums.ailmentDamageRateBase * ailmentMul,
       buildupRate: buildupMul,
-      poisonRate: tier ? Number(tier.poisonRate) || 1 : 1,
+      poisonRate: tier ? numberOr(tier.poisonRate, 1) : 1,
       permScalingIds: nums.permScalingIds
     };
   }
@@ -429,15 +506,41 @@
     return String(rounded);
   }
 
-  function fmtMul(value) {
+  // digits 默认 3（缩放档位表里的 ×0.55 / ×1.428 需要三位）；
+  // 「代表行承伤偏高」的徽标固定两位，与 macOS 端
+  // BossFormat.multiplier(_:digits: 2) 一致。
+  function fmtMul(value, digits) {
     if (value === null || value === undefined || !isFinite(Number(value))) return "—";
-    return "×" + fmtNumber(value, 3);
+    return "×" + fmtNumber(value, digits === undefined ? 3 : digits);
   }
 
-  // kind 来自 computeStats().poiseKind：none = poise < 0，zero = poise === 0。
+  // kind 来自 computeStats().poiseKind，与 macOS 端 BossPoiseKind.placeholder 同表：
+  //   none = poise < 0（不吃削韧）、zero = poise === 0（没有削韧槽）、
+  //   value = poise > 0 但承受削韧倍率为 0 / 非有限（数据异常）——此时不能写
+  //   「不吃削韧」，那是另一回事，两端一律给占位符「—」，原因写在下面的小字里。
   function fmtPoise(value, kind) {
-    if (value === null || value === undefined) return kind === "zero" ? "无削韧槽" : "不吃削韧";
+    if (value === null || value === undefined) {
+      if (kind === "zero") return "无削韧槽";
+      if (kind === "value") return "—";
+      return "不吃削韧";
+    }
     return fmtNumber(value, 1);
+  }
+
+  // 展开态「有效韧性」下面的小字，四支全部与 macOS 端
+  // BossRowText.poiseCaption(poise:poiseTakenTotal:kind:hasEffectivePoise:) 逐字一致：
+  //   能算出有效韧性 → 「韧性 120 ÷ 承受削韧 0.55」（此前 Windows 写「承受削韧 ×0.55」）；
+  //   poise < 0       → 「superArmorDurability = -1」（此前 Windows 空白）；
+  //   poise = 0       → 「superArmorDurability = 0，该实体没有削韧槽」（此前 Windows 空白）；
+  //   倍率异常        → 「承受削韧倍率异常（N）」。
+  // 上一轮只统一了最后一支，另外三支仍是两套说法。
+  function poiseCaption(stats) {
+    if (stats.effectivePoise !== null) {
+      return "韧性 " + fmtNumber(stats.poiseRaw, 0) + " ÷ 承受削韧 " + fmtNumber(stats.poiseTakenTotal, 3);
+    }
+    if (stats.poiseKind === "zero") return "superArmorDurability = 0，该实体没有削韧槽";
+    if (stats.poiseKind === "none") return "superArmorDurability = " + fmtNumber(stats.poiseRaw, 0);
+    return "承受削韧倍率异常（" + fmtNumber(stats.poiseTakenTotal, 3) + "）";
   }
 
   // ------------------------------------------------------------ 页面状态
@@ -578,7 +681,8 @@
       return "<span class='bosses-none'>本作只给夜王官方弱点标注；展开看承伤倍率</span>";
     }
     return "<span class='bosses-weak-label'>代表行承伤偏高</span>" + hot.map(function (row) {
-      return pill(row.zh + " " + fmtMul(row.rate), "amber");
+      // 两位小数：与 macOS 端 weaknessNote 的 BossFormat.multiplier(_, digits: 2) 一致。
+      return pill(row.zh + " " + fmtMul(row.rate, 2), "amber");
     }).join("");
   }
 
@@ -773,15 +877,14 @@
   function entryBlock(item, entry, index) {
     var stats = computeStats(entry, state.party, state.deep);
     var tiers = state.data && state.data.scalingTiers ? state.data.scalingTiers : null;
-    var tierMeta = tiers && entry.scalingId !== null && entry.scalingId !== undefined ? tiers[String(entry.scalingId)] : null;
-    var groupName = tierMeta && tierMeta.group ? (GROUP_LABELS[tierMeta.group] || tierMeta.group) : "";
-    var badges = [];
-    if (entry.isMain) badges.push(pill("主战", "green"));
-    if (item.kind === "boss" && entry.threat) {
-      badges.push(pill(entry.threat === "night" ? "守夜" : "野外", entry.threat === "night" ? "blue" : "green"));
-    }
-    if (entry.labelUncertain) badges.push(pill("标签存疑", "gray"));
-    if (stats.isDeep) badges.push(pill("深夜", "amber"));
+    var caption = scalingCaption(entry, tiers);
+    var badges = entryBadgeTexts(item, entry, stats).map(function (text) {
+      if (text === "主战") return pill(text, "green");
+      if (text === "守夜") return pill(text, "blue");
+      if (text === "野外") return pill(text, "green");
+      if (text === BADGE_LABEL_UNCERTAIN) return pill(text, "amber");
+      return pill(text, "amber");
+    });
 
     var npcIds = Array.isArray(entry.npcIds) ? entry.npcIds : [];
     var idText = "npcId " + String(entry.npcId) + (npcIds.length > 1 ? "（合并 " + npcIds.length + " 行）" : "");
@@ -794,15 +897,14 @@
       "</header>" +
       "<div class='bosses-stat-row bosses-stat-row--compact'>" +
       statCell("血量（" + partyLabel() + "）", fmtInt(stats.hp), "参数原值 " + fmtInt(stats.hpBase) + " × " + fmtNumber(stats.hpMultiplier, 3)) +
-      statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), stats.effectivePoise === null ? "" : "承受削韧 " + fmtMul(stats.poiseTakenTotal)) +
+      statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), poiseCaption(stats)) +
       statCell("削韧恢复", fmtNumber(stats.poiseRecover, 3), "每秒") +
       statCell("异常累积", fmtMul(stats.buildupRate), "Boss 承受量") +
       statCell("异常发动伤害", fmtMul(stats.ailmentDamageRate), "中毒/腐败 " + fmtMul(stats.poisonRate)) +
       "</div>" +
       "<div class='bosses-sub'>承伤倍率（&gt;1 多吃伤害，&lt;1 抗性）</div>" + rateTable(entry) +
       "<div class='bosses-sub'>异常抗性（累积阈值，越大越难触发）</div>" + resistTable(entry) +
-      "<div class='bosses-sub'>多人缩放" + (entry.scalingId !== null && entry.scalingId !== undefined
-        ? "（档位 " + esc(entry.scalingId) + (groupName ? " · " + esc(groupName) : "") + "）" : "") + "</div>" +
+      "<div class='bosses-sub'>多人缩放" + (caption ? "（" + esc(caption) + "）" : "") + "</div>" +
       scalingTable(entry) +
       permScalingLine(stats) +
       deepNote(entry) +
@@ -835,7 +937,7 @@
       "<span class='bosses-chevron' aria-hidden='true'>" + (expanded ? "▴" : "▾") + "</span>" +
       "</button>" +
       "<div class='bosses-weakness'>" + weaknessRow(item, entry) +
-      "<span class='bosses-entry-count'>" + esc(item.entries.length + " 组数值") + "</span></div>" +
+      "<span class='bosses-entry-count'>" + esc(rowCountText(item.entries.length)) + "</span></div>" +
       cardSummary(item, entry) +
       (expanded ? "<div class='bosses-card-body'>" + cardBody(item) + "</div>" : "");
   }
@@ -867,12 +969,12 @@
     var keys = Object.keys(tiers).sort(function (a, b) { return Number(a) - Number(b); });
     var rows = keys.map(function (key) {
       var tier = tiers[key];
-      var groupName = tier.group ? (GROUP_LABELS[tier.group] || tier.group) : "其它档位";
+      var groupName = tierGroupLabel(tier.group);
       return ["duo", "trio"].map(function (which, index) {
         var value = tier[which];
         var label = which === "duo" ? "2 人" : "3 人";
         var first = index === 0
-          ? "<th scope='row' rowspan='2'>" + esc(key) + "<span>" + esc(groupName) + "</span></th>"
+          ? "<th scope='row' rowspan='2'>#" + esc(key) + "<span>" + esc(groupName) + "</span></th>"
           : "";
         if (!value) {
           return "<tr>" + first + "<td>" + esc(label) + "</td><td colspan='5' class='bosses-none'>无数据</td></tr>";
@@ -1119,6 +1221,7 @@
     // 纯计算部分，供 windows/tests/bosses.test.mjs 直接测试。
     _internals: {
       tierKey: tierKey,
+      numberOr: numberOr,
       numbersFor: numbersFor,
       scalingFor: scalingFor,
       computeStats: computeStats,
@@ -1144,6 +1247,11 @@
       fmtNumber: fmtNumber,
       fmtMul: fmtMul,
       fmtPoise: fmtPoise,
+      poiseCaption: poiseCaption,
+      tierGroupLabel: tierGroupLabel,
+      scalingCaption: scalingCaption,
+      rowCountText: rowCountText,
+      entryBadgeTexts: entryBadgeTexts,
       DAMAGE_TYPES: DAMAGE_TYPES,
       AILMENTS: AILMENTS,
       GROUP_LABELS: GROUP_LABELS,

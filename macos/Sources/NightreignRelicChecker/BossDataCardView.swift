@@ -101,7 +101,8 @@ struct BossCardView: View {
             if deepOfNight, let text = card.deepCoverage.badgeText {
                 Pill(text: text, color: AppTheme.amber, symbol: "moon.fill")
             }
-            Text("\(card.rows.count) 条战斗记录")
+            // 「N 条数值行」：卡头计数与 Windows 端 rowCountText() 逐字一致。
+            Text(BossRowText.rowCount(card.rows.count))
                 .font(.system(size: 10))
                 .foregroundStyle(AppTheme.tertiaryText)
         }
@@ -340,10 +341,10 @@ struct BossFightRowView: View {
                     Pill(text: "主战", color: AppTheme.green, symbol: "flag")
                 }
                 if row.labelUncertain {
-                    Pill(text: "标签为社区推测", color: AppTheme.amber, symbol: "questionmark.circle")
+                    Pill(text: BossRowText.labelUncertainBadge, color: AppTheme.amber, symbol: "questionmark.circle")
                 }
                 if deepOfNight, row.hasDeepOfNight {
-                    Pill(text: "深夜数值", color: AppTheme.amber, symbol: "moon.fill")
+                    Pill(text: BossRowText.deepRowBadge, color: AppTheme.amber, symbol: "moon.fill")
                 }
                 Spacer(minLength: 6)
                 Text(row.npcIds.count > 1 ? "npcId \(row.npcId) 等 \(row.npcIds.count) 行" : "npcId \(row.npcId)")
@@ -392,17 +393,14 @@ struct BossFightRowView: View {
 
     /// 有效韧性为 nil 有三条来源：poise < 0（真的不吃削韧）、poise = 0（没有削韧槽），
     /// 以及承受削韧倍率为 0 / 非有限（数据异常）。三者文案必须分开。
+    /// 四支整体下沉到 RelicCore 的 BossRowText，与 Windows 端逐字一致。
     private var poiseCaption: String {
-        guard stats.effectivePoise == nil else {
-            let factor = stats.poiseTakenBase * stats.tier.poiseTaken
-            return "韧性 \(BossFormat.decimal(row.poise, digits: 0)) ÷ 承受削韧 \(BossFormat.decimal(factor, digits: 3))"
-        }
-        switch stats.poiseKind {
-        case .none: return "superArmorDurability = \(BossFormat.decimal(row.poise, digits: 0))"
-        case .zero: return "superArmorDurability = 0，该实体没有削韧槽"
-        case .value:
-            return "承受削韧倍率异常（\(BossFormat.decimal(stats.poiseTakenBase * stats.tier.poiseTaken, digits: 3))）"
-        }
+        BossRowText.poiseCaption(
+            poise: row.poise,
+            poiseTakenTotal: stats.poiseTakenBase * stats.tier.poiseTaken,
+            kind: stats.poiseKind,
+            hasEffectivePoise: stats.effectivePoise != nil
+        )
     }
 
     private var damageSection: some View {
@@ -497,9 +495,11 @@ struct BossFightRowView: View {
         }
     }
 
+    /// 三支下沉到 RelicCore 的 BossRowText，与 Windows 端逐字一致。
     private var scalingCaption: String {
-        guard let scalingId = row.scalingId else { return "无缩放档位" }
-        guard let group = index.dataset.scalingGroup(scalingId) else { return "档位 #\(scalingId)" }
-        return "档位 #\(scalingId) · \(group.title)"
+        BossRowText.scalingCaption(
+            scalingID: row.scalingId,
+            groupTitle: row.scalingId.flatMap { index.dataset.scalingGroup($0)?.title }
+        )
     }
 }

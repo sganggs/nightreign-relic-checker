@@ -26,7 +26,8 @@ func runAffixLookupChecks() throws -> Int {
         ("索引与搜索一致性", checkAffixLookupIndexIntegrity),
         ("孔数层池与可获得性", checkPoolTiersAndObtainability),
         ("互斥组口径", checkConflictGroupScope),
-        ("与 Windows 端对照", checkWindowsParitySamples)
+        ("与 Windows 端对照", checkWindowsParitySamples),
+        ("双端口径：互斥组对称 / 截断提示 / 深夜池说明 / 预览条数", checkAffixLookupParity)
     ]
     var total = 0
     for check in checks {
@@ -649,6 +650,230 @@ private func checkWindowsParitySamples() throws -> Int {
     try lookupExpect(index.searchRelics("").count == 768,
                      "两端的「可查遗物」件数都应是 768 件")
     count += 1
+
+    return count
+}
+
+// MARK: - 双端口径 / 文案一致性（与 Windows 端 pages/lookup.js 逐字对照）
+
+/// ④ 互斥组的对称性、⑤ 截断提示、⑥ 深夜池说明与槽位池预览条数。
+func checkAffixLookupParity() throws -> Int {
+    let fixtures = try lookupFixtures()
+    let index = fixtures.index
+    var count = 0
+
+    // ④ 互斥组必须对称：A 在 B 的组里 ⇔ B 在 A 的组里。
+    //    「不会出现在任何遗物槽位池里」的词条，两个方向都不算互斥对象。
+    let unreachable = index.affixes.filter { $0.compatibilityID != -1 && !$0.appearsOnRelic }
+    try lookupExpect(
+        unreachable.count > 900,
+        "物品表里应有大量不进池、却挂着 compatibilityId 的效果，实际 \(unreachable.count)"
+    )
+    count += 1
+    for affix in unreachable.prefix(40) {
+        try lookupExpect(
+            index.conflicts(with: affix.effectID).isEmpty,
+            "不可达词条 \(affix.effectID) 不该反查出互斥对象"
+        )
+        count += 1
+    }
+    let reachable = index.affixes.filter { $0.compatibilityID != -1 && $0.appearsOnRelic }
+    for affix in reachable.prefix(60) {
+        for peer in index.conflicts(with: affix.effectID).prefix(6) {
+            try lookupExpect(
+                index.conflicts(with: peer.effectID).contains { $0.effectID == affix.effectID },
+                "互斥组不对称：\(affix.effectID) 的组里有 \(peer.effectID)，反过来没有"
+            )
+            count += 1
+        }
+    }
+    // 修正之后互斥池 100 仍是 102 条（不可达的那一千多条没有被塞回来）
+    try lookupExpect(
+        index.conflicts(with: 6_001_400).count + 1 == 102,
+        "6001400 的互斥组仍应是 102 条（含自己）"
+    )
+    // 没有遗物物品表时只剩词条库条目，它们本来就都能出现在遗物上
+    let catalogOnly = AffixLookupIndex(catalog: fixtures.catalog, relicData: nil)
+    try lookupExpect(
+        catalogOnly.affixes.allSatisfy(\.appearsOnRelic),
+        "没有物品表时全部词条库条目都应算「能出现在遗物上」"
+    )
+    try lookupExpect(
+        !catalogOnly.conflicts(with: 6_001_400).isEmpty,
+        "没有物品表时仍应能给出词条库内的互斥组"
+    )
+    count += 3
+
+    // ④ 「互斥组」一栏四支的文案与分支顺序（Windows 端 conflictBranch / 三串文案）。
+    //    这几串此前只在 Windows 端被断言，Swift 这边单方面改一个字也不会被拦住。
+    try lookupExpect(
+        affixLookupUnreachableConflictNote
+            == "这条词条不会出现在任何遗物的槽位池里，不参与互斥判定：互斥只约束「能同时出现在一件遗物上」的词条。",
+        "不可达词条的说明，实际 \(affixLookupUnreachableConflictNote)"
+    )
+    try lookupExpect(
+        affixLookupNoConflictGroupNote == "该词条没有互斥组，可与任意其他词条同时出现（仍不能与自身重复）。",
+        "compatibilityID = -1 的说明，实际 \(affixLookupNoConflictGroupNote)"
+    )
+    try lookupExpect(
+        affixLookupLoneConflictNote(100) == "互斥池 100 内只有这一条词条，没有互斥对象。",
+        "互斥池里只有自己时的说明，实际 \(affixLookupLoneConflictNote(100))"
+    )
+    count += 3
+
+    // 分支顺序：不可达优先于 compatibilityID == -1。两者同时成立的效果，
+    // 上一轮 macOS 说「不参与互斥判定」、Windows 说「可与任意其他词条同时出现」，
+    // 正好是相反的口径；这一支此前两端的测试都没覆盖。
+    let unreachableNoGroup = index.affixes.filter { $0.compatibilityID == -1 && !$0.appearsOnRelic }
+    try lookupExpect(
+        unreachableNoGroup.count > 100,
+        "物品表里应有上百条「不可达且没有互斥池」的效果，实际 \(unreachableNoGroup.count)"
+    )
+    try lookupExpect(
+        unreachableNoGroup.contains { $0.effectID == 11001 },
+        "effectId 11001（使用圣杯瓶时，连同恢复周围我方人物）应在这一支里"
+    )
+    count += 2
+    for affix in unreachableNoGroup.prefix(40) {
+        try lookupExpect(
+            AffixConflictBranch.of(
+                reachable: affix.appearsOnRelic,
+                compatibilityID: affix.compatibilityID,
+                peerCount: index.conflicts(with: affix.effectID).count
+            ) == .unreachable,
+            "\(affix.effectID)「不可达 + compatibilityID = -1」应走不可达那一支"
+        )
+        count += 1
+    }
+    // 其余三支也各取一条真实数据验一遍
+    if let loner = index.affixes.first(where: { $0.compatibilityID == -1 && $0.appearsOnRelic }) {
+        try lookupExpect(
+            AffixConflictBranch.of(
+                reachable: true, compatibilityID: loner.compatibilityID,
+                peerCount: index.conflicts(with: loner.effectID).count
+            ) == .noGroup,
+            "\(loner.effectID)「能出现在遗物上 + compatibilityID = -1」应走「没有互斥组」"
+        )
+        count += 1
+    }
+    if let grouped = index.affixes.first(where: { $0.effectID == 6_001_400 }) {
+        try lookupExpect(
+            AffixConflictBranch.of(
+                reachable: grouped.appearsOnRelic,
+                compatibilityID: grouped.compatibilityID,
+                peerCount: index.conflicts(with: grouped.effectID).count
+            ) == .peers,
+            "6001400 应走互斥组列表那一支"
+        )
+        try lookupExpect(
+            AffixConflictBranch.of(
+                reachable: true, compatibilityID: grouped.compatibilityID, peerCount: 0
+            ) == .lone,
+            "同一个互斥池里只剩自己时应走 lone"
+        )
+        count += 2
+    }
+
+    // ⑤ 截断提示文案（Windows 端 hitCountText）
+    try lookupExpect(
+        affixLookupHitCountText(total: 7, shown: 7) == "共 7 件 · 已显示全部 7 件",
+        "全部显示时的提示文案"
+    )
+    try lookupExpect(
+        affixLookupHitCountText(total: 0, shown: 0) == "共 0 件 · 已显示全部 0 件",
+        "空结果的提示文案"
+    )
+    try lookupExpect(
+        affixLookupHitCountText(total: 300, shown: 120) == "共 300 件 · 已显示 120 件（另有 180 件未列出）",
+        "截断时的提示文案，实际 \(affixLookupHitCountText(total: 300, shown: 120))"
+    )
+    try lookupExpect(
+        affixLookupHitCountText(total: 300, shown: 900) == "共 300 件 · 已显示全部 300 件",
+        "显示数不会超过总数"
+    )
+    try lookupExpect(
+        affixLookupHitCountText(total: 300, shown: -5) == "共 300 件 · 已显示 0 件（另有 300 件未列出）",
+        "负数按 0 处理"
+    )
+    count += 5
+    // 真实数据：生命力＋１ 的随机池命中超过一屏，提示得说清楚被截断了多少
+    if let report = index.report(for: 7_000_000) {
+        let total = report.randomRelics.count
+        try lookupExpect(total > affixLookupRowLimit, "生命力＋１ 的随机池命中应超过默认列出的件数")
+        try lookupExpect(
+            affixLookupHitCountText(total: total, shown: affixLookupRowLimit)
+                == "共 \(total) 件 · 已显示 \(affixLookupRowLimit) 件（另有 \(total - affixLookupRowLimit) 件未列出）",
+            "真实截断时的提示文案"
+        )
+        count += 2
+    }
+
+    // ⑥ 深夜 A/B/C 池说明与结论文案（Windows 端 deepNoteText）
+    let curseCount = index.poolMembers[deepCurseLookupPool]?.count ?? 0
+    try lookupExpect(curseCount > 0, "诅咒池应有成员")
+    try lookupExpect(
+        affixLookupDeepNote(isCurse: true, requiresCurse: false, inAnyPool: true,
+                            cursePoolID: deepCurseLookupPool, curseCount: curseCount)
+            == "负面词条：只出现在深夜遗物带诅咒的那一行，与同一行的 A 池正面词条配对；诅咒池（3000000）共 \(curseCount) 条。",
+        "负面词条的结论文案"
+    )
+    try lookupExpect(
+        affixLookupDeepNote(isCurse: false, requiresCurse: true, inAnyPool: true,
+                            cursePoolID: deepCurseLookupPool, curseCount: curseCount)
+            == "A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 3000000，共 \(curseCount) 条）。存档里这条词条没配诅咒即为改动。",
+        "A 池词条的结论文案"
+    )
+    try lookupExpect(
+        affixLookupDeepNote(isCurse: false, requiresCurse: false, inAnyPool: true,
+                            cursePoolID: deepCurseLookupPool, curseCount: curseCount)
+            == "B / C 池词条：深夜遗物可出，所在行不带诅咒。",
+        "B / C 池词条的结论文案"
+    )
+    try lookupExpect(
+        affixLookupDeepNote(isCurse: false, requiresCurse: false, inAnyPool: false,
+                            cursePoolID: deepCurseLookupPool, curseCount: curseCount)
+            == "这条词条不在任何深夜词条池里，深夜遗物不会出它。",
+        "不在深夜池时的结论文案"
+    )
+    count += 5
+
+    // 深夜三池 + 诅咒池的补充说明两端同表，且都非空（Windows 端此前算了不画）
+    for poolID in deepPositiveLookupPools + [deepCurseLookupPool] {
+        try lookupExpect(!affixPoolDetail(poolID).isEmpty, "深夜池 \(poolID) 应有补充说明")
+        count += 1
+    }
+    try lookupExpect(affixPoolDetail(2_000_000) == "强力正面词条：同一行必定配一条深夜诅咒", "A 池说明")
+    try lookupExpect(affixPoolDetail(2_100_000) == "普通正面词条：同一行不带诅咒", "B 池说明")
+    try lookupExpect(affixPoolDetail(2_200_000) == "普通正面词条：同一行不带诅咒", "C 池说明")
+    try lookupExpect(affixPoolDetail(3_000_000) == "深夜遗物负面词条的唯一来源", "诅咒池说明")
+    try lookupExpect(affixPoolDetail(110).isEmpty, "孔数层池没有补充说明")
+    count += 5
+
+    // 兜底标签「池 <id>」旁边不该再打一遍 id（两端同一条判断）
+    var fallbackPools: Set<Int> = []
+    for relic in fixtures.relicData.relics {
+        for poolID in relic.slots + relic.curseSlots where poolID > 0 {
+            if affixPoolLabel(poolID) == "池 \(poolID)" { fallbackPools.insert(poolID) }
+        }
+    }
+    try lookupExpect(fallbackPools.count > 100, "确实有大量没有中文短名的槽位池，实际 \(fallbackPools.count)")
+    count += 1
+
+    // ⑥ 槽位池词条预览条数两端都是 10
+    try lookupExpect(affixLookupSlotPreviewLimit == 10, "槽位池预览条数应为 10")
+    count += 1
+    var checkedSlots = 0
+    for entry in index.relics where entry.isObtainable {
+        for slot in entry.slots where !slot.isEmpty {
+            try lookupExpect(
+                slot.previewEffectIDs.count == min(affixLookupSlotPreviewLimit, slot.poolSize),
+                "遗物 \(entry.id) 的槽位池预览应是 min(10, 池成员数)，实际 \(slot.previewEffectIDs.count)"
+            )
+            checkedSlots += 1
+        }
+        if checkedSlots > 200 { break }
+    }
+    count += checkedSlots
 
     return count
 }

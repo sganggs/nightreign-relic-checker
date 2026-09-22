@@ -583,6 +583,101 @@ private func checkSaveCompare(_ run: inout CheckRun, fixtures: SaveFixtures) thr
         renameResult.totalAdded == 0 && renameResult.totalRemoved == 0,
         "改名不应产生遗物增减"
     )
+
+    // ⑧ 「只改角色名」的槽位要把「遗物没变」说出来（Windows 端一直有这句话）。
+    //    原来展示层的条件是 presenceNote == nil，而可见槽位必然带 presenceNote，
+    //    结果这句话一次都没显示过。
+    try run.expect(
+        renamedSlot.identicalNote == "该角色的遗物与当前存档一致。",
+        "只改名的槽位应给出「遗物与当前存档一致」的说明，实际 \(String(describing: renamedSlot.identicalNote))"
+    )
+    try run.expect(
+        renameResult.characters[1].identicalNote == "该角色的遗物与当前存档一致。",
+        "没有任何差异的一致槽位同样给这句话（它本来就不会进可见列表）"
+    )
+    try run.expect(
+        result.characters[0].identicalNote == nil,
+        "有增减的槽位不该说「一致」"
+    )
+    let damagedSlotNote = damagedResult.characters.first { $0.hasParseError }?.identicalNote
+    try run.expect(
+        damagedSlotNote == nil,
+        "读不出遗物的槽位不是「一致」，不该给这句话，实际 \(String(describing: damagedSlotNote))"
+    )
+
+    // ⑦ 「两份存档的遗物完全一致」只有一个出口：列表为空时的那一句。
+    //    面板上方再挂一条同样的提示，两份一致的存档就会把同一句话显示两遍。
+    try run.expect(
+        self1.emptyListNote == "两份存档的遗物完全一致",
+        "完全一致时的空列表文案，实际 \(self1.emptyListNote)"
+    )
+    try run.expect(
+        result.emptyListNote == "没有符合筛选条件的差异",
+        "有差异但被筛空时的文案，实际 \(result.emptyListNote)"
+    )
+    try run.expect(
+        renameResult.emptyListNote == "没有符合筛选条件的差异",
+        "只有改名差异时也算「有差异」，不能写成「完全一致」"
+    )
+    try run.expect(
+        damagedResult.emptyListNote == "没有符合筛选条件的差异",
+        "有解析失败槽位时也算「有差异」，不能写成「完全一致」"
+    )
+    // 完全一致的两份存档：没有任何槽位会进可见列表，这句话只可能出现一次
+    try run.expect(
+        self1.characters.allSatisfy { !$0.hasAnyDifference },
+        "完全一致时不该有任何槽位进可见列表"
+    )
+
+    // ⑩ 遗物卡与导出报告的两块顺序一致：先「官方固定词条」，后「正确的词条顺序」。
+    //
+    // 上一轮这段是两条恒真断言：`fixedRelic.result.officialEffects != nil` 用的就是
+    // first(where:) 的谓词本身；顺序比较又包在 `if let officialIndex, let orderedIndex`
+    // 里，夹具缺一块就静默跳过。实测夹具里一件带 officialEffects 的遗物都没有，
+    // 整段从来没跑过。
+    //
+    // 审计器也不会在同一件遗物上同时给出这两块（officialEffects 只在审出问题时给、
+    // orderedEffects 只在没别的问题时给），所以这里直接合成一份两块都有的审计结果，
+    // 把报告生成层里两块的先后顺序钉死——改反了这条就会红。
+    let bothBlocks = AuditedSave(
+        fileName: "顺序.sl2",
+        checksumOk: true,
+        affixNames: [7_000_000: "生命力＋１", 6_630_000: "提升最大装备重量＋１"],
+        characters: [
+            AuditedSave.Character(slot: 0, name: "夜巡者", parseError: nil, relics: [
+                AuditedSave.AuditedRelic(
+                    relic: SaveRelic(
+                        index: 0, itemID: 1000,
+                        effects: [7_000_000, 6_630_000, -1], curses: [-1, -1, -1]
+                    ),
+                    info: nil,
+                    result: RelicAuditResult(
+                        status: .invalid,
+                        issues: [RelicAuditIssue(
+                            kind: .effectUnexpected,
+                            title: "词条不在槽位池",
+                            detail: "合成用例",
+                            effectIDs: [6_630_000]
+                        )],
+                        orderedEffects: [6_630_000, 7_000_000, -1],
+                        officialEffects: [7_000_000, -1, -1]
+                    )
+                )
+            ])
+        ]
+    )
+    let reportLines = SaveReportBuilder.text(for: bothBlocks).components(separatedBy: "\r\n")
+    let officialIndex = reportLines.firstIndex { $0.contains("官方固定词条（可据此改回）") }
+    let orderedIndex = reportLines.firstIndex { $0.contains("正确的词条顺序") }
+    try run.expect(officialIndex != nil, "报告里应有「官方固定词条（可据此改回）」一块")
+    try run.expect(orderedIndex != nil, "报告里应有「正确的词条顺序」一块")
+    guard let officialIndex, let orderedIndex else {
+        throw CheckFailure(description: "存档报告：两块缺一，⑩ 的顺序无从比较")
+    }
+    try run.expect(
+        officialIndex < orderedIndex,
+        "报告里应先写官方固定词条，再写正确的词条顺序，实际 \(officialIndex) / \(orderedIndex)"
+    )
 }
 
 // MARK: - 夹具

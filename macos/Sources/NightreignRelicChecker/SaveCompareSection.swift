@@ -96,12 +96,6 @@ struct SaveCompareSection: View {
             .background(AppTheme.field, in: RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(AppTheme.border, lineWidth: 1))
 
-            if !result.hasDifferences {
-                Text("两份存档的遗物完全一致。")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.secondaryText)
-            }
-
             if result.hasUnreliableSlots {
                 Text("有槽位在某一侧解析失败，该槽位读不出遗物；只作提示，不计入上面的增减。")
                     .font(.caption)
@@ -113,8 +107,10 @@ struct SaveCompareSection: View {
                 characterBlock(block)
             }
 
+            // 「完全一致」只在这里说一次：上面再挂一条同样的提示，两份一致的
+            // 存档就会把同一句话连着显示两遍。
             if blocks.isEmpty {
-                Text(result.hasDifferences ? "没有符合筛选条件的差异" : "两份存档的遗物完全一致")
+                Text(result.emptyListNote)
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             }
@@ -189,8 +185,11 @@ struct SaveCompareSection: View {
             }
 
             if character.isIdentical {
-                if !character.hasParseError && character.presenceNote == nil {
-                    Text("该角色的遗物与当前存档一致。")
+                // 走到这里的一致槽位都是「只改了角色名 / 只在一侧存在」那几个
+                // （没有任何提示的一致槽位根本不进 visibleBlocks）。原来的条件是
+                // `presenceNote == nil`，正好把它们全挡掉了，这句话一次都没显示过。
+                if let note = character.identicalNote {
+                    Text(note)
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                 }

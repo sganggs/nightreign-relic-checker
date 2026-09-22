@@ -335,6 +335,13 @@
   font-weight: 500;
 }
 
+/* 池的补充说明（深夜 A/B/C 池的出货规则），与 macOS 端 LookupPoolRow 的中间一行对应 */
+.lookup-slot-chip-detail {
+  color: var(--text-tertiary);
+  white-space: normal;
+  max-width: 220px;
+}
+
 .lookup-slot-chip.is-on {
   border-style: solid;
   border-color: var(--green); /* 回退：不支持 color-mix 时用实色 */

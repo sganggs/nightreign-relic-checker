@@ -28,7 +28,28 @@ struct AffixLookupDetailPane: View {
             if let effectID, let report = index.report(for: effectID) {
                 VStack(alignment: .leading, spacing: 16) {
                     summaryCard(report)
-                    if !report.conflicts.isEmpty { conflictCard(report) }
+                    // 四支与 Windows 端 pages/lookup.js 的 conflictBranch() 同一条链，
+                    // 顺序也相同：不可达优先于 compatibilityID == -1（真实数据里有 148 条
+                    // 两个条件同时成立的效果，顺序一反两端就给出相反的口径）。
+                    switch AffixConflictBranch.of(
+                        reachable: report.affix.appearsOnRelic,
+                        compatibilityID: report.affix.compatibilityID,
+                        peerCount: report.conflicts.count
+                    ) {
+                    case .unreachable:
+                        // 互斥组是对称的：这条词条进不了任何槽位池，也就不进任何互斥组。
+                        // 与其让「互斥组」整块消失，不如把原因写出来（两端同一句话）。
+                        LookupNoticeCard(title: "不参与互斥判定", detail: affixLookupUnreachableConflictNote)
+                    case .noGroup:
+                        LookupNoticeCard(title: "互斥组", detail: affixLookupNoConflictGroupNote)
+                    case .peers:
+                        conflictCard(report)
+                    case .lone:
+                        LookupNoticeCard(
+                            title: "互斥组",
+                            detail: affixLookupLoneConflictNote(report.affix.compatibilityID)
+                        )
+                    }
                     deepCard(report)
                     if report.hasRelicData {
                         whereCard(report)
@@ -179,10 +200,18 @@ struct AffixLookupDetailPane: View {
     private func deepCard(_ report: AffixLookupReport) -> some View {
         let hits = report.deepHits
         let inAny = hits.contains(where: \.contains) || report.cursePoolHit.contains
+        // 结论文案由 RelicCore 统一给，Windows 端读同一个函数的同一支（两端逐字一致）。
+        let note = affixLookupDeepNote(
+            isCurse: report.affix.isCurse,
+            requiresCurse: report.affix.requiresCurse,
+            inAnyPool: inAny,
+            cursePoolID: deepCurseLookupPool,
+            curseCount: report.cursePoolHit.memberCount
+        )
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: "深夜遗物",
-                subtitle: inAny ? "这条词条在深夜遗物的词条池里" : "这条词条不在任何深夜词条池里",
+                subtitle: "A / B / C 三池的归属，以及这一行要不要配诅咒",
                 symbol: "moon.stars"
             )
 
@@ -191,28 +220,15 @@ struct AffixLookupDetailPane: View {
                 LookupPoolRow(hit: report.cursePoolHit)
             }
 
-            if report.affix.requiresCurse {
-                LookupInlineNote(
-                    symbol: "link",
-                    tint: AppTheme.amber,
-                    text: "A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 3000000"
-                        + (report.cursePoolHit.memberCount > 0
-                           ? "，共 \(report.cursePoolHit.memberCount) 条" : "")
-                        + "）。存档里这条词条没配诅咒即为改动。"
-                )
-            } else if report.affix.isCurse {
-                LookupInlineNote(
-                    symbol: "minus.circle",
-                    tint: AppTheme.red,
-                    text: "负面词条：只出现在深夜遗物带诅咒的那一行，与同行的 A 池正面词条配对。"
-                )
-            } else if hits.contains(where: { $0.contains }) {
-                LookupInlineNote(
-                    symbol: "checkmark.circle",
-                    tint: AppTheme.green,
-                    text: "B / C 池词条：所在行不带诅咒。"
-                )
-            }
+            LookupInlineNote(
+                symbol: report.affix.isCurse
+                    ? "minus.circle"
+                    : (report.affix.requiresCurse ? "link" : (inAny ? "checkmark.circle" : "info.circle")),
+                tint: report.affix.isCurse
+                    ? AppTheme.red
+                    : (report.affix.requiresCurse ? AppTheme.amber : (inAny ? AppTheme.green : AppTheme.tertiaryText)),
+                text: note
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .appCard()
@@ -297,8 +313,8 @@ struct AffixLookupDetailPane: View {
 // MARK: - 按遗物查
 
 struct RelicLookupDetailPane: View {
-    /// 每个槽位最多展示多少条池成员预览。
-    private static let slotPreviewLimit = 8
+    /// 每个槽位最多展示多少条池成员预览（两端同值，见 RelicCore 的同名常量）。
+    private static let slotPreviewLimit = affixLookupSlotPreviewLimit
 
     let index: AffixLookupIndex
     let relicID: Int?
@@ -674,9 +690,10 @@ struct LookupHitList: View {
                              : "展开全部 \(hits.count) 件")
                             .font(.caption)
                     }
-                    Text(verbatim: expanded
-                         ? "已列出全部 \(hits.count) 件"
-                         : "另有 \(hits.count - limit) 件未列出；上面的种类统计是全部命中的分布")
+                    // 「共 N 件 · 已显示 M 件」这句与 Windows 端逐字相同；
+                    // 控件不同（那边是翻页）没关系，计数口径必须一样。
+                    Text(verbatim: affixLookupHitCountText(total: hits.count, shown: shown.count)
+                         + "；上面的种类统计是全部命中的分布")
                         .font(.caption2)
                         .foregroundStyle(AppTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)

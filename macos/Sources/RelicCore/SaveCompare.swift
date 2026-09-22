@@ -129,6 +129,17 @@ public struct SaveCompareCharacter: Identifiable, Sendable {
         return nil
     }
 
+    /// 遗物没有任何增减时的那一句话；读不出遗物的槽位不给（那不是「一致」）。
+    ///
+    /// 展示层的可见集合只收 `hasAnyDifference` 的槽位，所以走到这里的
+    /// `isIdentical` 槽位必然带着 `presenceNote`（改名 / 只在一侧存在）：
+    /// 提示要说清楚「变的只是角色名，遗物没动」。口径与 Windows 端
+    /// `app.js` 的 `compareCharacterBlock` 完全一致。
+    public var identicalNote: String? {
+        guard isIdentical, !hasParseError else { return nil }
+        return "该角色的遗物与当前存档一致。"
+    }
+
     /// 解析失败提示；该槽位读不出遗物，只提示、不产出增减。
     public var parseNote: String? {
         var sides: [String] = []
@@ -204,6 +215,16 @@ public struct SaveCompareResult: Sendable {
 
     /// 汇总文案：「新增 N 件 · 减少 M 件」。
     public var summaryText: String { "新增 \(totalAdded) 件 · 减少 \(totalRemoved) 件" }
+
+    /// 差异列表一条都没画出来时的那一句话。
+    ///
+    /// 只有这一个出口：有差异 → 是被搜索 / 方向筛掉了；没有差异 → 两份存档一致。
+    /// 「完全一致」这句话绝不能既在列表上方说一遍、列表里又说一遍——同一屏里
+    /// 同一句话出现两次，看着像渲染重复了。口径与 Windows 端
+    /// `renderSaveCompareList()` 的空列表分支一致。
+    public var emptyListNote: String {
+        hasDifferences ? "没有符合筛选条件的差异" : "两份存档的遗物完全一致"
+    }
 }
 
 /// 按角色槽位对比两份已审计存档的遗物多重集。

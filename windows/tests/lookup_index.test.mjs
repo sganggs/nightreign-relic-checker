@@ -724,3 +724,202 @@ test("双端对照：3 件遗物的槽位池结论与 macOS 端逐字段一致",
   assert.equal(lookup.searchRelics(Core, index, "", { limit: 10000 }).total, 768,
     "两端的「可查遗物」件数都应是 768 件");
 });
+
+test("compatibilityPeers：互斥组是对称的，不可达词条不再单向反查出一整组", () => {
+  // 曾经的口径只过滤「组员」，不过滤「查询方」：一条从不进任何槽位池的
+  // 参数表效果去反查，会拿到整组互斥对象，而那一组里每一条都不认它。
+  const unreachable = [...index.base.affixIndex.entries()].filter(([effectId, entry]) =>
+    entry.compatibilityId !== -1 && entry.compatibilityId != null &&
+    !lookup.appearsOnRelic(index, effectId));
+  assert.ok(unreachable.length > 900, "数据里确实有大量不进池、却挂着 compatibilityId 的效果");
+
+  for (const [effectId, entry] of unreachable.slice(0, 40)) {
+    assert.deepEqual(
+      lookup.compatibilityPeers(Core, index, entry, catalog), [],
+      `不可达词条 ${effectId} 不该反查出互斥对象`
+    );
+  }
+
+  // 对称性：任取一批能出现在遗物上的词条，A 在 B 的组里 ⇔ B 在 A 的组里
+  const reachable = [...index.base.affixIndex.entries()]
+    .filter(([effectId, entry]) => entry.compatibilityId !== -1 && lookup.appearsOnRelic(index, effectId))
+    .slice(0, 60);
+  for (const [effectId, entry] of reachable) {
+    const peers = lookup.compatibilityPeers(Core, index, entry, catalog);
+    for (const peer of peers.slice(0, 6)) {
+      const back = lookup.compatibilityPeers(Core, index, peer, catalog);
+      assert.ok(
+        back.some((item) => item.effectId === effectId),
+        `互斥组不对称：${effectId} 的组里有 ${peer.effectId}，反过来没有`
+      );
+    }
+  }
+
+  // 互斥池 100 仍是 102 条（不可达的那一千多条没有被塞回来）
+  const host = catalog.affixes.find((affix) => affix.compatibilityId === 100);
+  assert.equal(lookup.compatibilityPeers(Core, index, host, catalog).length + 1, 102);
+
+  // 没有遗物物品表时只剩词条库词条，它们本来就都能出现在遗物上
+  assert.equal(lookup.appearsOnRelic(null, 123456), true);
+  assert.ok(lookup.compatibilityPeers(Core, null, host, catalog).length > 0);
+
+  // 说明文案两端逐字一致（macOS：affixLookupUnreachableConflictNote）
+  assert.equal(
+    lookup.UNREACHABLE_CONFLICT_NOTE,
+    "这条词条不会出现在任何遗物的槽位池里，不参与互斥判定：互斥只约束「能同时出现在一件遗物上」的词条。"
+  );
+});
+
+test("互斥组一栏的四支分支：不可达优先于 compatibilityId = -1（两端同序）", () => {
+  // 上一轮两端的分支顺序正好相反：Windows 先判 compatibilityId === -1，
+  // macOS 先判 appearsOnRelic。对「不可达且 compatibilityId = -1」的那一批，
+  // 一端说「不参与互斥判定」，另一端说「可与任意其他词条同时出现」，
+  // 正好是相反的口径；两端新增的测试又都只覆盖了「不可达且挂着 compatibilityId」
+  // 的那一支。现在两端都把不可达排在最前面。
+  const unreachableNoGroup = [...index.base.affixIndex.entries()].filter(([effectId, entry]) =>
+    (entry.compatibilityId === -1 || entry.compatibilityId == null) &&
+    !lookup.appearsOnRelic(index, effectId));
+  assert.ok(
+    unreachableNoGroup.length > 100,
+    `数据里应有上百条「不可达且没有互斥池」的效果，实际 ${unreachableNoGroup.length}`
+  );
+  // 11001「使用圣杯瓶时，连同恢复周围我方人物」是这一批里的典型
+  assert.ok(
+    unreachableNoGroup.some(([effectId]) => effectId === 11001),
+    "effectId 11001 应在这一支里"
+  );
+  for (const [effectId, entry] of unreachableNoGroup.slice(0, 40)) {
+    const peers = lookup.compatibilityPeers(Core, index, entry, catalog);
+    assert.equal(
+      lookup.conflictBranch(entry, lookup.appearsOnRelic(index, effectId), peers.length),
+      "unreachable",
+      `${effectId}「不可达 + compatibilityId = -1」应走不可达那一支`
+    );
+  }
+
+  // 其余三支
+  const loner = catalog.affixes.find((affix) =>
+    affix.compatibilityId === -1 && lookup.appearsOnRelic(index, affix.effectId));
+  if (loner) {
+    assert.equal(lookup.conflictBranch(loner, true, 0), "noGroup");
+  }
+  const host = catalog.affixes.find((affix) => affix.compatibilityId === 100);
+  assert.equal(
+    lookup.conflictBranch(host, true, lookup.compatibilityPeers(Core, index, host, catalog).length),
+    "peers"
+  );
+  assert.equal(lookup.conflictBranch(host, true, 0), "lone");
+
+  // 另外两串说明也要两端逐字一致
+  // （macOS：affixLookupNoConflictGroupNote / affixLookupLoneConflictNote）
+  assert.equal(
+    lookup.NO_CONFLICT_GROUP_NOTE,
+    "该词条没有互斥组，可与任意其他词条同时出现（仍不能与自身重复）。"
+  );
+  assert.equal(lookup.loneConflictNote(100), "互斥池 100 内只有这一条词条，没有互斥对象。");
+});
+
+test("hitCountText：「共 N 件 / 已显示 M 件」与 macOS 逐字一致", () => {
+  // macOS：affixLookupHitCountText(total:shown:)。控件不同（那边展开全部、
+  // 这边翻页），提示文案必须一样。
+  assert.equal(lookup.hitCountText(7, 7), "共 7 件 · 已显示全部 7 件");
+  assert.equal(lookup.hitCountText(0, 0), "共 0 件 · 已显示全部 0 件");
+  assert.equal(lookup.hitCountText(300, 200), "共 300 件 · 已显示 200 件（另有 100 件未列出）");
+  assert.equal(lookup.hitCountText(300, 900), "共 300 件 · 已显示全部 300 件", "显示数不会超过总数");
+  assert.equal(lookup.hitCountText(300, -5), "共 300 件 · 已显示 0 件（另有 300 件未列出）");
+
+  // 真实翻页：页面传的是 paged.to（已显示到第几件）而不是本页行数。
+  // macOS 的 affixLookupHitCountText 是「前 M 件 / 共 N 件」的累计口径，
+  // 按本页行数写，第 2 页会再写一遍「已显示 200 件（另有 232 件未列出）」，
+  // 末页更会和紧挨着的副标题「第 401–432 件（第 3 / 3 页）」直接打架。
+  const sources = lookup.relicSourcesFor(index, NORMAL_EFFECT);
+  const total = sources.random.length;
+  assert.ok(total > lookup.ROW_LIMIT * 2, `生命力＋１ 的随机池命中应超过两页，实际 ${total}`);
+
+  const page1 = lookup.paginate(sources.random, 0, lookup.ROW_LIMIT);
+  assert.equal(
+    lookup.hitCountText(page1.total, page1.to),
+    `共 ${total} 件 · 已显示 ${lookup.ROW_LIMIT} 件（另有 ${total - lookup.ROW_LIMIT} 件未列出）`
+  );
+
+  const page2 = lookup.paginate(sources.random, 1, lookup.ROW_LIMIT);
+  assert.equal(page2.from, lookup.ROW_LIMIT + 1);
+  assert.equal(page2.to, lookup.ROW_LIMIT * 2);
+  assert.equal(
+    lookup.hitCountText(page2.total, page2.to),
+    `共 ${total} 件 · 已显示 ${lookup.ROW_LIMIT * 2} 件（另有 ${total - lookup.ROW_LIMIT * 2} 件未列出）`,
+    "第 2 页要算上第 1 页已经列过的那些"
+  );
+
+  const last = lookup.paginate(sources.random, page1.pageCount - 1, lookup.ROW_LIMIT);
+  assert.equal(last.to, total);
+  assert.equal(
+    lookup.hitCountText(last.total, last.to),
+    `共 ${total} 件 · 已显示全部 ${total} 件`,
+    "末页说「已显示全部」，不能和副标题「第 x–N 件（第 n / n 页）」打架"
+  );
+});
+
+test("deepNoteText：深夜 A/B/C 池结论四支文案，与 macOS 同一支", () => {
+  const curse = lookup.deepSources(Core, index, CURSE_EFFECT);
+  const poolA = lookup.deepSources(Core, index, DEEP_A_EFFECT);
+  const poolBC = lookup.deepSources(Core, index, DEEP_BC_EFFECT);
+  const none = lookup.deepSources(Core, index, NORMAL_EFFECT);
+  const curseCount = curse.curses.length;
+  assert.ok(curseCount > 0);
+
+  assert.equal(
+    lookup.deepNoteText(curse),
+    `负面词条：只出现在深夜遗物带诅咒的那一行，与同一行的 A 池正面词条配对；诅咒池（3000000）共 ${curseCount} 条。`
+  );
+  assert.equal(
+    lookup.deepNoteText(poolA),
+    `A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 3000000，共 ${curseCount} 条）。存档里这条词条没配诅咒即为改动。`
+  );
+  assert.equal(lookup.deepNoteText(poolBC), "B / C 池词条：深夜遗物可出，所在行不带诅咒。");
+  assert.equal(lookup.deepNoteText(none), "这条词条不在任何深夜词条池里，深夜遗物不会出它。");
+  assert.equal(lookup.deepNoteText(null), "这条词条不在任何深夜词条池里，深夜遗物不会出它。");
+});
+
+test("深夜池说明（poolDetail）真的会被渲染，且与 macOS 同表", () => {
+  // 此前 modeSources / deepSources 算了 detail，渲染层一个字都没画。
+  for (const entry of lookup.deepSources(Core, index, DEEP_A_EFFECT).pools) {
+    assert.ok(entry.detail, `深夜池 ${entry.poolId} 应有说明`);
+  }
+  assert.equal(lookup.poolDetail(2000000), "强力正面词条：同一行必定配一条深夜诅咒");
+  assert.equal(lookup.poolDetail(2100000), "普通正面词条：同一行不带诅咒");
+  assert.equal(lookup.poolDetail(2200000), "普通正面词条：同一行不带诅咒");
+  assert.equal(lookup.poolDetail(3000000), "深夜遗物负面词条的唯一来源");
+  assert.equal(lookup.poolDetail(110), "", "孔数层池没有补充说明");
+});
+
+test("poolLabelIsFallback：没有中文短名的池不再把「池 <id>」打两遍", () => {
+  // 物品表里有几百个只有 id 的槽位池；标签本身就是「池 <id>」，
+  // 旁边再挂一枚「池 <id>」就成了重复。macOS 端早有这条判断。
+  assert.equal(lookup.poolLabelIsFallback(110), false);
+  assert.equal(lookup.poolLabelIsFallback(2000000), false);
+  assert.equal(lookup.poolLabelIsFallback(3000000), false);
+
+  const fallbackPools = new Set();
+  for (const relic of relicData.relics) {
+    for (const poolId of relic.slots.concat(relic.curseSlots)) {
+      if (poolId !== -1 && lookup.poolLabelIsFallback(poolId)) fallbackPools.add(poolId);
+    }
+  }
+  assert.ok(fallbackPools.size > 100, "确实有大量没有中文短名的槽位池");
+  for (const poolId of fallbackPools) {
+    assert.equal(lookup.poolLabel(poolId), `池 ${poolId}`, "兜底标签里已经带了 id");
+  }
+});
+
+test("槽位池词条预览条数两端都是 10", () => {
+  // macOS：affixLookupSlotPreviewLimit（索引里 prefix(10)，视图 limit 同值）
+  assert.equal(lookup.SLOT_PREVIEW, 10);
+  const summary = lookup.relicSlotSummary(Core, index, RANDOM_RELIC_ID, lookup.SLOT_PREVIEW);
+  for (const slot of summary.slots) {
+    if (slot.poolId === -1 || slot.empty) continue;
+    assert.ok(slot.preview.length <= 10, `槽位预览超过 10 条：${slot.preview.length}`);
+    assert.equal(slot.preview.length, Math.min(10, slot.size));
+    assert.equal(slot.more, Math.max(0, slot.size - slot.preview.length));
+  }
+});

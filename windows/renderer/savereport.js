@@ -15,6 +15,11 @@
 //     做统计的人会整段漏掉这个角色。
 //
 // 本模块不做合法性判定：调用方先用 Core.auditRelic 把 audits 算好再传进来。
+//
+// 审计文案（issue.title / issue.detail）一律**原样输出**，报告层不做任何二次
+// 改写、补句号或换说法。core.js 与 macOS 端 RelicAudit.swift 的 detail 措辞
+// 目前并不完全相同（标题一致，说明写法有出入），那是审计器本身的差异，
+// 要统一就去改审计器；在这里改写只会让报告和页面上显示的问题对不上号。
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
     module.exports = factory();
@@ -49,8 +54,15 @@
     return text;
   }
 
+  // 空词条归一：缺字段 / 0 / 任意负值 / 0xFFFFFFFF 一律写成 -1。
+  //
+  // 口径以审计器为准——macOS 端 RelicAudit.padded() 与 SaveCompare 的
+  // SaveRelicIdentity.normalized() 都是 `raw <= 0 || raw == 0xFFFFFFFF`，
+  // Windows 端 savediff.js 的 normalizeEffectId 也是 `value <= 0`。
+  // 这里原来只认 0 与 -1，于是 -2 之类的坏值会被当成真词条 ID 去查名字，
+  // 报告里写出「词条 -2」，而 macOS 的同一份存档写「（空）」。
   function normId(value) {
-    return value == null || value === 0 || value === -1 || value === 0xFFFFFFFF ? -1 : value;
+    return value == null || value <= 0 || value === 0xFFFFFFFF ? -1 : value;
   }
 
   function pad2(value) {

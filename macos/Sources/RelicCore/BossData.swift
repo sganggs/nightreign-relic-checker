@@ -595,12 +595,81 @@ public enum BossPoiseKind: String, Sendable, Hashable {
     case none
 
     /// 算不出有效韧性时的显示文案（与 Windows 端 fmtPoise 一致）。
+    ///
+    /// `.value` 走到这里只有一种来源：poise > 0，但承受削韧倍率是 0 / 非有限
+    /// （数据异常）。它既不是「不吃削韧」也不是「无削韧槽」，两端一律给
+    /// 占位符「—」，原因写在数值下面的小字里（poiseCaption）；空串会让
+    /// 数值格看起来像渲染坏了。
     public var placeholder: String {
         switch self {
-        case .value: return ""
+        case .value: return "—"
         case .zero: return "无削韧槽"
         case .none: return "不吃削韧"
         }
+    }
+}
+
+/// 「首领数据」页里两端必须逐字相同的几串文案与数字格式。
+///
+/// 对应 Windows 端 `renderer/pages/bosses.js` 的 `BADGE_LABEL_UNCERTAIN` /
+/// `BADGE_DEEP_ROW` / `rowCountText()` / `poiseCaption()`。放在 RelicCore 里
+/// 是为了让 RelicCoreChecks 能直接断言这些串——写在 SwiftUI 视图里就只能靠人眼比对。
+public enum BossRowText {
+    /// 行内徽标：Paramdex 名带 "?"，阶段 / 用途属社区推测。
+    public static let labelUncertainBadge = "标签为社区推测"
+    /// 行内徽标：这一行当前显示的是深夜专属数值。
+    public static let deepRowBadge = "深夜数值"
+
+    /// 卡头右侧的数值行计数：「N 条数值行」。
+    public static func rowCount(_ count: Int) -> String { "\(count) 条数值行" }
+
+    /// poise > 0 却算不出有效韧性时的小字（承受削韧倍率为 0 / 非有限）。
+    /// 此时数值格给 `BossPoiseKind.value.placeholder`（「—」），原因写在这里。
+    public static func abnormalPoiseTakenCaption(_ factor: Double) -> String {
+        "承受削韧倍率异常（\(decimal(factor, digits: 3))）"
+    }
+
+    /// 展开态「有效韧性」下面的小字，四支两端逐字一致（Windows 端
+    /// `pages/bosses.js` 的 `poiseCaption()`）。
+    ///
+    /// - `hasEffectivePoise`：算得出有效韧性（poise > 0 且承受削韧倍率是正的有限数）。
+    /// - `poise`：原始 superArmorDurability；缺字段时两端都取 -1。
+    /// - `poiseTakenTotal`：poiseTakenBase × tier.poiseTaken。
+    public static func poiseCaption(
+        poise: Double,
+        poiseTakenTotal: Double,
+        kind: BossPoiseKind,
+        hasEffectivePoise: Bool
+    ) -> String {
+        if hasEffectivePoise {
+            return "韧性 \(decimal(poise, digits: 0)) ÷ 承受削韧 \(decimal(poiseTakenTotal, digits: 3))"
+        }
+        switch kind {
+        case .zero: return "superArmorDurability = 0，该实体没有削韧槽"
+        case .none: return "superArmorDurability = \(decimal(poise, digits: 0))"
+        case .value: return abnormalPoiseTakenCaption(poiseTakenTotal)
+        }
+    }
+
+    /// 展开态「多人缩放明细」标题右边的档位说明，三支两端逐字一致（Windows 端
+    /// `pages/bosses.js` 的 `scalingCaption()`）。
+    ///
+    /// id 前面的「#」两端都写：macOS 的底部档位表、Windows 的底部档位表都写 `#<id>`。
+    public static func scalingCaption(scalingID: Int?, groupTitle: String?) -> String {
+        guard let scalingID else { return "无缩放档位" }
+        guard let groupTitle, !groupTitle.isEmpty else { return "档位 #\(scalingID)" }
+        return "档位 #\(scalingID) · \(groupTitle)"
+    }
+
+    /// 去掉多余 0 的小数：1.350 → 1.35，2.0 → 2（与 Windows 端 fmtNumber 同口径）。
+    public static func decimal(_ value: Double, digits: Int = 2) -> String {
+        guard value.isFinite else { return "—" }
+        var text = String(format: "%.\(digits)f", value)
+        if text.contains(".") {
+            while text.hasSuffix("0") { text.removeLast() }
+            if text.hasSuffix(".") { text.removeLast() }
+        }
+        return text.isEmpty ? "0" : text
     }
 }
 

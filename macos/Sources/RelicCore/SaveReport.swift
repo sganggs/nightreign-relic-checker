@@ -58,6 +58,11 @@ public struct SaveReportCatalogInfo: Sendable {
 ///     读者误以为「已检查过、没有告警」；
 ///   * 存档判定走 `RelicAuditor`（不接受 `CheckMode`），与词条组合检查页顶部的
 ///     「校验口径」无关，说明行里明确写出来。
+///
+/// 审计文案（`issue.title` / `issue.detail`）一律**原样输出**，报告层不做任何
+/// 二次改写、补句号或换说法。`RelicAuditor` 与 Windows 端 core.js 的 detail
+/// 措辞目前并不完全相同（标题一致，说明写法有出入），那是审计器本身的差异，
+/// 要统一就去改审计器；在这里改写只会让报告和页面上显示的问题对不上号。
 public enum SaveReportBuilder {
     /// 抬头 / 角色分段的分隔线宽度（ASCII，记事本与表格软件里都不会错位）。
     static let ruleWidth = 46

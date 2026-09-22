@@ -79,6 +79,9 @@ struct SaveRelicCard: View {
                 SaveIssueRow(issue: issue, warning: true)
             }
 
+            // 「官方固定词条」在前、「正确的词条顺序」在后：与导出报告
+            // （SaveReportBuilder.relicLines）和 Windows 端的遗物卡同一顺序，
+            // 三处都是先给「原样长什么样」，再给「顺序该怎么排」。
             if let official = relic.result.officialEffects {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("该遗物的官方固定词条（可据此改回）")

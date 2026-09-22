@@ -763,3 +763,173 @@ func checkBossData() throws -> Int {
 
     return count
 }
+
+// MARK: - 双端文案一致性（与 Windows 端 pages/bosses.js 逐字对照）
+
+/// 展开态「多人缩放明细」的档位说明。视图层与这里都调 `BossRowText.scalingCaption`，
+/// Windows 端 `pages/bosses.js` 的 `scalingCaption()` 是同一组分支、同一串文案——
+/// 上一轮两端各自把不同的字面量写死（这边 `档位 #98815`、那边 `档位 98815`），
+/// 两份注释却都声称「逐字一致」。现在串只有一份，注释才名副其实。
+private func bossScalingCaption(_ scalingID: Int?, dataset: BossDataset) -> String {
+    BossRowText.scalingCaption(
+        scalingID: scalingID,
+        groupTitle: scalingID.flatMap { dataset.scalingGroup($0)?.title }
+    )
+}
+
+/// 首领数据页两端必须逐字相同的文案：档位分组名、行内徽标、数值行计数、
+/// 承受削韧倍率异常时的占位符与小字。
+func checkBossDataParityText() throws -> Int {
+    var count = 0
+
+    let url = bossesResourceURL
+    guard FileManager.default.fileExists(atPath: url.path) else {
+        throw CheckFailure(description: "首领数据文案：缺少 \(url.path)")
+    }
+    let data = try Data(contentsOf: url)
+    if GameDataLoader.isPlaceholder(data) {
+        print("    （bosses.json 仍是占位内容，跳过首领数据文案检查）")
+        return 0
+    }
+    let dataset = try BossDataIndex(data: data).dataset
+
+    // ① group = null 的档位一律写「其它档位」，展开态与底部档位表同名
+    try bossExpect(BossScalingGroup.title(for: nil) == "其它档位", "group = nil 应写「其它档位」", counter: &count)
+    try bossExpect(BossScalingGroup.title(for: "") == "其它档位", "group = 空串也算缺失", counter: &count)
+    try bossExpect(
+        BossScalingGroup.title(for: "Final Boss Threat") == "最终首领威胁档",
+        "已知分组名应翻译",
+        counter: &count
+    )
+    try bossExpect(
+        BossScalingGroup.title(for: "Brand New Threat") == "Brand New Threat",
+        "未知分组名照原样显示",
+        counter: &count
+    )
+    let nullGroupIDs = dataset.scalingTiers.values.filter { $0.group == nil }.map(\.id).sorted()
+    try bossExpect(
+        nullGroupIDs == [98810, 98815, 98818, 98822],
+        "数据里 group = null 的档位应是 98810/98815/98818/98822，实际 \(nullGroupIDs)",
+        counter: &count
+    )
+    for id in nullGroupIDs {
+        let caption = bossScalingCaption(id, dataset: dataset)
+        try bossExpect(
+            caption == "档位 #\(id) · 其它档位",
+            "档位 \(id) 的展开态标题应写「其它档位」，实际 \(caption)",
+            counter: &count
+        )
+    }
+    try bossExpect(bossScalingCaption(nil, dataset: dataset) == "无缩放档位", "没有档位时的文案", counter: &count)
+    try bossExpect(
+        bossScalingCaption(4_040_404, dataset: dataset) == "档位 #4040404",
+        "查不到的档位只写档位号",
+        counter: &count
+    )
+    // 每条数值行的档位都查得到，且都有分组名
+    for row in bossAllRows(dataset) {
+        guard let id = row.scalingId else { continue }
+        let caption = bossScalingCaption(id, dataset: dataset)
+        try bossExpect(caption.contains(" · "), "档位 \(id) 少了分组名：\(caption)", counter: &count)
+    }
+
+    // ② 行内徽标 / 卡头计数的统一文案
+    try bossExpect(BossRowText.labelUncertainBadge == "标签为社区推测", "labelUncertain 徽标文案", counter: &count)
+    try bossExpect(BossRowText.deepRowBadge == "深夜数值", "深夜行徽标文案", counter: &count)
+    try bossExpect(BossRowText.rowCount(5) == "5 条数值行", "数值行计数文案", counter: &count)
+    try bossExpect(BossRowText.rowCount(1) == "1 条数值行", "数值行计数文案（单数也不变）", counter: &count)
+    try bossExpect(
+        BossDeepCoverage.all.badgeText == BossRowText.deepRowBadge,
+        "卡头深夜徽标与行内徽标同一套说法",
+        counter: &count
+    )
+    try bossExpect(
+        BossDeepCoverage.some.badgeText == "部分行有深夜数值",
+        "部分行有深夜数值的卡头徽标",
+        counter: &count
+    )
+    try bossExpect(
+        bossAllRows(dataset).contains { $0.labelUncertain },
+        "数据集里应存在 labelUncertain 的行（徽标文案才有意义）",
+        counter: &count
+    )
+
+    // ③a 承伤倍率徽标两位小数
+    try bossExpect(BossRowText.decimal(1.2345, digits: 2) == "1.23", "两位小数", counter: &count)
+    try bossExpect(BossRowText.decimal(1.006, digits: 2) == "1.01", "两位小数进位", counter: &count)
+    try bossExpect(BossRowText.decimal(1.1, digits: 2) == "1.1", "去掉多余的 0", counter: &count)
+    try bossExpect(BossRowText.decimal(1.2346, digits: 3) == "1.235", "默认三位仍可用", counter: &count)
+    try bossExpect(BossRowText.decimal(.infinity) == "—", "非有限数给占位符", counter: &count)
+
+    // ③b poise > 0 但承受削韧倍率为 0 / 非有限
+    try bossExpect(BossPoiseKind.value.placeholder == "—", "算不出有效韧性时的占位符", counter: &count)
+    try bossExpect(BossPoiseKind.zero.placeholder == "无削韧槽", "poise = 0 的占位符", counter: &count)
+    try bossExpect(BossPoiseKind.none.placeholder == "不吃削韧", "poise < 0 的占位符", counter: &count)
+    try bossExpect(
+        BossRowText.abnormalPoiseTakenCaption(0) == "承受削韧倍率异常（0）",
+        "承受削韧异常时的小字，实际 \(BossRowText.abnormalPoiseTakenCaption(0))",
+        counter: &count
+    )
+    let brokenJSON = """
+    {"npcId": 1, "labelZh": "坏行", "isMain": true, "hp": 1000, "hpBase": 1000,
+     "hpMultiplier": 1, "poise": 120, "poiseRecover": 1, "poiseTakenBase": 0,
+     "poiseRecoverMultiplier": 1, "ailmentDamageRateBase": 0,
+     "scaling": {"duo": {"hp": 2, "poiseTaken": 0.55, "poiseRecover": 0.55,
+                         "buildupRate": 1, "ailmentDamageRate": 1}}}
+    """
+    let brokenRow = try JSONDecoder().decode(BossFight.self, from: Data(brokenJSON.utf8))
+    let brokenStats = brokenRow.stats(for: .duo)
+    try bossExpect(brokenRow.poiseTakenBase == 0, "数据里的 0 不能被改写成 1", counter: &count)
+    try bossExpect(brokenRow.poiseKind == .value, "poise = 120 仍是「有削韧槽」", counter: &count)
+    try bossExpect(brokenStats.effectivePoise == nil, "分母为 0 时算不出有效韧性", counter: &count)
+    try bossExpect(
+        brokenStats.poiseKind.placeholder == "—",
+        "poise > 0 而分母异常时显示「—」，不能写成「不吃削韧」",
+        counter: &count
+    )
+    try bossExpect(
+        BossRowText.abnormalPoiseTakenCaption(brokenStats.poiseTakenBase * brokenStats.tier.poiseTaken)
+            == "承受削韧倍率异常（0）",
+        "异常小字取的是 poiseTakenBase × 档位倍率",
+        counter: &count
+    )
+
+    // ③ 有效韧性小字的另外三支也必须两端逐字一致（上一轮只统一了异常那一支）
+    try bossExpect(
+        BossRowText.poiseCaption(poise: 120, poiseTakenTotal: 0.55, kind: .value, hasEffectivePoise: true)
+            == "韧性 120 ÷ 承受削韧 0.55",
+        "能算出有效韧性时的小字，实际 "
+            + BossRowText.poiseCaption(poise: 120, poiseTakenTotal: 0.55, kind: .value, hasEffectivePoise: true),
+        counter: &count
+    )
+    try bossExpect(
+        BossRowText.poiseCaption(poise: 0, poiseTakenTotal: 1, kind: .zero, hasEffectivePoise: false)
+            == "superArmorDurability = 0，该实体没有削韧槽",
+        "poise = 0 时的小字",
+        counter: &count
+    )
+    try bossExpect(
+        BossRowText.poiseCaption(poise: -1, poiseTakenTotal: 1, kind: .none, hasEffectivePoise: false)
+            == "superArmorDurability = -1",
+        "poise < 0 时的小字",
+        counter: &count
+    )
+    try bossExpect(
+        BossRowText.poiseCaption(poise: 120, poiseTakenTotal: 0, kind: .value, hasEffectivePoise: false)
+            == "承受削韧倍率异常（0）",
+        "倍率异常时的小字仍走 abnormalPoiseTakenCaption",
+        counter: &count
+    )
+    try bossExpect(
+        BossRowText.poiseCaption(
+            poise: brokenRow.poise,
+            poiseTakenTotal: brokenStats.poiseTakenBase * brokenStats.tier.poiseTaken,
+            kind: brokenStats.poiseKind,
+            hasEffectivePoise: brokenStats.effectivePoise != nil
+        ) == "承受削韧倍率异常（0）",
+        "真实换算结果也走同一支",
+        counter: &count
+    )
+
+    return count
+}

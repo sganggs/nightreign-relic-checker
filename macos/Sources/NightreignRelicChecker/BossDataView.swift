@@ -419,7 +419,7 @@ struct BossDataView: View {
                 rows += card.rows.count
             }
         }
-        return "当前显示 \(seen.count) 个首领 · \(rows) 条战斗记录"
+        return "当前显示 \(seen.count) 个首领 · \(rows) 条数值行"
     }
 
     private var footerTrailing: String {

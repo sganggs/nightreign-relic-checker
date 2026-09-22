@@ -70,6 +70,73 @@
     return Object.prototype.hasOwnProperty.call(POOL_DETAILS, poolId) ? POOL_DETAILS[poolId] : "";
   }
 
+  // 池标签是不是「池 <id>」这种兜底写法。是的话就别在旁边再打一遍「池 <id>」，
+  // 物品表里有 588 个没有中文短名的槽位池，原来的写法会把同一串打两次。
+  // 与 macOS 端 RelicSlotRow 的 `affixPoolLabel(id) != "池 \(id)"` 同一条判断。
+  function poolLabelIsFallback(poolId) {
+    return !Object.prototype.hasOwnProperty.call(POOL_LABELS, poolId);
+  }
+
+  // 结果被截断时的「共 N 件 / 已显示 M 件」。控件两端可以不同
+  // （这边翻页、macOS 就地展开全部），但这句话必须逐字相同，
+  // 否则同一份数据在两端读起来像两个结论。macOS 端 affixLookupHitCountText。
+  function hitCountText(total, shown) {
+    var visible = Math.max(0, Math.min(shown, total));
+    if (visible >= total) return "共 " + total + " 件 · 已显示全部 " + total + " 件";
+    return "共 " + total + " 件 · 已显示 " + visible + " 件（另有 " + (total - visible) + " 件未列出）";
+  }
+
+  // 深夜遗物一栏的结论文案（两端逐字一致；macOS 端 affixLookupDeepNote）。
+  // 分支顺序固定：负面词条 → A 池（需诅咒）→ B/C 池 → 不在任何深夜池。
+  // 诅咒词条本身不会 requiresCurse，所以先判 isCurse 不会吃掉 A 池那一支。
+  function deepNoteText(deep) {
+    var cursePoolId = deep && deep.cursePoolId !== undefined ? deep.cursePoolId : DEEP_CURSE_POOL_ID;
+    var curseCount = deep && Array.isArray(deep.curses) ? deep.curses.length : 0;
+    if (deep && deep.isCurse) {
+      return "负面词条：只出现在深夜遗物带诅咒的那一行，与同一行的 A 池正面词条配对；" +
+        "诅咒池（" + cursePoolId + "）共 " + curseCount + " 条。";
+    }
+    if (deep && deep.requiresCurse) {
+      return "A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 " + cursePoolId +
+        "，共 " + curseCount + " 条）。存档里这条词条没配诅咒即为改动。";
+    }
+    if (deep && deep.inAny) {
+      return "B / C 池词条：深夜遗物可出，所在行不带诅咒。";
+    }
+    return "这条词条不在任何深夜词条池里，深夜遗物不会出它。";
+  }
+
+  // 互斥组里出现「不会出现在遗物上」的词条时的说明（两端逐字一致；
+  // macOS 端 affixLookupUnreachableConflictNote）。
+  var UNREACHABLE_CONFLICT_NOTE =
+    "这条词条不会出现在任何遗物的槽位池里，不参与互斥判定：" +
+    "互斥只约束「能同时出现在一件遗物上」的词条。";
+
+  // compatibilityId = -1（参数表里就没给互斥池）时的说明（两端逐字一致；
+  // macOS 端 affixLookupNoConflictGroupNote）。
+  var NO_CONFLICT_GROUP_NOTE = "该词条没有互斥组，可与任意其他词条同时出现（仍不能与自身重复）。";
+
+  // 互斥池里只有它自己时的说明（两端逐字一致；macOS 端 affixLookupLoneConflictNote）。
+  function loneConflictNote(compatibilityId) {
+    return "互斥池 " + compatibilityId + " 内只有这一条词条，没有互斥对象。";
+  }
+
+  // 互斥组一栏走哪一支：两端必须是同一条链（文案见上面几串，控件各自套）。
+  //   1. unreachable：进不了任何槽位池 → UNREACHABLE_CONFLICT_NOTE
+  //   2. noGroup：    compatibilityId = -1 → NO_CONFLICT_GROUP_NOTE
+  //   3. peers：      有互斥对象 → 互斥组列表
+  //   4. lone：       互斥池里只有自己 → loneConflictNote
+  // 前两支的顺序不能反：仓库真实数据里有 148 条「不可达且 compatibilityId = -1」
+  // 的效果（effectId 11001 / 12000 / 12001 / 12003 等），先判 -1 的那一端会说它
+  //「可与任意其他词条同时出现」，先判不可达的那一端会说它「不参与互斥判定」，
+  // 正好是相反的口径。两端都把不可达排在前面——它是更强的结论
+  //（这条词条根本不会出现在遗物上，谈不上能不能和别的词条同时出现）。
+  function conflictBranch(affix, reachable, peerCount) {
+    if (!reachable) return "unreachable";
+    if (!affix || affix.compatibilityId === -1 || affix.compatibilityId == null) return "noGroup";
+    return peerCount > 0 ? "peers" : "lone";
+  }
+
   // core.js 目前没有导出 isUniqueRelicId，这里保留同口径的本地实现做兜底。
   function localIsUniqueRelicId(itemId) {
     return (itemId >= 1000 && itemId <= 2100) || (itemId >= 10000 && itemId <= 19999);
@@ -264,8 +331,18 @@
   // 任何槽位池的效果（庇佑等），它们共用参数表的默认 compatibilityId 100，
   // 列进来会把最大互斥组从 102 条撑到 1128 条，且没有任何遗物能同时带上它们。
   // index 为 null（遗物物品表不可用）时退回词条库内的同组词条。
+  //
+  // 互斥组必须是对称的：A 在 B 的组里 ⇔ B 在 A 的组里。所以「能不能出现在
+  // 遗物上」这道关，查询方自己也要过一遍——否则一条永远进不了任何槽位池的
+  // 词条会反查出整整一组互斥对象，而那一组里每一条都不认它。
+  function appearsOnRelic(index, effectId) {
+    if (!index) return true;
+    return index.catalogIds.has(effectId) || index.effectPools.has(effectId);
+  }
+
   function compatibilityPeers(Core, index, affix, catalog) {
     if (!affix || affix.compatibilityId === -1 || affix.compatibilityId == null) return [];
+    if (!appearsOnRelic(index, affix.effectId)) return [];
     if (!index) {
       var affixes = catalog && Array.isArray(catalog.affixes) ? catalog.affixes : [];
       return sortAffixes(Core, affixes.filter(function (other) {
@@ -276,7 +353,7 @@
     index.base.affixIndex.forEach(function (entry, effectId) {
       if (effectId === affix.effectId) return;
       if (entry.compatibilityId !== affix.compatibilityId) return;
-      if (!index.catalogIds.has(effectId) && !index.effectPools.has(effectId)) return;
+      if (!appearsOnRelic(index, effectId)) return;
       peers.push(entry);
     });
     return sortAffixes(Core, peers);
@@ -586,6 +663,14 @@
     isUniqueRelicId: localIsUniqueRelicId,
     poolLabel: poolLabel,
     poolDetail: poolDetail,
+    poolLabelIsFallback: poolLabelIsFallback,
+    appearsOnRelic: appearsOnRelic,
+    hitCountText: hitCountText,
+    deepNoteText: deepNoteText,
+    conflictBranch: conflictBranch,
+    loneConflictNote: loneConflictNote,
+    UNREACHABLE_CONFLICT_NOTE: UNREACHABLE_CONFLICT_NOTE,
+    NO_CONFLICT_GROUP_NOTE: NO_CONFLICT_GROUP_NOTE,
     ROW_LIMIT: ROW_LIMIT,
     SEARCH_LIMIT: SEARCH_LIMIT,
     SLOT_PREVIEW: SLOT_PREVIEW,
@@ -868,36 +953,34 @@
       var extraPeerCount = index
         ? peers.filter(function (peer) { return !isCatalogAffix(index, peer.effectId); }).length
         : 0;
-      var peersHtml = affix.compatibilityId === -1
-        ? "<p class='lookup-note'>该词条没有互斥组，可与任意其他词条同时出现（仍不能与自身重复）。</p>"
-        : (peers.length
-          ? "<p class='lookup-note'>同一互斥池（" + affix.compatibilityId + "）内的词条不能同时出现在一件遗物上，共 " +
-            (peers.length + 1) + " 条" +
-            (extraPeerCount > 0 ? "（其中 " + extraPeerCount + " 条只见于遗物参数表）" : "") +
-            "：</p><div class='lookup-chiplist lookup-chiplist--scroll' data-testid='lookup-peers'>" +
-            peersShown.map(function (peer) {
-              return affixChip(peerEntry(peer));
-            }).join("") + "</div>" + peersToggle +
-            (extraPeerCount > 0 ? extraAffixNote(peersShown.map(peerEntry)) : "")
-          : "<p class='lookup-note'>互斥池 " + affix.compatibilityId + " 内只有这一条词条，没有互斥对象。</p>");
-
-      // 深夜口径与 core.js auditDeepRelic / RelicAudit 一致：按存档里的
-      // effects[i] / curses[i] 位置配对，「这一行」而不是「第 N 槽」。
-      var deepNote = "";
-      if (index) {
-        var deep = deepSources(context.Core, index, affix.effectId);
-        if (deep.isCurse) {
-          deepNote = "<p class='lookup-note'>负面词条：只出现在深夜遗物带诅咒的那一行，" +
-            "与同一行的 A 池正面词条配对（诅咒池 " + deep.cursePoolId + "）。</p>";
-        } else if (deep.requiresCurse) {
-          deepNote = "<p class='lookup-note'>A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 " +
-            deep.cursePoolId + "，共 " + deep.curses.length + " 条）。存档里这条词条没配诅咒即为改动。</p>";
-        } else if (deep.inAny) {
-          deepNote = "<p class='lookup-note'>B / C 池词条：深夜遗物可出，所在行不带诅咒。</p>";
-        } else {
-          deepNote = "<p class='lookup-note'>这条词条不在任何深夜词条池里，不会出现在深夜遗物上。</p>";
-        }
+      var peersHtml;
+      var branch = conflictBranch(affix, appearsOnRelic(index, affix.effectId), peers.length);
+      if (branch === "unreachable") {
+        // 互斥组是对称的：这条词条进不了任何槽位池，也就不进任何互斥组。
+        // 两端都把原因写出来，而不是一侧显示整组、另一侧连提都不提。
+        peersHtml = "<p class='lookup-note' data-testid='lookup-peers-unreachable'>" +
+          esc(UNREACHABLE_CONFLICT_NOTE) + "</p>";
+      } else if (branch === "noGroup") {
+        peersHtml = "<p class='lookup-note' data-testid='lookup-peers-no-group'>" +
+          esc(NO_CONFLICT_GROUP_NOTE) + "</p>";
+      } else if (branch === "peers") {
+        peersHtml = "<p class='lookup-note'>同一互斥池（" + affix.compatibilityId + "）内的词条不能同时出现在一件遗物上，共 " +
+          (peers.length + 1) + " 条" +
+          (extraPeerCount > 0 ? "（其中 " + extraPeerCount + " 条只见于遗物参数表）" : "") +
+          "：</p><div class='lookup-chiplist lookup-chiplist--scroll' data-testid='lookup-peers'>" +
+          peersShown.map(function (peer) {
+            return affixChip(peerEntry(peer));
+          }).join("") + "</div>" + peersToggle +
+          (extraPeerCount > 0 ? extraAffixNote(peersShown.map(peerEntry)) : "");
+      } else {
+        peersHtml = "<p class='lookup-note' data-testid='lookup-peers-lone'>" +
+          esc(loneConflictNote(affix.compatibilityId)) + "</p>";
       }
+
+      // 深夜结论只在下面「能在哪出」卡片的「深夜遗物」一栏说一次（那里还带着
+      // A/B/C 三池与诅咒池的命中情况）。这里原来也有一块「深夜相关」，
+      // 两端文案统一之后就成了同一屏里一字不差地说两遍，与 macOS 的单张
+      // deepCard 也对不上，所以撤掉。
 
       node.innerHTML = "<article class='card lookup-card' data-testid='lookup-detail-card'>" +
         "<div class='section-heading'><div class='section-icon section-icon--green'>◈</div>" +
@@ -905,17 +988,27 @@
         "<div class='lookup-taglist'>" + tags + "</div>" +
         "<dl class='data-lines lookup-lines'>" + lines + "</dl>" +
         "<div class='lookup-block'><h3>互斥组</h3>" + peersHtml + "</div>" +
-        (deepNote ? "<div class='lookup-block'><h3>深夜相关</h3>" + deepNote + "</div>" : "") +
         "</article>";
     }
 
     // 槽位池只按「池」展示，不打槽序号：普通大遗物按孔数分层取池，
     // 3 孔遗物的 slots 是 [300, 200, 100]，模板下标不是槽序号。
+    // 池标签 + 池的补充说明（深夜 A/B/C 池的出货规则）+ 规模。
+    // 说明此前只算不画：深夜三池在 macOS 上各有一行小字，这边什么都没有，
+    // 同一个池在两端读起来像两回事。与 macOS 端 LookupPoolRow 同一套三段。
+    //
+    // meta 一律写「池 <id> · N 条 · M 件遗物」，与 macOS 端 LookupPoolRow 逐字一致。
+    // 上一轮在这里也套了兜底判断，于是没有中文短名的池在 Windows 只写
+    //「N 条 · M 件遗物」、macOS 仍写「池 <id> · …」，同一行在两端又不一样了。
+    //「兜底标签旁边不再重复打一遍 id」那条判断只用在 slotBlock 的那枚 pill 上
+    //（macOS 的 RelicSlotRow 早有同样判断，那一处两端本来就一致）。
     function poolChips(pools) {
       return pools.map(function (pool) {
+        var meta = "池 " + pool.poolId + " · " + pool.size + " 条 · " + pool.relicCount + " 件遗物";
         return "<span class='lookup-slot-chip" + (pool.member ? " is-on" : "") + "'>" +
-          esc(pool.label) + "<span>池 " + pool.poolId + " · " + pool.size + " 条 · " +
-          pool.relicCount + " 件遗物</span></span>";
+          esc(pool.label) +
+          (pool.detail ? "<span class='lookup-slot-chip-detail'>" + esc(pool.detail) + "</span>" : "") +
+          "<span>" + esc(meta) + "</span></span>";
       }).join("");
     }
 
@@ -977,20 +1070,13 @@
 
       // b) 深夜遗物：口径与 core.js auditDeepRelic 一致 —— 按行配对，不按槽序号
       var deepBody = "<div class='lookup-chipbar'>" +
-        poolChips(deep.pools.concat([deep.cursePool])) + "</div>";
-      if (deep.isCurse) {
-        deepBody += "<p class='lookup-note'>负面词条：只出现在深夜遗物带诅咒的那一行，与同一行的 A 池正面词条配对；" +
-          "诅咒池（" + deep.cursePoolId + "）共 " + deep.curses.length + " 条。</p>";
-      } else if (!deep.inAny) {
-        deepBody += "<p class='lookup-note'>这条词条不在任何深夜词条池里，深夜遗物不会出它。</p>";
-      } else if (deep.requiresCurse) {
-        deepBody += "<p class='lookup-note'>A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 " +
-          deep.cursePoolId + "，共 " + deep.curses.length + " 条）。存档里这条词条没配诅咒即为改动。</p>" +
-          "<div class='lookup-chiplist' data-testid='lookup-curses'>" + deep.curses.map(function (curse) {
+        poolChips(deep.pools.concat([deep.cursePool])) + "</div>" +
+        "<p class='lookup-note' data-testid='lookup-deep-note-text'>" + esc(deepNoteText(deep)) + "</p>";
+      if (!deep.isCurse && deep.requiresCurse) {
+        deepBody += "<div class='lookup-chiplist' data-testid='lookup-curses'>" +
+          deep.curses.map(function (curse) {
             return affixChip(affixEntry(index, curse.effectId));
           }).join("") + "</div>";
-      } else {
-        deepBody += "<p class='lookup-note'>B / C 池词条：深夜遗物可出，所在行不带诅咒。</p>";
       }
 
       // c) 固定 / 唯一遗物与随机池出处。
@@ -1021,17 +1107,27 @@
           relicBody += "<p class='lookup-note'>没有随机池会出这条词条。</p>";
         } else {
           relicBody += relicTable(paged.rows, "lookup-random-table");
+          // 「共 N 件 · 已显示 M 件」与 macOS 端逐字相同；控件不同（那边是
+          // 「展开全部」，这边翻页）没关系，计数口径必须一样。
+          //
+          // 传的是 paged.to（已显示到第几件）而不是本页行数：macOS 的
+          // affixLookupHitCountText(total:shown:) 是「前 M 件 / 共 N 件」的累计口径。
+          // 按本页行数写，第 2 页会再写一遍「已显示 200 件（另有 232 件未列出）」，
+          // 末页更会和紧挨着的副标题「第 401–432 件（第 3 / 3 页）」直接打架。
+          var countLine = "<span data-testid='lookup-hit-count'>" +
+            esc(hitCountText(paged.total, paged.to)) + "</span>";
           if (paged.pageCount > 1) {
             relicBody += "<div class='lookup-pager' data-testid='lookup-pager'>" +
               "<button type='button' class='button button--secondary' data-lookup-page='prev'" +
               (paged.page === 0 ? " disabled" : "") + ">上一页</button>" +
-              "<span>第 " + paged.from + "–" + paged.to + " 件 / 共 " + paged.total + " 件（第 " +
+              countLine +
+              "<span class='lookup-sub'>第 " + paged.from + "–" + paged.to + " 件（第 " +
               (paged.page + 1) + " / " + paged.pageCount + " 页）</span>" +
               "<button type='button' class='button button--secondary' data-lookup-page='next'" +
               (paged.page >= paged.pageCount - 1 ? " disabled" : "") + ">下一页</button>" +
               "</div>";
           } else {
-            relicBody += "<div class='lookup-pager'><span>共 " + paged.total + " 件</span></div>";
+            relicBody += "<div class='lookup-pager'>" + countLine + "</div>";
           }
         }
       }
@@ -1099,9 +1195,12 @@
         return "<div class='lookup-slotbox is-muted'><div class='lookup-slotbox-head'><strong>" + esc(title) + "</strong>" +
           pill("没有这个槽", "gray") + "</div></div>";
       }
+      // 具名池（深夜 A/B/C 等）的标签里没有 id，这里补上；兜底标签本身就是
+      // 「池 xxx」，再打一枚就成了「池 501100000 池 501100000」。
+      // 与 macOS 端 RelicSlotRow 的同一条判断。
       var head = "<div class='lookup-slotbox-head'><strong>" + esc(title) + "</strong>" +
         pill(entry.label, "purple") +
-        pill("池 " + entry.poolId, "gray") +
+        (poolLabelIsFallback(entry.poolId) ? "" : pill("池 " + entry.poolId, "gray")) +
         pill(entry.fixed ? "固定 1 条" : "随机 " + entry.size + " 条", entry.fixed ? "green" : "blue") +
         (entry.cursePoolId !== -1 ? pill("配诅咒 · " + entry.curseSize + " 条", "amber") : "") +
         "</div>";

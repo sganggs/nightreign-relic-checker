@@ -10,14 +10,9 @@ enum BossFormat {
     }
 
     /// 去掉多余 0 的小数：1.350 → 1.35，2.0 → 2。
+    /// 实现放在 RelicCore（BossRowText.decimal），自检才能直接断言它。
     static func decimal(_ value: Double, digits: Int = 2) -> String {
-        guard value.isFinite else { return "—" }
-        var text = String(format: "%.\(digits)f", value)
-        if text.contains(".") {
-            while text.hasSuffix("0") { text.removeLast() }
-            if text.hasSuffix(".") { text.removeLast() }
-        }
-        return text.isEmpty ? "0" : text
+        BossRowText.decimal(value, digits: digits)
     }
 
     /// 倍率：×1.35。

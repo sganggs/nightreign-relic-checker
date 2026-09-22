@@ -532,3 +532,193 @@ test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {
 test("分组名与 macOS 的 BossCard.Group.title 一致", () => {
   assert.deepEqual(B.GROUP_TITLES, { nightlords: "夜王", night: "守夜首领", field: "野外首领" });
 });
+
+test("group = null 的 4 个档位写「其它档位」，展开态与底部档位表同名", () => {
+  // macOS 端 BossScalingGroup.title(for:) 对 group = nil 返回「其它档位」；
+  // Windows 端此前在展开态的「多人缩放」标题里什么都不写，两端对不上。
+  const nullGroupIds = Object.keys(data.scalingTiers)
+    .filter((key) => !data.scalingTiers[key].group)
+    .map(Number)
+    .sort((a, b) => a - b);
+  assert.deepEqual(nullGroupIds, [98810, 98815, 98818, 98822]);
+
+  assert.equal(B.tierGroupLabel(null), "其它档位");
+  assert.equal(B.tierGroupLabel(undefined), "其它档位");
+  assert.equal(B.tierGroupLabel(""), "其它档位");
+  assert.equal(B.tierGroupLabel("Final Boss Threat"), "最终首领威胁档");
+  // 表里没有的分组名照原样显示（macOS 的 `case .some(let name)` 同支）
+  assert.equal(B.tierGroupLabel("Brand New Threat"), "Brand New Threat");
+
+  // 整串说明与 macOS 端 BossRowText.scalingCaption(scalingID:groupTitle:) 逐字一致，
+  // 包括 id 前面的「#」。上一轮两端各自把不同的字面量写死（这边「档位 98815」、
+  // 那边「档位 #98815」），两份注释却都写着「逐字一致」。
+  for (const id of nullGroupIds) {
+    assert.equal(
+      B.scalingCaption({ scalingId: id }, data.scalingTiers),
+      `档位 #${id} · 其它档位`,
+      `档位 ${id} 的展开态标题应写「其它档位」`
+    );
+  }
+  // 与 macOS 的 scalingCaption 同样的两条边界（「没有 scalingId」那一支此前
+  // Windows 给空串、macOS 写「无缩放档位」，也是一端有话一端空白）
+  assert.equal(B.scalingCaption({ scalingId: null }, data.scalingTiers), "无缩放档位");
+  assert.equal(B.scalingCaption({}, data.scalingTiers), "无缩放档位");
+  assert.equal(B.scalingCaption({ scalingId: 4040404 }, data.scalingTiers), "档位 #4040404");
+});
+
+test("每条数值行的 scalingId 都能查到档位，且档位名非空", () => {
+  for (const entry of allEntries) {
+    if (entry.scalingId === null || entry.scalingId === undefined) continue;
+    const caption = B.scalingCaption(entry, data.scalingTiers);
+    assert.ok(caption.startsWith(`档位 #${entry.scalingId}`), `档位标题异常：${caption}`);
+    assert.ok(caption.includes(" · "), `档位 ${entry.scalingId} 少了分组名：${caption}`);
+  }
+});
+
+test("行内徽标 / 卡头计数文案与 macOS 逐字一致", () => {
+  // macOS：Pill("标签为社区推测") / Pill("深夜数值") / Text("N 条数值行")
+  const uncertain = allEntries.find((entry) => entry.labelUncertain);
+  assert.ok(uncertain, "数据集里应存在 labelUncertain 的行");
+  const badges = B.entryBadgeTexts(
+    { kind: "boss" },
+    uncertain,
+    B.computeStats(uncertain, 1, false)
+  );
+  assert.ok(badges.includes("标签为社区推测"), `实际徽标：${badges.join(" / ")}`);
+  assert.ok(!badges.includes("标签存疑"), "旧文案「标签存疑」不该再出现");
+
+  const deepEntry = allEntries.find((entry) => entry.deepOfNight);
+  const deepBadges = B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, true));
+  assert.ok(deepBadges.includes("深夜数值"), `实际徽标：${deepBadges.join(" / ")}`);
+  assert.equal(
+    B.entryBadgeTexts({ kind: "nightlord" }, deepEntry, B.computeStats(deepEntry, 1, false)).includes("深夜数值"),
+    false,
+    "深夜开关关着时不挂深夜徽标"
+  );
+
+  // 守夜 / 野外的威胁短名仍是「守夜 / 野外」（macOS 的 threatTitle）
+  assert.ok(allEntries.some((entry) => entry.threat === "night"), "数据集里应存在 threat = night 的行");
+  assert.deepEqual(
+    B.entryBadgeTexts({ kind: "boss" }, { threat: "night", isMain: true }, { isDeep: false }),
+    ["主战", "守夜"]
+  );
+
+  assert.equal(B.rowCountText(5), "5 条数值行");
+  assert.equal(B.rowCountText(1), "1 条数值行");
+});
+
+test("「代表行承伤偏高」倍率统一两位小数", () => {
+  // macOS：BossFormat.multiplier(item.rate, digits: 2)
+  assert.equal(B.fmtMul(1.2346), "×1.235", "默认仍是三位（缩放档位表要用）");
+  assert.equal(B.fmtMul(1.2345, 2), "×1.23");
+  assert.equal(B.fmtMul(1.1, 2), "×1.1");
+  assert.equal(B.fmtMul(1.006, 2), "×1.01");
+  assert.equal(B.fmtMul(null, 2), "—");
+
+  const boss = data.nightBosses.find((item) => item.variants.some((entry) => entry.damageRates));
+  const entry = B.representativeEntry(boss.variants, "field") || boss.variants[0];
+  for (const row of B.topDamageTypes(entry, 3)) {
+    const text = B.fmtMul(row.rate, 2);
+    const decimals = text.includes(".") ? text.split(".")[1].length : 0;
+    assert.ok(decimals <= 2, `承伤徽标小数位过多：${text}`);
+  }
+});
+
+test("poise > 0 但承受削韧倍率为 0 / 非有限：两端都显示「—」+ 异常说明", () => {
+  // macOS：effectivePoise 的 `factor > 0, factor.isFinite` 守卫 → nil，
+  // 值格用 BossPoiseKind.value 的占位符，小字写「承受削韧倍率异常（…）」。
+  const broken = {
+    hp: 1000, hpBase: 1000, hpMultiplier: 1, poise: 120, poiseRecover: 1,
+    poiseTakenBase: 0, poiseRecoverMultiplier: 1, ailmentDamageRateBase: 0,
+    scaling: { duo: { hp: 2, poiseTaken: 0.55, poiseRecover: 0.55, buildupRate: 1, ailmentDamageRate: 1 } },
+  };
+  const stats = B.computeStats(broken, 2, false);
+  assert.equal(stats.poiseKind, "value", "poise = 120 仍然是「有削韧槽」");
+  assert.equal(stats.poiseTakenTotal, 0, "数据里的 0 不能被改写成 1");
+  assert.equal(stats.effectivePoise, null, "分母为 0 时算不出有效韧性");
+  assert.equal(B.fmtPoise(stats.effectivePoise, stats.poiseKind), "—");
+  assert.equal(B.poiseCaption(stats), "承受削韧倍率异常（0）");
+
+  // 另外两种算不出的来源，文案必须分开（与 macOS 的三条分支一致）
+  assert.equal(B.fmtPoise(null, "zero"), "无削韧槽");
+  assert.equal(B.fmtPoise(null, "none"), "不吃削韧");
+
+  // 正常行不受影响
+  const normal = allEntries.find((item) => item.poise > 0 && item.scaling && item.scaling.duo);
+  const ok = B.computeStats(normal, 2, false);
+  assert.ok(ok.effectivePoise > 0);
+});
+
+test("有效韧性小字的四支都与 macOS 的 BossRowText.poiseCaption 逐字一致", () => {
+  // 上一轮只统一了「倍率异常」那一支，另外三支仍是两套说法：
+  // Windows 写「承受削韧 ×0.55」/ 空串，macOS 写「韧性 120 ÷ 承受削韧 0.55」/
+  //「superArmorDurability = 0，该实体没有削韧槽」/「superArmorDurability = -1」。
+  assert.equal(
+    B.poiseCaption({ effectivePoise: 218.18, poiseRaw: 120, poiseTakenTotal: 0.55, poiseKind: "value" }),
+    "韧性 120 ÷ 承受削韧 0.55"
+  );
+  assert.equal(
+    B.poiseCaption({ effectivePoise: null, poiseRaw: 0, poiseTakenTotal: 1, poiseKind: "zero" }),
+    "superArmorDurability = 0，该实体没有削韧槽"
+  );
+  assert.equal(
+    B.poiseCaption({ effectivePoise: null, poiseRaw: -1, poiseTakenTotal: 1, poiseKind: "none" }),
+    "superArmorDurability = -1"
+  );
+  assert.equal(
+    B.poiseCaption({ effectivePoise: null, poiseRaw: 120, poiseTakenTotal: 0, poiseKind: "value" }),
+    "承受削韧倍率异常（0）"
+  );
+
+  // 真实数据走同一支：poise < 0 / poise = 0 的行两端都会写出原始值
+  const noPoise = allEntries.find((item) => Number(item.poise) < 0);
+  if (noPoise) {
+    const stats = B.computeStats(noPoise, 1, false);
+    assert.equal(stats.poiseKind, "none");
+    assert.equal(B.poiseCaption(stats), `superArmorDurability = ${noPoise.poise}`);
+  }
+  const normal = allEntries.find((item) => item.poise > 0 && item.scaling && item.scaling.duo);
+  const ok = B.computeStats(normal, 2, false);
+  assert.equal(
+    B.poiseCaption(ok),
+    `韧性 ${B.fmtNumber(normal.poise, 0)} ÷ 承受削韧 ${B.fmtNumber(ok.poiseTakenTotal, 3)}`
+  );
+  // 缺字段时两端都回落到 -1（macOS 的 bossDouble(.poise, default: -1)）
+  assert.equal(B.computeStats({}, 1, false).poiseRaw, -1);
+});
+
+test("numberOr：只在缺字段 / null / 空串 / 非有限时回落，真实的 0 照原样用", () => {
+  // macOS 的 bossDouble 走 decodeIfPresent：JSON null 与空串都解不出来 → default。
+  // Windows 这边如果只判 isFinite(Number(x))，Number(null) === 0、Number("") === 0
+  // 都是有限数，null 那一格反而会和 macOS 对不上。
+  assert.equal(B.numberOr(0, 1), 0, "数据里真实的 0 不能被改写成 1");
+  assert.equal(B.numberOr(0.55, 1), 0.55);
+  assert.equal(B.numberOr(null, 1), 1);
+  assert.equal(B.numberOr(undefined, 1), 1);
+  assert.equal(B.numberOr("", 1), 1);
+  assert.equal(B.numberOr("abc", 1), 1);
+  assert.equal(B.numberOr(Infinity, 1), 1);
+  assert.equal(B.numberOr("0.55", 1), 0.55, "字符串数字仍按数字用（macOS 的 Double(text) 同支）");
+
+  // 其余几个倍率此前还是 `Number(x) || 1`，同一类问题
+  const zeroed = {
+    hp: 1000, hpBase: 1000, hpMultiplier: 0, poise: 120, poiseRecover: 2,
+    poiseTakenBase: 1, poiseRecoverMultiplier: 0, ailmentDamageRateBase: 2,
+    scaling: { duo: { hp: 0, poiseTaken: 1, poiseRecover: 0, buildupRate: 0, ailmentDamageRate: 0 } },
+  };
+  const stats = B.computeStats(zeroed, 2, false);
+  assert.equal(stats.hp, 0, "hpMultiplier / tier.hp 为 0 时不该被改写成 1");
+  assert.equal(stats.poiseRecover, 0);
+  assert.equal(stats.ailmentDamageRate, 0);
+  assert.equal(stats.buildupRate, 0);
+
+  // null 这一格与 macOS 一样回落到 1
+  const nulled = {
+    hp: 1000, hpBase: 1000, hpMultiplier: null, poise: 120, poiseRecover: 1,
+    poiseTakenBase: null, poiseRecoverMultiplier: 1, ailmentDamageRateBase: 1,
+    scaling: { duo: { hp: null, poiseTaken: null, poiseRecover: 1, buildupRate: 1, ailmentDamageRate: 1 } },
+  };
+  const nullStats = B.computeStats(nulled, 2, false);
+  assert.equal(nullStats.poiseTakenTotal, 1, "poiseTakenBase / tier.poiseTaken 为 null 时回落到 1");
+  assert.equal(nullStats.hp, 1000, "hpMultiplier / tier.hp 为 null 时回落到 1");
+});

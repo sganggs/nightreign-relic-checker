@@ -23,6 +23,87 @@ public let affixLookupConflictLimit = 24
 /// 「能在哪出」的遗物列表默认列出多少件（超出部分由页面就地展开）。
 public let affixLookupRowLimit = 120
 
+/// 「按遗物查」里每个槽位池预览多少条词条（两端同值；Windows 端 SLOT_PREVIEW）。
+public let affixLookupSlotPreviewLimit = 10
+
+/// 结果被截断时的提示文案。控件两端可以不同（Windows 翻页、macOS 就地展开），
+/// 但「共 N 件 / 已显示 M 件」这句话必须一模一样，否则同一份数据在两端读起来
+/// 像两个结论。Windows 端是 `pages/lookup.js` 的 `hitCountText()`。
+public func affixLookupHitCountText(total: Int, shown: Int) -> String {
+    let visible = max(0, min(shown, total))
+    if visible >= total { return "共 \(total) 件 · 已显示全部 \(total) 件" }
+    return "共 \(total) 件 · 已显示 \(visible) 件（另有 \(total - visible) 件未列出）"
+}
+
+/// 深夜遗物一栏的结论文案（两端逐字一致；Windows 端 `deepNoteText()`）。
+///
+/// 分支顺序固定：负面词条 → A 池（需诅咒）→ B/C 池 → 不在任何深夜池。
+/// 诅咒词条本身不会 `requiresCurse`，所以先判 `isCurse` 不会吃掉 A 池那一支。
+public func affixLookupDeepNote(
+    isCurse: Bool,
+    requiresCurse: Bool,
+    inAnyPool: Bool,
+    cursePoolID: Int,
+    curseCount: Int
+) -> String {
+    if isCurse {
+        return "负面词条：只出现在深夜遗物带诅咒的那一行，与同一行的 A 池正面词条配对；"
+            + "诅咒池（\(cursePoolID)）共 \(curseCount) 条。"
+    }
+    if requiresCurse {
+        return "A 池词条：出货时这一行必定同时带一条深夜诅咒（诅咒池 \(cursePoolID)，"
+            + "共 \(curseCount) 条）。存档里这条词条没配诅咒即为改动。"
+    }
+    if inAnyPool {
+        return "B / C 池词条：深夜遗物可出，所在行不带诅咒。"
+    }
+    return "这条词条不在任何深夜词条池里，深夜遗物不会出它。"
+}
+
+/// 互斥组里出现「不会出现在遗物上」的词条时的说明（两端逐字一致）。
+///
+/// 这类词条（物品表里从不进任何槽位池的效果，如各种「庇佑」）共用参数表默认的
+/// compatibilityId 100；把它们算进互斥组会把最大的组从 102 条撑到 1128 条，
+/// 而其中没有任何一条能真的和这条词条出现在同一件遗物上。所以两端都不把它们
+/// 列进任何互斥组——**也包括它们自己那一侧**，否则「A 的互斥组里有 B、
+/// B 的互斥组里没有 A」，同一条规则在两个方向上给出两个答案。
+public let affixLookupUnreachableConflictNote =
+    "这条词条不会出现在任何遗物的槽位池里，不参与互斥判定："
+    + "互斥只约束「能同时出现在一件遗物上」的词条。"
+
+/// `compatibilityID == -1`（参数表里就没给互斥池）时的说明（两端逐字一致）。
+public let affixLookupNoConflictGroupNote = "该词条没有互斥组，可与任意其他词条同时出现（仍不能与自身重复）。"
+
+/// 互斥池里只有它自己时的说明（两端逐字一致）。
+public func affixLookupLoneConflictNote(_ compatibilityID: Int) -> String {
+    "互斥池 \(compatibilityID) 内只有这一条词条，没有互斥对象。"
+}
+
+/// 「互斥组」一栏走哪一支。两端必须是同一条链（Windows 端 `pages/lookup.js`
+/// 的 `conflictBranch()`），文案与控件由各自的视图层套。
+///
+/// 前两支的顺序不能反：仓库真实数据里有 148 条「不可达且 compatibilityID = -1」
+/// 的效果（effectId 11001 / 12000 / 12001 / 12003 等）。先判 `-1` 的那一端会说它
+/// 「可与任意其他词条同时出现」，先判不可达的那一端会说它「不参与互斥判定」，
+/// 正好是相反的口径。两端都把不可达排在前面——它是更强的结论（这条词条根本
+/// 不会出现在遗物上，谈不上能不能和别的词条同时出现）。
+public enum AffixConflictBranch: String, Sendable, Hashable {
+    /// 进不了任何槽位池 → `affixLookupUnreachableConflictNote`
+    case unreachable
+    /// `compatibilityID == -1` → `affixLookupNoConflictGroupNote`
+    case noGroup
+    /// 有互斥对象 → 互斥组列表
+    case peers
+    /// 互斥池里只有自己 → `affixLookupLoneConflictNote`
+    case lone
+
+    public static func of(reachable: Bool, compatibilityID: Int, peerCount: Int) -> AffixConflictBranch {
+        if !reachable { return .unreachable }
+        if compatibilityID == -1 { return .noGroup }
+        return peerCount > 0 ? .peers : .lone
+    }
+}
+
 /// 槽位池的中文短名；未知池回退为「池 <id>」。
 ///
 /// 普通大遗物的槽位池按孔数分层（真实物品表：1 孔 = [100]，2 孔 = [200, 100]，
@@ -80,6 +161,14 @@ public struct LookupAffix: Identifiable, Hashable, Sendable {
     public var id: Int { effectID }
     public var displayName: String { name.isEmpty ? "未命名词条 #\(effectID)" : name }
 
+    /// 这条词条能不能真的出现在某件遗物上：词条库词条，或被某个槽位池引用的
+    /// extraAffixes。物品表里另有一千多条从不进任何槽位池的效果（各种「庇佑」），
+    /// 它们共用参数表默认的 compatibilityId，既不进别人的互斥组，
+    /// 自己也不该反过来把整组列成自己的互斥对象（口径与 `RelicAuditor` 第 6 条一致）。
+    ///
+    /// 没有遗物物品表时只剩词条库条目，它们本来就都能出现在遗物上，恒为 true。
+    public let appearsOnRelic: Bool
+
     public init(
         effectID: Int,
         name: String,
@@ -92,8 +181,10 @@ public struct LookupAffix: Identifiable, Hashable, Sendable {
         isCurse: Bool,
         requiresCurse: Bool,
         inCatalog: Bool,
-        searchText: String
+        searchText: String,
+        appearsOnRelic: Bool = true
     ) {
+        self.appearsOnRelic = appearsOnRelic
         self.effectID = effectID
         self.name = name
         self.category = category
@@ -106,6 +197,25 @@ public struct LookupAffix: Identifiable, Hashable, Sendable {
         self.requiresCurse = requiresCurse
         self.inCatalog = inCatalog
         self.searchText = searchText
+    }
+
+    /// 建索引时才知道这条词条有没有被某个槽位池引用，届时补上这一位。
+    public func withAppearsOnRelic(_ value: Bool) -> LookupAffix {
+        LookupAffix(
+            effectID: effectID,
+            name: name,
+            category: category,
+            explanation: explanation,
+            superposability: superposability,
+            compatibilityID: compatibilityID,
+            sortID: sortID,
+            poolIDs: poolIDs,
+            isCurse: isCurse,
+            requiresCurse: requiresCurse,
+            inCatalog: inCatalog,
+            searchText: searchText,
+            appearsOnRelic: value
+        )
     }
 }
 
@@ -325,12 +435,6 @@ public struct AffixLookupIndex: Sendable {
                 searchText: "\(extra.name) \(extraCategory) \(extra.effectID)".foldedForSearch
             )
         }
-        affixByID = entries
-        let sortedAffixes = entries.values.sorted { lhs, rhs in
-            lhs.sortID == rhs.sortID ? lhs.effectID < rhs.effectID : lhs.sortID < rhs.sortID
-        }
-        affixes = sortedAffixes
-
         guard let relicData else {
             hasRelicData = false
             relics = []
@@ -340,6 +444,9 @@ public struct AffixLookupIndex: Sendable {
             poolsByEffect = [:]
             slotsByPool = [:]
             // 没有物品表时只剩词条库条目，它们本来就都能出现在遗物上
+            let sortedAffixes = Self.sorted(entries)
+            affixByID = entries
+            affixes = sortedAffixes
             conflictGroups = Self.conflictGroups(of: sortedAffixes) { _ in true }
             return
         }
@@ -367,10 +474,16 @@ public struct AffixLookupIndex: Sendable {
         poolMembers = members
         poolsByEffect = byEffect
 
-        // 3. 互斥组：只算真正能出现在遗物上的词条
-        conflictGroups = Self.conflictGroups(of: sortedAffixes) { affix in
-            affix.inCatalog || byEffect[affix.effectID] != nil
+        // 3. 互斥组：只算真正能出现在遗物上的词条。
+        //    「能不能出现在遗物上」先写回词条条目本身，互斥组的两个方向才用同一位判断：
+        //    不可达词条既不进别人的组，自己也不把整组列成互斥对象。
+        for (effectID, affix) in entries where !(affix.inCatalog || byEffect[effectID] != nil) {
+            entries[effectID] = affix.withAppearsOnRelic(false)
         }
+        let sortedAffixes = Self.sorted(entries)
+        affixByID = entries
+        affixes = sortedAffixes
+        conflictGroups = Self.conflictGroups(of: sortedAffixes) { $0.appearsOnRelic }
 
         // 4. 遗物 → 槽位池概览，以及池 → 遗物槽位
         var refs: [Int: [SlotRef]] = [:]
@@ -392,7 +505,7 @@ public struct AffixLookupIndex: Sendable {
                     poolSize: poolList.count,
                     cursePoolID: cursePoolID,
                     cursePoolSize: cursePoolSize,
-                    previewEffectIDs: Array(poolList.prefix(8))
+                    previewEffectIDs: Array(poolList.prefix(affixLookupSlotPreviewLimit))
                 ))
                 if poolID != -1 {
                     refs[poolID, default: []].append(
@@ -473,8 +586,14 @@ public struct AffixLookupIndex: Sendable {
     }
 
     /// 同互斥组的其它词条。
+    ///
+    /// 互斥组必须是对称的：A 在 B 的组里 ⇔ B 在 A 的组里。所以除了「组员只收
+    /// 能出现在遗物上的词条」，**查询方自己**也要过同一道关——不然一条永远
+    /// 进不了任何槽位池的词条（物品表里的「庇佑」等）会反查出整整一组互斥对象，
+    /// 而那一组里的每一条都不认它。
     public func conflicts(with effectID: Int) -> [LookupAffix] {
         guard let affix = affixByID[effectID], affix.compatibilityID != -1 else { return [] }
+        guard affix.appearsOnRelic else { return [] }
         return (conflictGroups[affix.compatibilityID] ?? [])
             .filter { $0 != effectID }
             .compactMap { affixByID[$0] }
@@ -581,6 +700,13 @@ public struct AffixLookupIndex: Sendable {
     }
 
     // MARK: 构建辅助
+
+    /// 词条条目的展示顺序：(sortId, effectId) 升序。
+    private static func sorted(_ entries: [Int: LookupAffix]) -> [LookupAffix] {
+        entries.values.sorted { lhs, rhs in
+            lhs.sortID == rhs.sortID ? lhs.effectID < rhs.effectID : lhs.sortID < rhs.sortID
+        }
+    }
 
     /// 互斥组。口径与 `RelicAuditor` 第 6 条（互斥词条）一致：参与互斥判定的是
     /// 「能出现在遗物上的词条」，即词条库词条 ∪ 被某个槽位池引用的 extraAffixes。
