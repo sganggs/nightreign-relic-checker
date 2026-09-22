@@ -175,6 +175,13 @@ struct BossTierDetail: View {
                 Spacer(minLength: 0)
             }
             BossDetailRow(label: "血量", value: BossFormat.multiplier(tier.hp))
+            // 攻击力单独一行：7744 / 7753 / 7754 / 7758 四档在多人时敌人打得更疼，
+            // 只看血量会以为「人多只是血条长」。1 倍写「不变」，免得被当成没读到数据。
+            BossDetailRow(
+                label: "攻击力",
+                value: BossRowText.attackRateText(tier.attackRate),
+                tint: tier.raisesAttack ? AppTheme.red : .white
+            )
             BossDetailRow(label: "承受削韧", value: BossFormat.multiplier(tier.poiseTaken))
             BossDetailRow(label: "削韧恢复速度", value: BossFormat.multiplier(tier.poiseRecover))
             BossDetailRow(label: "异常发动伤害", value: BossFormat.multiplier(tier.ailmentDamageRate))
@@ -201,9 +208,20 @@ struct BossPermanentEffectRow: View {
     private var parts: [String] {
         var items: [String] = []
         if effect.hp != 1 { items.append("血量 " + BossFormat.multiplier(effect.hp, digits: 4)) }
+        // 常驻档位里确实存在「只加攻击力」的行（7799 ×1.2 攻击、7783 ×2.45 攻击），
+        // 上一版只看四项数值会把它们当成「无数值改动」。
+        if effect.attackRate != 1 { items.append("攻击力 " + BossFormat.multiplier(effect.attackRate, digits: 4)) }
+        if !effect.attackRates.isUniform {
+            items.append("（攻击力按属性分开：物 " + BossFormat.decimal(effect.attackRates.physical, digits: 4)
+                         + " / 魔 " + BossFormat.decimal(effect.attackRates.magic, digits: 4)
+                         + " / 火 " + BossFormat.decimal(effect.attackRates.fire, digits: 4)
+                         + " / 雷 " + BossFormat.decimal(effect.attackRates.lightning, digits: 4)
+                         + " / 圣 " + BossFormat.decimal(effect.attackRates.holy, digits: 4) + "）")
+        }
         if effect.poiseTaken != 1 { items.append("承受削韧 " + BossFormat.multiplier(effect.poiseTaken, digits: 4)) }
         if effect.poiseRecover != 1 { items.append("削韧恢复 " + BossFormat.multiplier(effect.poiseRecover, digits: 4)) }
         if effect.ailmentDamageRate != 1 { items.append("异常发动伤害 " + BossFormat.multiplier(effect.ailmentDamageRate, digits: 4)) }
+        if effect.staminaAttackRate != 1 { items.append("削玩家耐力 " + BossFormat.multiplier(effect.staminaAttackRate, digits: 4)) }
         return items
     }
 

@@ -10,14 +10,18 @@ struct BossCardView: View {
     let group: BossCard.Group
     let index: BossDataIndex
     let players: BossPartySize
-    let deepOfNight: Bool
+    /// 常规 / 深夜 · 深度 1…5。
+    let mode: BossNightMode
     let isExpanded: Bool
     let onToggle: () -> Void
 
     private var primary: BossFight? { card.representativeRow(in: group) }
 
-    /// 该分组下参与评选的候选行（守夜 / 野外先按 threat 过滤，夜王收敛到 isMain）。
+    /// 该分组下参与评选的候选行（守夜 / 野外先按 threat 过滤，夜王收敛到 isMain，
+    /// 再排掉无奖励行与登场演出 / 血条实体这类演出行）。规则正文见 BossCard.rows(in:)。
     private var candidates: [BossFight] { card.rows(in: group) }
+
+    private var depthWord: String { index.dataset.deepOfNightText.depthTitle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -48,16 +52,8 @@ struct BossCardView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(card.displayName)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white)
-                    if !card.nameEn.isEmpty, card.nameEn != card.displayName {
-                        Text(card.nameEn)
-                            .font(.system(size: 11))
-                            .foregroundStyle(AppTheme.tertiaryText)
-                    }
-                }
+                titleLine
+                fallbackLine
                 badges
                 weaknessNote
                 primaryRowNote
@@ -73,6 +69,34 @@ struct BossCardView: View {
                 .padding(.top, 4)
         }
         .contentShape(Rectangle())
+    }
+
+    /// 主标题：nameZh 非空用 nameZh，否则用 nameEn；两者都没有才是「未知敌人 cXXXX」。
+    private var titleLine: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(card.displayName)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+            if !card.nameEn.isEmpty, card.nameEn != card.displayName {
+                Text(card.nameEn)
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            }
+        }
+    }
+
+    /// 副标题：主标题只剩英文时，把旧的参考译名显示出来，并写明它不是本作的游戏文本。
+    /// 不这么做的话，用户要么看到一串英文，要么被一个「像是游戏里的」译名误导。
+    @ViewBuilder
+    private var fallbackLine: some View {
+        if let fallback = card.fallbackSubtitle {
+            HStack(spacing: 6) {
+                Text(fallback)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.secondaryText)
+                Pill(text: BossRowText.nameFallbackBadge, color: AppTheme.amber, symbol: "character.book.closed")
+            }
+        }
     }
 
     private var badges: some View {
@@ -96,10 +120,23 @@ struct BossCardView: View {
                     )
                 }
                 nameSourceBadge
+                if card.showsApproxBadge {
+                    Pill(text: BossRowText.nameApproxBadge, color: AppTheme.amber, symbol: "wand.and.stars")
+                }
+                if card.hidden {
+                    Pill(text: BossRowText.hiddenToggleHelp, color: AppTheme.tertiaryText, symbol: "eye.slash")
+                }
             }
             // 深夜徽标扫描整卡：首条代表行没有深夜值，不代表整张卡都没有。
-            if deepOfNight, let text = card.deepCoverage.badgeText {
-                Pill(text: text, color: AppTheme.amber, symbol: "moon.fill")
+            // 两个徽标分工：前者说「深度模式下这张卡的数值变了」（depthStats 口径，
+            // v3 全量覆盖），后者说「还额外吃一组深夜专属常驻修正」（deepOfNight，只有 31 行）。
+            if mode.isDeepOfNight {
+                if let text = card.deepCoverage.badgeText {
+                    Pill(text: text, color: AppTheme.amber, symbol: "moon.fill")
+                }
+                if let text = card.deepOfNightCoverage.exclusiveBadgeText {
+                    Pill(text: text, color: AppTheme.amber, symbol: "moon.stars.fill")
+                }
             }
             // 「N 条数值行」：卡头计数与 Windows 端 rowCountText() 逐字一致。
             Text(BossRowText.rowCount(card.rows.count))
@@ -120,7 +157,7 @@ struct BossCardView: View {
             let ambiguous = card.group == .nightlord ? card.hasMultipleMainRows : card.groups.count > 1
             if ambiguous, pool.count > 1 {
                 let list = pool
-                    .map { "\($0.displayLabel) \(BossFormat.integer($0.hp(for: players, deepOfNight: deepOfNight)))" }
+                    .map { "\($0.displayLabel) \(BossFormat.integer($0.hp(for: players, mode: mode)))" }
                     .joined(separator: " · ")
                 let lead = card.group == .nightlord
                     ? "\(pool.count) 条主战行，上方取血量最高的一条："
@@ -191,10 +228,12 @@ struct BossCardView: View {
         }
     }
 
+    /// 「名字缺不缺」与「身份谁认出来的」是两件事，可能同时成立（Elder Dragon Greyoll
+    /// 之类既没有简中名、身份又只有社区资料），所以按 nameBadges 全挂上。
     @ViewBuilder
     private var nameSourceBadge: some View {
-        if let badge = card.nameBadge {
-            Pill(text: badge.text, color: AppTheme.amber)
+        ForEach(card.nameBadges, id: \.self) { badge in
+            Pill(text: badge.text, color: badge == .community ? AppTheme.purpleSoft : AppTheme.amber)
         }
     }
 
@@ -204,30 +243,51 @@ struct BossCardView: View {
         return card.hasMultipleMainRows ? "主战血量 · 最高" : "主战血量"
     }
 
-    /// 深夜开着但代表行没有深夜专属缩放时，要直说这一行回落到了常规值，
-    /// 否则摘要与卡头的「部分行有深夜数值」徽标看着像在互相打架。
-    private func hpCaption(_ stats: BossComputedStats, row: BossFight) -> String {
-        if deepOfNight {
-            guard row.hasDeepOfNight else { return "该行深夜同常规" }
-            return players == .solo ? "深夜数值" : "深夜 1 人 \(BossFormat.integer(row.deepOfNight?.hp ?? row.hp))"
+    /// 深度模式下代表行没有 depthStats 时要直说，否则摘要与卡头的深夜徽标看着像在互相打架。
+    private func hpCaption(row: BossFight) -> String {
+        if let depth = mode.depth {
+            guard row.hasDepthStats else { return BossRowText.noDepthStatsText }
+            let solo = row.hp(for: .solo, mode: mode)
+            return players == .solo
+                ? "\(depthWord) \(depth) 数值"
+                : "\(depthWord) \(depth) · 1 人 \(BossFormat.integer(solo))"
         }
         return players == .solo ? "含常驻缩放" : "1 人 \(BossFormat.integer(row.hp))"
     }
 
     private func summaryMetrics(for row: BossFight) -> some View {
-        let stats = row.stats(for: players, deepOfNight: deepOfNight)
+        let stats = row.stats(for: players, mode: mode)
+        let tier = row.tier(for: players)
         return HStack(alignment: .top, spacing: 18) {
-            BossMetric(
-                title: "\(hpMetricTitle)（\(players.title)）",
-                value: BossFormat.integer(stats.hp),
-                caption: hpCaption(stats, row: row),
-                tint: AppTheme.purpleSoft,
-                width: 128
-            )
+            VStack(alignment: .leading, spacing: 3) {
+                BossMetric(
+                    title: "\(hpMetricTitle)（\(players.title)）",
+                    value: BossFormat.integer(stats.hp),
+                    caption: hpCaption(row: row),
+                    tint: AppTheme.purpleSoft,
+                    width: 136
+                )
+                // 多人不只是血条变长：7744 / 7753 / 7754 / 7758 四档敌人攻击力也上浮。
+                if tier.raisesAttack {
+                    Text(BossRowText.multiplayerAttackBadge(tier.attackRate))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(AppTheme.red)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(AppTheme.red.opacity(0.14), in: Capsule())
+                }
+            }
             BossMetric(
                 title: "有效韧性",
                 value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? stats.poiseKind.placeholder,
                 caption: stats.effectivePoise == nil ? nil : "韧性槽 \(BossFormat.decimal(row.poise, digits: 0))",
+                width: 84
+            )
+            BossMetric(
+                title: "攻击力倍率",
+                value: BossFormat.multiplier(stats.attackRate, digits: 3),
+                caption: mode.isDeepOfNight ? "含深度倍率" : "常驻基准",
+                tint: AppTheme.red,
                 width: 84
             )
             BossMetric(
@@ -262,9 +322,64 @@ struct BossCardView: View {
         }
     }
 
+    /// 名字来历：近似匹配的依据、社区认身份的说明、让出同名词条的裁决，以及参考译名的来源。
+    /// 组级「不掉奖励」小字也挂在这块里，所以 `noReward` 必须进外层条件——否则
+    /// Giant Skeleton Torso（五个名字字段全空、noReward = true）这类组就永远看不到那行小字。
+    @ViewBuilder
+    private var nameNotes: some View {
+        if card.showsNameNotes {
+            VStack(alignment: .leading, spacing: 5) {
+                if !card.nameNote.isEmpty {
+                    Text(card.nameNote)
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let evidence = card.nameEvidence {
+                    BossDetailRow(label: "游戏文本依据", value: evidence.summary, tint: AppTheme.secondaryText)
+                }
+                if let rejected = card.nameZhRejected {
+                    BossDetailRow(label: "被挡下的候选词条", value: rejected.summary, tint: AppTheme.amber)
+                    if !rejected.reason.isEmpty {
+                        Text(rejected.reason)
+                            .font(.system(size: 10))
+                            .foregroundStyle(AppTheme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if !card.nameZhFallbackNote.isEmpty {
+                    Text(card.nameZhFallbackNote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !card.nameSourceUrl.isEmpty {
+                    Text(card.nameSourceUrl)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                // noReward 只作小字，不影响是否显示：Storm King / 蚯蚓脸这些不掉奖励但仍是首领。
+                if card.noReward {
+                    Text(BossRowText.noRewardGroupNote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(AppTheme.amber.opacity(0.05))
+            )
+        }
+    }
+
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             identifierNote
+            nameNotes
             if !card.descriptionZh.isEmpty {
                 Text(card.descriptionZh)
                     .font(.system(size: 11))
@@ -278,30 +393,59 @@ struct BossCardView: View {
                     )
             }
 
+            // 夜王才有按深度的出现权重（守夜 / 野外 Boss 参数里根本没有这张表）。
+            if card.group == .nightlord, let weights = depthChanceWeights {
+                BossDepthChanceRow(weights: weights, depthWord: depthWord)
+            }
+
             ForEach(card.rows) { row in
                 BossFightRowView(
                     row: row,
                     index: index,
                     players: players,
-                    deepOfNight: deepOfNight,
+                    mode: mode,
                     isNightlord: card.group == .nightlord
                 )
             }
         }
     }
+
+    /// 该卡片对应夜王的各深度出现权重；不是夜王或数据缺失时为 nil。
+    private var depthChanceWeights: [(depth: Int, weight: Int)]? {
+        guard let menuId = card.menuId,
+              let lord = index.dataset.nightlords.first(where: { $0.menuId == menuId }),
+              lord.hasDepthChanceWeights
+        else { return nil }
+        return lord.orderedDepthChanceWeights
+    }
 }
 
-/// 单条战斗记录：数值概览 + 八种承伤倍率 + 异常抗性 + 缩放明细。
+/// 单条战斗记录：数值概览 + 八种承伤倍率 + 异常抗性 + 深夜各深度 + 变异个体 + 缩放明细。
 struct BossFightRowView: View {
     let row: BossFight
     let index: BossDataIndex
     let players: BossPartySize
-    let deepOfNight: Bool
+    let mode: BossNightMode
     let isNightlord: Bool
+
+    /// 「按变异个体计算」的选择。变异档位是逐行的（mutationPool 每行不同），
+    /// 所以状态也放在行里；收起卡片后归零，不会悄悄影响别处的数值。
+    @State private var mutationId: Int? = nil
 
     private let rateColumns = [GridItem(.adaptive(minimum: 62, maximum: 120), spacing: 6)]
 
-    private var stats: BossComputedStats { row.stats(for: players, deepOfNight: deepOfNight) }
+    private var mutationPool: [BossMutation] { index.dataset.mutations(for: row) }
+
+    private var mutation: BossMutation? {
+        guard let mutationId else { return nil }
+        return index.dataset.mutation(mutationId)
+    }
+
+    private var stats: BossComputedStats {
+        row.stats(for: players, mode: mode, mutation: mutation)
+    }
+
+    private var depthWord: String { index.dataset.deepOfNightText.depthTitle }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -309,6 +453,8 @@ struct BossFightRowView: View {
             metrics
             damageSection
             resistSection
+            depthSection
+            mutationSection
             scalingSection
         }
         .padding(12)
@@ -343,8 +489,14 @@ struct BossFightRowView: View {
                 if row.labelUncertain {
                     Pill(text: BossRowText.labelUncertainBadge, color: AppTheme.amber, symbol: "questionmark.circle")
                 }
-                if deepOfNight, row.hasDeepOfNight {
+                if mode.isDeepOfNight, row.hasDepthStats {
                     Pill(text: BossRowText.deepRowBadge, color: AppTheme.amber, symbol: "moon.fill")
+                }
+                if mode.isDeepOfNight, row.hasDeepOfNight {
+                    Pill(text: BossRowText.deepExclusiveBadge, color: AppTheme.amber, symbol: "moon.stars.fill")
+                }
+                if mutation != nil {
+                    Pill(text: index.dataset.mutationTitle, color: AppTheme.red, symbol: "flame")
                 }
                 Spacer(minLength: 6)
                 Text(row.npcIds.count > 1 ? "npcId \(row.npcId) 等 \(row.npcIds.count) 行" : "npcId \(row.npcId)")
@@ -357,49 +509,86 @@ struct BossFightRowView: View {
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if row.noReward {
+                Text(BossRowText.noRewardRowNote)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            }
         }
     }
 
     private var metrics: some View {
-        HStack(alignment: .top, spacing: 16) {
+        let current = stats
+        return HStack(alignment: .top, spacing: 16) {
             BossMetric(
                 title: "\(players.shortTitle)血量",
-                value: BossFormat.integer(stats.hp),
-                caption: "参数原值 \(BossFormat.integer(row.hpBase)) · 常驻 \(BossFormat.multiplier(stats.hpMultiplier, digits: 4))",
+                value: BossFormat.integer(current.hp),
+                caption: hpCaption(current),
                 tint: AppTheme.purpleSoft,
-                width: 168
+                width: 190
             )
             BossMetric(
                 title: "有效韧性",
-                value: stats.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? stats.poiseKind.placeholder,
+                value: current.effectivePoise.map { BossFormat.decimal($0, digits: 1) } ?? current.poiseKind.placeholder,
                 caption: poiseCaption,
                 width: 178
             )
             BossMetric(
+                title: "攻击力倍率",
+                value: BossFormat.multiplier(current.attackRate, digits: 3),
+                caption: attackCaption(current),
+                tint: AppTheme.red,
+                width: 150
+            )
+            BossMetric(
                 title: "削韧恢复",
-                value: BossFormat.decimal(stats.poiseRecover, digits: 3),
+                value: BossFormat.decimal(current.poiseRecover, digits: 3),
                 caption: "基准 \(BossFormat.decimal(row.poiseRecover, digits: 3))",
                 width: 104
             )
             BossMetric(
                 title: "异常发动伤害",
-                value: BossFormat.multiplier(stats.ailmentDamageRate),
-                caption: "累积量 " + BossFormat.multiplier(stats.ailmentBuildupRate),
+                value: BossFormat.multiplier(current.ailmentDamageRate),
+                caption: "累积量 " + BossFormat.multiplier(current.ailmentBuildupRate),
                 width: 118
             )
             Spacer(minLength: 0)
         }
     }
 
+    /// 血量小字要把「这个数是怎么来的」说全：参数原值、常驻倍率，以及深度 / 变异这两层。
+    private func hpCaption(_ current: BossComputedStats) -> String {
+        if current.depthMissing { return BossRowText.noDepthStatsText }
+        var text = "参数原值 \(BossFormat.integer(row.hpBase)) · 总倍率 "
+            + BossFormat.multiplier(current.hpMultiplier, digits: 4)
+        if let depth = current.mode.depth { text += " · \(depthWord) \(depth)" }
+        if let mutation = current.mutation {
+            text += " · 变异 " + BossFormat.multiplier(mutation.hp, digits: 3)
+        }
+        return text
+    }
+
+    private func attackCaption(_ current: BossComputedStats) -> String {
+        var parts = ["基准 " + BossFormat.multiplier(row.baseline(mode: current.mode).attackRateBase, digits: 3)]
+        if current.tier.raisesAttack {
+            parts.append("多人 " + BossFormat.multiplier(current.tier.attackRate, digits: 3))
+        }
+        if let mutation = current.mutation {
+            parts.append("变异 " + BossFormat.multiplier(mutation.attackRate, digits: 3))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     /// 有效韧性为 nil 有三条来源：poise < 0（真的不吃削韧）、poise = 0（没有削韧槽），
     /// 以及承受削韧倍率为 0 / 非有限（数据异常）。三者文案必须分开。
     /// 四支整体下沉到 RelicCore 的 BossRowText，与 Windows 端逐字一致。
     private var poiseCaption: String {
-        BossRowText.poiseCaption(
+        let current = stats
+        return BossRowText.poiseCaption(
             poise: row.poise,
-            poiseTakenTotal: stats.poiseTakenBase * stats.tier.poiseTaken,
-            kind: stats.poiseKind,
-            hasEffectivePoise: stats.effectivePoise != nil
+            poiseTakenTotal: current.poiseTakenBase * current.tier.poiseTaken,
+            kind: current.poiseKind,
+            hasEffectivePoise: current.effectivePoise != nil
         )
     }
 
@@ -438,6 +627,34 @@ struct BossFightRowView: View {
         }
     }
 
+    /// 「深夜各深度」小表。按当前人数（与已选变异档位）换算，口径与上面的主数值一致。
+    private var depthSection: some View {
+        BossDepthTable(
+            rows: row.depthRows(for: players, mutation: mutation),
+            currentDepth: mode.depth,
+            caption: depthCaption,
+            depthWord: depthWord
+        )
+    }
+
+    private var depthCaption: String {
+        var parts = ["按 \(players.title)换算"]
+        if let mutation { parts.append("含变异 #\(mutation.id)") }
+        parts.append("已含常驻缩放、深夜修正与深度倍率")
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var mutationSection: some View {
+        if !mutationPool.isEmpty {
+            BossMutationSection(
+                title: index.dataset.mutationTitle,
+                pool: mutationPool,
+                selectedId: $mutationId
+            )
+        }
+    }
+
     @ViewBuilder
     private var scalingSection: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -458,16 +675,17 @@ struct BossFightRowView: View {
                     .foregroundStyle(AppTheme.tertiaryText)
             }
 
-            if !stats.permScalingIds.isEmpty {
+            let current = stats
+            if !current.permScalingIds.isEmpty {
                 BossSubHeading(
                     title: "常驻缩放",
-                    detail: deepOfNight && row.hasDeepOfNight ? "深夜模式下生效的一组" : "已计入上面的血量与韧性"
+                    detail: mode.isDeepOfNight && row.hasDeepOfNight ? "深夜模式下生效的一组" : "已计入上面的血量与韧性"
                 )
                 VStack(alignment: .leading, spacing: 5) {
-                    ForEach(index.permanentEffects(stats.permScalingIds)) { effect in
+                    ForEach(index.permanentEffects(current.permScalingIds)) { effect in
                         BossPermanentEffectRow(effect: effect)
                     }
-                    ForEach(index.missingPermanentEffectIDs(stats.permScalingIds), id: \.self) { id in
+                    ForEach(index.missingPermanentEffectIDs(current.permScalingIds), id: \.self) { id in
                         Text("#\(id)（缺少明细）")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(AppTheme.tertiaryText)
@@ -475,23 +693,40 @@ struct BossFightRowView: View {
                 }
             }
 
-            // 深夜提示随开关反向：关着时告诉用户「可以切」，开着时给出常规值作对照。
-            // 三条文案与 Windows 端 deepNote() 完全一致。
-            if let deep = row.deepOfNight, !deepOfNight {
-                Text("该行有深夜专属缩放：血量 \(BossFormat.integer(deep.hp))（1 人），可用顶部「深夜」开关切换。")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.amber)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if deepOfNight, row.hasDeepOfNight {
-                Text("当前为深夜数值；常规数值：血量 \(BossFormat.integer(row.hp))（1 人）。")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.amber)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if deepOfNight {
-                Text("该行没有深夜专属缩放，深夜数值与常规相同。")
+            // chaosCorrectId 可能与 scalingId 不等（14 行如此），不标出来会让人对不上深度档位。
+            if let chaosId = row.chaosCorrectId, chaosId != row.scalingId {
+                Text("深度档位取 ChaosMatchingCorrectParam #\(chaosId)，与人数档位 "
+                     + (row.scalingId.map { "#\($0)" } ?? "（无）") + " 不是同一行。")
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
+            deepNote
+        }
+    }
+
+    /// 深夜提示随模式反向：常规模式告诉用户「可以切」，深度模式给出常规值作对照。
+    @ViewBuilder
+    private var deepNote: some View {
+        if !mode.isDeepOfNight {
+            if row.hasDepthStats, let deepest = row.depthRows(for: .solo).last {
+                Text("该行有深夜数值：\(depthWord) \(deepest.depth) 血量 \(BossFormat.integer(deepest.hp))（1 人）、"
+                     + "攻击 \(BossFormat.multiplier(deepest.attackRate, digits: 3))，可用顶部的模式选择切换。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if row.hasDepthStats {
+            Text("当前为深夜数值；常规数值：血量 \(BossFormat.integer(row.hp))（1 人）、"
+                 + "攻击 \(BossFormat.multiplier(row.attackRateBase, digits: 3))。")
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.amber)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text(BossRowText.noDepthStatsText)
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.tertiaryText)
         }
     }
 

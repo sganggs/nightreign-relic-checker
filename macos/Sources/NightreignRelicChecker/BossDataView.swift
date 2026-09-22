@@ -49,10 +49,16 @@ struct BossDataView: View {
     @State private var query = ""
     @State private var players: BossPartySize = .solo
     @State private var groupFilter: GroupFilter = .all
-    @State private var deepOfNight = false
+    /// 常规 / 深夜 · 深度 1…5。v2 的布尔「深夜」开关在这里被换掉：
+    /// 深夜有 5 个深度，血量与攻击力倍率逐级不同，一个开关表达不了。
+    @State private var mode: BossNightMode = .normal
+    /// hidden = true 的组（召唤物 / 投射物等非首领实体）默认不显示。
+    @State private var showHidden = false
     @State private var expandedIDs: Set<String> = []
     @State private var showCaveats = false
     @State private var showScalingTiers = false
+    @State private var showMutationCounts = false
+    @State private var showDepthOverview = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,6 +71,13 @@ struct BossDataView: View {
     }
 
     // MARK: - 顶部
+
+    /// 模式选择器的标题优先用数据集的游戏内文本（「深夜」「深度」），
+    /// 数据缺失时退回内置文案。
+    private func modeTitle(_ mode: BossNightMode) -> String {
+        guard case .ready(let index) = state else { return mode.builtinTitle }
+        return index.dataset.title(for: mode)
+    }
 
     private var toolbar: some View {
         VStack(spacing: 14) {
@@ -87,7 +100,7 @@ struct BossDataView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(AppTheme.secondaryText)
-                    TextField("搜索首领名、远征名、变体标签，或输入 npcId / chrId 前缀", text: $query)
+                    TextField("搜索首领名、参考译名、远征名、变体标签，或输入 npcId / chrId 前缀", text: $query)
                         .textFieldStyle(.plain)
                     if !query.isEmpty {
                         Button {
@@ -122,10 +135,20 @@ struct BossDataView: View {
                 .labelsHidden()
                 .frame(width: 124)
 
-                Toggle("深夜", isOn: $deepOfNight)
+                Picker("模式", selection: $mode) {
+                    ForEach(BossNightMode.allCases) { item in
+                        Text(modeTitle(item)).tag(item)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 150)
+                .help("深夜按深度 1–5 分档：血量与敌人攻击力逐级上涨，攻击力涨得比血量快得多")
+
+                Toggle(BossRowText.hiddenToggleTitle, isOn: $showHidden)
                     .toggleStyle(.switch)
                     .font(.caption)
-                    .help("按「深夜」模式显示：有深夜专属缩放的战斗行改用深夜数值")
+                    .help(BossRowText.hiddenToggleHelp)
 
                 if !expandedIDs.isEmpty {
                     Button("收起全部") {
@@ -136,10 +159,46 @@ struct BossDataView: View {
                     .foregroundStyle(AppTheme.purpleSoft)
                 }
             }
+
+            deepOfNightNote
         }
         .padding(.horizontal, 26)
         .padding(.vertical, 22)
         .background(AppTheme.elevated.opacity(0.55))
+    }
+
+    /// 顶部说明用 deepOfNightText 的游戏文本（深夜 / 深度 / 变异个体），
+    /// 不要自己造词——社区叫「红化」，游戏里的正式叫法是「变异个体」。
+    @ViewBuilder
+    private var deepOfNightNote: some View {
+        if case .ready(let index) = state, mode.isDeepOfNight {
+            let text = index.dataset.deepOfNightText
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Pill(text: text.deepOfNightTitle, color: AppTheme.amber, symbol: "moon.fill")
+                    Text("\(text.depthTitle) \(mode.depth ?? 0)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AppTheme.amber)
+                    Text("血量与敌人攻击力都按深度上浮，攻击力涨得更快；"
+                         + "部分敌人还会以「\(text.mutationTitle)」出现，倍率再乘一层。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(AppTheme.secondaryText)
+                    Spacer(minLength: 0)
+                }
+                if !text.description.zh.isEmpty {
+                    Text(text.description.zh.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(AppTheme.amber.opacity(0.06))
+            )
+        }
     }
 
     // MARK: - 主体
@@ -202,7 +261,7 @@ struct BossDataView: View {
                                     group: section.group,
                                     index: index,
                                     players: players,
-                                    deepOfNight: deepOfNight,
+                                    mode: mode,
                                     isExpanded: expandedIDs.contains(card.id),
                                     onToggle: { toggle(card.id) }
                                 )
@@ -280,6 +339,38 @@ struct BossDataView: View {
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    // 「多人是不是简单乘倍」是用户直接问的第三个问题，结论必须写在这里，
+                    // 而不是埋在 37 条 caveats 里。摘要 + 数据集自带的逐项核实结论。
+                    Text(BossRowText.multiplayerAuditSummary)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AppTheme.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(AppTheme.amber.opacity(0.06))
+                        )
+
+                    let audit = index.dataset.notes?.multiplayerScalingAudit ?? []
+                    if !audit.isEmpty {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("逐项核实（数据集 notes.multiplayerScalingAudit，\(audit.count) 条）")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                            ForEach(Array(audit.enumerated()), id: \.offset) { item in
+                                HStack(alignment: .top, spacing: 7) {
+                                    Text("·")
+                                        .foregroundStyle(AppTheme.tertiaryText)
+                                    Text(item.element)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(AppTheme.secondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+
                     ForEach(index.scalingGroups) { tier in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
@@ -305,10 +396,66 @@ struct BossDataView: View {
                 }
             }
 
+            if !index.dataset.mutationCategories.isEmpty {
+                disclosure(
+                    title: "\(index.dataset.mutationTitle)出现只数（\(index.dataset.mutationCategories.count) 行）",
+                    isOn: $showMutationCounts
+                ) {
+                    BossMutationCountTable(
+                        categories: index.dataset.orderedMutationCategories,
+                        depthWord: index.dataset.deepOfNightText.depthTitle
+                    )
+                }
+            }
+
+            if !index.dataset.deepOfNightDepths.isEmpty {
+                disclosure(
+                    title: "\(index.dataset.deepOfNightText.depthTitle)概览（\(index.dataset.deepOfNightDepths.count) 档）",
+                    isOn: $showDepthOverview
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        BossDepthOverview(infos: index.dataset.orderedDepthInfos)
+                        let audit = index.dataset.notes?.deepOfNightAudit ?? []
+                        if !audit.isEmpty {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("逐项核实（数据集 notes.deepOfNightAudit，\(audit.count) 条）")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                ForEach(Array(audit.enumerated()), id: \.offset) { item in
+                                    HStack(alignment: .top, spacing: 7) {
+                                        Text("·")
+                                            .foregroundStyle(AppTheme.tertiaryText)
+                                        Text(item.element)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(AppTheme.secondaryText)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let hiddenSummary = index.hiddenSummary {
+                Text(hiddenSummary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.white.opacity(0.03))
+                    )
+            }
+
             let unmatched = index.dataset.notes?.unmatchedNames ?? []
             if !unmatched.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("以下 \(unmatched.count) 组首领在游戏文本里没有对应词条，只保留英文名（对应上面的取舍说明）：")
+                    Text("以下 \(unmatched.count) 组首领在本作游戏文本里查不到简中词条，主标题只能用英文名"
+                         + "（其中一部分另有《艾尔登法环》的参考译名，作副标题显示并已标注「"
+                         + BossRowText.nameFallbackBadge + "」，搜索也认这些旧译名）：")
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -424,8 +571,7 @@ struct BossDataView: View {
 
     private var footerTrailing: String {
         guard case .ready(let index) = state else { return "" }
-        let mode = deepOfNight ? "深夜" : "常规"
-        return "\(players.title) · \(mode) · 数据版本 \(index.dataset.dataVersion)"
+        return "\(players.title) · \(index.dataset.title(for: mode)) · 数据版本 \(index.dataset.dataVersion)"
     }
 
     // MARK: - 逻辑
@@ -438,7 +584,12 @@ struct BossDataView: View {
 
     private func visibleGroups(_ index: BossDataIndex) -> [GroupSection] {
         let groups: [BossCard.Group] = groupFilter.group.map { [$0] } ?? BossCard.Group.allCases
-        return groups.map { GroupSection(group: $0, cards: index.cards(in: $0, query: query)) }
+        return groups.map {
+            GroupSection(
+                group: $0,
+                cards: index.cards(in: $0, query: query, includeHidden: showHidden)
+            )
+        }
     }
 
     private func toggle(_ id: String) {
