@@ -67,6 +67,14 @@ go test ./...
 - `internal/w32` — 所需的少量 Win32 绑定（自 jchv/go-webview2 内部包 fork）。
 - `renderer/`、`resources/affixes.json`、`resources/relics.json`、`build/icon.ico`
   — 界面、内置词条库、遗物物品表（存档检查用）与图标。
+- `renderer/pages/` — 三个新页面（首领数据 / 词条反查 / 增伤排名）各自的
+  `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**，
+  功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。
+- `resources/bosses.json`、`resources/skills.json`、`resources/buffs.json`
+  — 上述三页的数据，同样由 `go:embed` 内嵌，经 `window.nightreign.loadGameData(name)`
+  桥交给渲染层。真实数据就绪前是最小占位 JSON（`{"placeholder": true}`），
+  页面显示「数据未内置」；用仓库根的 `zsh scripts/sync-data.sh` 覆盖后重新构建即可，
+  **占位文件不能删**（`go:embed` 要求文件存在）。
 - `winres/winres.json` — 图标、版本信息与 per-monitor v2 DPI 清单。
 
 ## 调试

@@ -12,6 +12,10 @@ struct RootView: View {
                 case .library: AffixLibraryView()
                 case .data: DataSettingsView()
                 case .saveScan: SaveScanView()
+                // 以下三页各自一个文件，页面状态自持（见各文件顶部说明）。
+                case .bosses: BossDataView()
+                case .lookup: AffixLookupView()
+                case .ranker: BuffRankerView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

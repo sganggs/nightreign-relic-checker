@@ -1,0 +1,6 @@
+/* 增伤排名页样式。由「增伤排名」功能开发者独占。
+   共用外壳（.page-content / .page-title / .page-placeholder-card 等）在 styles.css；
+   主题变量一律用 styles.css :root 里的 --bg / --card / --border / --text / --purple… */
+.ranker-content {
+  /* 先沿用共用外壳的宽度与留白，需要时在此覆盖 */
+}

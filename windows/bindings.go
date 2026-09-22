@@ -104,6 +104,11 @@ const bridgeJS = `(function () {
     },
     loadRelicData: function () {
       return call(function () { return window.__nightreignLoadRelicData(); });
+    },
+    // 新页面（首领数据 / 词条反查 / 增伤排名）的数据：name 为
+    // 'bosses' | 'skills' | 'buffs'，未内置时返回 null（渲染层据此降级）。
+    loadGameData: function (name) {
+      return call(function () { return window.__nightreignLoadGameData(String(name)); });
     }
   });
   // Parity with the hardened Electron shell: no popups, and dropping a
@@ -113,7 +118,7 @@ const bridgeJS = `(function () {
   window.addEventListener('drop', function (event) { event.preventDefault(); }, false);
 })();`
 
-func registerBindings(w *shell, builtIn, relicData []byte) error {
+func registerBindings(w *shell, builtIn, relicData []byte, gameData map[string][]byte) error {
 	owner := zenity.Attach(w.Window())
 
 	bind := func(name string, fn interface{}) error { return w.Bind(name, fn) }
@@ -234,6 +239,18 @@ func registerBindings(w *shell, builtIn, relicData []byte) error {
 
 	if err := bind("__nightreignLoadRelicData", func() (json.RawMessage, error) {
 		return json.RawMessage(relicData), nil
+	}); err != nil {
+		return err
+	}
+
+	// 新页面数据：未知名称或空内容返回 JSON null，渲染层的 getGameData 会把它
+	// 当作「数据未内置」处理，不抛错。
+	if err := bind("__nightreignLoadGameData", func(name string) (json.RawMessage, error) {
+		data, ok := gameData[name]
+		if !ok || len(data) == 0 {
+			return json.RawMessage("null"), nil
+		}
+		return json.RawMessage(data), nil
 	}); err != nil {
 		return err
 	}

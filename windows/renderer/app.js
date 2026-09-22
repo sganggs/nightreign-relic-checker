@@ -7,6 +7,18 @@
     return;
   }
 
+  // 新页面（首领数据 / 词条反查 / 增伤排名）可用的游戏数据文件。
+  var GAME_DATA_NAMES = ["bosses", "skills", "buffs"];
+
+  // 浏览器预览模式下的读取方式，与 affixes.json / relics.json 一致：
+  // renderer/ 与 resources/ 同级，所以相对路径是 ../resources/<name>.json。
+  function fetchGameData(name) {
+    return fetch("../resources/" + name + ".json").then(function (response) {
+      if (!response.ok) throw new Error("无法载入 " + name + ".json");
+      return response.json();
+    });
+  }
+
   var browserPreview = !window.nightreign;
   var api = window.nightreign || {
     platform: "browser-preview",
@@ -26,7 +38,8 @@
         if (!response.ok) throw new Error("无法载入内置遗物数据");
         return response.json();
       });
-    }
+    },
+    loadGameData: fetchGameData
   };
 
   var modeKeys = ["currentNormal", "legacyNormal", "deepPositive", "compatibilityOnly"];
@@ -98,6 +111,87 @@
   function setBusy(value) {
     state.busy = value;
     $$('[data-action="import"], [data-action="export"], [data-action="reset"]').forEach(function (button) { button.disabled = value; });
+  }
+
+  // ---- 新页面脚手架（renderer/pages/*.js，契约见 renderer/pages/README.md）----
+
+  // 提供给页面模块的通用小函数；行为与 app.js 内部使用的完全一致。
+  var helpers = Object.freeze({
+    escapeHtml: esc,
+    pill: pill,
+    foldForSearch: Core.foldForSearch,
+    searchableText: Core.searchableText,
+    showToast: showToast,
+    query: $,
+    queryAll: $$,
+    byTestId: test
+  });
+
+  var gameDataCache = {};
+  var pageInited = {};
+
+  // 内置占位文件（go:embed 要求文件必须存在）视同「数据未内置」。
+  function hasGameData(data) {
+    if (!data || typeof data !== "object") return false;
+    return Array.isArray(data) || data.placeholder !== true;
+  }
+
+  // 懒加载 + 缓存；文件缺失、仍是占位内容或读取失败都 resolve null，不抛错。
+  function getGameData(name) {
+    if (GAME_DATA_NAMES.indexOf(name) === -1) return Promise.resolve(null);
+    if (!gameDataCache[name]) {
+      gameDataCache[name] = Promise.resolve().then(function () {
+        return typeof api.loadGameData === "function" ? api.loadGameData(name) : fetchGameData(name);
+      }).then(function (data) {
+        return hasGameData(data) ? data : null;
+      }).catch(function () {
+        return null;
+      });
+    }
+    return gameDataCache[name];
+  }
+
+  function pageContext() {
+    return {
+      Core: Core,
+      catalog: state.catalog,
+      relicData: state.save.relicData,
+      getGameData: getGameData,
+      helpers: helpers
+    };
+  }
+
+  function pageModule(key) {
+    var registry = window.NightreignPages;
+    return registry && registry[key] ? registry[key] : null;
+  }
+
+  // 首次切换到某个新页面时调用一次 init；模块出错不影响其余界面。
+  function activatePage(key) {
+    if (pageInited[key]) return;
+    var module = pageModule(key);
+    var mount = $("[data-mount='" + key + "']");
+    if (!module || !mount || typeof module.init !== "function") return;
+    pageInited[key] = true;
+    try {
+      module.init(mount, pageContext());
+    } catch (error) {
+      mount.innerHTML = "<p class='page-error'>页面载入失败：" + esc(error.message) + "</p>";
+      console.error("页面 " + key + " init 失败", error);
+    }
+  }
+
+  // 词条库 / 存档数据变化后通知已初始化的页面。
+  function refreshPages() {
+    Object.keys(pageInited).forEach(function (key) {
+      var module = pageModule(key);
+      if (!module || typeof module.refresh !== "function") return;
+      try {
+        module.refresh(pageContext());
+      } catch (error) {
+        console.error("页面 " + key + " refresh 失败", error);
+      }
+    });
   }
 
   function renderNav() {
@@ -333,6 +427,7 @@
       if (state.save.payload) { state.save.audits = auditCharacters(state.save.payload); renderSave(); }
     }
     renderAll();
+    refreshPages();
   }
 
   async function importCatalog() {
@@ -400,6 +495,7 @@
       state.save.indexPromise = api.loadRelicData().then(function (relicData) {
         state.save.relicData = relicData;
         state.save.index = Core.buildRelicIndex(state.catalog, relicData);
+        refreshPages();
         return state.save.index;
       }).catch(function (error) {
         state.save.indexPromise = null;
@@ -577,6 +673,7 @@
       test("save-search").value = "";
       setSaveMessage("已解析 " + (payload.fileName || "存档") + " · " + payload.characters.length + " 个角色");
       renderSave();
+      refreshPages();
     } catch (error) {
       setSaveMessage("解析失败：" + error.message, true);
       showToast("解析失败：" + error.message, true);
@@ -593,6 +690,7 @@
       if (state.page === "save") {
         ensureRelicIndex().catch(function (error) { setSaveMessage("遗物数据载入失败：" + error.message, true); });
       }
+      activatePage(state.page);
       return;
     }
     var mode = event.target.closest("[data-mode]");

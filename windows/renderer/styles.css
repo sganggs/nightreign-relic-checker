@@ -337,6 +337,9 @@ dialog::backdrop { background: rgba(4, 3, 8, .76); backdrop-filter: blur(3px); }
 @media (max-width: 1120px) {
   .topbar { gap: 13px; padding-left: 18px; }
   .topbar-badges .pill:last-child { display: none; }
+  /* 主导航有七项，窄窗口下收紧间距，避免顶栏被挤压 */
+  .main-nav { gap: 3px; }
+  .nav-button { gap: 5px; padding: 0 9px; font-size: 12.5px; }
   .checker-content { padding-left: 18px; padding-right: 18px; }
   .checker-grid { gap: 13px; }
   .selection-card, .result-card, .popular-card { padding: 17px; }
@@ -356,3 +359,12 @@ dialog::backdrop { background: rgba(4, 3, 8, .76); backdrop-filter: blur(3px); }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 .order-id { color: var(--text-tertiary); font-size: 10px; }
+
+/* 新页面脚手架（bosses / lookup / ranker）的共用外壳。
+   页面自己的样式写在 pages/<key>.css，避免三个功能开发者互相冲突。 */
+.page-mount { width: 100%; min-height: 100%; }
+.page-content { width: min(1180px, 100%); min-width: 850px; margin: 0 auto; padding: 24px 26px 30px; }
+.page-title { margin-bottom: 18px; }
+.page-placeholder-card { padding: 20px; }
+.page-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 0; color: var(--text-secondary); font-size: 12px; }
+.page-error { margin: 0; padding: 24px 26px; color: var(--red); font-size: 12px; }

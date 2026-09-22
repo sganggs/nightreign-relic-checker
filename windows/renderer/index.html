@@ -7,6 +7,9 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
   <title>夜幕验物</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="pages/bosses.css">
+  <link rel="stylesheet" href="pages/lookup.css">
+  <link rel="stylesheet" href="pages/ranker.css">
 </head>
 <body>
   <div class="app-shell" data-testid="app-shell">
@@ -30,6 +33,15 @@
         </button>
         <button class="nav-button" type="button" data-page-target="save" data-testid="nav-save">
           <span aria-hidden="true">▤</span>存档检查
+        </button>
+        <button class="nav-button" type="button" data-page-target="bosses" data-testid="nav-bosses">
+          <span aria-hidden="true">✸</span>首领数据
+        </button>
+        <button class="nav-button" type="button" data-page-target="lookup" data-testid="nav-lookup">
+          <span aria-hidden="true">⌖</span>词条反查
+        </button>
+        <button class="nav-button" type="button" data-page-target="ranker" data-testid="nav-ranker">
+          <span aria-hidden="true">⇗</span>增伤排名
         </button>
         <button class="nav-button" type="button" data-page-target="data" data-testid="nav-data">
           <span aria-hidden="true">▣</span>数据设置
@@ -243,6 +255,20 @@
           </div>
         </div>
       </section>
+
+      <!-- 以下三页由 renderer/pages/<key>.js 自行渲染到 [data-mount]，
+           页面模块契约见 renderer/pages/README.md。 -->
+      <section class="page page--scroll" id="page-bosses" data-page="bosses" data-testid="page-bosses" hidden>
+        <div class="page-mount" data-mount="bosses"></div>
+      </section>
+
+      <section class="page page--scroll" id="page-lookup" data-page="lookup" data-testid="page-lookup" hidden>
+        <div class="page-mount" data-mount="lookup"></div>
+      </section>
+
+      <section class="page page--scroll" id="page-ranker" data-page="ranker" data-testid="page-ranker" hidden>
+        <div class="page-mount" data-mount="ranker"></div>
+      </section>
     </main>
   </div>
 
@@ -287,6 +313,9 @@
   </div>
 
   <script src="core.js" defer></script>
+  <script src="pages/bosses.js" defer></script>
+  <script src="pages/lookup.js" defer></script>
+  <script src="pages/ranker.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

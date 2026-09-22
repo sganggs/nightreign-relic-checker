@@ -32,7 +32,23 @@
 | [`macos/`](macos/) | macOS 版：Swift / SwiftUI |
 | [`android/`](android/) | Android 手机版：Kotlin / Jetpack Compose / Material 3；首版提供手动验物、词条库与离线说明 |
 | [`data/`](data/) | 各端共用的内置词条库 `nightreign-affixes-v1.03.4.json`（可从应用内“数据设置”重新导入）与遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用） |
+| [`scripts/`](scripts/) | 跨端脚本；`sync-data.sh` 把 `data/` 下的权威 JSON 同步到两端的内置资源目录 |
 | [`testdata/`](testdata/) | 两端校验器共用的对拍用例 |
+
+### 同步内置数据
+
+`data/` 下的文件名带版本号，两端内置资源的文件名不带版本号。换数据时不要手动复制，运行：
+
+```sh
+zsh scripts/sync-data.sh
+```
+
+脚本把 `data/nightreign-<名字>-v<版本>.json` 复制成 `windows/resources/<名字>.json` 与
+`macos/Sources/NightreignRelicChecker/Resources/<名字>.json`（当前映射：affixes、relics，
+以及建设中的三个新页面数据 bosses、skills、buffs）。源文件不存在时跳过并提示；换版本号只需改脚本里的映射表。
+
+三个新页面数据（`bosses.json` / `skills.json` / `buffs.json`）在真实数据就绪前是最小占位
+JSON（`{"placeholder": true}`），两端页面会显示“数据未内置”，不影响现有功能与构建。
 
 三个客户端共享同一套判定规则与内置词条库，仅界面容器不同。各目录内有独立的 README 与构建说明：
 

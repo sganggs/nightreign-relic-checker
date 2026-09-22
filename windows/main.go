@@ -32,6 +32,31 @@ var builtInCatalog []byte
 //go:embed resources/relics.json
 var builtInRelicData []byte
 
+// 三个新页面（首领数据 / 词条反查 / 增伤排名）的数据文件。内容由另一条数据
+// 流水线生成，未生成前 resources/ 下是最小占位 JSON（`{"placeholder": true}`），
+// 渲染层据此显示「数据未内置」。go:embed 要求文件必须存在，所以占位文件不能删；
+// 拿到真实数据后运行 scripts/sync-data.sh 覆盖即可，本文件无需改动。
+
+//go:embed resources/bosses.json
+var builtInBossData []byte
+
+//go:embed resources/skills.json
+var builtInSkillData []byte
+
+//go:embed resources/buffs.json
+var builtInBuffData []byte
+
+// builtInGameData 的键就是渲染层 ctx.getGameData(name) 的 name。
+var builtInGameData = map[string][]byte{
+	"bosses": builtInBossData,
+	"skills": builtInSkillData,
+	"buffs":  builtInBuffData,
+}
+
+// uiResourcesDir 是 ui\ 下存放上述数据文件的目录名（与版本目录同级，对应
+// index.html 的 ../resources/<name>.json）。
+const uiResourcesDir = "resources"
+
 func init() {
 	// The Win32 message loop and WebView2's STA COM must stay on one thread.
 	runtime.LockOSThread()
@@ -65,7 +90,7 @@ func main() {
 		fatal(err.Error())
 	}
 
-	if err := registerBindings(w, builtInCatalog, builtInRelicData); err != nil {
+	if err := registerBindings(w, builtInCatalog, builtInRelicData, builtInGameData); err != nil {
 		fatal("无法注册应用接口：" + err.Error())
 	}
 	w.Init(bridgeJS)
@@ -104,8 +129,32 @@ func extractUI(target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := extractGameData(filepath.Join(filepath.Dir(target), uiResourcesDir)); err != nil {
+		return "", err
+	}
 	pruneOldUIVersions(target)
 	return target, nil
+}
+
+// extractGameData 把内嵌的新页面数据写到 ui\resources\，与 index.html 的
+// ../resources/<name>.json 相对路径对应。打包后的应用实际走
+// window.nightreign.loadGameData 桥（Chromium 不允许 file:// 页面 fetch 本地
+// 文件），落盘的副本供浏览器预览与排障使用；写入规则与 extractUI 一致：
+// 内容未变则不重写，需要重写时走原子替换。
+func extractGameData(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for name, data := range builtInGameData {
+		dest := filepath.Join(dir, name+".json")
+		if existing, err := os.ReadFile(dest); err == nil && bytes.Equal(existing, data) {
+			continue
+		}
+		if err := writeFileAtomic(dest, data, 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // writeFileAtomic writes data to a same-directory temp file, fsyncs it, and
@@ -143,8 +192,9 @@ func writeFileAtomic(dest string, data []byte, perm os.FileMode) error {
 }
 
 // pruneOldUIVersions removes sibling ui\v* directories from previous versions
-// so upgrades do not accumulate stale copies. Best-effort; failures (e.g. a
-// directory held open by another running instance) are ignored.
+// so upgrades do not accumulate stale copies. ui\resources\ (written by
+// extractGameData and shared across versions) is kept. Best-effort; failures
+// (e.g. a directory held open by another running instance) are ignored.
 func pruneOldUIVersions(currentDir string) {
 	uiRoot := filepath.Dir(currentDir)
 	keep := filepath.Base(currentDir)
@@ -153,7 +203,7 @@ func pruneOldUIVersions(currentDir string) {
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() && e.Name() != keep {
+		if e.IsDir() && e.Name() != keep && e.Name() != uiResourcesDir {
 			_ = os.RemoveAll(filepath.Join(uiRoot, e.Name()))
 		}
 	}

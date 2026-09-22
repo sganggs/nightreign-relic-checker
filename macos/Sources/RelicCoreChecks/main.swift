@@ -655,6 +655,10 @@ try expect(
     "P4 未归一化输入 kinds 应与 JS 端一致，实际 \(p4.issues.map(\.kind.rawValue))"
 )
 
+// ===== 新页面（首领数据 / 词条反查 / 增伤排名）自检（见 GameDataChecks.swift） =====
+
+passed += try runGameDataChecks()
+
 print("RelicCoreChecks: \(passed) checks passed")
 
 // ===== 可选：传入存档路径做真实存档端到端验证（swift run RelicCoreChecks <path.sl2>） =====

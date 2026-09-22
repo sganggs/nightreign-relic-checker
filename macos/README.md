@@ -32,6 +32,28 @@ zsh Scripts/build_app.sh
 
 应用词条库位于 `Sources/NightreignRelicChecker/Resources/affixes.json`，schema 版本为 1。应用内“数据设置”可以导入相同格式的 JSON。存档检查所用的遗物物品表位于同目录 `relics.json`（由 `DataSources/generate_relics.py` 生成，见 `DataSources/PROVENANCE.md`）。
 
+内置数据不要手动复制，统一用仓库根的 `zsh scripts/sync-data.sh` 从 `data/` 同步。
+
+## 新页面脚手架（首领数据 / 词条反查 / 增伤排名）
+
+三页各自一个视图文件，页面状态全部自持，**功能开发不需要再改 `AppModel.swift` / `RootView.swift`**：
+
+| 页面 | 视图文件 | 数据 |
+| --- | --- | --- |
+| 首领数据 | `Sources/NightreignRelicChecker/BossDataView.swift` | `GameDataLoader.dataIfAvailable(for: .bosses)` |
+| 词条反查 | `Sources/NightreignRelicChecker/AffixLookupView.swift` | `model.catalog` / `model.relicData`（无新数据文件） |
+| 增伤排名 | `Sources/NightreignRelicChecker/BuffRankerView.swift` | `GameDataLoader.dataIfAvailable(for: .skills / .buffs)` |
+
+- `RelicCore/GameDataLoader.swift` 提供 `GameDataResource`（bosses / skills / buffs）与
+  `url(for:)`、`data(for:)`（未内置时抛出可读错误）、`isPlaceholder(_:)`、
+  `dataIfAvailable(for:)`（未内置 / 占位 / 读取失败时返回 nil）。加载器**只返回原始
+  `Data`**，业务模型请各自在新文件里定义。
+- 查找顺序是 `Bundle.main`（打包后的 .app）→ 应用目标的 SwiftPM 资源包（`swift run`）。
+- `Resources/bosses.json`、`skills.json`、`buffs.json` 在真实数据就绪前是最小占位 JSON
+  （`{"placeholder": true}`），页面显示“数据未内置”；`scripts/sync-data.sh` 覆盖后重新构建即可。
+- 自检：`Sources/RelicCoreChecks/GameDataChecks.swift` 里维护一个检查列表，
+  功能开发者把自己的 `() throws -> Int` 检查函数写在新文件里，只往列表加一行。
+
 ## 许可
 
 本项目以 GPL-3.0 发布。第三方数据、修订号及许可见 `THIRD_PARTY_NOTICES.md`。

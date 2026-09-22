@@ -5,10 +5,14 @@ import RelicCore
 
 @MainActor
 final class AppModel: ObservableObject {
+    /// 声明顺序即主导航顺序（`allCases`）。
     enum Page: String, CaseIterable, Identifiable {
         case checker
         case library
         case saveScan
+        case bosses
+        case lookup
+        case ranker
         case data
 
         var id: String { rawValue }
@@ -19,6 +23,9 @@ final class AppModel: ObservableObject {
             case .library: return "词条库"
             case .data: return "数据设置"
             case .saveScan: return "存档检查"
+            case .bosses: return "首领数据"
+            case .lookup: return "词条反查"
+            case .ranker: return "增伤排名"
             }
         }
 
@@ -28,6 +35,9 @@ final class AppModel: ObservableObject {
             case .library: return "list.bullet.rectangle"
             case .data: return "externaldrive"
             case .saveScan: return "externaldrive.badge.checkmark"
+            case .bosses: return "shield.lefthalf.filled"
+            case .lookup: return "magnifyingglass.circle"
+            case .ranker: return "chart.bar.xaxis"
             }
         }
     }
