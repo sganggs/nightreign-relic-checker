@@ -1,6 +1,484 @@
 /* 词条反查页样式。由「词条反查」功能开发者独占。
-   共用外壳（.page-content / .page-title / .page-placeholder-card 等）在 styles.css；
+   共用外壳（.page-content / .page-title / .card / .pill / .library-table 等）在 styles.css；
    主题变量一律用 styles.css :root 里的 --bg / --card / --border / --text / --purple… */
+
 .lookup-content {
-  /* 先沿用共用外壳的宽度与留白，需要时在此覆盖 */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lookup-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lookup-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 240px;
+  flex: 0 0 240px;
+}
+
+.lookup-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.lookup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lookup-card {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lookup-hint {
+  padding: 26px 20px;
+}
+
+.lookup-search {
+  flex: 1;
+  min-width: 240px;
+}
+
+.lookup-taglist {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ---- 搜索结果列表 ---- */
+
+.lookup-list {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 4px;
+}
+
+.lookup-list-meta {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 6px;
+  color: var(--text-tertiary);
+  background: var(--card);
+  font-size: 10.5px;
+}
+
+.lookup-row {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  background: var(--field);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+
+.lookup-row:hover {
+  border-color: var(--purple-soft); /* 回退：不支持 color-mix 时用实色 */
+  border-color: color-mix(in srgb, var(--purple-soft) 38%, transparent);
+  background: var(--card-hover);
+}
+
+.lookup-row.is-active {
+  border-color: var(--purple);
+  background: var(--purple-faint);
+}
+
+.lookup-row-ids {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+
+.lookup-row-ids strong {
+  color: var(--purple-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.lookup-row-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lookup-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+
+.lookup-row-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.lookup-empty {
+  padding: 26px 12px;
+  gap: 4px;
+}
+
+.lookup-empty .empty-icon {
+  font-size: 22px;
+  opacity: .6;
+}
+
+/* ---- 详情分块 ---- */
+
+.lookup-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lookup-block h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lookup-subhead {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.lookup-note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.lookup-sub {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.lookup-lines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  gap: 8px 24px;
+  margin: 2px 0 0;
+}
+
+.lookup-lines > div {
+  grid-template-columns: 132px 1fr;
+}
+
+.lookup-count {
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+}
+
+/* ---- 词条小标签 ---- */
+
+.lookup-chiplist {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lookup-chiplist--scroll {
+  max-height: 156px;
+  overflow-y: auto;
+  align-content: flex-start;
+  padding-right: 4px;
+}
+
+.lookup-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--field-soft);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+
+.lookup-chip:hover {
+  border-color: var(--purple-soft);
+  color: var(--purple-soft);
+}
+
+.lookup-chip span {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+
+/* 只存在于遗物参数表（extraAffixes）的词条：词条库里查不到，做成不可点的静态标签 */
+.lookup-chip--static {
+  cursor: default;
+  color: var(--text-secondary);
+  background: var(--field);
+  border-style: dashed;
+}
+
+.lookup-chip--static:hover {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+
+.lookup-chip--static em {
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: .04em;
+}
+
+.lookup-note--muted {
+  margin-top: 6px;
+  color: var(--text-tertiary);
+}
+
+.lookup-peers-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.lookup-peers-toggle {
+  padding: 5px 12px;
+  font-size: 11px;
+}
+
+.lookup-peers-actions .lookup-sub {
+  margin: 0;
+}
+
+.lookup-more {
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+}
+
+.lookup-linkish {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--purple-soft);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lookup-linkish:hover {
+  text-decoration: underline;
+}
+
+/* ---- 槽位 / 池 ---- */
+
+.lookup-chipbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lookup-slot-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  background: var(--field);
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.lookup-slot-chip span {
+  font-size: 9.5px;
+  font-weight: 500;
+}
+
+.lookup-slot-chip.is-on {
+  border-style: solid;
+  border-color: var(--green); /* 回退：不支持 color-mix 时用实色 */
+  border-color: color-mix(in srgb, var(--green) 38%, transparent);
+  color: var(--green);
+  background: var(--green-faint);
+}
+
+.lookup-slotgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.lookup-slotbox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--field);
+}
+
+.lookup-slotbox.is-muted {
+  opacity: .55;
+}
+
+.lookup-slotbox-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+/* ---- 表格 ---- */
+
+.lookup-table-wrap {
+  max-height: 460px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.lookup-table th,
+.lookup-table td {
+  padding: 8px 12px;
+  vertical-align: middle;
+  font-size: 11.5px;
+}
+
+.lookup-table th:first-child,
+.lookup-table td:first-child {
+  padding-left: 14px;
+}
+
+.lookup-table th:last-child,
+.lookup-table td:last-child {
+  padding-right: 14px;
+}
+
+.lookup-table th {
+  height: 34px;
+}
+
+.lookup-table .lookup-num {
+  width: 86px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.lookup-table .lookup-where {
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.lookup-table .lookup-slotcell {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.lookup-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lookup-filter-row--tight {
+  gap: 14px;
+  padding-bottom: 2px;
+}
+
+.lookup-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+}
+
+.lookup-pager .button {
+  min-height: 28px;
+  padding: 4px 12px;
+  font-size: 11px;
+}
+
+/* ---- 底部数据说明 ---- */
+
+.lookup-caveats {
+  padding: 14px 20px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.lookup-caveats > summary {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lookup-caveats[open] > summary {
+  margin-bottom: 10px;
+}
+
+.lookup-notelist {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  line-height: 1.6;
+}
+
+.lookup-notelist strong {
+  color: var(--text);
+}
+
+.lookup-sources li {
+  color: var(--text-secondary);
 }
