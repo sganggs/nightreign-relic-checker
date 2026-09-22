@@ -18,6 +18,11 @@ struct AffixLookupDetailPane: View {
     let onPickAffix: (Int) -> Void
     let onPickRelic: (Int) -> Void
 
+    /// 互斥组默认只列前 `conflictLimit` 条，超出部分由「展开全部」就地展开。
+    /// 「词条库」页没有按 compatibilityId 过滤的能力（searchableText 里不含它），
+    /// 不能把用户指过去，所以必须在本页看全。
+    @State private var conflictsExpanded = false
+
     var body: some View {
         ScrollView {
             if let effectID, let report = index.report(for: effectID) {
@@ -49,6 +54,8 @@ struct AffixLookupDetailPane: View {
                 .padding(.top, 60)
             }
         }
+        // 换一条词条就收起互斥组，不然新词条会一上来就铺开上百个标签
+        .task(id: effectID) { conflictsExpanded = false }
     }
 
     // MARK: 词条说明
@@ -120,7 +127,7 @@ struct AffixLookupDetailPane: View {
         let extraOnes = report.conflicts.filter { !$0.inCatalog }
         let preferred = catalogOnes + extraOnes
         let extras = extraOnes.count
-        let shown = Array(preferred.prefix(conflictLimit))
+        let shown = conflictsExpanded ? preferred : Array(preferred.prefix(conflictLimit))
         return VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: "互斥组（compatibilityId \(report.affix.compatibilityID)）",
@@ -143,12 +150,24 @@ struct AffixLookupDetailPane: View {
                     .help(Text(verbatim: index.affixName(id) + "（" + String(id) + "）"))
                 }
             }
-            if report.conflicts.count > shown.count {
-                Text(verbatim: "另有 \(report.conflicts.count - shown.count) 条未显示；在「词条库」页按互斥池 "
-                     + "\(report.affix.compatibilityID) 可看全组。")
-                    .font(.caption2)
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+            // 最大的互斥组有 102 条，必须能在本页看全
+            if report.conflicts.count > conflictLimit {
+                HStack(spacing: 10) {
+                    Button {
+                        conflictsExpanded.toggle()
+                    } label: {
+                        Text(verbatim: conflictsExpanded
+                             ? "收起（只看前 \(conflictLimit) 条）"
+                             : "展开全部 \(report.conflicts.count) 条")
+                            .font(.caption)
+                    }
+                    Text(verbatim: conflictsExpanded
+                         ? "已列出全部 \(report.conflicts.count) 条互斥词条"
+                         : "还有 \(report.conflicts.count - conflictLimit) 条未列出")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                    Spacer(minLength: 0)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -595,8 +614,12 @@ struct LookupHitList: View {
     let tint: Color
     let onPick: (Int) -> Void
 
+    /// 超过 `limit` 件时默认折叠；截断提示必须配一个能执行的展开动作，
+    /// 不然用户拿不到剩下那些遗物。
+    @State private var expanded = false
+
     var body: some View {
-        let shown = Array(hits.prefix(limit))
+        let shown = expanded ? hits : Array(hits.prefix(limit))
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(title)
@@ -641,13 +664,28 @@ struct LookupHitList: View {
                     .buttonStyle(.plain)
                 }
             }
-            if hits.count > shown.count {
-                Text(verbatim: "结果过多，只显示前 \(shown.count) 件，另有 \(hits.count - shown.count) 件未列出；可在上面的种类统计里看总体分布。")
-                    .font(.caption2)
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+            if hits.count > limit {
+                HStack(spacing: 10) {
+                    Button {
+                        expanded.toggle()
+                    } label: {
+                        Text(verbatim: expanded
+                             ? "收起（只看前 \(limit) 件）"
+                             : "展开全部 \(hits.count) 件")
+                            .font(.caption)
+                    }
+                    Text(verbatim: expanded
+                         ? "已列出全部 \(hits.count) 件"
+                         : "另有 \(hits.count - limit) 件未列出；上面的种类统计是全部命中的分布")
+                        .font(.caption2)
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
             }
         }
+        // 换一条词条（命中集合变了）就收回折叠状态
+        .task(id: hits.map(\.relicID)) { expanded = false }
     }
 }
 

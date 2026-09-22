@@ -24,7 +24,9 @@ func runAffixLookupChecks() throws -> Int {
         ("深夜遗物模板的诅咒行", checkDeepCursePairing),
         ("唯一遗物固定词条", checkUniqueRelicFixedAffixes),
         ("索引与搜索一致性", checkAffixLookupIndexIntegrity),
-        ("孔数层池与可获得性", checkPoolTiersAndObtainability)
+        ("孔数层池与可获得性", checkPoolTiersAndObtainability),
+        ("互斥组口径", checkConflictGroupScope),
+        ("与 Windows 端对照", checkWindowsParitySamples)
     ]
     var total = 0
     for check in checks {
@@ -366,6 +368,287 @@ private func checkPoolTiersAndObtainability() throws -> Int {
         try lookupExpect(label.contains("孔层"), "孔数层池 \(poolID) 的标签应写「N 孔层」，实际「\(label)」")
         count += 2
     }
+
+    return count
+}
+
+/// 互斥组的范围：只算「能出现在遗物上」的词条，与 `RelicAuditor` 第 6 条同口径。
+/// 物品表里有一千多条从不进任何槽位池的效果共用 compatibilityId 100，
+/// 算进来会把最大互斥组从 102 条撑到 1128 条。
+private func checkConflictGroupScope() throws -> Int {
+    let fixtures = try lookupFixtures()
+    let catalog = fixtures.catalog
+    let index = fixtures.index
+    var count = 0
+
+    // 最大互斥组：词条库里 compatibilityId 100 有 102 条
+    var catalogGroupSizes: [Int: Int] = [:]
+    for affix in catalog.affixes where affix.compatibilityID != -1 {
+        catalogGroupSizes[affix.compatibilityID, default: 0] += 1
+    }
+    guard let biggest = catalogGroupSizes.max(by: { $0.value < $1.value }) else {
+        throw CheckFailure(description: "词条库里应存在互斥组")
+    }
+    try lookupExpect(biggest.key == 100 && biggest.value == 102,
+                     "最大互斥组应为 compatibilityId 100 的 102 条，实际 \(biggest)")
+    try lookupExpect(biggest.value > affixLookupConflictLimit,
+                     "最大互斥组超过页面默认列出的 \(affixLookupConflictLimit) 条，必须能就地展开")
+    count += 2
+
+    let conflicts = index.conflicts(with: 6_001_400)
+    try lookupExpect(conflicts.count + 1 == 102,
+                     "6001400 的互斥组应为 102 条（含自己），实际 \(conflicts.count + 1)")
+    count += 1
+
+    // 池里从没出现过的 extraAffixes 不算互斥对象
+    var pooled: Set<Int> = []
+    for members in index.poolMembers.values { pooled.formUnion(members) }
+    let catalogIDs = Set(catalog.affixes.map(\.effectID))
+    let strays = index.affixes.filter {
+        $0.compatibilityID == 100 && !$0.inCatalog && !pooled.contains($0.effectID)
+    }
+    try lookupExpect(strays.count > 900,
+                     "物品表里应有大量不进池、却挂着 compatibilityId 100 的效果，实际 \(strays.count)")
+    let conflictIDs = Set(conflicts.map(\.effectID))
+    try lookupExpect(strays.allSatisfy { !conflictIDs.contains($0.effectID) },
+                     "不进任何槽位池的效果不应出现在互斥组里")
+    count += 2
+
+    // 反过来：进了池的 extraAffixes 必须算进互斥组（存档审计会判它们互斥）
+    var checkedPairs = 0
+    for affix in index.affixes where !affix.inCatalog && affix.compatibilityID != -1 && pooled.contains(affix.effectID) {
+        guard let host = catalog.affixes.first(where: { $0.compatibilityID == affix.compatibilityID }) else { continue }
+        checkedPairs += 1
+        try lookupExpect(index.conflicts(with: host.effectID).contains { $0.effectID == affix.effectID },
+                         "池内的物品表词条 \(affix.effectID) 应算进互斥组 \(affix.compatibilityID)")
+    }
+    try lookupExpect(checkedPairs > 0, "应存在与词条库共组的池内 extraAffixes")
+    count += checkedPairs + 1
+
+    // 全库兜底：互斥组成员要么在词条库里，要么被某个槽位池引用
+    for affix in index.affixes where affix.compatibilityID != -1 {
+        for peer in index.conflicts(with: affix.effectID) {
+            try lookupExpect(catalogIDs.contains(peer.effectID) || pooled.contains(peer.effectID),
+                             "互斥组不应包含既不在词条库、也不进任何池的词条 \(peer.effectID)")
+        }
+    }
+    count += 1
+
+    // 没有物品表时退回词条库内的同组词条
+    let bare = AffixLookupIndex(catalog: catalog, relicData: nil)
+    try lookupExpect(bare.conflicts(with: 6_001_400).count + 1 == 102,
+                     "降级模式下互斥组仍应是词条库里的 102 条")
+    count += 1
+
+    return count
+}
+
+// MARK: - 双端对照
+
+/// 一条词条在反查页上的全部结论，两端必须逐字段相同。
+private struct AffixParitySample {
+    let effectID: Int
+    let name: String
+    /// [普通 1.03, 普通旧池, 深夜正面] 的可掉落判定
+    let modes: [Bool]
+    /// 深夜 [A, B, C] 池归属
+    let deepPools: [Bool]
+    let inCursePool: Bool
+    let requiresCurse: Bool
+    let isCurse: Bool
+    /// 固定出这条词条的遗物 ID（正常可获得的）
+    let fixedRelicIDs: [Int]
+    let randomRelicCount: Int
+    /// 不会正常获得、因而未列出的命中条数
+    let hiddenCount: Int
+    /// 互斥组条数（含自己）；无互斥组为 0
+    let conflictGroupSize: Int
+}
+
+/// 一件遗物在反查页上的全部结论，两端必须逐字段相同。
+private struct RelicParitySample {
+    let relicID: Int
+    let name: String
+    let kindLabel: String
+    let colorLabel: String
+    let deep: Bool
+    let isUnique: Bool
+    let slotCount: Int
+    let curseSlotCount: Int
+    /// 三个正面槽的池 id（空槽为 -1）
+    let slotPools: [Int]
+    let slotLabels: [String]
+    let slotSizes: [Int]
+    /// 深夜遗物按池归并后的 [池 id, 本件条数]；非深夜遗物为 nil
+    let deepGroups: [[Int]]?
+    let fixedEffectIDs: [Int]?
+}
+
+/// 与 Windows 端 `renderer/pages/lookup.js` 对照的固定样本（5 条词条 + 3 件遗物）。
+///
+/// 同一份内置数据，两端对同一输入必须给出同样的结论：三种口径的可掉落判定、
+/// 深夜 A/B/C 池说明、固定 vs 随机池可出的区分、遗物种类/颜色标签、孔数层池标签、
+/// 深夜遗物的按池归并，以及「不会正常获得」的剔除条数。
+/// Windows 端在 `tests/lookup_index.test.mjs` 的同名用例里断言同一张表。
+private func checkWindowsParitySamples() throws -> Int {
+    let index = try lookupFixtures().index
+    var count = 0
+
+    let affixSamples: [AffixParitySample] = [
+        AffixParitySample(
+            effectID: 7_000_000, name: "生命力＋１",
+            modes: [true, true, false], deepPools: [false, false, false],
+            inCursePool: false, requiresCurse: false, isCurse: false,
+            fixedRelicIDs: [10002, 11003], randomRelicCount: 432,
+            hiddenCount: 1, conflictGroupSize: 4
+        ),
+        AffixParitySample(
+            effectID: 6_001_400, name: "提升物理攻击力＋３",
+            modes: [false, false, true], deepPools: [true, false, false],
+            inCursePool: false, requiresCurse: true, isCurse: false,
+            fixedRelicIDs: [], randomRelicCount: 144,
+            hiddenCount: 1, conflictGroupSize: 102
+        ),
+        AffixParitySample(
+            effectID: 6_003_000, name: "提升对中毒的抵抗力＋１",
+            modes: [false, false, true], deepPools: [false, true, true],
+            inCursePool: false, requiresCurse: false, isCurse: false,
+            fixedRelicIDs: [], randomRelicCount: 144,
+            hiddenCount: 1, conflictGroupSize: 3
+        ),
+        AffixParitySample(
+            effectID: 6_820_000, name: "受到损伤时，会累积中毒量表",
+            modes: [false, false, false], deepPools: [false, false, false],
+            inCursePool: true, requiresCurse: false, isCurse: true,
+            fixedRelicIDs: [], randomRelicCount: 144,
+            hiddenCount: 1, conflictGroupSize: 1
+        ),
+        AffixParitySample(
+            effectID: 7_121_100, name: "出击时，会持有“火焰壶”",
+            modes: [true, true, false], deepPools: [false, false, false],
+            inCursePool: false, requiresCurse: false, isCurse: false,
+            fixedRelicIDs: [1000], randomRelicCount: 432,
+            hiddenCount: 2, conflictGroupSize: 1
+        )
+    ]
+
+    let modeOrder: [CheckMode] = [.currentNormal, .legacyNormal, .deepPositive]
+    try lookupExpect(affixLookupModes == modeOrder,
+                     "反查页应按「普通 1.03 / 普通旧池 / 深夜正面」三种口径展示")
+    count += 1
+
+    for sample in affixSamples {
+        guard let report = index.report(for: sample.effectID) else {
+            throw CheckFailure(description: "反查不到 effectId \(sample.effectID)")
+        }
+        try lookupExpect(report.affix.name == sample.name,
+                         "\(sample.effectID) 名称应为「\(sample.name)」，实际「\(report.affix.name)」")
+        let modeHits = Dictionary(report.modeHits.map { ($0.mode, $0.isAvailable) },
+                                  uniquingKeysWith: { first, _ in first })
+        try lookupExpect(modeOrder.map { modeHits[$0] ?? false } == sample.modes,
+                         "\(sample.effectID) 的三口径可掉落判定应为 \(sample.modes)")
+        let deepByPool = Dictionary(report.deepHits.map { ($0.poolID, $0.contains) },
+                                    uniquingKeysWith: { first, _ in first })
+        try lookupExpect(deepPositiveLookupPools.map { deepByPool[$0] ?? false } == sample.deepPools,
+                         "\(sample.effectID) 的深夜 A/B/C 归属应为 \(sample.deepPools)")
+        try lookupExpect(report.cursePoolHit.contains == sample.inCursePool,
+                         "\(sample.effectID) 的诅咒池归属应为 \(sample.inCursePool)")
+        try lookupExpect(report.affix.requiresCurse == sample.requiresCurse,
+                         "\(sample.effectID) 的 requiresCurse 应为 \(sample.requiresCurse)")
+        try lookupExpect(report.affix.isCurse == sample.isCurse,
+                         "\(sample.effectID) 的 isCurse 应为 \(sample.isCurse)")
+        try lookupExpect(report.fixedRelics.map(\.relicID) == sample.fixedRelicIDs,
+                         "\(sample.effectID) 的固定出处应为 \(sample.fixedRelicIDs)，"
+                            + "实际 \(report.fixedRelics.map(\.relicID))")
+        try lookupExpect(report.randomRelics.count == sample.randomRelicCount,
+                         "\(sample.effectID) 的随机池出处应为 \(sample.randomRelicCount) 件，"
+                            + "实际 \(report.randomRelics.count)")
+        try lookupExpect(report.hiddenRelicCount == sample.hiddenCount,
+                         "\(sample.effectID) 被剔除的不可正常获得条目应为 \(sample.hiddenCount) 条，"
+                            + "实际 \(report.hiddenRelicCount)")
+        let groupSize = report.affix.compatibilityID == -1 ? 0 : report.conflicts.count + 1
+        try lookupExpect(groupSize == sample.conflictGroupSize,
+                         "\(sample.effectID) 的互斥组应为 \(sample.conflictGroupSize) 条，实际 \(groupSize)")
+        // 列出来的遗物一律是正常可获得的
+        for hit in report.fixedRelics + report.randomRelics {
+            try lookupExpect(index.relic(hit.relicID)?.isObtainable == true,
+                             "\(sample.effectID) 列出了不会正常获得的遗物 \(hit.relicID)")
+        }
+        count += 10
+    }
+
+    let relicSamples: [RelicParitySample] = [
+        RelicParitySample(
+            relicID: 202, name: "辽阔的火燃情景", kindLabel: "商店遗物", colorLabel: "红",
+            deep: false, isUnique: false, slotCount: 3, curseSlotCount: 0,
+            slotPools: [310, 210, 110],
+            slotLabels: ["1.03 · 3 孔层", "1.03 · 2 孔层", "1.03 · 1 孔层"],
+            slotSizes: [340, 340, 340], deepGroups: nil, fixedEffectIDs: nil
+        ),
+        RelicParitySample(
+            relicID: 1000, name: "细腻的火燃情景", kindLabel: "唯一遗物", colorLabel: "红",
+            deep: false, isUnique: true, slotCount: 1, curseSlotCount: 0,
+            slotPools: [707_121_100, -1, -1],
+            slotLabels: ["池 707121100", "", ""],
+            slotSizes: [1, 0, 0], deepGroups: nil, fixedEffectIDs: [7_121_100]
+        ),
+        RelicParitySample(
+            relicID: 2_000_002, name: "辽阔的火燃暗淡情景", kindLabel: "深夜遗物", colorLabel: "红",
+            deep: true, isUnique: false, slotCount: 3, curseSlotCount: 1,
+            slotPools: [2_000_000, 2_100_000, 2_100_000],
+            slotLabels: ["深夜 A 池", "深夜 B 池", "深夜 B 池"],
+            slotSizes: [49, 277, 277],
+            deepGroups: [[2_000_000, 1], [2_100_000, 2]], fixedEffectIDs: nil
+        )
+    ]
+
+    for sample in relicSamples {
+        guard let entry = index.relic(sample.relicID) else {
+            throw CheckFailure(description: "索引里没有遗物 \(sample.relicID)")
+        }
+        try lookupExpect(entry.displayName == sample.name,
+                         "遗物 \(sample.relicID) 名称应为「\(sample.name)」")
+        try lookupExpect(entry.kindLabel == sample.kindLabel,
+                         "遗物 \(sample.relicID) 的种类标签应为「\(sample.kindLabel)」")
+        try lookupExpect(entry.colorLabel == sample.colorLabel,
+                         "遗物 \(sample.relicID) 的颜色标签应为「\(sample.colorLabel)」")
+        try lookupExpect(entry.deep == sample.deep && entry.isUnique == sample.isUnique,
+                         "遗物 \(sample.relicID) 的深夜 / 唯一标记两端不一致")
+        try lookupExpect(entry.isObtainable, "遗物 \(sample.relicID) 应判为正常可获得")
+        try lookupExpect(entry.slotCount == sample.slotCount,
+                         "遗物 \(sample.relicID) 应有 \(sample.slotCount) 孔")
+        try lookupExpect(entry.slots.filter(\.hasCurse).count == sample.curseSlotCount,
+                         "遗物 \(sample.relicID) 的诅咒槽数应为 \(sample.curseSlotCount)")
+        try lookupExpect(entry.slots.map(\.poolID) == sample.slotPools,
+                         "遗物 \(sample.relicID) 的槽位池应为 \(sample.slotPools)")
+        try lookupExpect(
+            entry.slots.map { $0.isEmpty ? "" : affixPoolLabel($0.poolID) } == sample.slotLabels,
+            "遗物 \(sample.relicID) 的槽位池标签应为 \(sample.slotLabels)"
+        )
+        try lookupExpect(entry.slots.map(\.poolSize) == sample.slotSizes,
+                         "遗物 \(sample.relicID) 的槽位池成员数应为 \(sample.slotSizes)")
+        try lookupExpect(entry.fixedEffectIDs?.filter { $0 != -1 } == sample.fixedEffectIDs,
+                         "遗物 \(sample.relicID) 的固定词条应为 \(String(describing: sample.fixedEffectIDs))")
+        count += 11
+
+        // 深夜遗物：按池归并，不给槽序号
+        if let expected = sample.deepGroups {
+            var tally: [Int: Int] = [:]
+            for slot in entry.slots where !slot.isEmpty { tally[slot.poolID, default: 0] += 1 }
+            let groups = tally.keys.sorted().map { [$0, tally[$0] ?? 0] }
+            try lookupExpect(groups == expected,
+                             "深夜遗物 \(sample.relicID) 的按池归并应为 \(expected)，实际 \(groups)")
+            // 槽位模板只保证 A 槽数 = 诅咒槽数
+            let aCount = entry.slots.filter { $0.poolID == 2_000_000 }.count
+            try lookupExpect(aCount == sample.curseSlotCount,
+                             "深夜遗物 \(sample.relicID) 的 A 槽数应等于诅咒槽数")
+            count += 2
+        }
+    }
+
+    try lookupExpect(index.searchRelics("").count == 768,
+                     "两端的「可查遗物」件数都应是 768 件")
+    count += 1
 
     return count
 }

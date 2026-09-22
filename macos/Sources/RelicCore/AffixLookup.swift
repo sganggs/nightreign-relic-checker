@@ -17,6 +17,12 @@ public let deepCurseLookupPool = 3_000_000
 /// 反查页展示的口径：「顺序/互斥」不涉及槽池，不参与反查。
 public let affixLookupModes: [CheckMode] = [.currentNormal, .legacyNormal, .deepPositive]
 
+/// 互斥组默认列出多少条（最大的互斥组有 102 条，超出部分由页面就地展开）。
+public let affixLookupConflictLimit = 24
+
+/// 「能在哪出」的遗物列表默认列出多少件（超出部分由页面就地展开）。
+public let affixLookupRowLimit = 120
+
 /// 槽位池的中文短名；未知池回退为「池 <id>」。
 ///
 /// 普通大遗物的槽位池按孔数分层（真实物品表：1 孔 = [100]，2 孔 = [200, 100]，
@@ -325,13 +331,6 @@ public struct AffixLookupIndex: Sendable {
         }
         affixes = sortedAffixes
 
-        // 2. 互斥组
-        var groups: [Int: [Int]] = [:]
-        for affix in sortedAffixes where affix.compatibilityID != -1 {
-            groups[affix.compatibilityID, default: []].append(affix.effectID)
-        }
-        conflictGroups = groups
-
         guard let relicData else {
             hasRelicData = false
             relics = []
@@ -340,11 +339,13 @@ public struct AffixLookupIndex: Sendable {
             relicCountByPool = [:]
             poolsByEffect = [:]
             slotsByPool = [:]
+            // 没有物品表时只剩词条库条目，它们本来就都能出现在遗物上
+            conflictGroups = Self.conflictGroups(of: sortedAffixes) { _ in true }
             return
         }
         hasRelicData = true
 
-        // 3. 池成员与 effectId → 池 的反向索引
+        // 2. 池成员与 effectId → 池 的反向索引
         var members: [Int: [Int]] = [:]
         var byEffect: [Int: [Int]] = [:]
         members.reserveCapacity(relicData.pools.count)
@@ -365,6 +366,11 @@ public struct AffixLookupIndex: Sendable {
         }
         poolMembers = members
         poolsByEffect = byEffect
+
+        // 3. 互斥组：只算真正能出现在遗物上的词条
+        conflictGroups = Self.conflictGroups(of: sortedAffixes) { affix in
+            affix.inCatalog || byEffect[affix.effectID] != nil
+        }
 
         // 4. 遗物 → 槽位池概览，以及池 → 遗物槽位
         var refs: [Int: [SlotRef]] = [:]
@@ -575,6 +581,23 @@ public struct AffixLookupIndex: Sendable {
     }
 
     // MARK: 构建辅助
+
+    /// 互斥组。口径与 `RelicAuditor` 第 6 条（互斥词条）一致：参与互斥判定的是
+    /// 「能出现在遗物上的词条」，即词条库词条 ∪ 被某个槽位池引用的 extraAffixes。
+    ///
+    /// 物品表里另有一千多条从不进任何槽位池的效果（各种「庇佑」等），它们共用参数表
+    /// 的默认 compatibilityId 100；算进来会把最大互斥组从 102 条撑到 1128 条，
+    /// 而其中没有任何一条能真的和这条词条出现在同一件遗物上。
+    private static func conflictGroups(
+        of affixes: [LookupAffix],
+        isRelicReachable: (LookupAffix) -> Bool
+    ) -> [Int: [Int]] {
+        var groups: [Int: [Int]] = [:]
+        for affix in affixes where affix.compatibilityID != -1 && isRelicReachable(affix) {
+            groups[affix.compatibilityID, default: []].append(affix.effectID)
+        }
+        return groups
+    }
 
     private static func slotValue(_ slots: [Int], _ index: Int) -> Int {
         guard slots.indices.contains(index) else { return -1 }

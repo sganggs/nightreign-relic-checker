@@ -43,10 +43,10 @@ struct AffixLookupView: View {
         }
     }
 
-    /// 结果列表一次最多渲染多少行，超出只给条数提示。
-    static let rowLimit = 120
-    /// 互斥组最多展示多少条（个别互斥组有近百条，全铺会把页面挤没）。
-    static let conflictLimit = 24
+    /// 结果列表一次最多渲染多少行，超出由详情面板的「展开全部」就地展开。
+    static let rowLimit = affixLookupRowLimit
+    /// 互斥组最多展示多少条（最大的互斥组有 102 条，全铺会把页面挤没）。
+    static let conflictLimit = affixLookupConflictLimit
 
     @State private var index: AffixLookupIndex?
     @State private var tab: Tab = .byAffix
@@ -191,11 +191,7 @@ struct AffixLookupView: View {
                     reveal(effectID: effectID, in: index)
                 },
                 onPickRelic: { relicID in
-                    relicQuery = ""
-                    onlyDeepRelics = false
-                    selectedRelicID = relicID
-                    pendingScrollRelicID = relicID
-                    tab = .byRelic
+                    reveal(relicID: relicID, in: index)
                 }
             )
         case .byRelic:
@@ -356,15 +352,36 @@ struct AffixLookupView: View {
     // MARK: - 选中与索引
 
     /// 跳到某条词条：先放开筛选保证它在列表里，再选中它。
+    ///
+    /// 搜索词只在「目标本来就搜不出来」时才清空 —— 用户从互斥组 / 诅咒池 / 槽位池
+    /// 标签点过来时，多半还想留着原来的搜索词继续看，不该被无条件冲掉。
     private func reveal(effectID: Int, in index: AffixLookupIndex) {
-        affixQuery = ""
         if let affix = index.affix(effectID) {
             if affix.isCurse { includeCurses = true }
             if affixScope == .catalog && !affix.inCatalog { affixScope = .all }
             if affixScope == .extras && affix.inCatalog { affixScope = .all }
+            let needle = affixQuery.foldedForSearch
+            if !needle.isEmpty && !affix.searchText.contains(needle) { affixQuery = "" }
+        } else {
+            affixQuery = ""
         }
         selectedAffixID = effectID
         pendingScrollAffixID = effectID
+    }
+
+    /// 跳到某件遗物；与 `reveal(effectID:in:)` 同样只在必要时才动搜索词与筛选。
+    private func reveal(relicID: Int, in index: AffixLookupIndex) {
+        if let entry = index.relic(relicID) {
+            if onlyDeepRelics && !entry.deep { onlyDeepRelics = false }
+            let needle = relicQuery.foldedForSearch
+            if !needle.isEmpty && !entry.searchText.contains(needle) { relicQuery = "" }
+        } else {
+            relicQuery = ""
+            onlyDeepRelics = false
+        }
+        selectedRelicID = relicID
+        pendingScrollRelicID = relicID
+        tab = .byRelic
     }
 
     private func rebuildIndex() async {
