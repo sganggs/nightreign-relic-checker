@@ -186,7 +186,7 @@ SCHEMA_CHANGELOG = [
          "（TAE 核实）spells[] 不做 TAE 过滤（施法动画只按 refId 槽发射，见 fieldNotes.法术与 TAE）。",
          "（审查修正）hits[].noFp：原先只看行名里的 \"No FP\"；TAE 核实时再按战技 TAE 动画号（4xxxx 个位 5–9 = 无 FP 版）"
          "补标行名没写的无 FP 段（noFpSource=\"tae\"，labelZh 前补「无FP版」），例：风暴刃 300000411–413、狩猎巨人 301700915。"
-         "按「noFp 与开关同侧」取段的页面不用改写法，带 FP 版不再混进无 FP 段。",
+         "页面取段要改成「hit.fpBoth 或 noFp 与开关同侧」（fpBoth 段两侧都计），带 FP 版不再混进无 FP 段。",
          "（审查修正）hits[].noDamage：除了六项全 0 的挂状态行，只打自己 / 队友的行（selfOrAllyOnly，如祈祷一击的回血子弹 "
          "1202100 / 1202110）也标 noDamage，motion / flat 原值保留。这一条不依赖 TAE，--no-tae 时同样生效。",
          "（审查修正）counts 的 *Damaging 计数（hitsWithoutVariantDamaging / hitsNotInvokedDamaging）不再把 noDamage 段算作带伤害。",
@@ -1992,7 +1992,7 @@ def main() -> None:
             f'例：{skills_by_id[112]["nameZh"]} {ex_rows[0]["atkId"]}–{ex_rows[-1]["atkId"]}（Large Weapon 套 {len(ex_rows)} 段）'
             f'只留给 {" / ".join(WEP_TYPE_ZH[t][1] for t in ex_types)}（{ex_first["keptOnWeapons"]} 把），'
             f'在另 {ex_first["removedOnWeapons"]} 把武器上按互斥动画套（exclusiveBlock）移除；'
-            "野蛮咆哮 300000957/959/967/969 不属于这种——三级回退下没有任何武器会解到这 4 行 var 0 的通用行，"
+            "野蛮咆哮 300000957/959/967/969 不属于这种——三级回退下选到这 4 行 var 0 通用行的 141 把武器（大剑 / 特大剑 / 大斧 / 大锤 / 矛…）的 R2 动画只发 3956/3958/3966/3968，没有任何武器会打出它们，"
             "它们在全部选到它们的武器上都被移除、标了 notInvoked")
     hits_self_or_ally = sum(1 for e in skills + spells for h in e["hits"] if h.get("selfOrAllyOnly"))
     hits_self_or_ally_with_values = sum(1 for e in skills + spells for h in e["hits"]
