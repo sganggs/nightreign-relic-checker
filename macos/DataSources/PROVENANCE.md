@@ -618,3 +618,247 @@ inventorySummary 守夜 51→50、数值行 384→394）。
 5. `scalingTiers.*.fullEffects` 新增 `fieldUnits`（multiplier / percent / flag / enum），生成时断言每列都已登记。
 6. 事实性更正：夜王各深度出现权重 18 条逐条实测（玛利斯 500/400/325/250/250、哈尔莫妮亚 1600/1280/1040/800/800、史柴格斯 1120×5、布德奇冥 700×5 等），唯一普适结论是永夜/救世旗手形态深度 1 权重恒为 0；深夜修正行 spCategory = 20（少数 100）、DLC 深夜修正与深度行 = 0（0 表示不参与覆盖，连乘成立）；ChaosMatchingCorrectParam 90 行 → 89 行归并 25 组；人数缩放 136 条上恒为 1 的 4 个字段是 0/1 开关位而非倍率。
 7. 两端数据断言同步（只改断言）：Windows bosses.test.mjs 的名字回退口径、macOS BossDataChecks 的 unmatchedNames 12 与 chrid-fallback 显示名。
+
+## 增伤数据集第六版（按来源槽位与生效范围重构）
+
+## buffs v6（schemaVersion 6，2026-09-23）
+
+- **生成器**：macos/DataSources/generate_buffs.py。纯标准库，不联网，输出确定（连续两次生成除 generatedAt 外完全一致）。输出到 data/nightreign-buffs-v1.03.5.json，并用 scripts/sync-data.sh 同步到两端的 resources。
+- **v6 新读取的参数表**（regulation 1.03.5，raw/params）：
+  - EquipParamCustomWeapon、ItemTableParam、ItemLotParam_map、ItemLotParam_enemy：局内武器词条池、可掉落武器行、isCursed
+  - EquipParamAntique、AntiqueStandParam：遗物词条池、固定词条遗物、容器格数
+  - CharaInitParam：武器格数（equip_Wep_Right/Left_1..3）
+  - ChaosMatchingRankControlParam：深夜诅咒武器概率
+  - LotResultSmallBaseAndSpot：封印监牢（Evergaol）点位数
+  - AtkParam_Pc：subCategory1..5、throwFlag、isArrowAtk
+  - Magic：subCategory1..2
+- **v6 新读取的 FMG**（zhocn 与 engus）：AntiqueName、ArtsName、CL_MenuText（武器类别 60010–60175、角色名 288050+i、技艺 411010+i、绝招 413010+i、复仇者家人 332001–332003），以及按同一 ID 查 PermanentBuffName 和 AttachEffectName。
+- **v6 新读取的本仓库数据**：
+  - data/nightreign-affixes-v1.03.4.json：relicAffixes[].catalogEffectId 的对齐与 self_check
+  - data/nightreign-relics-v1.03.4.json：extraAffixes，固定遗物专用的词条
+  - data/nightreign-skills-v1.03.5.json：战技和法术的命中段 atkId，用于 attackIndex 和 appliesTo 的『人口』
+  - **generate_skills.py 必须先于本脚本运行。**
+- **Paramdex 依据**（vawser/Smithbox@f5969c0，只用来核对，已转写进脚本常量）：
+  - NR Param Enums：WEP_TYPE、SP_EFE_WEP_CHANGE_PARAM、ATK_SUB_CATEGORY
+  - ER Param Enums：ATK_PATAM_THROWFLAG_TYPE（2=Throw）
+  - NR Param Meta：EquipParamCustomWeapon、AttachEffect(Table/Filter*)、EquipParamAntique、ItemTableParam
+  - ER Defs：SpEffect.xml（wepParamChange『どの武器に対して効果を発揮するか』、magParamChange、throwAttackParamChange『投げ攻撃に対して効果を発揮するか』）、AtkParam.xml（subCategory、throwFlag）
+- **推断而非实测的口径**（写进了 notes 和 slotRules）：
+  - isCursed=1 的武器只在深夜掉落。
+  - throwAttackParamChange=0 的增益也作用于致命一击（旁证：战技『决心』的 1691 与 1694 两行）。
+  - wepParamChange=3 表示不作用于武器攻击。
+  - spAttribute 是附加属性的负载，不是生效门槛。
+  - 『赐福王的余威』每份相乘。
+  - 护符 2 格：参数表没有这个字段，依据是用户说明和 CL_MenuText 338380。
+  - 黑夜入侵者上限 4 层：按用户反馈。
+- **验证**：
+  - self_check 新增 self_check_v6：槽位、词条库对齐（requiresCurse/isCurse/compatibilityId 零差异）、appliesTo 与 scope 不矛盾、slotRules 数字等于实测、叠层字段、fixedRelics、attackContexts 推导规则。反例测试全部被拦下。
+  - macOS RelicCoreChecks 12697 项全过。
+  - Windows 的 ranker.test.mjs 与 ranker_crosscheck.test.mjs 共 107 项全过。
+
+#### 核验修复补充
+
+generate_buffs.py（schemaVersion 6，核验轮）补充：
+
+1. 新读的数据：
+   - 游戏文本 PermanentBuffInfo（zhocn＋engus，基础档与 _dlc01 合并），用作 permanent／runStack 条目的 descZh，出处记在 buffs[].descZhSource。PermanentBuffCaption 的 ID 与 PermanentBuffParam 对不上，没有使用。
+   - 参数表 BehaviorParam_PC.csv（refType 0＝AtkParam），只用于近战人口旁证 diagnostics.meleePopulationCheck。
+   - CL_MenuText 415010+i（角色能力名，与 411010+i 技艺、413010+i 绝招同一套角色顺序，例：415017 不屈＝执行者）。
+   - ArtsCaption 604／605／1053 里的用词『死诞者』，作为 TAIL_PHRASES_ZH 中『Anti-Undead』的译法出处。
+
+2. 封印监牢的实测依据（更正）：LotResultSmallBaseAndSpot 中行名含 Evergaol 的行共 320 个 patternId；每个 patternId 的点位数分布为 7 个点位 160 个、6 个点位 80 个、4 个点位 80 个；attachId 共 91 个，取值 520–763。此前变更摘要里写的『attachId 601–607』有误，不要写入。practicalMaxStacks=7 不变。
+
+3. 赐福王的余威：PermanentBuffInfo#8970000 原文为『根据新发现的赐福数量，提升攻击力』／『Newly found Sites of Grace raise attack power』，层数单位是本局新发现的赐福数，不是打倒的首领数。每份 ×1.02、多份按 spCategory=10 相乘，仍是推断。
+
+4. 深夜专属词条上限：在 2950 行可掉落的 EquipParamCustomWeapon 上逐行统计槽 4–6 中非诅咒、且池里含深夜专属 AttachEffect id（任何可掉落行的槽 1–3 池都不含的 id，共 96 个）的槽数，结果为 {1: 2007, 0: 943}。因此每把最多 1 条、6 把最多 6 条。可掉落池里带权重的 AttachEffect id 共 310 个，其中 146 个对应 buffs。
+
+5. 武器槽位布局（池 ID 按百万位归族）：
+   - 一般武器：501 或 808／-／-／610 或 620／501 或 808／505。
+   - isCursed 武器：630／501 或 808／810–814，槽 4–6 与槽 1–3 镜像。
+   - 20 行 [Hero]／[Unique] X+2 角色武器（101750002–141755002，由 ItemLotParam_enemy 13000000 起、行名为 [Night Assassin]／[Night Thief]／[Night Hunter]／[Night Witch] 等的掉落表给出）：[Hero] 为 601／-／-／601／602／620，[Unique] 为 601／603／630，槽 4–6 镜像。
+   - 603000000、603000100、603000200 分别是 810000000、811000000、813000000 的成员子集，按赐福计。808xxxxxx 是单成员的固定词条池。
+
+6. 近战人口旁证：179 个有名武器的 behaviorVariationId 在 BehaviorParam_PC 中引用、且有伤害的无名近战 AtkParam_Pc 共 3271 行，其中 3221 行带 130。不带 130 的 50 行里，47 行带 101（骑马攻击），2 行没有子类别（4600800、4600801），1 行只有 102。无名、无子类别的非投技非箭行共 470 行：213 行无伤害，257 行有伤害，其中 195 行 ID 在 1000000 以下。
+
+7. 其他：
+   - nameSource 取值 attachEffectNameById 本版本 0 条。8390000 在 PermanentBuffName 和 AttachEffectName 里都有同一段文本，按 PermanentBuffName 优先记，参数表里没有 ID 为 8390000 的行。
+   - [Weapon Power] 脚本行按『同一百位的 SpEffect＋同名前缀』归到传说武器的 AE，例：8980002 → AE 9021400（passiveSpEffectId_1=8980000）→ 武器 2140000。
+   - 7050301 归到 AE 7050100（passiveSpEffectId_1..3 分别为 7050100、7050200、7050300），括号里的『Exalted Flesh』对应 GoodsName 1210。
+
+
+#### 复核修复补充
+
+generate_buffs.py（schemaVersion 6，复核二轮）补充：
+
+1. spCategory=20 的语义（Paramdex NR SP_EFFECT_SPCATEGORY：Reset on Apply）
+- 按同一 SpEffect 重复获得处理，不是跨 ID 互斥。
+- 实测依据：
+  - SpEffectParam 里 20 类 1310 行。
+  - AttachEffectParam passiveSpEffectId_1..3 的引用按 spCategory 计：20 类 1202、10 类 781、0 类 203、203 类 4。
+  - 词条库 nightreign-affixes-v1.03.4.json 里被动全是 20 的词条，叠加性分布：不可叠加 126、不同级别可叠加 7、未知 7、可叠加 1。
+  - 固定遗物『辽阔的光耀情景』同时带 7030602 和 7034402。
+
+2. 200–299 系列按 categoryPriority 分组
+- 这是推断，Paramdex 只把 200 标为 w/ Matching Priority。
+- 各类别的行数与不同优先度数：
+
+| spCategory | 行数 | 不同优先度 |
+|---|---|---|
+| 200 | 152 | 53 |
+| 201 | 292 | 90 |
+| 202 | 26 | 10 |
+| 203 | 26 | 6 |
+| 204 | 350 | 12 |
+| 205 | 5 | 3 |
+| 206 | 20 | 2 |
+
+- 201：破露滴同一种的两档共用一个优先度（带火破露滴 511028／708940 都是 226；带魔力、带雷、带圣依次为 227–229）。
+- 204：按优先度分成 12 组，每组是一段连续 ID 的存档阶梯。封印监牢 7069001–7069010＝11，黑夜入侵者 7069201–7069210＝13，玛雷家的庇佑 8988200–8988299＝5，复仇的庇佑 8998000–8998099＝4，遗物『每次打倒…强敌』各阶梯＝8／9／10…，24231–24245＝3（中间隔了 5 个其他类别的行）。
+
+3. 累积阶梯
+- 识别方法：SpEffectParam 中带 accumuOverFireId 的行，按『连续 ID＋同 stateInfo』归族，共 83 个累积行、62 族。
+- 其中多档族：3554–3557 → 3558–3561、13865 → 13869–13872、49753、312501–312504 → 312505–312508、320800–320803 → 320804–320807、707050、7037600–7037603 → 7037604–7037607、8884201、8885201。阈值 17／30／45／60。
+- 连续攻击类第 1–3 档是 spCategory 120（removePrevious），第 4 档是 20、effectEndurance=0、数值与第 3 档相同。
+
+4. 游戏文本
+- 矛护符 AccessoryInfo#2060（zhocn『能强化突刺攻击特有的反击攻击』／engus "Enhances counterattacks unique to thrusting weapons"），作为 stateInfo=197 对魔法、祷告、射击判 no 的依据。
+
+5. 封印监牢的覆盖范围
+- LotResultSmallBaseAndSpot 共 520 个 patternId，其中有行名的 320 个全部含 Evergaol 行。
+- 另外 200 个（1000–1199）的行都没有行名：不使用 91 个监牢 attachId（520–763），但 smallBaseMapId 与监牢行有部分重合，是否含监牢未核。
+
+6. 局内武器词条
+- 深夜专属 AttachEffect id 共 96 个，其中正面 52 个、诅咒（isDebuff=1）44 个。
+- 深夜专属正面词条的档位按池族：505／602 只有档位1；603、810–814 只有档位2。
+- 常规池各档位的成员数（各武器组相同）：
+  - 501x00000：档位1 54 个
+  - 501x00100：档位2 51 个、档位1 3 个
+  - 501x00200：档位3 48 个、档位2 1 个、档位1 2 个
+  - 505x00100：档位2 51 个、档位1 20 个
+  - 505x00200：档位3 48 个、档位2 1 个、档位1 19 个
+- 有两个正面深夜槽的行共 2007 行，其中 1164 行的两个池有共同成员；同一把武器是否去重，参数表里没有字段。
+- 武器 AE 的 compatibilityId 把同一词条的各档归为一组（例：8330100–8330102 都是 401020），exclusivityId 在 8xxxxxx 段全部为 -1。
+
+7. throwAttackParamChange 的读法
+- 与 Paramdex 字面相反，依据是带无条件伤害倍率且 throw=1 的 10 条：1694、1704、1711、1713（Throw Damage Adjust）；320900、7040200、7040201、8130000–8130002（stateInfo=367 强化致命一击）。
+
+## 首领数据第三版（bossesSchemaVersion 4：按出场场合的多重归属 roles）
+
+### 地图敌人放置（MSB）与出场场合（bosses schemaVersion 4，2026-09-23）
+- 新增导出脚本 macos/DataSources/extract_msb.py（uv 脚本，依赖 pycryptodome 和 zstandard）。它复用 extract_msg.py 的 BHD5 解密、路径哈希和 DCX 解压。归档里只存路径哈希，所以脚本对 /map/mapstudio/mAA_BB_CC_DD.msb.dcx（每段 00–99）逐一计算增量哈希来找出实际存在的文件，共找到 402 张，全部是 KRAK 压缩。
+- tools/oodledec 新增批量模式：`oodledec.exe <oo2core_9_win64.dll> --batch <manifest>`，manifest 每行格式为 `in<TAB>out<TAB>size`，这样一次 Wine 进程就能解完整批文件。原来的单文件调用方式不变。
+- 本机实际执行的命令（exe 1.3.3.0 / regulation 1.03.5，CrossOver Steam bottle），整批约 100 秒：
+  `uv run extract_msb.py --game "<Game>" --krak-batch-cmd "'<CrossOver wine>' --bottle Steam --no-gui 'Z:\…\tools\oodledec\oodledec.exe' 'Z:\…\Game\oo2core_9_win64.dll' --batch {win_manifest}"`
+- 产物位于 raw/msb/，与 raw/params 一样不入 git：
+  - MsbEnemyParts.csv：每个 Enemy / DummyEnemy part 一行，列为 map, partName, partType, model, entityId, entityGroupIds, npcParamId, npcThinkParamId, talkId, charaInitParamId。共 8701 行，其中 Enemy 7476、DummyEnemy 1225。
+  - manifest.json：地图数 402，以及各地图的 part 数。
+- MSB 布局对照 Smithbox 仓库 Documentation/Binary Templates/MSB/MSB_NR（TKGP 的 010 模板，与 Paramdex 同一修订 f5969c0）：
+  - Part：type 在 +0x0C（2 = Enemy，10 = DummyEnemy），commonOffset 在 +0x60，typeOffset 在 +0x68；
+  - PartCommon：entityId 在 +0x00，entityGroupIds[8] 在 +0x1C；
+  - PartEnemy：npcThinkParamId 在 +0x08，npcParamId 在 +0x0C。
+  - 抽查一致：m46_56（Field Boss - Bell Bearing Hunter）里放的是 31000010，m49_24（Night Boss - Bell-bearing Hunter）里放的是 31000020。
+- generate_bosses.py（schemaVersion 4）新读取的输入：raw/msb/MsbEnemyParts.csv + manifest.json；参数表 LotResultPlayAreaParam、LotResultSmallBaseAndSpot、SmallBaseAndSpotAttachPoint、SmallBaseMapVariationParam、ChaosMatchingMutationEnemyTableParam、LotResultMapPatternFlag、SmallBaseEnemyLotMapCombinationParam、SmallbaseInvationNpcParam；文本 menu/TutorialTitle（特异地形名 403400–403440）和 CL_MenuText 146501/146503（初始日/中间日：夜晚）。缺少 raw/msb 时生成器会直接报错，并提示先运行 extract_msb.py。
+- 场合判定口径（完整说明见生成器里的 ROLE_DEFS）：
+  - 地图块被 LotResultPlayAreaParam.bossId1/2/extraBossId1/2 引用 → 守夜首领；其中挂 7741 档的行 → 守夜前哨；
+  - 夜晚首领地图块又挂到大空洞 Tower Boss 挂点 → tower；
+  - ChaosMatchingMutationEnemyTableParam 类别 160，或 SmallBaseEnemyLotMapCombinationParam 引用 → 封印监牢；
+  - 抽选结果全部落在 Raid 修饰（600–604 / 10000 / 10001）→ 突袭事件；全部落在 180 修饰 → 黑夜势力事件；抽选行 modifier 424 → 持秤商人事件；defaultSmallBase 默认地块 → event；
+  - 类别 120 → 野外首领；其余据点/地点地图块 → 据点首领；m60_* 开放地块 → 野外首领（地形变体 = 末段 ÷ 10）；
+  - SmallbaseInvationNpcParam → 黑夜入侵者；
+  - 夜王本体行：在夜王战场 m16/m18/m19 → 夜王战，否则 → 突袭或事件；
+  - 只出现在首领战地图里、自身零奖励、同图另有掉奖励首领 → 随从/召唤物；
+  - DummyEnemy 不计入；完全没有 Enemy part 的行 → 未放置。
+- 验证：12735 项 self_check 全部通过；与 v3 产物逐键比对，原有字段 0 处变化；两次生成除 generatedAt 外逐字节相同；data/ 与两端 resources/ 的 sha256 一致。
+
+#### 核验修复补充
+
+bosses schemaVersion 4 review fixes (2026-09-23, generate_bosses.py):
+
+(1) The 圣树骑士 example is c3252 卡利亚禁卫骑士 (Royal Carian Knight@3252). Evidence:
+- WeaponCaption 18100000/18100800/31060000: 「“圣树骑士”罗蕾塔的武器」 (engus: 'Loretta, Knight of the Haligtree'); 18100000 also says 「身为卡利亚的禁卫骑士时受赐的武器」.
+- ItemLotParam_enemy 23252000 (per-chrId numbering 2+3252+000) contains 18100000 罗蕾塔的战镰 and 31060000 白银盾. By the same numbering, 23251000 = c3251 (黄金戟 / 黄金树大盾) and 23250000 = c3250 (大龙爪 / 龙爪盾). NpcParam does not reference these lots.
+- Conclusion: it is only a field boss (m46_54, m60_42_37_50), never a night boss.
+
+(2) Rows at 7741 (prelude) in a night boss piece that also attaches to a Great Hollow tower get prelude only, not tower. The tower attachment is recorded in the prelude evidence note.
+
+(3) A second summon criterion for mounts and helpers: rewardItemLot_1/2 and chaosMatchingRewardLotId are all ≤ 0, and getSoul ≤ 5% of a same-map row that has rewardItemLot_2 > 0. It applies in night boss pieces, towers and field boss pieces, but not on m60_* tiles.
+- Hits: 31600010 and 31600020 (Funeral Steed; the night horse shares MSB entityGroupId 49285810 with its rider) and 77009010 (placed as model c2150 'Lightning Ball' with npcThinkParamId 0).
+- Real co-bosses such as 31501020 and 50110020 are unaffected.
+
+(4) A map mAA_BB_00_00 whose AA is one of the SmallBaseMapVariationParam piece areas, but with no SmallBaseMapVariationParam row and no references from any lot or attach table, is treated as inactivePiece. Today only m46_90 (Ancestor Spirit 46700020) qualifies.
+
+(5) Using PATTERN_MODIFIER on LotResultMapPatternFlag.modifier and LotResultSmallBaseAndSpot.modifier is an inference. At Smithbox@f5969c0, Param Meta sets Enum on LotBaseMapPatternFlag.modifier, LotBaseSmallBaseAndSpot.modifier1/2 and MapPatternSet, but not on the LotResult* tables. Supporting evidence is measured and asserted at generation time:
+- raid modifiers 600–604 and 10000 map one-to-one to the 'Boss Raid - … (X)' pieces;
+- 10–15 match the pattern row names Standard / Mountaintop / The Crater / Rotted Woods / Great Hollow / Shrouded City;
+- the all-180 pieces are 'Night Horde - …';
+- 424 is on the Libra pieces.
+
+Meteor evidence for the major-base default pieces: all 14 modifier-200 patterns attach a default piece, and 46801010 has rewardItemLot_2 6310000 '[Fallingstar Beast (Random Encounter)]'. However, 19 of the 33 default-piece lot rows are in non-meteor patterns. Confirming the role would need EMEVD.
+
+(6) mutationCategories[].mapZh now comes from game text: 10 宁姆韦德 (PersonalScenarioObjective 1020), 11–15 from TutorialTitle 403420/403430/403400/403440/403410 「特异地形：…」. The v3 labels 林薇尔德, 陨石坑 and 笼罩之城 were not game text. This is a value-only change in schemaVersion 4.
+
+Additional input files now read: ItemLotParam_enemy (row names and 23252000), and zhocn/engus PersonalScenarioObjective, WeaponCaption and WeaponName FMGs.
+
+
+#### 复核修复补充
+
+#### schemaVersion 4 第二轮复核修订（bosses，2026-09-23，generate_bosses.py）
+
+1. **开放地图地块改按变异类别判定场合。**
+   - v4 首版把 m60_* 地块上的行一律算 field，这是错的。
+   - 解码：ChaosMatchingMutationEnemyTableParam 里 smallBaseId = 0 的行是开放地块的变异刷新点。Paramdex 给的字段名只有 mapUnk_1(u8) / mapUnk_2(u8) / mapUnk_3(u16)，按小端拼起来正好是 60XXYY，即地块 m60_XX_YY。这是**推断的解码**。
+   - 生成时逐行断言：
+     - smallBaseId = 0 的 667 行全部解码成 60XXYY（共 16 个地块），smallBaseId > 0 的行全部解码成 0；
+     - 行号编码的是同一个地块与地形变体（60XXYY×1000+序号，或 10^6/10^5/10^4 位 = XX−40/YY−30/v）。
+   - 适用规则：
+     - modifierMapId1 = 10+v 的行只适用于地形变体 v；
+     - modifierMapId1 = 0 的行通用，但 modifierMapId2/3 列出的变体除外；
+     - 大空洞有自己的一套行。
+   - 用坑道精英三行实测验证了这套规则：43511120 放在 0/5，46000110 放在 0/2/5，43401120 放在 0/3/5。
+   - 判定规则：
+     - 含 120 → 场景头目；
+     - 没有 120 但有 150/151 → 新增场合 **mine「坑道精英」**；
+     - 只有 110 → 据点首领；
+     - 都没有 → 场景头目（只表示放在开放地图上）；
+     - 大地块（LOD）按 part 名前缀里的原地块判定。
+   - 本轮改判：
+     - Troll (Mine) 46000110 → mine。证据：604436000 类别 150；奖励表 6130000「[Troll (Mine)]」。
+     - 大空洞坑道的挖石山妖 46030010 → mine。证据：1602940006 类别 151；它是该地形变体上唯一带首领奖励表的首领档行。
+   - 开放地块上仍标 field 但不带首领奖励表的 7 行，证据 note 里逐行注明「未必就是地图上标图标的那只」。
+
+2. **开放地块上的零奖励行。**
+   - 辅助实体判 summon：全部 part 换成别的模型、npcThinkParamId 为 0/1。NpcThinkParam 0/1 都是 logicId 11000、disableParam_NT = 1 的占位 AI。
+     - 本轮命中：“冻结冰雾”玻列琉斯 45030020。模型 c0100；part 名显示原属 m60_43_39_10，同一 chrId 的首领行是 45030010。
+   - 剧情敌人判 event（推断，EMEVD 未解析）：MSB part 与带 talkId 的实体同属一个实体组。
+     - 本轮命中：神皮使徒 35600060。与 6 个带对话脚本的 c0100 实体同属实体组 1029405700，同图还有 Scholar NPC 521090000。
+
+3. **标签改取游戏文本。**
+   - 出处：TutorialBody 403200 地图图标说明「坑道入口 / 要塞 / 场景头目 / 封印监牢」（engus：Tunnel Entrance / Castle / Field Boss / Evergaol）。
+   - roleNames.field.zh 改为「场景头目」。
+   - 为保持一致，categoryZh 120（6 行）与变体 labelZh 的 (Field Boss)（21 个）也改成场景头目。
+   - 变体 labelZh 的地形名与 mapZh 统一：陨石坑 → 火山口（3 个），诺克拉提欧 → “隐城”诺克拉缇欧（5 个）。
+   - 以上都在生成时断言与游戏文本一致。
+
+4. **突袭证据补 LotResultMapPatternFlag.targetBoss**（Paramdex Meta：Refs = NightBossMenuParam）。
+   - 实测：520 个地图模式，每个 targetBoss 唯一，且与行名前缀「[夜王]」一致。
+   - 每种夜王 Raid 修饰都从不出现在该夜王自己的远征里。例如 10001 Harmonia 出现在 20 个模式中，分布为 9×10，3/4/5/6 各 ×2，0/7 各 ×1，从不含 8/18。
+   - 6 个突袭地图块的 placementMaps、以及哈尔莫妮亚突袭行的证据里，都写入了 targetBoss 分布。
+   - 大空洞 5240/5245/5250/5255 四块改写为**推断**：
+     - 它们自己的抽选结果没有一行落在 10001 模式里；
+     - 同建筑的另一元素变体 5242/5246/5252/5257 各有 1 行落在模式 1177「[Straghess] Great Hollow (DLC)」里；
+     - 是否启用要看 EMEVD。
+
+5. **notes.roleAudit.examples 数量订正。**
+   - 上轮修复说明写的是 10 条，但实际数据里是 9 条。
+   - 本轮新增死亡仪式鸟、黑夜骑兵、恶魔王子三条，现为 12 条。self_check 断言条数与 ROLE_EXAMPLES 一致。
+
+6. **统计变化。**
+   - roleSummary：场景头目 39 → 35，随从/召唤物 10 → 11，地图事件 4 → 5，新增坑道精英 2。
+   - caveats 47 → 48，末尾新增【场合】开放地图地块一条。
+   - self_check 断言 15523 项全过。
+   - 文件 1,594,753 字节。
+   - 新读入：TutorialBody（zhocn/engus）、NpcThinkParam（0/1 行）、NightBossMenuParam（targetBoss 名称），以及 LotResultMapPatternFlag 的 targetBoss 列。
+
+## 地图 MSB 提取（extract_msb.py）
+
+为判断首领「放在哪张地图、何时进入远征」，新增 extract_msb.py（复用 extract_msg.py 的归档解密/哈希/解压，用 Smithbox 的 NR 文件字典枚举 /map/mapstudio/*.msb.dcx），oodledec 增加 --batch 模式一次进程解一整批 Kraken 数据；产物 raw/msb/ 不入库。

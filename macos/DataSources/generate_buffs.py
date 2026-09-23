@@ -63,6 +63,57 @@ Each field in the output `rateFields` list was verified against the CSV header
 of raw/params/SpEffectParam.csv and against the Paramdex field metadata; nothing
 here is invented.
 
+Loadout slots and per-output applicability (schema v6)
+------------------------------------------------------
+The ranking page assembles a run loadout slot by slot, so every buff also says
+
+  sourceSlot / sourceSlots   which column it belongs to: weaponAffix (in-run
+                             armament passives, AttachEffectParam rows pooled
+                             through EquipParamCustomWeapon.attachEffectTableId_1..6),
+                             relicAffix (EquipParamAntique pools), accessory,
+                             consumable, spellBuff, weaponSkill, weaponInnate,
+                             character, permanent, runStack, other
+  appliesTo / appliesToDetail  yes / no / conditional for skill, sorcery,
+                             incantation, melee, ranged, throw -- derived from
+                             wepParamChange / magParamChange / miracleParamChange
+                             / throwAttackParamChange, triggerOnWepType,
+                             stateInfo and magicSubCategoryChange1..3 checked
+                             against the *measured* sub-categories of every
+                             skill / spell hit (data/nightreign-skills-v1.03.5.json
+                             + AtkParam_Pc + Magic.subCategory1..2)
+  relicAffixes[]             catalog alignment with
+                             data/nightreign-affixes-v1.03.4.json
+  weaponAffixIds, stackInput, suggestedNameZh, scope.weaponTypes ...
+
+plus the top-level slotRules (every number measured from params and asserted
+in self_check), weaponAffixes, weaponAffixPools, fixedRelics and attackIndex.
+v6 also fixes scope.attackContexts: magicSubCategoryChange1..3 is an OR list,
+so [112 Skill Attack, 111 Charged Skill Attack] is *not* a charged-only gate.
+
+A verification round on v6 added: the deep-only cap (each Deep-of-Night
+weapon holds at most one affix that no slot-1..3 pool offers, so 6 across
+six weapons, measured per EquipParamCustomWeapon row); the blessing role by
+pool family (81x + the 603000x00 pools of the [Unique] X+2 hero weapons);
+weaponInnate on every innate buff (weapon ids from EquipParamWeapon, the
+[Weapon Power] rows matched to their legendary AE); PermanentBuffInfo as the
+descZh of permanent / run-stack buffs (8970000 counts *newly found Sites of
+Grace*, not bosses); and a Chinese-only displayNameZh -- the disambiguation
+detail is the row name rendered from game text, never the English row name,
+asserted in self_check.  BehaviorParam_PC is read for a melee-population
+cross-check only (diagnostics.meleePopulationCheck).
+
+A second verification round added stacking.exclusiveKey / exclusiveScope,
+the key a page de-duplicates on: spCategory 20 ("Reset on Apply") is a
+same-id rule, so it is per SpEffect like none / stackSelf (stacking.group
+had merged all 77 of them); 200..299 is scoped by categoryPriority (every
+saved ladder in 204, every cracked tear in 201 owns a priority); accumulator
+ladders (accumuOverFireId tiers of the successive-attack talismans) share one
+key and carry buffs[].accumulatorLadder.  Also: weaponAffixDeepOnlyPositive
+(the deep-only cap does not count curses), 7020002 / 7020004 filed under
+relic affix 7020000, stateInfo 197 (thrusting counter) is no for spells and
+bows, and displayNameZh uses 「第N层」 / 「永久强化」 / the owning affix's
+potency before falling back to #spEffectId.
+
 Sources (all local, exported beforehand; nothing is fetched at run time)
 -----------------------------------------------------------------------
   raw/params/*.csv        regulation 1.03.5 (container 10350000), first column
@@ -72,6 +123,10 @@ Sources (all local, exported beforehand; nothing is fetched at run time)
                           Param Enums) and the Elden Ring paramdef for the
                           Japanese field descriptions -- both transcribed into
                           the tables below so this script stays offline.
+  ../../data/nightreign-affixes-v1.03.4.json, nightreign-relics-v1.03.4.json,
+  nightreign-skills-v1.03.5.json   read-only (v6): relic catalog alignment and
+                          the skill / spell hit lists behind appliesTo.  Run
+                          generate_skills.py first when the skills change.
 
 Run:  cd macos/DataSources && python3 generate_buffs.py
 """
@@ -82,7 +137,7 @@ import argparse
 import csv
 import json
 import re
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -94,7 +149,7 @@ PARAM_DIR = HERE / "raw" / "params"
 MSG_DIR = HERE / "raw" / "msg"
 DEFAULT_OUT = ROOT / "data" / "nightreign-buffs-v1.03.5.json"
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 SMITHBOX_COMMIT = "f5969c060cea240476e9dd4d6a64eafa9dbafaab"
@@ -109,6 +164,101 @@ CHAIN_INHERIT_LIMIT = 4
 # bump would not need this, but v1 -> v2 also narrowed countsAsDamage and
 # affectsAllies, which silently changes any ranking built on v1).
 SCHEMA_CHANGELOG: list[dict[str, Any]] = [
+    {
+        "version": 6,
+        "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；"
+              "只增字段、只增取值，没有改名或删字段。"
+              "① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）："
+              "v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，"
+              "局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。"
+              "sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行"
+              "引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill"
+              "（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。"
+              "② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）"
+              "与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、"
+              "顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。"
+              "③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，"
+              "只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』"
+              "的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；"
+              "v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、"
+              "buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。"
+              "④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，"
+              "顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；"
+              "**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／"
+              "compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；"
+              "顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），"
+              "数字附实测依据。"
+              "⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 "
+              "scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。"
+              "⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）"
+              "与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。"
+              "**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→"
+              "stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、"
+              "conditional 363→364。"
+              "⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、"
+              "8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，"
+              "按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，"
+              "本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。"
+              "其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；"
+              "脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。"
+              "displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／"
+              "道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。"
+              "**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、"
+              "68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，"
+              "3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。"
+              "displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；"
+              "唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。"
+              "diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。"
+              "⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、"
+              "suggestedName。"
+              "⑨ **核验补充**（仍是 v6，只增字段）："
+              "slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条"
+              "是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／"
+              "deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；"
+              "weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），"
+              "『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；"
+              "buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，"
+              "[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；"
+              "7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，"
+              "新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；"
+              "8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；"
+              "顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；"
+              "新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／"
+              "displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，"
+              "counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。"
+              "⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）："
+              "(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它："
+              "perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、"
+              "categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；"
+              "新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、"
+              "遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、"
+              "counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。"
+              "**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\""
+              "（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／"
+              "战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。"
+              "(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）"
+              "归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds "
+              "加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。"
+              "(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、"
+              "slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），"
+              "evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／"
+              "potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变"
+              "（诅咒仍为 true），上限的说明文字改为只数正面词条。"
+              "(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged "
+              "conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；"
+              "counts.appliesToByOutput 三类各 conditional −5／no +5。"
+              "(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；"
+              "只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条"
+              "（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；"
+              "另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。"
+              "counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；"
+              "suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。"
+              "(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；"
+              "notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，"
+              "按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；"
+              "slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；"
+              "slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。",
+    },
     {
         "version": 5,
         "zh": "① **buffs[].target 再修正 43 条 self→enemy：命中投递槽补全第三条路径。** "
@@ -756,9 +906,13 @@ SPCATEGORY_BEHAVIOUR = [
     (0, 0, "none", "不参与互斥；同类可以无限量共存"),
     (1, 1, "persistThroughDeath", "死亡后仍保留"),
     (10, 10, "stackSelf", "可与自己叠加（同一效果多份同时生效）"),
-    (20, 20, "resetOnApply", "重复取得时刷新计时"),
+    (20, 20, "resetOnApply",
+     "重复取得**同一个** SpEffect 时刷新计时（不叠第二份）；不同 ID 之间不互斥"
+     "（遗物词条、护符的被动大多是这一类，按 ID 各自独立，见 stacking.exclusiveKey）"),
     (100, 299, "removePrevious",
-     "同类互斥，新的覆盖旧的（200 需 categoryPriority 相同才覆盖）。"
+     "同类互斥，新的覆盖旧的。100–199 整个 spCategory 互斥；200–299 只有 categoryPriority 也相同才覆盖"
+     "（Paramdex 只把 200 标成 w/ Matching Priority，但 201／204 的数据显示整个 200 系列都按优先度分组："
+     "同一阶梯／同一道具的各档共用一个优先度，不同效果各有自己的优先度，见 stacking.exclusiveKey）。"
      "注意 205／206 未出现在 Paramdex 枚举里，但同属 200 系列＝Remove Previous 语义；"
      "206 的『异常状态量表逐层提升攻击力』1..10 层是同一条词条的十个档位，彼此互斥，只会生效当前层。"),
     (1000, 1999, "applyHighest", "同类互斥，按 categoryPriority 取最强的一份（数值小者优先）"),
@@ -777,6 +931,162 @@ def spcategory_behaviour(value: int) -> tuple[str, str]:
         if lo <= value <= hi:
             return code, zh
     return SPCATEGORY_UNKNOWN
+
+
+# --------------------------------------------------------------------------
+# v6 (re-verify): which *different* SpEffects exclude each other
+# --------------------------------------------------------------------------
+# stacking.group used "sp<spCategory>" for every behaviour other than
+# none / stackSelf, so all 77 spCategory=20 buffs (1310 SpEffectParam rows,
+# 1202 of the AttachEffectParam passives -- i.e. most relic affixes and
+# talismans) collapsed into one de-dup bucket and a page kept only one of
+# 红羽七刃剑 ×1.2 + 『装备三把以上短剑』 ×1.2 + 无赖被动 ×1.5.
+#
+# What the params actually say:
+#   * 20 is "Reset on Apply" (Paramdex NR SP_EFFECT_SPCATEGORY); it is about
+#     the *same* SpEffect being applied again (the timer restarts), not about
+#     other ids.  The affix catalog agrees: superposability 『不可叠加』 (the
+#     same affix twice does not stack) is sp20 on 126 affixes, while
+#     『不同级别可叠加』 (+1 and +2 do stack) is also sp20 on 7 affixes
+#     (6005600 / 6005601 ...), and one fixed relic carries two sp20 buffs.
+#     -> per SpEffect id, like none / stackSelf.
+#   * 200..299: Paramdex labels 200 "Remove Previous w/ Matching Priority";
+#     the data shows the whole block is priority-scoped.  201 has 292 rows
+#     over 90 priorities that come in tier pairs (带火破露滴 511028 and its
+#     tier 2 708940 share 226, 带魔力破露滴 511029 / 708950 share 227, ...),
+#     204 has 350 rows in 13 saved ladders and every ladder owns its own
+#     priority (封印监牢 7069001-010 = 11, 黑夜入侵者 7069201-210 = 13,
+#     玛雷家的庇佑 8988200-299 = 5, 复仇的庇佑 8998000-099 = 4, the relic
+#     『每次打倒…强敌』 ladders 8/9/10 ...).  A category-wide "remove previous"
+#     would make two relic affixes of that kind knock each other out, which
+#     is why the priorities are there.  -> "sp<cat>@p<priority>".
+#   * 100..199 (removePrevious), 1000.. (applyHighest), 10000.. (applyFirst):
+#     category-wide, as before (right-hand weapon enchant 162, body buffs 151,
+#     auras 160 ... -- the Elden Ring engine groups the same way).
+#   * accumulator ladders (successive-attack talismans etc.): the tiers are
+#     fired one by one through accumuOverFireId; tiers 1-3 are sp120 but the
+#     top tier is sp20 with effectEndurance=0 and the same value as tier 3
+#     (312508 ×1.11 = 312507 ×1.11).  Taken per id the page could multiply
+#     tier 3 and tier 4 of one talisman; the whole ladder takes the key of its
+#     category tiers.
+EXCLUSIVE_SCOPE_LABELS: "OrderedDict[str, str]" = OrderedDict([
+    ("perSpEffect", "只与自己（同一 spEffectId）互斥：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／"
+                    "resetOnApply／unknown。不同 ID 永不互相顶替；同一 ID 从多个来源各拿一份时，stackSelf 各份相乘，"
+                    "其余只算一份。键＝\"sp<spCategory>#<spEffectId>\"（与 group 相同）"),
+    ("category", "同 spCategory 互斥（removePrevious 100–199、applyHighest 1000–1999、applyFirst 10000 以上）："
+                 "键＝\"sp<spCategory>\"。例：162＝右手武器附魔（油脂、武器附魔战技、附魔祷告只能留一个），"
+                 "151＝『火焰啊，赐予我力量！』与狂热香药、勇者肉块，160＝黄金树立誓与振奋香、归于麾下"),
+    ("categoryPriority", "同 spCategory 且同 categoryPriority 才互斥（200–299 系列）：键＝\"sp<spCategory>@p<categoryPriority>\"。"
+                         "同一阶梯／同一道具的各档共用一个优先度（封印监牢 7069001–7069010 都是 11），"
+                         "不同效果各有自己的优先度（黑夜入侵者 13、玛雷家的庇佑 5、复仇的庇佑 4），因此彼此独立"),
+    ("accumulatorLadder", "累积阶梯（accumuOverFireId 逐档触发的连续攻击类）：各档共用一个键——有档位落在互斥类别里时取该类别的键"
+                          "（连续攻击类都是 sp120），否则取 \"ladder#<第 1 档 spEffectId>\"。最高档常是 spCategory=20、"
+                          "effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），按 ID 算会把两档相乘"),
+])
+
+
+def exclusive_category_key(sp_category: int, priority: int) -> tuple[str | None, str]:
+    """(key, scope) from spCategory / categoryPriority alone; key None = per SpEffect."""
+    behaviour, _zh = spcategory_behaviour(sp_category)
+    if behaviour == "removePrevious":
+        if 200 <= sp_category <= 299:
+            return f"sp{sp_category}@p{priority}", "categoryPriority"
+        return f"sp{sp_category}", "category"
+    if behaviour in ("applyHighest", "applyFirst"):
+        return f"sp{sp_category}", "category"
+    return None, "perSpEffect"
+
+
+def exclusive_key_evidence(sp: dict[str, dict[str, str]], attach: dict[str, dict[str, str]],
+                           catalog_affixes: list[dict[str, Any]]) -> dict[str, Any]:
+    """The numbers stackingRules 1-2 quote, measured (and asserted against the text)."""
+    rows_by_cat: dict[int, list[dict[str, str]]] = defaultdict(list)
+    for row in sp.values():
+        rows_by_cat[int(row["spCategory"])].append(row)
+    passive_fields = ("passiveSpEffectId_1", "passiveSpEffectId_2", "passiveSpEffectId_3")
+    attach_passives = Counter(int(sp[t]["spCategory"]) for row in attach.values()
+                              for t in (ref(row.get(f)) for f in passive_fields) if t in sp)
+    superpos: Counter = Counter()
+    for affix in catalog_affixes:
+        row = attach.get(str(affix["effectId"]))
+        if row is None:
+            continue
+        cats = sorted({int(sp[t]["spCategory"]) for t in (ref(row.get(f)) for f in passive_fields) if t in sp})
+        if cats == [20]:
+            superpos[affix.get("superposability") or "?"] += 1
+    per_200 = []
+    for cat in sorted(c for c in rows_by_cat if 200 <= c <= 299):
+        rows = rows_by_cat[cat]
+        per_200.append({"spCategory": cat, "rows": len(rows),
+                        "distinctCategoryPriority": len({r["categoryPriority"] for r in rows})})
+    # 204: one categoryPriority = one saved ladder (its rows sit in one id block)
+    by_priority: dict[int, list[dict[str, str]]] = defaultdict(list)
+    for row in rows_by_cat.get(204, []):
+        by_priority[int(row["categoryPriority"])].append(row)
+    ladders_204: list[dict[str, Any]] = []
+    for priority, rows in sorted(by_priority.items(), key=lambda kv: min(int(r["ID"]) for r in kv[1])):
+        ids = sorted(int(r["ID"]) for r in rows)
+        ladders_204.append({"categoryPriority": priority, "rows": len(rows),
+                            "firstSpEffectId": ids[0], "lastSpEffectId": ids[-1],
+                            "saveCategory": sorted({int(r["saveCategory"]) for r in rows}),
+                            "paramName": next((r.get("Name") for r in sorted(rows, key=lambda r: int(r["ID"]))
+                                               if r.get("Name")), None)})
+    return {
+        "spCategory20Rows": len(rows_by_cat.get(20, [])),
+        "attachEffectPassivesBySpCategory": {str(k): v for k, v in sorted(attach_passives.items())},
+        "affixCatalogSuperposabilityOfSp20": dict(sorted(superpos.items())),
+        "category200sPriorities": per_200,
+        "sp204Ladders": ladders_204,
+        # every priority group is one id block (a ladder), not ids scattered over the table
+        "sp204LaddersAreIdBlocks": all(l["lastSpEffectId"] - l["firstSpEffectId"] + 1 <= l["rows"] + 10
+                                       for l in ladders_204),
+    }
+
+
+def accumulator_ladders(sp: dict[str, dict[str, str]]) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Tier SpEffects of every multi-step accumulator ladder, and any unmergeable ladder.
+
+    An accumulator row carries accumuOverFireId (the SpEffect fired once the
+    counter passes accumuOverVal).  One ladder = a run of consecutive
+    accumulator ids with the same stateInfo (312501..312504 -> 312505..312508,
+    thresholds 17/30/45/60).  Single accumulators are not ladders.
+    """
+    ids = sorted(int(k) for k, row in sp.items() if ref(row.get("accumuOverFireId")))
+    families: list[list[int]] = []
+    for value in ids:
+        if (families and value == families[-1][-1] + 1
+                and sp[str(value)]["stateInfo"] == sp[str(families[-1][-1])]["stateInfo"]):
+            families[-1].append(value)
+        else:
+            families.append([value])
+    tiers_of: dict[str, dict[str, Any]] = {}
+    conflicts: list[dict[str, Any]] = []
+    for family in families:
+        if len(family) < 2:
+            continue
+        pairs = sorted(((float(sp[str(a)]["accumuOverVal"]), a, ref(sp[str(a)]["accumuOverFireId"]))
+                        for a in family), key=lambda p: (p[0], p[1]))
+        targets = [t for _thr, _a, t in pairs if t in sp]
+        if len(targets) < 2:
+            continue
+        keys = sorted({k for k in (exclusive_category_key(int(sp[t]["spCategory"]),
+                                                          int(sp[t]["categoryPriority"]))[0]
+                                   for t in targets) if k})
+        if len(keys) > 1:
+            conflicts.append({"accumulatorSpEffectIds": family, "tierSpEffectIds": [int(t) for t in targets],
+                              "keys": keys})
+            continue
+        key = keys[0] if keys else f"ladder#{targets[0]}"
+        for index, target in enumerate(targets, 1):
+            tiers_of[target] = {
+                "key": key,
+                "tier": index,
+                "tiers": len(targets),
+                "tierSpEffectIds": [int(t) for t in targets],
+                "accumulatorSpEffectIds": [a for _thr, a, _t in pairs if _t in sp],
+                "thresholds": [as_number(str(thr)) for thr, _a, t in pairs if t in sp],
+            }
+    return tiers_of, conflicts
 
 
 # --------------------------------------------------------------------------
@@ -1202,6 +1512,10 @@ ACTIVATION_SOURCE_LABELS = {
                        "不是玩家要满足的状态；v3 把它们算进来，导致 210 条无条件 buff"
                        "（狂热香药 ×1.45、黄金树立誓 ×1.15…）被误判成 conditional。",
     "onHitTrigger": "来源是 AttachEffectParam.onHitSpEffect（命中时才挂上），同 buffs[].triggered。",
+    "stackInputRequired": "**v6 新增**：局内叠层增益（sourceSlot=runStack），一局开始时是 0 层，"
+                          "层数要由用户按实际打倒的首领数填写（见 buffs[].stackInput），"
+                          "因此不得作为『装上就有』的 passive 默认乘进排名"
+                          "（例：8970000『赐福王的余威』每层 ×1.02，v5 标成 passive／noEvidence）。",
     "eventScriptTimedBuff": "这条 SpEffect 没有任何参数列指向它（全部来源都是 inferred=true，由游戏脚本挂载），"
                             "且持续时间有限（effectEndurance ≠ -1）——脚本必然是在某个时刻才把它打开的，"
                             "只是那个时刻写在 ESD／EMEVD 里、参数表看不到"
@@ -1214,8 +1528,20 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
 1. spCategory 是主判定字段，决定同类效果之间怎么处理：
    - 0（none）：不参与互斥，想挂多少份就挂多少份；
    - 10（stackSelf）：同一个效果可以与自己叠加（遗物词条里的「提升物理攻击力」等就属于这一类，因此带同名词条的多枚遗物是各自结算再相乘的）；
-   - 20（resetOnApply）：重复取得时只刷新持续时间；
-   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉；其中 200 要求 categoryPriority 相同才顶替。
+   - 20（resetOnApply）：**同一个 SpEffect** 重复取得时只刷新持续时间、不叠第二份；不同 ID 之间不互斥。
+     Paramdex NR 的枚举就叫 Reset on Apply，说的是同一效果重复获得；遗物词条、护符的被动绝大多数是这一类
+     （SpEffectParam 里 1310 行；AttachEffectParam passiveSpEffectId_1..3 的引用里有 1202 处指向 20 类），若跨 ID 互斥，装两条遗物词条就会互相顶掉。
+     词条库的实测叠加性与此一致：『不可叠加』（同一词条装两次不叠）有 126 条是 20，
+     『不同级别可叠加』（＋1 与＋2 可以同时生效）也有 7 条是 20（词条 6005600／6005601…，对应 buff 7005601／7005602）；
+     固定遗物『辽阔的光耀情景』一件就带 7030602、7034402 两条 20 类增益。
+     v6 之前 stacking.group 把 20 按类别整组合并，77 条互不相干的增益只剩一条，已改为按 ID；
+   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；
+     200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示
+     整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个
+     （带火破露滴 511028 与档位2 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；
+     204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、
+     黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、
+     遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。
      Paramdex 的 SP_EFFECT_SPCATEGORY 枚举只标注到 204，但本作实际还用了 205（学者绝招「共鸣」）与 206
      （遗物词条「异常状态量表逐层提升攻击力」1～10 层、三级投掷道具的减防叠层），整个 200 系列都是
      Remove Previous 语义，所以本表按区间归类：那十层「逐层提升攻击力」彼此互斥，同一时刻只生效当前层，
@@ -1227,7 +1553,25 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
    enums.spCategoryBehavior 末尾还有一条 min/max 为 null 的 "unknown" 兜底项，用于万一出现区间外的新值
    （本版本数据中不会出现，见 diagnostics.observedSpCategoryBehaviors）。
 
-2. 排名时的建议做法：先按 stacking.group（= spCategoryBehavior 为 stackSelf/none 时用 "sp<spCategory>#<spEffectId>"，其余情况用 "sp<spCategory>"）分组；同组内按上面的规则只保留一份（applyHighest 取 categoryPriority 最优，removePrevious/applyFirst 取玩家实际选择的那一份，默认取倍率最高者）；不同组之间视为相互独立，各自的倍率相乘。
+2. 排名时的建议做法：**按 stacking.exclusiveKey 分组**（v6 新增，取值规则见 enums.exclusiveScope）：
+   - exclusiveScope=perSpEffect：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown，
+     键＝"sp<spCategory>#<spEffectId>"，只和自己同键；
+   - exclusiveScope=category：removePrevious 100～199、applyHighest、applyFirst，键＝"sp<spCategory>"；
+   - exclusiveScope=categoryPriority：removePrevious 200～299，键＝"sp<spCategory>@p<categoryPriority>"；
+   - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），
+     各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 "sp120"），否则 "ladder#<第 1 档 id>"。
+     最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），
+     按 ID 算会把同一护符的两档相乘。
+   同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；
+   不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。
+   stacking.group 保留旧口径（"sp<spCategory>#<spEffectId>" 或 "sp<spCategory>"，只按类别、不看优先度与阶梯），
+   v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。
+   正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；
+   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010。
+   反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；
+   『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；
+   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间。
+   这些都写进了 self_check。
 
 3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。
 
@@ -1438,12 +1782,1309 @@ PERCENT_RE = re.compile(r"\(([+-]?\d+(?:\.\d+)?)\s*%\)")
 SIDE_RE = re.compile(r"\b(Right|Left)\b")
 
 
+# ==========================================================================
+# v6 -- loadout slots (武器词条／遗物／护符／道具…) and per-output appliesTo
+# ==========================================================================
+# The 增伤排名 page is being rebuilt as a *loadout builder*: the user fills
+# the slots a run really has (6 weapons x 1-2 affixes, 3+3 relics, 2
+# talismans, consumables / spell buffs / run stacks) and the page multiplies
+# only what applies to the chosen skill or spell.  v5 could not support that:
+#
+#   * every AttachEffectParam row that sat in *any* AttachEffectTableParam
+#     pool was exported as kind="relicAffix", so the in-run weapon affixes
+#     (8100000-8889999, pooled through EquipParamCustomWeapon) were
+#     indistinguishable from relic affixes;
+#   * nothing said which output a buff touches, so the page guessed from
+#     scope and got it wrong three ways (see notes.userQuestions Q1/Q2).
+#
+# Everything below is derived from the params at run time; the few numbers
+# that the params cannot give (talisman slots, the Night Invader cap) are
+# labelled with their source instead of being passed off as measured.
+
+AFFIX_CATALOG_PATH = ROOT / "data" / "nightreign-affixes-v1.03.4.json"
+RELIC_CATALOG_PATH = ROOT / "data" / "nightreign-relics-v1.03.4.json"
+SKILLS_DATASET_PATH = ROOT / "data" / "nightreign-skills-v1.03.5.json"
+
+SOURCE_SLOTS: "OrderedDict[str, dict[str, str]]" = OrderedDict([
+    ("weaponAffix", {
+        "zh": "局内武器词条", "en": "In-run armament passive",
+        "note": "局内捡到的武器随机带的附加效果（游戏里显示为「提升战技攻击力」「提升火属性攻击力」等）。"
+                "实现上是 AttachEffectParam 行，经 EquipParamCustomWeapon.attachEffectTableId_1..6 → "
+                "AttachEffectTableParam 池挂到武器上（与遗物词条同一张 AttachEffectParam 表、但不同的池）。"
+                "按 slotRules.weaponAffix 组装：常规每把 1 条、深夜诅咒武器每把 2 条（另带 1 条负面诅咒），最多 6 把；"
+                "深夜的 2 条正面词条里最多 1 条是深夜专属词条（weaponAffixDeepOnlyPositive=true；"
+                "weaponAffixDeepOnly=true 也包括诅咒，诅咒另算每把 1 条，不占这个名额）。"}),
+    ("relicAffix", {
+        "zh": "遗物词条", "en": "Relic affix",
+        "note": "EquipParamAntique 的词条池（attachEffectTableId_1..3／_curse1..3）里的 AttachEffectParam 行。"
+                "每条带 relicAffixes[]：catalogEffectId 对齐词条库 data/nightreign-affixes-v1.03.4.json，"
+                "页面按现有遗物合法性规则（windows/renderer/core.js）组遗物；官方固定词条遗物见 fixedRelics。"}),
+    ("accessory", {
+        "zh": "护符", "en": "Talisman",
+        "note": "EquipParamAccessory.spEffectId_1..3 → AttachEffectParam → SpEffectParam，名字取 AccessoryName。"
+                "按 slotRules.accessory 最多 2 个，同一护符（accessoryGroup 相同）不能重复。"}),
+    ("consumable", {
+        "zh": "道具（消耗品）", "en": "Consumable",
+        "note": "EquipParamGoods：香、油脂、露滴、投掷物等，使用后获得的增益。"}),
+    ("spellBuff", {
+        "zh": "增益法术", "en": "Buff spell",
+        "note": "Magic 表（魔法／祷告）施放后挂在身上或队友身上的增益，例如黄金树立誓、火焰啊赐予我力量。"}),
+    ("weaponSkill", {
+        "zh": "战技发动后的增益", "en": "Ash of War self-buff",
+        "note": "**v6 新增取值（任务清单外）**：战技（AoW）发动后给自己的增益，例如战技『黄金树立誓』『归于麾下』『神圣刀刃』。"
+                "它们由游戏脚本挂载（参数表无引用，sources[].inferred=true），数量多（v5 里 95 条），"
+                "既不是武器词条也不是法术，归进 other 会让页面把它们与场景增益混在一起。"
+                "注意：显示名里的『战技』是**来源**，不是『提升战技攻击力』——它们能否作用于法术看 appliesTo。"}),
+    ("weaponInnate", {
+        "zh": "武器固有效果", "en": "Armament innate effect",
+        "note": "**v6 新增取值（任务清单外）**：武器本身自带、不随机的效果——"
+                "EquipParamWeapon.residentSpEffectId*/spEffectBehaviorId*（武器自带的出血／中毒等）、"
+                "EquipParamWeapon.attachEffectId（传说武器的『XX的庇佑』，如玛雷家行刑剑『玛雷家的庇佑』），"
+                "以及 Paramdex 行名为 [Weapon Power]／[Bow]／[Arrow]／[Flail] 的脚本挂载行。选了那把武器才有。"}),
+    ("character", {
+        "zh": "角色技艺／绝招／被动", "en": "Nightfarer skill / ultimate / passive",
+        "note": "Paramdex 行名 [Skill - X]／[Ultimate - X]／[Passive - X]（脚本挂载），以及隐士的『混合魔法』[Magic Cocktail]。"}),
+    ("permanent", {
+        "zh": "永久强化／潜在能力", "en": "Permanent buff / Dormant Power",
+        "note": "PermanentBuffParam：局内打倒特定首领后获得、持续整局的效果（潜在能力、地图恩惠等）。"}),
+    ("runStack", {
+        "zh": "局内叠层增益", "en": "In-run stacking buff",
+        "note": "不依附任何装备、随一局进程反复叠加的增益（本版本是 PermanentBuffParam.graceSpEffectId 投递的『赐福王的余威』）。"
+                "叠层上限与每层倍率见 buffs[].stackInput。依附遗物词条／武器的叠层效果（封印监牢、黑夜入侵者、"
+                "玛雷家的庇佑、复仇的庇佑）仍归各自的装备槽位，同样带 stackInput。"}),
+    ("other", {
+        "zh": "其他", "en": "Other",
+        "note": "不属于上面任何可组装槽位的来源，每条都写了 sourceSlotReason："
+                "天秤契约（黑夜王交易）、场景互动（蝴蝶、陨石）、没有任何池／物品引用的 AttachEffectParam 行、"
+                "只能从其它 SpEffect 链式到达的行等。"}),
+])
+SOURCE_SLOT_ORDER = {key: index for index, key in enumerate(SOURCE_SLOTS)}
+
+OUTPUT_CLASSES: "OrderedDict[str, dict[str, str]]" = OrderedDict([
+    ("skill", {"zh": "战技", "en": "Skill (Ash of War)", "delivery": "weapon",
+               "population": "skills 数据集里每个有伤害段的战技（skills[].hits 去掉 noDamage／noVariant 段）"
+                             "——子类别取 AtkParam_Pc.subCategory1..5；战技射出的子弹段同样算"}),
+    ("sorcery", {"zh": "魔法", "en": "Sorcery", "delivery": "sorcery",
+                 "population": "skills 数据集 spells[] 里 kind=sorcery 且有伤害段的法术——子类别取 "
+                               "Magic.subCategory1..2（流派）∪ 命中段 AtkParam_Pc.subCategory1..5（蓄力 110 等）"}),
+    ("incantation", {"zh": "祷告", "en": "Incantation", "delivery": "incantation",
+                     "population": "spells[] 里 kind=incantation 且有伤害段的祷告，子类别口径同上"}),
+    ("melee", {"zh": "近战普通攻击", "en": "Melee armament attack", "delivery": "weapon",
+               "population": "AtkParam_Pc 中行名为空（武器动作行）、带 130 近战武器攻击、throwFlag=0、"
+                             "且不带战技／技艺／绝招／远程／道具类子类别的行。"
+                             "注意这个口径是**用 130 本身定义的**，所以『提升近战攻击力』[130] 对 melee 判 yes 是定义使然；"
+                             "独立旁证见 diagnostics.meleePopulationCheck：按各武器 behaviorVariationId 在 BehaviorParam_PC"
+                             "（refType 0）实际引用的有伤害的无名行里，不带 130 的只有骑马攻击（101）等少数行"
+                             "（本作没有骑乘，推断是沿用行，未实测）；"
+                             "没有任何子类别的无名行不计入，其中有伤害且被武器引用的逐条列在 "
+                             "meleePopulationCheck.unnamedNoSubcategoryDamagingReferencedByWeapons"}),
+    ("ranged", {"zh": "弓弩普通射击", "en": "Ranged armament attack", "delivery": "weapon",
+                "population": "AtkParam_Pc 中 isArrowAtk=1、不带 112 战技攻击的行（普通射击；战技箭算 skill）"}),
+    ("throw", {"zh": "致命一击（背刺／破防处决）", "en": "Critical hit (throw attack)", "delivery": "throw",
+               "population": "AtkParam_Pc 中 throwFlag=2（ATK_PATAM_THROWFLAG_TYPE：Throw）的行"}),
+])
+
+APPLIES_TO_VALUES = OrderedDict([
+    ("yes", "对这类输出生效（仍要按 rates 的属性与伤害构成加权）"),
+    ("no", "对这类输出不生效——页面应虚化并显示 reason"),
+    ("conditional", "要看具体的战技／法术／持武器的手／攻击情境：requires 给出机读条件，"
+                    "matchShare 是按人口实测的命中比例（战技、法术按条目，近战／射击／致命一击按 AtkParam 行）"),
+])
+APPLIES_RANK = {"no": 0, "conditional": 1, "yes": 2}
+
+# economy fields that are meaningful for one of the six outputs; every other
+# economy field (ultimate gauge, character-skill cooldown, goods, regain,
+# spell-buff duration) never changes the damage of these six outputs.
+ECONOMY_OUTPUTS: dict[str, dict[str, str]] = {
+    "artsConsumptionRate": {"skill": "yes"},
+    "magicConsumptionRate": {"sorcery": "yes"},
+    "miracleConsumptionRate": {"incantation": "yes"},
+    "bowDistRate": {"ranged": "yes", "skill": "conditional"},
+}
+
+# Paramdex WEP_TYPE (NR/Param Enums/WEP_TYPE.json @ SMITHBOX_COMMIT), English
+# labels only; the Chinese label is resolved from CL_MenuText 60000-60200 by
+# matching the English text, so no Chinese is hand-typed here.
+WEP_TYPE_EN: dict[int, str] = {
+    1: "Dagger", 3: "Straight Sword", 5: "Greatsword", 7: "Colossal Sword",
+    9: "Curved Sword", 11: "Curved Greatsword", 13: "Katana", 14: "Twinblade",
+    15: "Thrusting Sword", 16: "Heavy Thrusting Sword", 17: "Axe", 19: "Greataxe",
+    21: "Hammer", 23: "Great Hammer", 24: "Flail", 25: "Spear", 28: "Great Spear",
+    29: "Halberd", 31: "Reaper", 33: "Fist (Unarmed)", 35: "Fist", 37: "Claw",
+    39: "Whip", 41: "Colossal Weapon", 50: "Light Bow", 51: "Bow", 53: "Greatbow",
+    55: "Crossbow", 56: "Ballista", 57: "Glintstone Staff", 61: "Sacred Seal",
+    65: "Small Shield", 67: "Medium Shield", 69: "Greatshield", 81: "Arrow",
+    83: "Greatarrow", 85: "Bolt", 86: "Greatbolt", 87: "Torch",
+}
+RANGED_WEP_TYPES = {50, 51, 53, 55, 56}
+SORCERY_CATALYST_WEP_TYPES = {57}
+INCANTATION_CATALYST_WEP_TYPES = {61}
+
+# Hero order used by CL_MenuText 288050+i (name), 411010+i (skill), 413010+i
+# (ultimate) -- the same order AttachEffectFilterSubCategoryParam uses.
+HERO_TEXT_BASE = {"name": 288050, "skill": 411010, "ultimate": 413010, "passive": 415010}
+HERO_ORDER = ["Wylder", "Guardian", "Ironeye", "Duchess", "Raider", "Revenant",
+              "Recluse", "Executor", "Scholar", "Undertaker"]
+
+# AtkParam subcategories that make a row something other than a plain melee
+# armament attack (used to carve the melee population out of AtkParam_Pc).
+NON_MELEE_SUBCATEGORIES = {105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 116, 117,
+                           118, 120, 121, 122, 123, 126}
+HERO_ONLY_SUBCATEGORIES = {122, 123}
+ITEM_SUBCATEGORIES = {108, 109, 114, 120, 121}
+
+# English tail phrases of script-applied rows -> Chinese, for suggestedNameZh
+# only.  Longest first; applied as whole-token replacements.  Anything these
+# cannot translate stays visible in suggestedNameZhUntranslated so the gap is
+# measurable instead of silently English.
+TAIL_PHRASES_ZH: list[tuple[str, str]] = [
+    (r"Attack and Poise Buff \+ Fire Weapon VFX", "攻击力与削韧增益"),
+    # v6 (display-name detail): 死诞者 is the game's own word for "Those Who
+    # Live in Death" (ArtsCaption 604/605/1053, 『对死诞者的伤害尤为巨大』)
+    (r"Damage/Defen[cs]e/Stamina Buff", "伤害／防御／精力增益"),
+    (r"Anti-Undead/Damage Buff", "对死诞者特效／伤害增益"),
+    (r"Boost Physical and Fire Damage", "提升物理与火属性伤害"),
+    (r"Throw Damage Adjust", "致命一击伤害修正"),
+    (r"Successive Attack Boost", "连续攻击加成"),
+    (r"On-Hit Weapon Effect (\d+)", r"命中时武器效果\1"),
+    (r"Attack/Defen[cs]e/Poise", "攻击力／防御力／强韧度"),
+    (r"Damage/Stagger Buff", "伤害／削韧增益"),
+    (r"Damage/Defen[cs]e Buff", "伤害／防御增益"),
+    (r"Damage/Defen[cs]e Change", "伤害／防御调整"),
+    (r"Anti-Undead Buff", "对死诞者特效增益"),
+    (r"Ultimate Power Adjust", "绝招威力调整"),
+    (r"Enemy Attack Debuff", "降低敌人攻击力"),
+    (r"Spirit Stat Change", "灵魂数值调整"),
+    (r"Beast Attack Boost", "兽化攻击力提升"),
+    (r"Beast Depth (\d+)", r"兽化・深度\1"),
+    (r"Apply State Info", "状态标记"),
+    (r"Attack Boost", "攻击力提升"),
+    (r"Damage Reduction", "伤害降低"),
+    (r"Damage Buff", "伤害增益"),
+    (r"Weapon Buff", "武器增益"),
+    (r"Aura Buff", "光环增益"),
+    (r"No FP", "无专注值版"),
+    (r"\[NPC\]", "NPC专用版"),
+    # v6 (re-verify): 「第N层」 like the accumulator tiers (accumulatorLadder),
+    # so 3558..3561 read 连刺破露滴（第1层）..（第4层） in one style
+    (r"\(Tier (\d+) Boost\)", r"第\1层"),
+    # v6 (re-verify): 1731002 / 1731003 (The Flame of Frenzy, Self vs Charged
+    # Self Madness +4) had no Chinese detail and fell back to #spEffectId
+    (r"\bSelf Madness \+\d+", "自身累积"),
+    (r"\bCharged\b", "蓄力"),
+    (r"\(Add (\d+) damage\)", r"伤害+\1"),
+    (r"Level (\d+)", r"等级\1"),
+    (r"Depth (\d+)", r"深度\1"),
+    (r"\bRight-Hand\b", "右手"),
+    (r"\bLeft-Hand\b", "左手"),
+    (r"\bRight\b", "右手"),
+    (r"\bLeft\b", "左手"),
+    (r"\bSelf\b", "自身"),
+    (r"\bAllies\b", "队友"),
+    (r"\bStart\b", "起始"),
+    (r"\bBuff\b", "增益"),
+    (r"\b(\d+)$", r"\1"),
+]
+# Latin letters allowed inside a Chinese display name (self_check): the NPC
+# marker of TAIL_PHRASES_ZH and the game's own HP / FP abbreviations.
+ZH_LATIN_ALLOWED = {"NPC", "HP", "FP"}
+ZH_LATIN_RE = re.compile(r"[A-Za-z]+")
+
+
+def zh_latin_residue(text: str | None) -> list[str]:
+    """Latin words left in a Chinese display string (empty = fully Chinese)."""
+    return [w for w in ZH_LATIN_RE.findall(text or "") if w not in ZH_LATIN_ALLOWED]
+# Stems that no FMG names.  Each entry says where the Chinese comes from.
+MANUAL_STEMS_ZH: dict[str, tuple[str, str]] = {
+    "Attack Stance": ("攻击架式", "手工翻译：Paramdex 行名 [AoW] Attack Stance，ArtsName 无此战技（本作未实装的战技行）"),
+    "Golden Great Arrow": ("黄金大箭", "WeaponCaption 42030000（黄金树大弓说明文）原文用词「黄金大箭」"),
+    "Fallen Meteroite": ("坠落陨石", "手工翻译：Paramdex 行名 [Interactable Effect] Fallen Meteroite（场景互动）"),
+    "Charge": ("蓄力", "手工翻译：Paramdex 行名 [Flail] Charge"),
+}
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def has_weight(row: dict[str, str]) -> bool:
+    """Effective pool membership: base weight or DLC weight above zero.
+
+    AttachEffectTableParam carries two weights; chanceWeight_dlc (!= -1)
+    overrides for owners of the DLC.  Six Scholar / Undertaker affixes sit in
+    pool 2200000 with chanceWeight=0 but chanceWeight_dlc=40/160, which is
+    why the affix catalog lists 283 members where the base weight shows 277.
+    """
+    for key in ("chanceWeight", "chanceWeight_dlc"):
+        try:
+            if float(row.get(key) or "-1") > 0:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def pool_members(table_rows: list[dict[str, str]]) -> dict[str, list[str]]:
+    members: dict[str, list[str]] = defaultdict(list)
+    for row in table_rows:
+        attach_id = ref(row.get("attachEffectId"))
+        if attach_id and has_weight(row) and attach_id not in members[row["ID"]]:
+            members[row["ID"]].append(attach_id)
+    return members
+
+
+def potency_of(name: str | None) -> int | None:
+    match = re.search(r"\bPotency (\d+)\b", name or "")
+    return int(match.group(1)) if match else None
+
+
+def subcategory_set(row: dict[str, str], fields: tuple[str, ...]) -> frozenset[int]:
+    out = set()
+    for field in fields:
+        try:
+            value = int(row.get(field) or "0")
+        except ValueError:
+            continue
+        if value:
+            out.add(value)
+    return frozenset(out)
+
+
+ATK_SUB_FIELDS = tuple(f"subCategory{i}" for i in range(1, 6))
+MAGIC_SUB_FIELDS = ("subCategory1", "subCategory2")
+
+
+class AttackPopulations:
+    """Measured attack signatures per output class (see OUTPUT_CLASSES)."""
+
+    def __init__(self, atk_pc: dict[str, dict[str, str]], magic_rows: dict[str, dict[str, str]],
+                 skills_data: dict[str, Any], bullet_atk_ids: set[str]) -> None:
+        self.items: dict[str, list[dict[str, Any]]] = {"skill": [], "sorcery": [], "incantation": []}
+        self.rows: dict[str, Counter] = {"melee": Counter(), "ranged": Counter(), "throw": Counter()}
+        self.skill_index: dict[str, Any] = {}
+        self.spell_index: dict[str, Any] = {}
+        missing_atk: set[int] = set()
+
+        def hit_sets(hits: list[dict[str, Any]], extra: frozenset[int]) -> Counter:
+            sets: Counter = Counter()
+            for hit in hits:
+                if hit.get("noDamage") or hit.get("noVariant"):
+                    continue
+                atk = atk_pc.get(str(hit.get("atkId")))
+                if atk is None:
+                    missing_atk.add(int(hit.get("atkId") or 0))
+                    continue
+                sets[subcategory_set(atk, ATK_SUB_FIELDS) | extra] += 1
+            return sets
+
+        for skill in skills_data.get("skills", []):
+            sets = hit_sets(skill.get("hits") or [], frozenset())
+            if not sets:
+                continue
+            item = {"id": int(skill["id"]), "nameZh": skill.get("nameZh") or skill.get("nameEn"),
+                    "sets": sets}
+            self.items["skill"].append(item)
+            self.skill_index[str(skill["id"])] = {
+                "nameZh": item["nameZh"],
+                "subCategorySets": [{"subs": sorted(s), "hits": n}
+                                    for s, n in sorted(sets.items(), key=lambda kv: (sorted(kv[0]), kv[1]))],
+            }
+        for spell in skills_data.get("spells", []):
+            kind = spell.get("kind")
+            if kind not in ("sorcery", "incantation"):
+                continue
+            magic_row = magic_rows.get(str(spell["id"])) or {}
+            magic_subs = subcategory_set(magic_row, MAGIC_SUB_FIELDS)
+            sets = hit_sets(spell.get("hits") or [], magic_subs)
+            if not sets:
+                continue
+            item = {"id": int(spell["id"]), "nameZh": spell.get("nameZh") or spell.get("nameEn"),
+                    "sets": sets}
+            self.items[kind].append(item)
+            self.spell_index[str(spell["id"])] = {
+                "nameZh": item["nameZh"],
+                "kind": kind,
+                "magicSubCategories": sorted(magic_subs),
+                "subCategorySets": [{"subs": sorted(s), "hits": n}
+                                    for s, n in sorted(sets.items(), key=lambda kv: (sorted(kv[0]), kv[1]))],
+            }
+        for atk in atk_pc.values():
+            subs = subcategory_set(atk, ATK_SUB_FIELDS)
+            name = (atk.get("Name") or "").strip()
+            if atk.get("throwFlag") == "2":
+                self.rows["throw"][subs] += 1
+                continue
+            if atk.get("throwFlag") != "0":
+                continue
+            if atk.get("isArrowAtk") == "1":
+                # only rows a Bullet actually fires (1200-3xxx are unreferenced
+                # leftovers), and not the throwing-knife / stone item rows
+                if (atk["ID"] in bullet_atk_ids and 112 not in subs
+                        and not subs & (HERO_ONLY_SUBCATEGORIES | ITEM_SUBCATEGORIES)):
+                    self.rows["ranged"][subs] += 1
+                continue
+            if not name and 130 in subs and not subs & NON_MELEE_SUBCATEGORIES:
+                self.rows["melee"][subs] += 1
+        self.missing_atk_ids = sorted(missing_atk)
+
+    def match(self, cls: str, wanted: frozenset[int]) -> tuple[str, float, list[str]]:
+        """(value, share, notes) for a magicSubCategoryChange set on one class."""
+        if cls in self.items:
+            items = self.items[cls]
+            if not items:
+                return "no", 0.0, []
+            any_hits = [item for item in items if any(s & wanted for s in item["sets"])]
+            all_hits = [item for item in items if all(s & wanted for s in item["sets"])]
+            share = round(len(any_hits) / len(items), 4)
+            if not any_hits:
+                return "no", 0.0, []
+            if len(all_hits) == len(items):
+                return "yes", 1.0, []
+            if len(any_hits) == len(items):
+                partial = [i["nameZh"] for i in items if i not in all_hits]
+                return "conditional", share, [f"全部 {len(items)} 个都有这类段，但 {len(partial)} 个只有部分段带"
+                                              f"（例：{'、'.join(partial[:5])}）"]
+            if share >= 0.5:
+                without = [i["nameZh"] for i in items if i not in any_hits]
+                return "conditional", share, [f"{len(items)} 个里 {len(any_hits)} 个有这类段"
+                                              f"（没有的：{'、'.join(without[:6])}{'…' if len(without) > 6 else ''}）"]
+            with_ = [i["nameZh"] for i in any_hits]
+            return "conditional", share, [f"{len(items)} 个里只有 {len(any_hits)} 个有这类段"
+                                          f"（{'、'.join(with_[:6])}{'…' if len(with_) > 6 else ''}）"]
+        rows = self.rows[cls]
+        total = sum(rows.values())
+        if not total:
+            return "no", 0.0, []
+        hit = sum(n for subs, n in rows.items() if subs & wanted)
+        share = round(hit / total, 4)
+        if hit == 0:
+            return "no", 0.0, []
+        if hit == total:
+            return "yes", 1.0, []
+        return "conditional", share, [f"AtkParam_Pc 里 {total} 行中 {hit} 行带这类子类别"]
+
+    def counts(self) -> dict[str, int]:
+        out = {cls: len(items) for cls, items in self.items.items()}
+        out.update({cls: sum(rows.values()) for cls, rows in self.rows.items()})
+        return out
+
+
+def atk_row_deals_damage(atk: dict[str, str]) -> bool:
+    fields = ATK_CORRECTION_FIELDS + ["atkPhys", "atkMag", "atkFire", "atkThun", "atkDark"]
+    for field in fields:
+        try:
+            if float(atk.get(field) or "0") != 0:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def melee_population_check(atk_pc: dict[str, dict[str, str]], weapons_by_id: dict[str, dict[str, str]],
+                           weapon_names_zh: dict[str, str]) -> dict[str, Any]:
+    """Cross-check of the melee population (outputClass.melee) against the rows
+    the armaments actually use.
+
+    The melee population is *defined* as unnamed AtkParam_Pc rows carrying 130
+    (近战武器攻击), so 『提升近战攻击力』 [130] is melee=yes by construction.  This
+    measures what that definition leaves out: (a) unnamed non-throw non-arrow
+    rows with no subcategory at all, split into zero-damage and damaging rows;
+    (b) the independent route -- AtkParam_Pc rows referenced by
+    BehaviorParam_PC (refType 0 = attack) of every named weapon's
+    behaviorVariationId -- and how many of those lack 130.
+    """
+    no_sub = [a for a in atk_pc.values()
+              if a.get("throwFlag") == "0" and a.get("isArrowAtk") != "1"
+              and not (a.get("Name") or "").strip() and not subcategory_set(a, ATK_SUB_FIELDS)]
+    no_sub_damaging = sorted(int(a["ID"]) for a in no_sub if atk_row_deals_damage(a))
+    variations = {w.get("behaviorVariationId") for wid, w in weapons_by_id.items()
+                  if weapon_names_zh.get(wid) and ref(w.get("behaviorVariationId"))}
+    referenced = {row["refId"] for row in read_param("BehaviorParam_PC")
+                  if row.get("refType") == "0" and row.get("variationId") in variations}
+    with_130 = 0
+    without: Counter = Counter()
+    without_ids: list[int] = []
+    for atk_id in referenced:
+        atk = atk_pc.get(atk_id)
+        if (atk is None or (atk.get("Name") or "").strip() or atk.get("throwFlag") != "0"
+                or atk.get("isArrowAtk") == "1" or not atk_row_deals_damage(atk)):
+            continue
+        subs = subcategory_set(atk, ATK_SUB_FIELDS)
+        if 130 in subs:
+            with_130 += 1
+        else:
+            without[",".join(str(v) for v in sorted(subs)) or "-"] += 1
+            without_ids.append(int(atk_id))
+    no_sub_referenced = sorted(int(a["ID"]) for a in no_sub if a["ID"] in referenced and atk_row_deals_damage(a))
+    blocks: Counter = Counter("<1000000" if v < 1_000_000 else str(v // 1000 * 1000) for v in no_sub_damaging)
+    return {
+        "unnamedNoSubcategoryRows": len(no_sub),
+        "unnamedNoSubcategoryZeroDamage": len(no_sub) - len(no_sub_damaging),
+        "unnamedNoSubcategoryDamaging": len(no_sub_damaging),
+        "unnamedNoSubcategoryDamagingByIdBlock": dict(sorted(blocks.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "unnamedNoSubcategoryDamagingReferencedByWeapons": no_sub_referenced,
+        "weaponBehaviorVariations": len(variations),
+        "weaponBehaviorDamagingRows": with_130 + sum(without.values()),
+        "weaponBehaviorRowsWith130": with_130,
+        "weaponBehaviorRowsWithout130BySubCategories": dict(sorted(without.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "weaponBehaviorRowsWithout130": sorted(without_ids),
+    }
+
+
+def sub_label(value: int) -> str:
+    zh, _en = ATK_SUB_CATEGORY.get(value, (str(value), str(value)))
+    return f"{value} {zh}"
+
+
+def evaluate_applies_to(row: dict[str, str], target: str, rates: dict[str, Any],
+                        pops: AttackPopulations, wep_type_zh: dict[int, str],
+                        named_wep_types: set[int], skill_wep_types: set[int]) -> "OrderedDict[str, dict]":
+    """Per-output verdict for one SpEffect row.  Pure function of the row."""
+    out: "OrderedDict[str, dict]" = OrderedDict()
+    groups = {RATE_FIELD_BY_KEY[key]["group"] for key in rates}
+    live_groups = groups - {"flag"}
+    economy_only = live_groups == {"economy"}
+    wep = int(row.get("wepParamChange") or "0")
+    mag = row.get("magParamChange") == "1"
+    mir = row.get("miracleParamChange") == "1"
+    thr = row.get("throwAttackParamChange") == "1"
+    state = int(row.get("stateInfo") or "0")
+    on_type = int(row.get("triggerOnWepType") or "0")
+    attached = row.get("triggerAttachedWeapon") == "1"
+    sp_attr = int(row.get("spAttribute") or "254")
+    atk_attr = int(row.get("atkAttribute") or "254")
+    subs = frozenset(int(row[f"magicSubCategoryChange{i}"]) for i in (1, 2, 3)
+                     if int(row[f"magicSubCategoryChange{i}"]))
+
+    def type_name(value: int) -> str:
+        return wep_type_zh.get(value) or f"武器类别 {value}"
+
+    for cls, spec in OUTPUT_CLASSES.items():
+        gates: list[tuple[str, str, dict[str, Any]]] = []
+        share: float | None = None
+        if target in ("enemy", "summon"):
+            gates.append(("no", f"target={target}（挂在{'被命中的敌人' if target == 'enemy' else '召唤物'}身上）", {}))
+        elif economy_only:
+            hits = [(key, ECONOMY_OUTPUTS[key][cls]) for key in rates
+                    if key in ECONOMY_OUTPUTS and cls in ECONOMY_OUTPUTS[key]]
+            if hits:
+                value = max((v for _k, v in hits), key=lambda v: APPLIES_RANK[v])
+                req = {"subCategoriesAny": [105]} if value == "conditional" else {}
+                gates.append((value, "只含消耗／射程类字段：" + "、".join(
+                    f"{RATE_FIELD_BY_KEY[k]['zh']}" for k, _v in hits)
+                    + ("（弓系战技才有射程衰减）" if value == "conditional" else ""), req))
+            else:
+                labels = "、".join(RATE_FIELD_BY_KEY[k]["zh"] for k in rates
+                                  if RATE_FIELD_BY_KEY[k]["group"] == "economy")
+                gates.append(("no", f"只含 {labels}，不改变{spec['zh']}的伤害", {}))
+        else:
+            # --- hard state gates -------------------------------------------
+            if state == 367:
+                gates.append(("yes" if cls == "throw" else "no",
+                              "stateInfo=367（强化致命一击）：只作用于致命一击", {}))
+            # --- delivery ----------------------------------------------------
+            delivery = spec["delivery"]
+            if delivery == "weapon":
+                if thr:
+                    gates.append(("no", "throwAttackParamChange=1：这一行只作用于致命一击（投げ攻撃）", {}))
+                elif wep == 3:
+                    gates.append(("no", "wepParamChange=3（自身）：不作用于武器攻击", {}))
+                elif wep == 4:
+                    gates.append(("no", "wepParamChange=4：只作用于踢击", {}))
+                elif wep in (1, 2):
+                    gates.append(("conditional", f"wepParamChange={wep}：只作用于{WEP_CHANGE_PARAM[wep][0]}的攻击",
+                                  {"hand": wep}))
+            elif delivery == "throw":
+                if not thr:
+                    if wep in (3, 4):
+                        gates.append(("no", f"wepParamChange={wep}：不作用于武器攻击", {}))
+                    elif wep in (1, 2):
+                        gates.append(("conditional", f"wepParamChange={wep}：只作用于{WEP_CHANGE_PARAM[wep][0]}的攻击",
+                                      {"hand": wep}))
+                    else:
+                        gates.append(("yes", "throwAttackParamChange=0：按推断同样作用于致命一击（见 notes.appliesTo）", {}))
+            elif delivery == "sorcery":
+                if not mag:
+                    gates.append(("no", "magParamChange=0：参数声明不作用于魔法", {}))
+                elif wep in (1, 2):
+                    gates.append(("conditional", f"wepParamChange={wep}（{WEP_CHANGE_PARAM[wep][0]}）＋magParamChange=1："
+                                                 "法术是否按施法器所在的手判定未实测", {"hand": wep}))
+            elif delivery == "incantation":
+                if not mir:
+                    gates.append(("no", "miracleParamChange=0：参数声明不作用于祷告", {}))
+                elif wep in (1, 2):
+                    gates.append(("conditional", f"wepParamChange={wep}（{WEP_CHANGE_PARAM[wep][0]}）＋miracleParamChange=1："
+                                                 "法术是否按施法器所在的手判定未实测", {"hand": wep}))
+            # --- armament type the attack is made with ---------------------------
+            if on_type:
+                name = type_name(on_type)
+                if on_type not in named_wep_types:
+                    gates.append(("no", f"triggerOnWepType={on_type}（{name}）：本作没有任何这一类别的武器，实际不会生效", {}))
+                elif cls == "sorcery":
+                    gates.append(("yes", f"triggerOnWepType={on_type}（{name}）：魔法由手杖施放", {})
+                                 if on_type in SORCERY_CATALYST_WEP_TYPES else
+                                 ("no", f"triggerOnWepType={on_type}：只作用于用{name}发动的攻击，魔法由手杖施放", {}))
+                elif cls == "incantation":
+                    gates.append(("yes", f"triggerOnWepType={on_type}（{name}）：祷告由圣印记施放", {})
+                                 if on_type in INCANTATION_CATALYST_WEP_TYPES else
+                                 ("no", f"triggerOnWepType={on_type}：只作用于用{name}发动的攻击，祷告由圣印记施放", {}))
+                elif cls == "ranged":
+                    gates.append(("conditional", f"triggerOnWepType={on_type}：只作用于用{name}射出的攻击",
+                                  {"attackWeaponTypes": [on_type]})
+                                 if on_type in RANGED_WEP_TYPES else
+                                 ("no", f"triggerOnWepType={on_type}（{name}）不是弓弩类", {}))
+                elif cls == "skill" and on_type not in skill_wep_types:
+                    gates.append(("no", f"triggerOnWepType={on_type}（{name}）：没有这一类武器带有伤害战技", {}))
+                elif cls in ("melee", "throw") and on_type in RANGED_WEP_TYPES:
+                    gates.append(("no", f"triggerOnWepType={on_type}（{name}）是弓弩类", {}))
+                else:
+                    gates.append(("conditional", f"triggerOnWepType={on_type}：只作用于用{name}发动的攻击"
+                                                 f"（{'所选战技所在的武器' if cls == 'skill' else '当前出手的武器'}须为{name}）",
+                                  {"attackWeaponTypes": [on_type]}))
+            if attached:
+                gates.append(("conditional", "triggerAttachedWeapon=1：只作用于带这条效果的那把武器发动的攻击",
+                              {"attachedWeaponOnly": True}))
+            if sp_attr != 254 and wep == 0 and delivery in ("weapon", "throw"):
+                zh_attr = SP_ATTR_TYPE.get(sp_attr, (str(sp_attr), ""))[0]
+                gates.append(("conditional", f"spAttribute={sp_attr}（{zh_attr}）：附加属性负载，只对被附加的那把武器生效",
+                                      {"imbuedWeaponOnly": True}))
+            if atk_attr != 254:
+                zh_attr = ATK_ATTR_TYPE.get(atk_attr, (str(atk_attr), ""))[0]
+                gates.append(("conditional", f"atkAttribute={atk_attr}：只作用于物理攻击类型为{zh_attr}的段",
+                              {"physicalType": atk_attr}))
+            if state == 197:
+                # v6 (re-verify): the counter is "unique to thrusting weapons"
+                # (矛护符 AccessoryInfo#2060 『能强化突刺攻击特有的反击攻击』／
+                # "Enhances counterattacks unique to thrusting weapons"), so a
+                # spell or a bow shot never enters it; only weapon swings and
+                # Ashes of War do.
+                if cls == "throw":
+                    gates.append(("no", "stateInfo=197（强化突刺反击）：致命一击不是反击", {}))
+                elif cls in ("sorcery", "incantation", "ranged"):
+                    gates.append(("no", "stateInfo=197（强化突刺反击）：突刺反击只由突刺类武器的近战攻击／战技触发"
+                                        "（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），"
+                                        f"{spec['zh']}不会进入这种情境", {}))
+                else:
+                    gates.append(("conditional", "stateInfo=197（强化突刺反击）：只在突刺反击时生效",
+                                  {"attackContexts": ["thrustingCounter"]}))
+            # --- attack sub-categories ------------------------------------------
+            if subs:
+                labels = "、".join(sub_label(v) for v in sorted(subs))
+                if subs <= HERO_ONLY_SUBCATEGORIES:
+                    gates.append(("no", f"子类别限定 [{labels}]：只作用于角色技艺／绝招，不在这六类输出内", {}))
+                else:
+                    value, share_here, notes = pops.match(cls, subs)
+                    if value == "no":
+                        gates.append(("no", f"子类别限定 [{labels}]：{spec['zh']}的命中段都不带这类子类别", {}))
+                    elif value == "conditional":
+                        share = share_here
+                        gates.append(("conditional", f"子类别限定 [{labels}]：" + "；".join(notes),
+                                      {"subCategoriesAny": sorted(subs)}))
+                    else:
+                        gates.append(("yes", f"子类别限定 [{labels}]：{spec['zh']}的命中段全部带这类子类别", {}))
+        verdict = min((g[0] for g in gates), key=lambda v: APPLIES_RANK[v]) if gates else "yes"
+        if verdict == "yes":
+            reasons = [g[1] for g in gates] or [_default_yes_reason(cls, wep, mag, mir)]
+        else:
+            reasons = [g[1] for g in gates if g[0] != "yes"]
+        entry: dict[str, Any] = {"value": verdict, "reason": "；".join(dict.fromkeys(reasons))}
+        if verdict == "conditional":
+            requires: dict[str, Any] = {}
+            for value, _reason, req in gates:
+                if value == "conditional":
+                    requires.update(req)
+            entry["requires"] = requires
+            if share is not None:
+                entry["matchShare"] = share
+        out[cls] = entry
+    return out
+
+
+def _default_yes_reason(cls: str, wep: int, mag: bool, mir: bool) -> str:
+    if cls == "sorcery":
+        return "magParamChange=1，且没有子类别／武器类别限制"
+    if cls == "incantation":
+        return "miracleParamChange=1，且没有子类别／武器类别限制"
+    return f"wepParamChange={wep}（{WEP_CHANGE_PARAM.get(wep, ('?', '?'))[0]}），且没有子类别／武器类别限制"
+
+
+# --- names for script-applied rows (Q4) ---------------------------------------
+TAG_RE = re.compile(r"<\?[^?]*\?>")
+
+
+def plain_text(text: str | None) -> str:
+    return flatten_text(TAG_RE.sub("", text or "")).strip()
+
+
+def build_text_index(sources: list[tuple[str, dict[str, str], dict[str, str]]]) -> dict[str, tuple[str, str]]:
+    """English FMG text (casefolded, with a leading "[X] " also indexed) -> (zh, "Fmg#id")."""
+    index: dict[str, tuple[str, str]] = {}
+    for fmg_name, en_map, zh_map in sources:
+        for text_id in sorted(en_map, key=lambda k: int(k) if k.lstrip("-").isdigit() else 0):
+            en_text = plain_text(en_map.get(text_id))
+            zh_text = plain_text(zh_map.get(text_id))
+            if not en_text or not zh_text:
+                continue
+            keys = {en_text.casefold()}
+            stripped = re.sub(r"^\[[^\]]+\]\s*", "", en_text)
+            keys.add(stripped.casefold())
+            for key in keys:
+                index.setdefault(key, (zh_text, f"{fmg_name}#{text_id}"))
+    return index
+
+
+def translate_phrases(text: str) -> str:
+    out = text
+    for pattern, replacement in TAIL_PHRASES_ZH:
+        out = re.sub(pattern, replacement, out)
+    return re.sub(r"\s+", "・", out.strip()).strip("・")
+
+
+def suggest_name_zh(param_name: str | None, text_index: dict[str, tuple[str, str]],
+                    hero_texts: dict[tuple[str, str], tuple[str, str]],
+                    word_texts: dict[str, tuple[str, str]],
+                    type_texts: dict[str, tuple[str, str]]) -> tuple[str | None, list[str], str | None]:
+    """(suggested zh name, provenance list, untranslated residue) for a row with no own text."""
+    if not param_name:
+        return None, [], None
+    category = row_category(param_name)
+    body = clean_param_name(param_name)
+    parts = [part.strip() for part in body.split(" - ") if part.strip()]
+    if not parts:
+        return None, [], None
+    stem, tails = parts[0], parts[1:]
+    provenance: list[str] = []
+
+    def resolve(text: str) -> str | None:
+        hit = text_index.get(text.casefold())
+        if hit:
+            provenance.append(hit[1])
+            return hit[0]
+        manual = MANUAL_STEMS_ZH.get(text)
+        if manual:
+            provenance.append("manual:" + manual[1])
+            return manual[0]
+        return None
+
+    head = resolve(stem)
+    if head is None:
+        # longest resolvable leading run of words, the rest goes to the tail
+        words = stem.split(" ")
+        for cut in range(len(words) - 1, 0, -1):
+            lead = resolve(" ".join(words[:cut]))
+            if lead:
+                head = lead
+                tails = [" ".join(words[cut:])] + tails
+                break
+    translated_head = head is None
+    if head is None:
+        translated = translate_phrases(stem)
+        for word, (zh_word, origin) in word_texts.items():
+            if re.search(rf"\b{re.escape(word)}\b", translated):
+                translated = re.sub(rf"\b{re.escape(word)}\b", zh_word, translated)
+                provenance.append(origin)
+        head = translated
+    prefix = None
+    match = re.match(r"^(Skill|Ultimate) - (\w+)$", category)
+    if match and (match.group(1).lower(), match.group(2)) in hero_texts:
+        prefix, origin = hero_texts[(match.group(1).lower(), match.group(2))]
+        provenance.append(origin)
+    elif category in type_texts and type_texts[category][0] not in head:
+        prefix, origin = type_texts[category]
+        provenance.append(origin)
+    tail_zh = "・".join(filter(None, (translate_phrases(t) for t in tails)))
+    name = head
+    if prefix:
+        name = f"{prefix}：{name}" if match else f"{prefix}・{name}"
+    if tail_zh:
+        name = f"{name}（{tail_zh}）"
+    residue = " ".join(w for w in re.findall(r"[A-Za-z][A-Za-z'?]*", name) if w != "NPC") or None
+    if tail_zh or translated_head:
+        provenance.append("TAIL_PHRASES_ZH")
+    return name, [p for p in dict.fromkeys(provenance) if p], residue
+
+
+# --- pools: which AttachEffectParam rows a weapon / relic can carry ------------
+def build_loadout_context(attach: dict[str, dict[str, str]],
+                          attach_table: list[dict[str, str]],
+                          weapons_by_id: dict[str, dict[str, str]],
+                          weapon_names_zh: dict[str, str],
+                          menu_zh: dict[str, str], menu_en: dict[str, str],
+                          antique_names_zh: dict[str, str], antique_names_en: dict[str, str],
+                          attach_names: Any) -> dict[str, Any]:
+    """Everything the slot / relic / weapon-affix fields need, measured from params."""
+    members = pool_members(attach_table)
+    custom_rows = read_param("EquipParamCustomWeapon")
+    item_table = read_param("ItemTableParam")
+    lot_rows = read_param("ItemLotParam_map") + read_param("ItemLotParam_enemy")
+    antiques = read_param("EquipParamAntique")
+    stands = read_param("AntiqueStandParam")
+    chara_init_header = list(read_param("CharaInitParam")[0].keys())
+    chaos_rank = read_param("ChaosMatchingRankControlParam")
+    spots = read_param("LotResultSmallBaseAndSpot")
+
+    # ---- weapon types: zh label from CL_MenuText by English text ---------------
+    menu_by_en: dict[str, tuple[str, str]] = {}
+    for text_id in sorted((k for k in menu_en if k.isdigit() and 60000 <= int(k) <= 60200), key=int):
+        en_text = plain_text(menu_en.get(text_id))
+        zh_text = plain_text(menu_zh.get(text_id))
+        if en_text and zh_text:
+            menu_by_en.setdefault(en_text, (zh_text, text_id))
+    wep_type_zh: dict[int, str] = {}
+    wep_type_text_id: dict[int, str] = {}
+    for value, en_label in WEP_TYPE_EN.items():
+        hit = menu_by_en.get(en_label)
+        if hit:
+            wep_type_zh[value], wep_type_text_id[value] = hit
+    named_wep_types = {int(row["wepType"]) for wid, row in weapons_by_id.items()
+                       if weapon_names_zh.get(wid) and ref(row.get("wepType"))}
+
+    # ---- weapon affixes -----------------------------------------------------------
+    reachable = {row["itemId"] for row in item_table if row.get("itemCategory") == "6"}
+    for row in lot_rows:
+        for index in range(1, 9):
+            if row.get(f"lotItemCategory0{index}") == "6" and ref(row.get(f"lotItemId0{index}")):
+                reachable.add(row[f"lotItemId0{index}"])
+    custom_by_id = {row["ID"]: row for row in custom_rows}
+    weapon_affix: dict[str, dict[str, Any]] = {}
+    table_info: dict[str, dict[str, Any]] = {}
+    per_rarity: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    normal_positive_max = deep_positive_max = deep_curse_max = normal_curse_max = 0
+    cursed_rows_mirror = True
+    reachable_rows = 0
+    # v6 (verify): the weapon blessing is a *pool family*, not a slot index.
+    # isCursed 『Unique』 rows carry it in slot 3/6 (810-814 pools), but the 20
+    # [Hero] / [Unique] X+2 rows (101750002-141755002) use another layout --
+    # slot 1/4 = the character's fixed 601000x00 pool, slot 5 = 602000000
+    # (the 17 deep-only affixes, potency 1) or 603000x00, slot 6 = the curse
+    # (620/630).  603000x00 is a blessing pool: its members are a subset of an
+    # 81x blessing pool (asserted in self_check via weaponAffixPools).
+    # Only pools of reachable rows count, and only multi-member pools can be
+    # a blessing by subset (the 808xxxxxx single-member pools of slot 1/5 are
+    # a weapon's fixed affix, even when that affix also sits in an 81x pool).
+    reachable_rows_list = [custom_by_id[c] for c in sorted(reachable, key=int)
+                           if c in custom_by_id and custom_by_id[c]["targetWeaponId"] in weapons_by_id]
+    all_tables = {t for row in reachable_rows_list
+                  for t in (ref(row.get(f"attachEffectTableId_{k}")) for k in range(1, 7)) if t}
+    family_blessing = {t for t in all_tables if 810 <= int(t) // 1_000_000 <= 814}
+    blessing_members = [set(members.get(t, [])) for t in sorted(family_blessing, key=int)]
+    blessing_tables = set(family_blessing)
+    for table in all_tables:
+        ids = set(members.get(table, []))
+        if (table not in blessing_tables and len(ids) > 1
+                and not all(attach.get(i, {}).get("isDebuff") == "1" for i in ids)
+                and any(ids <= bm for bm in blessing_members)):
+            blessing_tables.add(table)
+    # the documented statement: the only subset-blessing pools are the 603 family
+    assert {int(t) // 1_000_000 for t in blessing_tables - family_blessing} <= {603}, \
+        sorted(blessing_tables - family_blessing)
+    row_tables: list[tuple[bool, dict[int, str | None]]] = []
+    layouts: Counter = Counter()
+    for custom_id in sorted(reachable, key=int):
+        row = custom_by_id.get(custom_id)
+        if row is None:
+            continue
+        weapon = weapons_by_id.get(row["targetWeaponId"])
+        if weapon is None:
+            continue
+        reachable_rows += 1
+        wep_type = int(weapon["wepType"])
+        rarity = weapon.get("rarity", "?")
+        cursed = row.get("isCursed") == "1"
+        tables = {k: ref(row.get(f"attachEffectTableId_{k}")) for k in range(1, 7)}
+        if cursed and any(tables[k] != tables[k + 3] for k in (1, 2, 3)):
+            cursed_rows_mirror = False
+        row_tables.append((cursed, tables))
+        layouts[("isCursed" if cursed else "regular",
+                 "/".join(str(int(tables[k]) // 1_000_000) if tables[k] else "-" for k in range(1, 7)))] += 1
+        counts = {"normal": [0, 0], "deep": [0, 0]}  # [positive, curse]
+        for k in range(1, 7):
+            table = tables[k]
+            if not table:
+                continue
+            # slots 1-3: what the weapon carries in a normal expedition; slots
+            # 4-6: its Deep of Night cursed variant.  isCursed rows mirror 1-3
+            # into 4-6 and only drop in the Deep of Night (see slotRules).
+            mode = "deep" if (k >= 4 or cursed) else "normal"
+            if cursed and k <= 3:
+                continue  # counted once through the mirrored 4-6
+            ids = members.get(table, [])
+            if not ids:
+                continue
+            is_curse = all(attach.get(i, {}).get("isDebuff") == "1" for i in ids)
+            role = ("curse" if is_curse
+                    else "blessing" if table in blessing_tables
+                    else "fixed" if len(ids) == 1
+                    else "affix")
+            counts[mode][1 if is_curse else 0] += 1
+            tinfo = table_info.setdefault(table, {"roles": set(), "modes": set(), "wepTypes": set(),
+                                                  "slotIndexes": set(), "members": len(ids),
+                                                  "potencies": set()})
+            tinfo["roles"].add(role)
+            tinfo["modes"].add(mode)
+            tinfo["wepTypes"].add(wep_type)
+            tinfo["slotIndexes"].add(k)
+            tinfo["potencies"].update(p for p in (potency_of(attach.get(i, {}).get("Name")) for i in ids) if p)
+            for attach_id in ids:
+                info = weapon_affix.setdefault(attach_id, {
+                    "normal": set(), "deep": set(), "roles": set(), "tables": set(), "rarities": set()})
+                info[mode].add(wep_type)
+                info["roles"].add(role)
+                info["tables"].add(int(table))
+                info["rarities"].add(int(rarity) if str(rarity).lstrip("-").isdigit() else rarity)
+        if not cursed:
+            normal_positive_max = max(normal_positive_max, counts["normal"][0])
+            normal_curse_max = max(normal_curse_max, counts["normal"][1])
+        if counts["deep"][0] or counts["deep"][1]:
+            deep_positive_max = max(deep_positive_max, counts["deep"][0])
+            deep_curse_max = max(deep_curse_max, counts["deep"][1])
+        pattern = (f"normal+{counts['normal'][0]}/-{counts['normal'][1]}",
+                   f"deep+{counts['deep'][0]}/-{counts['deep'][1]}")
+        per_rarity[(str(rarity), "isCursed" if cursed else "regular")][" ".join(pattern)] += 1
+    # a Deep of Night weapon that did *not* roll its cursed variant keeps its
+    # slot-1..3 affix, so everything rollable normally is rollable deep too
+    for info in weapon_affix.values():
+        info["deep"] |= info["normal"]
+    # v6 (verify): how many of a weapon's positive deep slots can hold a
+    # deep-only affix (an AttachEffect id no slot-1..3 pool of any reachable
+    # row contains).  slotRules said 2 per weapon / 12 in total, which lets a
+    # page stack 12 deep-only affixes (提升物理攻击力 ×1.08 ...); every row has
+    # at most one such slot (regular cursed: slot 6 = 505 pool; isCursed: the
+    # 81x blessing; [Hero]/[Unique] +2: 602/603), so the cap is 6.
+    deep_only_ids = {a for a, info in weapon_affix.items() if not info["normal"]}
+    deep_only_slots: Counter = Counter()
+    for cursed, tables in row_tables:
+        count = 0
+        for k in range(1, 7):
+            table = tables[k]
+            if not table or k <= 3:   # 1-3 = normal expedition (isCursed rows mirror them into 4-6)
+                continue
+            ids = members.get(table, [])
+            if not ids or all(attach.get(i, {}).get("isDebuff") == "1" for i in ids):
+                continue
+            if set(ids) & deep_only_ids:
+                count += 1
+        deep_only_slots[count] += 1
+    distinct_weighted_ids = set(weapon_affix)
+    # v6 (re-verify): deep_only_ids also holds the curses (they only ever sit
+    # in slots 4-6), and weaponAffixes[].deepOnly / buffs[].weaponAffixDeepOnly
+    # follow it.  The 1-per-weapon cap measured above counts *positive* slots
+    # only; a page that capped every deepOnly=true row would refuse the legal
+    # 6 curses + 6 deep-only affixes.  Split the ids for the evidence and the
+    # deepOnlyPositive flags.
+    deep_only_curse_ids = {a for a in deep_only_ids if attach.get(a, {}).get("isDebuff") == "1"}
+    deep_only_positive_ids = deep_only_ids - deep_only_curse_ids
+    # v6 (re-verify): can one weapon roll the same affix twice?  On regular
+    # rows the slot-6 pool (505) contains every member of the slot-5 pool
+    # (501 / 808), so nothing in the pools prevents it; whether the lottery
+    # de-duplicates (as relics do by compatibilityId) is not in the params.
+    overlap_rows = 0
+    positive_pair_rows = 0
+    for cursed, tables in row_tables:
+        positive = [set(members.get(tables[k], [])) for k in (4, 5, 6)
+                    if tables[k] and members.get(tables[k])
+                    and not all(attach.get(i, {}).get("isDebuff") == "1" for i in members.get(tables[k], []))]
+        if len(positive) == 2:
+            positive_pair_rows += 1
+            if positive[0] & positive[1]:
+                overlap_rows += 1
+    # v6 (re-verify): "rarity -> potency" is the main potency of the pool, not
+    # its only one -- the uncommon 501x00100 pools also hold 3 potency-1
+    # members, the rare 501x00200 pools 2 potency-1 and 1 potency-2.  Counts
+    # per potency, as [min, max] over the 501X / 505X weapon-type groups.
+    potency_by_tier: dict[str, dict[int, list[int]]] = {}
+    for table in table_info:
+        family = int(table) // 1_000_000
+        if family not in (501, 505):
+            continue
+        tier_key = f"{family}x00{(int(table) % 1000) // 100}00"
+        counts = Counter(potency_of(attach.get(a, {}).get("Name")) for a in members.get(table, []))
+        counts.pop(None, None)
+        slot = potency_by_tier.setdefault(tier_key, {})
+        for potency in set(slot) | set(counts):
+            got = counts.get(potency, 0)
+            low, high = slot.get(potency, [got, got])
+            slot[potency] = [min(low, got), max(high, got)]
+    # potency of the deep-only positive affixes by pool family (505 = regular
+    # cursed weapons' slot 6, 602 = [Hero] +2 slot 5, 81x / 603 = blessing)
+    deep_only_potency_by_family: dict[str, set[int]] = defaultdict(set)
+    for table, info in table_info.items():
+        for attach_id in set(members.get(table, [])) & deep_only_positive_ids:
+            potency = potency_of(attach.get(attach_id, {}).get("Name"))
+            if potency:
+                deep_only_potency_by_family[str(int(table) // 1_000_000)].add(potency)
+
+    innate: dict[str, list[str]] = defaultdict(list)
+    for wid in sorted(weapons_by_id, key=int):
+        attach_id = ref(weapons_by_id[wid].get("attachEffectId"))
+        if attach_id and weapon_names_zh.get(wid):
+            innate[attach_id].append(wid)
+
+    # ---- relic pools (named, enabled relics only) --------------------------------
+    relic_tables: dict[str, dict[str, Any]] = {}
+    named_relics = []
+    for row in antiques:
+        if row.get("disableParam_NT") != "0" or not antique_names_zh.get(row["ID"]):
+            continue
+        named_relics.append(row)
+        deep = row.get("isDeepRelic") == "1"
+        for k in (1, 2, 3):
+            table = ref(row.get(f"attachEffectTableId_{k}"))
+            curse_table = ref(row.get(f"attachEffectTableId_curse{k}"))
+            if table:
+                spec = relic_tables.setdefault(table, {"deep": set(), "paired": set(), "curse": False, "rows": 0})
+                spec["deep"].add(deep)
+                spec["paired"].add(bool(curse_table))
+                spec["rows"] += 1
+            if curse_table:
+                spec = relic_tables.setdefault(curse_table, {"deep": set(), "paired": set(), "curse": True, "rows": 0})
+                spec["curse"] = True
+                spec["deep"].add(deep)
+                spec["rows"] += 1
+    relic_affix: dict[str, dict[str, Any]] = {}
+    for table, spec in relic_tables.items():
+        ids = members.get(table, [])
+        for attach_id in ids:
+            info = relic_affix.setdefault(attach_id, {
+                "pools": set(), "deepTables": set(), "normalTables": set(), "curse": False,
+                "pairedDeep": False, "unpairedDeep": False, "random": False})
+            info["pools"].add(int(table))
+            if len(ids) > 1:
+                info["random"] = True
+            if spec["curse"]:
+                info["curse"] = True
+                continue
+            if True in spec["deep"]:
+                info["deepTables"].add(int(table))
+                if True in spec["paired"]:
+                    info["pairedDeep"] = True
+                if False in spec["paired"]:
+                    info["unpairedDeep"] = True
+            if False in spec["deep"]:
+                info["normalTables"].add(int(table))
+
+    catalog = load_json(AFFIX_CATALOG_PATH)
+    catalog_by_id = {int(a["effectId"]): a for a in catalog["affixes"]}
+    relic_catalog = load_json(RELIC_CATALOG_PATH)
+    extra_ids = {int(a["effectId"]) for a in relic_catalog.get("extraAffixes", [])}
+
+    # ---- fixed relics ------------------------------------------------------------
+    fixed: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
+    for row in named_relics:
+        slots = [ref(row.get(f"attachEffectTableId_{k}")) for k in (1, 2, 3)]
+        curse_slots = [ref(row.get(f"attachEffectTableId_curse{k}")) for k in (1, 2, 3)]
+        used = [t for t in slots if t]
+        if not used or any(len(members.get(t, [])) != 1 for t in used):
+            continue
+        if any(t and len(members.get(t, [])) != 1 for t in curse_slots):
+            continue
+        effect_ids = [int(members[t][0]) for t in used]
+        curse_ids = [int(members[t][0]) for t in curse_slots if t]
+        key = (antique_names_zh[row["ID"]], row.get("relicColor"), row.get("isDeepRelic"),
+               tuple(effect_ids), tuple(curse_ids))
+        entry = fixed.setdefault(key, {
+            "relicIds": [],
+            "nameZh": antique_names_zh[row["ID"]],
+            "nameEn": antique_names_en.get(row["ID"]) or None,
+            "color": int(row.get("relicColor") or 0),
+            "isDeepRelic": row.get("isDeepRelic") == "1",
+            "attachEffectIds": effect_ids,
+            "curseAttachEffectIds": curse_ids,
+        })
+        entry["relicIds"].append(int(row["ID"]))
+
+    # ---- slot-count evidence -------------------------------------------------------
+    weapon_columns = [c for c in chara_init_header if re.match(r"^equip_Wep_(Right|Left)_\d+$", c)]
+    enabled_stands = [s for s in stands if s.get("disableParam_NT") == "0"]
+    stand_normal = Counter(sum(1 for k in (1, 2, 3) if ref(s.get(f"relicSlot{k}")) is not None
+                               or s.get(f"relicSlot{k}") == "0") for s in enabled_stands)
+    stand_deep = Counter(sum(1 for k in (1, 2, 3) if ref(s.get(f"deepRelicSlot{k}")) is not None
+                             or s.get(f"deepRelicSlot{k}") == "0") for s in enabled_stands)
+    relic_affix_slots = max(sum(1 for k in (1, 2, 3) if ref(r.get(f"attachEffectTableId_{k}")))
+                            for r in named_relics)
+    relic_curse_slots = max(sum(1 for k in (1, 2, 3) if ref(r.get(f"attachEffectTableId_curse{k}")))
+                            for r in named_relics)
+    evergaol_spots: dict[str, set[str]] = defaultdict(set)
+    for row in spots:
+        if "Evergaol" in (row.get("Name") or ""):
+            evergaol_spots[row.get("patternId", "?")].add(row.get("attachId", "?"))
+    evergaol_max = max((len(v) for v in evergaol_spots.values()), default=0)
+    evergaol_dist = Counter(len(v) for v in evergaol_spots.values())
+    evergaol_attach = sorted({int(a) for v in evergaol_spots.values() for a in v if a.lstrip("-").isdigit()})
+    # v6 (re-verify): the count above only sees patterns whose rows carry a
+    # Paramdex name.  The rest (patternId 1000-1199) are unnamed rows; they do
+    # not reuse any of the evergaol attachIds, but whether they hold an
+    # evergaol under other attach points is not decidable from the params.
+    spot_patterns: dict[str, bool] = {}
+    for row in spots:
+        pattern = row.get("patternId", "?")
+        spot_patterns[pattern] = spot_patterns.get(pattern, False) or bool((row.get("Name") or "").strip())
+    unnamed_patterns = sorted((p for p, named in spot_patterns.items() if not named),
+                              key=lambda p: int(p) if p.lstrip("-").isdigit() else 0)
+    evergaol_attach_set = {str(a) for a in evergaol_attach}
+    unnamed_on_evergaol_attach = {row.get("patternId") for row in spots
+                                  if row.get("patternId") in set(unnamed_patterns)
+                                  and row.get("attachId") in evergaol_attach_set}
+
+    return {
+        "members": members,
+        "weaponAffix": weapon_affix,
+        "weaponTables": table_info,
+        "weaponRarityPatterns": {f"{r}/{c}": dict(sorted(v.items())) for (r, c), v in sorted(per_rarity.items())},
+        "weaponReachableRows": reachable_rows,
+        "cursedRowsMirror": cursed_rows_mirror,
+        "deepOnlySlotsPerRow": {str(k): v for k, v in sorted(deep_only_slots.items())},
+        "deepOnlyPerWeaponMax": max(deep_only_slots) if deep_only_slots else 0,
+        "deepOnlyAttachIds": deep_only_ids,
+        "deepOnlyPositiveAttachIds": deep_only_positive_ids,
+        "deepOnlyCurseAttachIds": deep_only_curse_ids,
+        "deepOnlyPositivePotencyByPoolFamily": {k: sorted(v) for k, v in sorted(deep_only_potency_by_family.items())},
+        "deepPositivePairRows": positive_pair_rows,
+        "potencyCountsByPoolTier": {k: {str(p): v for p, v in sorted(d.items())} for k, d in sorted(potency_by_tier.items())},
+        "deepPositivePairRowsWithSharedAffix": overlap_rows,
+        "distinctAffixIds": len(distinct_weighted_ids),
+        "slotLayouts": [{"row": kind, "slots": layout, "rows": n}
+                        for (kind, layout), n in sorted(layouts.items(), key=lambda kv: (-kv[1], kv[0]))],
+        "blessingTables": sorted(int(t) for t in blessing_tables),
+        "blessingTablesBySubset": sorted(int(t) for t in blessing_tables - family_blessing),
+        "normalPositiveMax": normal_positive_max,
+        "normalCurseMax": normal_curse_max,
+        "deepPositiveMax": deep_positive_max,
+        "deepCurseMax": deep_curse_max,
+        "chaosCursedRates": [
+            {"depth": row["Name"] or row["ID"], "cursedUncommonRate": as_number(row["cursedUncommonRate"]),
+             "cursedRareRate": as_number(row["cursedRareRate"])} for row in chaos_rank],
+        "weaponColumns": weapon_columns,
+        "innate": innate,
+        "relicTables": relic_tables,
+        "relicAffix": relic_affix,
+        "catalogById": catalog_by_id,
+        "extraIds": extra_ids,
+        "fixedRelics": list(fixed.values()),
+        "standCount": len(enabled_stands),
+        "standNormal": {str(k): v for k, v in sorted(stand_normal.items())},
+        "standDeep": {str(k): v for k, v in sorted(stand_deep.items())},
+        "relicAffixSlots": relic_affix_slots,
+        "relicCurseSlots": relic_curse_slots,
+        "namedRelicRows": len(named_relics),
+        "evergaolMax": evergaol_max,
+        "evergaolPatterns": len(evergaol_spots),
+        "evergaolSpotsPerPattern": {str(k): v for k, v in sorted(evergaol_dist.items(), reverse=True)},
+        "evergaolAttachIdRange": [evergaol_attach[0], evergaol_attach[-1]] if evergaol_attach else None,
+        "evergaolAttachIds": len(evergaol_attach),
+        "spotPatterns": len(spot_patterns),
+        "unnamedSpotPatterns": len(unnamed_patterns),
+        "unnamedSpotPatternRange": [unnamed_patterns[0], unnamed_patterns[-1]] if unnamed_patterns else None,
+        "unnamedPatternsOnEvergaolAttachIds": len(unnamed_on_evergaol_attach),
+        "wepTypeZh": wep_type_zh,
+        "wepTypeTextId": wep_type_text_id,
+        "namedWepTypes": named_wep_types,
+    }
+
+
+def attach_stem_index(attach: dict[str, dict[str, str]]) -> dict[tuple[str, str], list[str]]:
+    """(row-category head, param stem) -> AttachEffectParam ids, for script-applied rows."""
+    index: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for attach_id in sorted(attach, key=int):
+        name = attach[attach_id].get("Name") or ""
+        stem = param_stem(name)
+        if stem:
+            index[(row_category(name).split(" - ")[0], stem)].append(attach_id)
+    return index
+
+
+def owning_attach_ids(sp_id: str, param_name: str | None, attach: dict[str, dict[str, str]],
+                      stems: dict[tuple[str, str], list[str]]) -> list[str]:
+    """AttachEffectParam rows a script-applied SpEffect belongs to.
+
+    Stem match first (same rule the name borrowing uses).  For *slot*
+    purposes a decade / century neighbour with the same "[...]" head is also
+    accepted even when the stems differ ("Magma upon Charge Attack - Flame
+    Buff" belongs to AE 8881500 "Magma upon Charge Attacks"): which slot a row
+    comes from does not depend on the exact wording, only on the family.
+    """
+    value = int(sp_id)
+    stem = re.sub(r"\s*\+\d+$", "", param_stem(param_name or ""))
+    head = row_category(param_name).split(" - ")[0]
+    bases = (value, value - value % 10, value - value % 100)
+    for base in bases:
+        row = attach.get(str(base))
+        if row is not None and (not stem or re.sub(r"\s*\+\d+$", "", param_stem(row.get("Name", ""))) == stem):
+            return [str(base)]
+    if stem and stems.get((head, stem)):
+        return list(stems[(head, stem)])
+    for base in bases[1:]:
+        row = attach.get(str(base))
+        if row is not None and row_category(row.get("Name")).split(" - ")[0] == head:
+            return [str(base)]
+    # v6 (verify): a per-item variant names the item in a trailing
+    # parenthetical -- 7050301 "[Relic] Items confer effect to all nearby
+    # allies (Exalted Flesh)" is a row of AE 7050100 "Items confer effect to
+    # all nearby allies" (whose passiveSpEffectId_1..3 are 7050100/200/300).
+    # Only tried when nothing above matched, so no earlier owner changes.
+    bare = re.sub(r"\s*\([^()]*\)$", "", stem)
+    if bare and bare != stem and stems.get((head, bare)):
+        return list(stems[(head, bare)])
+    # v6 (re-verify): a relic affix whose buff rows were filed under the
+    # hero's skill.  7020002 / 7020004 "[Skill - Wylder] Relic Followup Buff
+    # (Right/Left Active)" (fire +20, descZh 『遗物带来的效果』) are fired by
+    # 7020001 / 7020003 and belong to AE 7020000 "[Relic - Wylder] Standard
+    # attacks enhanced with fiery follow-ups ..." in the same decade; the "[...]"
+    # heads differ (Skill vs Relic), so none of the rules above matched and the
+    # buff landed in the character column.  Accepted only when the row name
+    # itself says "Relic" and the neighbour is "[Relic - <same subject>]".
+    category = row_category(param_name)
+    subject = category.split(" - ", 1)[1] if " - " in category else ""
+    if subject and re.search(r"\bRelic\b", clean_param_name(param_name or "")):
+        for base in bases[1:]:
+            row = attach.get(str(base))
+            if row is not None and row_category(row.get("Name")) == f"Relic - {subject}":
+                return [str(base)]
+    return []
+
+
+def innate_owner(sp_id: str, param_name: str | None, attach: dict[str, dict[str, str]],
+                 innate: dict[str, list[str]]) -> list[str]:
+    """Legendary-weapon AE for a script-applied [Weapon Power] row.
+
+    "[Weapon Power] Power of Night and Flame: Magic Damage Buff (Right)"
+    (SpEffect 8980002) has no " - " so its stem never equals the AE's; it
+    belongs to AE 9021400 "[Weapon Power] Power of Night and Flame" (weapon
+    2140000) whose passiveSpEffectId_1 = 8980000 sits in the same century.
+    Both the century and the name prefix must agree.
+    """
+    value = int(sp_id)
+    body = clean_param_name(param_name or "").casefold()
+    hits = []
+    for attach_id in innate:
+        row = attach.get(attach_id) or {}
+        stem = param_stem(row.get("Name", ""))
+        if not stem or not body.startswith(stem):
+            continue
+        for field in ("passiveSpEffectId_1", "passiveSpEffectId_2", "passiveSpEffectId_3", "permanentSpEffectId"):
+            target = ref(row.get(field))
+            if target and int(target) // 100 == value // 100:
+                hits.append(attach_id)
+                break
+    return sorted(hits, key=int)
+
+
+def slot_of_attach(attach_id: str, ctx: dict[str, Any], accessory_attach: set[str]) -> str | None:
+    if attach_id in ctx["relicAffix"]:
+        return "relicAffix"
+    if attach_id in ctx["weaponAffix"]:
+        return "weaponAffix"
+    if attach_id in ctx["innate"]:
+        return "weaponInnate"
+    if attach_id in accessory_attach:
+        return "accessory"
+    return None
+
+
+OTHER_CATEGORY_REASONS = {
+    "Libra Deal": "天秤契约：黑夜王『天秤』交易给出的局内临时效果，不属于任何可装备槽位",
+    "Interactable Effect": "场景互动：地图上的蝴蝶、陨石等交互物给的临时效果，不属于任何可装备槽位",
+    "EFfect": "Paramdex 行名 [EFfect]，没有任何参数列指向它（脚本挂载），无法确认来自哪个槽位",
+}
+
+
+def classify_source_slots(sp_id: str, param_name: str | None, all_sources: list[dict[str, Any]],
+                          ctx: dict[str, Any], attach: dict[str, dict[str, str]],
+                          stems: dict[tuple[str, str], list[str]], accessory_attach: set[str],
+                          grace_ids: set[str], permanent_ids: set[str]) -> dict[str, Any]:
+    """Slots for one buff, from *every* source (not only the 40 exported)."""
+    slots: dict[str, set[str]] = defaultdict(set)   # slot -> attach ids that put it there
+    reasons: list[str] = []
+    for entry in all_sources:
+        kind = entry["kind"]
+        via = entry.get("via") or ""
+        category = entry.get("paramRowCategory") or ""
+        if entry.get("inferred"):
+            head = category.split(" - ")[0]
+            owners = owning_attach_ids(sp_id, param_name, attach, stems)
+            if not owners and head == "Weapon Power":
+                owners = innate_owner(sp_id, param_name, attach, ctx["innate"])
+            placed = False
+            for attach_id in owners:
+                slot = slot_of_attach(attach_id, ctx, accessory_attach)
+                if slot is None and attach_id in permanent_ids:
+                    # DLC Dormant Power: PermanentBuffParam rows share the id
+                    # of the weapon effect they grant (8330700, 8450100, ...)
+                    slot = "permanent"
+                if slot:
+                    slots[slot].add(attach_id)
+                    placed = True
+            if placed:
+                continue
+            if head == "AoW":
+                slots["weaponSkill"].add("")
+            elif head in ("Skill", "Ultimate", "Passive", "Magic Cocktail"):
+                slots["character"].add("")
+            elif head in ("Weapon Power", "Bow", "Arrow", "Serpent Bow", "Flail"):
+                slots["weaponInnate"].add("")
+            elif head == "Relic":
+                slots["relicAffix"].add("")
+            elif head in ("Item", "Hub"):
+                slots["consumable"].add("")
+            elif head in ("Incantation", "Sorcery"):
+                slots["spellBuff"].add("")
+            elif head == "Talisman":
+                slots["accessory"].add("")
+            else:
+                slots["other"].add("")
+                reasons.append(OTHER_CATEGORY_REASONS.get(
+                    head, f"Paramdex 行名 [{category}]：没有任何词条池／物品引用它，只能靠行名推断"))
+            continue
+        if kind in ("relicAffix", "other") and (entry.get("attachEffectId") or kind == "relicAffix"):
+            attach_id = str(entry.get("attachEffectId") or entry.get("id") or "")
+            slot = slot_of_attach(attach_id, ctx, accessory_attach) if attach_id else None
+            if slot is None and attach_id in permanent_ids:
+                slot = "permanent"
+            if slot:
+                slots[slot].add(attach_id)
+            else:
+                slots["other"].add(attach_id)
+                reasons.append(f"AttachEffectParam {attach_id}：不在任何遗物／武器词条池里，"
+                               "也不是护符或武器固有效果（未启用或仅供脚本使用的词条行）")
+            continue
+        if kind == "accessory":
+            slots["accessory"].add(str(entry.get("attachEffectId") or ""))
+        elif kind == "goods":
+            slots["consumable"].add("")
+        elif kind == "spell":
+            slots["spellBuff"].add("")
+        elif kind == "permanent":
+            if via.startswith("graceSpEffectId") and sp_id in grace_ids:
+                slots["runStack"].add("")
+            else:
+                slots["permanent"].add("")
+        elif kind == "weaponPassive":
+            slots["weaponInnate"].add("")
+        elif kind == "heroSkill":
+            slots["character"].add("")
+        else:
+            slots["other"].add("")
+            reasons.append("只能从另一条没有物品来源的 SpEffect 链式到达（chainFields），无法归到可装备槽位")
+    ordered = sorted(slots, key=lambda s: SOURCE_SLOT_ORDER[s])
+    # a buff that also has a real slot does not need to show up under "other"
+    if len(ordered) > 1 and "other" in ordered:
+        ordered.remove("other")
+        reasons = []
+    return {
+        "slots": ordered,
+        "primary": ordered[0] if ordered else "other",
+        "reason": "；".join(dict.fromkeys(reasons)) or None,
+        "attach": {slot: sorted((a for a in ids if a), key=int) for slot, ids in slots.items()},
+    }
+
+
 # --------------------------------------------------------------------------
 # main build
 # --------------------------------------------------------------------------
 def build() -> dict[str, Any]:
     sp_rows = read_param("SpEffectParam")
     sp = index_param(sp_rows)
+    accum_ladders, accum_conflicts = accumulator_ladders(sp)
 
     attach_rows = read_param("AttachEffectParam")
     attach = index_param(attach_rows)
@@ -1489,6 +3130,12 @@ def build() -> dict[str, Any]:
         "permanent": read_fmg("item", "PermanentBuffName", "zhocn"),
         "speffect": read_fmg("menu", "SpEffectName", "zhocn"),
         "speffectInfo": read_fmg("menu", "SpEffectInfo", "zhocn"),
+        "permanentInfo": read_fmg("item", "PermanentBuffInfo", "zhocn"),
+        # v6: relic names, Ash of War names, menu words (weapon types, hero
+        # skill / ultimate names) and the id-keyed name fallbacks for Q4
+        "antique": read_fmg("item", "AntiqueName", "zhocn"),
+        "arts": read_fmg("item", "ArtsName", "zhocn"),
+        "menu": read_fmg("menu", "CL_MenuText", "zhocn"),
     }
     en = {
         "attach": read_fmg("item", "AttachEffectName", "engus"),
@@ -1497,7 +3144,11 @@ def build() -> dict[str, Any]:
         "weapon": read_fmg("item", "WeaponName", "engus"),
         "magic": read_fmg("item", "MagicName", "engus"),
         "permanent": read_fmg("item", "PermanentBuffName", "engus"),
+        "permanentInfo": read_fmg("item", "PermanentBuffInfo", "engus"),
         "speffect": read_fmg("menu", "SpEffectName", "engus"),
+        "antique": read_fmg("item", "AntiqueName", "engus"),
+        "arts": read_fmg("item", "ArtsName", "engus"),
+        "menu": read_fmg("menu", "CL_MenuText", "engus"),
     }
 
     missing_zh: list[str] = []
@@ -1648,8 +3299,8 @@ def build() -> dict[str, Any]:
 
         raw_name = clean_param_name(param_name or "") or None
         if is_zh:
-            return pick(("nameZh", "effectNameZh")), (pick(("nameEn", "effectNameEn"))
-                                                      or raw_name)
+            return pick(("nameZh", "effectNameZh", "artsNameZh")), (pick(("nameEn", "effectNameEn"))
+                                                                    or raw_name)
         return pick(("nameEn", "effectNameEn")), raw_name
 
     def display_head(base: str, src_list: list[dict[str, Any]], is_zh: bool,
@@ -2133,6 +3784,7 @@ def build() -> dict[str, Any]:
     # --- emit buffs -------------------------------------------------------
     buffs: list[dict[str, Any]] = []
     sentinel_rows: list[dict[str, Any]] = []
+    dropped_attack_contexts: list[dict[str, Any]] = []
     display_inputs: dict[int, tuple[list[dict[str, Any]], str | None]] = {}
     # ids the dataset will ship, needed before the loop so the stack-ladder scan
     # can stop at the next *reachable* tier instead of swallowing it
@@ -2290,10 +3942,21 @@ def build() -> dict[str, Any]:
 
         sp_category = int(row["spCategory"])
         behaviour, _behaviour_zh = spcategory_behaviour(sp_category)
-        if behaviour in ("none", "stackSelf"):
+        # v6 (re-verify): resetOnApply (20) was grouped per *category*, which
+        # put 77 unrelated relic / talisman / skill buffs into one de-dup
+        # bucket.  It is a same-id rule, like none / stackSelf; the two
+        # behaviours that no buff uses today (persistThroughDeath, unknown)
+        # are per id as well.  The finer key is stacking.exclusiveKey.
+        if behaviour in ("none", "stackSelf", "resetOnApply", "persistThroughDeath", SPCATEGORY_UNKNOWN[0]):
             group = f"sp{sp_category}#{sp_id}"
         else:
             group = f"sp{sp_category}"
+        exclusive_key, exclusive_scope = exclusive_category_key(sp_category, int(row["categoryPriority"]))
+        accum_tier = accum_ladders.get(sp_id)
+        if accum_tier:
+            exclusive_key, exclusive_scope = accum_tier["key"], "accumulatorLadder"
+        elif exclusive_key is None:
+            exclusive_key = f"sp{sp_category}#{sp_id}"
 
         scope: dict[str, Any] = {
             "affectsSorcery": row["magParamChange"] == "1",
@@ -2322,9 +3985,23 @@ def build() -> dict[str, Any]:
         # game states such a restriction (magicSubCategoryChange + stateInfo)
         # into one vocabulary; see ATTACK_CONTEXTS and enums.attackContext.
         state_info = int(row["stateInfo"])
+        # v6: magicSubCategoryChange1..3 is an OR list -- the rate applies to
+        # an attack carrying *any* of them.  A situational subcategory is only
+        # a restriction when every listed subcategory is situational: the
+        # 『提升战技攻击力』 rows list [112 战技攻击, 111 蓄力战技攻击], so every
+        # skill hit (which carries 112) qualifies, yet v4/v5 exported
+        # attackContexts=["chargedSkill"] and the page hid them behind the
+        # 「蓄力战技」 tick box.  [110, 111] (both situational) still gates.
+        situational = [value for value in sub_categories if value in ATTACK_CONTEXT_BY_SUBCATEGORY]
+        if situational and len(situational) != len(sub_categories):
+            dropped_attack_contexts.append({
+                "spEffectId": int(sp_id),
+                "subCategories": sub_categories,
+                "droppedAttackContexts": sorted({ATTACK_CONTEXT_BY_SUBCATEGORY[v] for v in situational}),
+            })
+            situational = []
         attack_contexts = sorted(
-            {ATTACK_CONTEXT_BY_SUBCATEGORY[value] for value in sub_categories
-             if value in ATTACK_CONTEXT_BY_SUBCATEGORY}
+            {ATTACK_CONTEXT_BY_SUBCATEGORY[value] for value in situational}
             | ({ATTACK_CONTEXT_BY_STATE_INFO[state_info]}
                if state_info in ATTACK_CONTEXT_BY_STATE_INFO else set())
         )
@@ -2375,6 +4052,11 @@ def build() -> dict[str, Any]:
                 "categoryPriority": int(row["categoryPriority"]),
                 "saveCategory": int(row["saveCategory"]),
                 "group": group,
+                # v6 (re-verify): the key a page de-duplicates on -- equal
+                # keys exclude each other, different keys multiply
+                # (enums.exclusiveScope, stackingRules 2).
+                "exclusiveKey": exclusive_key,
+                "exclusiveScope": exclusive_scope,
             },
             "duration": as_number(row["effectEndurance"]),
             "permanent": float(row["effectEndurance"]) == -1.0,
@@ -2406,6 +4088,17 @@ def build() -> dict[str, Any]:
             entry["selfInflictedStatus"] = True
         if stack_ladder:
             entry["stackLadder"] = stack_ladder
+        if accum_tier:
+            # v6 (re-verify): this row is tier N of an accumulator ladder
+            # (successive-attack talismans ...); every tier is its own buff.
+            entry["accumulatorLadder"] = {
+                "key": accum_tier["key"],
+                "tier": accum_tier["tier"],
+                "tiers": accum_tier["tiers"],
+                "tierSpEffectIds": accum_tier["tierSpEffectIds"],
+                "accumulatorSpEffectIds": accum_tier["accumulatorSpEffectIds"],
+                "thresholds": accum_tier["thresholds"],
+            }
         if inferred_name:
             entry["inferredName"] = True
             entry["inferredNameFrom"] = inferred_name_from
@@ -2464,11 +4157,299 @@ def build() -> dict[str, Any]:
         buff["inferredNameFrom"] = "siblingSpEffect"
         buff["displayNameZh"] = borrowed[0]
 
+    # --- v6: game text keyed by the SpEffect's own id (Q4) -----------------
+    # Two of the v5 English-only rows do have game text, just not in
+    # SpEffectName: PermanentBuffName 8161600 「提升长矛攻击力」 and
+    # AttachEffectName 8390000 「强化投掷壶」 are keyed by the very same id.
+    for buff in buffs:
+        if buff["nameZh"]:
+            continue
+        key = str(buff["spEffectId"])
+        for fmg_key, origin in (("permanent", "permanentBuffNameById"),
+                                ("attach", "attachEffectNameById")):
+            text = zh[fmg_key].get(key)
+            if text:
+                buff["nameZh"] = text
+                buff["nameSource"] = origin
+                buff["displayNameZh"] = text
+                if en[fmg_key].get(key):
+                    buff["nameEn"] = en[fmg_key][key]
+                    buff["displayNameEn"] = en[fmg_key][key]
+                break
+
+    # --- v6: Ash of War names on the script-applied AoW sources -------------
+    # "[AoW] Golden Vow - Damage/Defence Buff" had no localized origin, so the
+    # display name read 「提升攻击力（战技・×1.115）」 and the user took the
+    # 「战技」 token for 『提升战技攻击力』.  The ArtsName FMG names the skill.
+    arts_by_en: dict[str, tuple[str, str]] = {}
+    for text_id in sorted(en["arts"], key=lambda k: int(k) if k.isdigit() else 0):
+        en_text = plain_text(en["arts"].get(text_id))
+        zh_text = plain_text(zh["arts"].get(text_id))
+        if en_text and zh_text:
+            arts_by_en.setdefault(en_text.casefold(), (zh_text, text_id))
+    def arts_lookup(stem: str) -> tuple[str, str] | None:
+        """ArtsName hit for an Ash-of-War stem, "A/B C" stems included.
+
+        Paramdex writes one row shared by two skills as "Barbaric/Milos Roar";
+        each alternative ("Barbaric Roar", "Milos Roar") is looked up on its
+        own and the ones the FMG knows are joined with 「／」 (the first one's
+        id is kept as artsId).
+        """
+        hit = arts_by_en.get(stem.casefold())
+        if hit or "/" not in stem or " " not in stem:
+            return hit
+        words = stem.split(" ")
+        slashed = [i for i, w in enumerate(words) if "/" in w]
+        if len(slashed) != 1:
+            return None
+        index = slashed[0]
+        found: list[tuple[str, str]] = []
+        for alt in words[index].split("/"):
+            candidate = " ".join(words[:index] + [alt] + words[index + 1:])
+            alt_hit = arts_by_en.get(candidate.casefold())
+            if alt_hit and alt_hit not in found:
+                found.append(alt_hit)
+        if not found:
+            return None
+        return "／".join(h[0] for h in found), found[0][1]
+
+    arts_named_sources = 0
+    for buff in buffs:
+        for entry in buff["sources"]:
+            if not (entry.get("inferred") and entry.get("paramRowCategory", "").startswith("AoW")):
+                continue
+            stem = (entry.get("nameEn") or "").split(" - ")[0].strip()
+            # "Rallying Standard (Buff)" -> "Rallying Standard"
+            stem = re.sub(r"\s*\([^)]*\)$", "", stem)
+            hit = arts_lookup(stem)
+            if hit:
+                entry["artsNameZh"] = hit[0]
+                entry["artsId"] = int(hit[1])
+                arts_named_sources += 1
+
+    # --- v6: suggested Chinese names for rows with no game text at all -----
+    suggest_index = build_text_index([
+        ("ArtsName", en["arts"], zh["arts"]),
+        ("MagicName", en["magic"], zh["magic"]),
+        ("GoodsName", en["goods"], zh["goods"]),
+        ("WeaponName", en["weapon"], zh["weapon"]),
+        ("AccessoryName", en["accessory"], zh["accessory"]),
+        ("AttachEffectName", en["attach"], zh["attach"]),
+        ("PermanentBuffName", en["permanent"], zh["permanent"]),
+    ])
+    hero_texts: dict[tuple[str, str], tuple[str, str]] = {}
+    for index, hero in enumerate(HERO_ORDER):
+        for kind in ("skill", "ultimate", "passive"):
+            text_id = str(HERO_TEXT_BASE[kind] + index)
+            if plain_text(zh["menu"].get(text_id)):
+                hero_texts[(kind, hero)] = (plain_text(zh["menu"][text_id]), f"CL_MenuText#{text_id}")
+    word_texts: dict[str, tuple[str, str]] = {}
+    for text_id in sorted((k for k in en["menu"] if k.isdigit()), key=int):
+        en_text = plain_text(en["menu"].get(text_id))
+        zh_text = plain_text(zh["menu"].get(text_id))
+        # single capitalised words only (family names such as Helen / Frederick
+        # / Sebastian); longer menu strings would match too loosely
+        if en_text and zh_text and re.fullmatch(r"[A-Z][a-z]+", en_text):
+            word_texts.setdefault(en_text, (zh_text, f"CL_MenuText#{text_id}"))
+    type_texts: dict[str, tuple[str, str]] = {}
+    for text_id in sorted((k for k in en["menu"] if k.isdigit() and 60000 <= int(k) <= 60200), key=int):
+        en_text = plain_text(en["menu"].get(text_id))
+        if en_text and plain_text(zh["menu"].get(text_id)):
+            type_texts.setdefault(en_text, (plain_text(zh["menu"][text_id]), f"CL_MenuText#{text_id}"))
+    suggested_untranslated: list[dict[str, Any]] = []
+    for buff in buffs:
+        if buff["nameZh"]:
+            continue
+        name, provenance, residue = suggest_name_zh(
+            buff["paramName"], suggest_index, hero_texts,
+            {w: t for w, t in word_texts.items() if w in ("Helen", "Frederick", "Sebastian")},
+            type_texts)
+        if not name:
+            continue
+        buff["suggestedNameZh"] = name
+        buff["suggestedNameZhSource"] = provenance
+        buff["suggestedNameZhInferred"] = True
+        buff["displayNameZh"] = name
+        if residue:
+            buff["suggestedNameZhUntranslated"] = residue
+            suggested_untranslated.append({"spEffectId": buff["spEffectId"], "suggestedNameZh": name,
+                                           "untranslated": residue})
+
+    # --- v6: Chinese rendering of the Paramdex row name (display detail) ------
+    # The second-to-last disambiguation level of displayNameZh used to be the
+    # raw English row name, so 42 Chinese display names still read
+    # 「提升物理攻击力（遗物・×1.1・Switching Weapons Boosts Attack Power）」 after the
+    # Q4 pass (which only covered rows with *no* Chinese name at all).  The
+    # zh list now gets a Chinese rendering of that row name instead, built
+    # only from game text and TAIL_PHRASES_ZH:
+    #   stem   the owning AttachEffectParam row's own name (relic / weapon
+    #          affixes: 7035902 -> AE 7035900 「切换武器时，能提升物理攻击力」),
+    #          else ArtsName ("Barbaric/Milos Roar" -> 「野蛮咆哮」), the hero
+    #          skill / ultimate / passive words of CL_MenuText 411010+ /
+    #          413010+ / 415010+ ("Tenacity" -> 「不屈」), any item / spell /
+    #          affix / SpEffect name, MANUAL_STEMS_ZH, then TAIL_PHRASES_ZH;
+    #   tails  TAIL_PHRASES_ZH (Right / Left are dropped when the side token
+    #          already says 右手武器 / 左手武器).
+    # A rendering that still contains Latin words is not used at all -- the
+    # name then falls through to 「#spEffectId」, which is always unique -- and
+    # the row is listed in diagnostics.displayNameZhDetailUntranslated.
+    stems = attach_stem_index(attach)
+    detail_index = build_text_index([
+        ("ArtsName", en["arts"], zh["arts"]),
+        ("MagicName", en["magic"], zh["magic"]),
+        ("GoodsName", en["goods"], zh["goods"]),
+        ("WeaponName", en["weapon"], zh["weapon"]),
+        ("AccessoryName", en["accessory"], zh["accessory"]),
+        ("AttachEffectName", en["attach"], zh["attach"]),
+        ("PermanentBuffName", en["permanent"], zh["permanent"]),
+        ("SpEffectName", en["speffect"], zh["speffect"]),
+    ])
+    hero_words: dict[str, tuple[str, str]] = {}
+    for kind in ("skill", "ultimate", "passive"):
+        for index in range(len(HERO_ORDER)):
+            text_id = str(HERO_TEXT_BASE[kind] + index)
+            en_text = plain_text(en["menu"].get(text_id))
+            zh_text = plain_text(zh["menu"].get(text_id))
+            if en_text and zh_text:
+                hero_words.setdefault(en_text.casefold(), (zh_text, f"CL_MenuText#{text_id}"))
+    detail_untranslated: list[dict[str, Any]] = []
+    DETAIL_OWNER_HEADS = ("Relic", "Weapon", "Weapon Power", "Talisman")
+
+    def detail_whole(text: str) -> str | None:
+        key = text.strip().casefold()
+        if not key:
+            return None
+        for table in (detail_index, hero_words):
+            if key in table:
+                return table[key][0]
+        arts = arts_lookup(text.strip())
+        if arts:
+            return arts[0]
+        manual = MANUAL_STEMS_ZH.get(text.strip())
+        return manual[0] if manual else None
+
+    def detail_piece(text: str) -> str | None:
+        """Chinese for one " - " segment of a row name, or None if any Latin is left."""
+        text = text.strip()
+        if not text:
+            return ""
+        hit = detail_whole(text)
+        if hit:
+            return hit
+        paren = re.match(r"^(.*?)\s*\(([^()]*)\)$", text)
+        if paren and paren.group(1):
+            base = detail_piece(paren.group(1))
+            inner = detail_whole(paren.group(2)) or detail_piece(f"({paren.group(2)})")
+            if base is not None and inner is not None:
+                return "・".join(filter(None, (base, inner)))
+        if " & " in text:
+            parts = [detail_piece(part) for part in text.split(" & ")]
+            if all(part for part in parts):
+                return "、".join(parts)
+        words = text.split(" ")
+        for cut in range(len(words) - 1, 0, -1):
+            lead = detail_whole(" ".join(words[:cut]))
+            if lead:
+                rest = detail_piece(" ".join(words[cut:]))
+                if rest is not None:
+                    return "・".join(filter(None, (lead, rest)))
+                break
+        out = translate_phrases(text).replace("(", "").replace(")", "").strip("・")
+        return None if zh_latin_residue(out) else out
+
+    def zh_row_detail(sp_key: int, param_name: str | None, head: str, localized: str | None,
+                      has_side: bool) -> str | None:
+        if not param_name:
+            return None
+        category = row_category(param_name)
+        body = clean_param_name(param_name)
+        segments = [seg.strip() for seg in body.split(" - ") if seg.strip()]
+        if not segments:
+            return None
+        stem, tails = segments[0], segments[1:]
+        if ": " in stem:
+            stem, extra = stem.split(": ", 1)
+            tails = [extra] + tails
+        stem_zh = None
+        if category.split(" - ")[0] in DETAIL_OWNER_HEADS:
+            for owner in owning_attach_ids(str(sp_key), param_name, attach, stems):
+                owner_zh = attach_names(attach[owner])[0] if owner in attach else None
+                if owner_zh:
+                    stem_zh = owner_zh
+                    break
+        if stem_zh is None:
+            stem_zh = detail_piece(stem)
+        pieces: list[str | None] = []
+        if stem_zh and not (stem_zh == localized or stem_zh in head
+                            or (localized and stem_zh in localized)):
+            pieces.append(stem_zh)
+        elif stem_zh is None:
+            pieces.append(None)
+        for tail in tails:
+            if has_side:
+                tail = re.sub(r"\b(?:Right|Left)(?:-Hand)?\b", "", tail)
+                tail = re.sub(r"\(\s*\)", "", re.sub(r"\s+", " ", tail)).strip()
+            pieces.append(detail_piece(tail) if tail else "")
+        if any(piece is None for piece in pieces):
+            detail_untranslated.append({"spEffectId": sp_key, "paramName": param_name})
+            return None
+        text = "・".join(piece for piece in pieces if piece)
+        return text or None
+
+    # --- v6: a weapon's own name is not a buff name -------------------------
+    # 1940 "[Bow] Golden Arrows Gain 1.5x TypeB" has no text of its own and
+    # took the name of the first of the 13 bows that carry it (「短弓」).  Say
+    # what it is instead; nameZh keeps the v5 value.
+    weapon_named: list[int] = []
+    for buff in buffs:
+        if buff["nameSource"] != "itemName":
+            continue
+        all_src = sources[str(buff["spEffectId"])]
+        weapon_ids = [e["id"] for e in all_src if e["kind"] == "weaponPassive" and e.get("id")]
+        if len(all_src) != len(weapon_ids) or len(set(weapon_ids)) < 2:
+            continue
+        subs = buff["scope"].get("subCategories") or []
+        subject_zh = "、".join(ATK_SUB_CATEGORY.get(v, (str(v), str(v)))[0] for v in subs)
+        subject_en = ", ".join(ATK_SUB_CATEGORY.get(v, (str(v), str(v)))[1] for v in subs)
+        buff["displayNameZh"] = (f"{buff['nameZh']}等{len(set(weapon_ids))}把武器的固有效果"
+                                 + (f"：{subject_zh}" if subject_zh else ""))
+        buff["displayNameEn"] = (f"Innate effect of {buff['nameEn']} and {len(set(weapon_ids)) - 1} other armaments"
+                                 + (f": {subject_en}" if subject_en else ""))
+        weapon_named.append(buff["spEffectId"])
+
     missing_zh = [
         f"{buff['spEffectId']} {sp[str(buff['spEffectId'])].get('Name') or ''} "
         f"-> {buff['nameEn']}".strip()
         for buff in buffs if not buff["nameZh"]
     ]
+
+    # --- v6 (re-verify): slots before display names ------------------------
+    # The display-name category word used to come from the Paramdex "[...]"
+    # prefix only, so the permanent upgrade 8100500 (PermanentBuffParam, not
+    # in any affix pool) read 「提升属性攻击力（档位1・武器・×1.05）」 like the
+    # in-run weapon affix 8850600 and both needed 「#spEffectId」 to be told
+    # apart.  The primary sourceSlot is known from the params alone, so it is
+    # computed here once and used by the category level (slot_category_label).
+    weapons_by_id = {row["ID"]: row for row in weapons}
+    loadout = build_loadout_context(
+        attach, attach_table, weapons_by_id, zh["weapon"], zh["menu"], en["menu"],
+        zh["antique"], en["antique"], attach_names)
+    grace_ids = {row["graceSpEffectId"] for row in permanents if ref(row.get("graceSpEffectId"))}
+    permanent_ids = {row["ID"] for row in permanents}
+    early_slot: dict[int, str] = {}
+    # the potency of the affix a buff belongs to, when its own row name has
+    # none: 8810301 / 8810351 are identical rows of AE 8810300 (Potency 1) and
+    # 8810350 (Potency 2) and needed #spEffectId to be told apart
+    early_owner_potency: dict[int, int] = {}
+    for buff in buffs:
+        placed_early = classify_source_slots(
+            str(buff["spEffectId"]), buff["paramName"], sources[str(buff["spEffectId"])], loadout, attach,
+            stems, accessory_attach_ids, grace_ids, permanent_ids)
+        early_slot[buff["spEffectId"]] = placed_early["primary"]
+        owner_potencies = {potency_of(attach[a].get("Name")) for ids in placed_early["attach"].values()
+                           for a in ids if a in attach}
+        if len(owner_potencies) == 1 and None not in owner_potencies:
+            early_owner_potency[buff["spEffectId"]] = owner_potencies.pop()
 
     # --- display names ----------------------------------------------------
     # Only names that actually collide get a qualifier: a unique name such as
@@ -2488,7 +4469,31 @@ def build() -> dict[str, Any]:
                   "rowCategory", "rate", "rawOrigin", "spEffectId")
     LEVEL_COUNT = len(LEVEL_KEYS)
 
-    for field, is_zh in (("displayNameZh", True), ("displayNameEn", False)):
+    # v6 (re-verify): an accumulator tier reads 「第N层」 (the successive-attack
+    # talismans were 「米莉森的义手（护符・×1.04・#312505）」), and a [Weapon]
+    # row that only PermanentBuffParam grants reads 「永久强化」 instead of
+    # 「武器」 so it cannot be mistaken for the in-run weapon affix.
+    def ladder_step_token(buff: dict[str, Any], is_zh: bool) -> str | None:
+        ladder = buff.get("accumulatorLadder")
+        if not ladder:
+            return None
+        return f"第{ladder['tier']}层" if is_zh else f"Stack {ladder['tier']}"
+
+    def owner_potency_token(buff: dict[str, Any], is_zh: bool) -> str | None:
+        potency = early_owner_potency.get(buff["spEffectId"])
+        if not potency:
+            return None
+        return f"档位{potency}" if is_zh else f"Lv{potency}"
+
+    def slot_category_label(buff: dict[str, Any], param_name: str | None, is_zh: bool) -> str | None:
+        head = row_category(param_name).split(" - ")[0]
+        slot = early_slot.get(buff["spEffectId"])
+        if head == "Weapon" and slot == "permanent":
+            return "永久强化" if is_zh else "Permanent"
+        return row_category_label(param_name, is_zh)
+
+    def disambiguate(field: str, is_zh: bool, zh_detail: bool) -> dict[int, str]:
+        """Rendered, unique display names for one list (nothing is written)."""
         heads: dict[int, str] = {}
         levels: dict[int, list[str | None]] = {}
         used: dict[int, set[int]] = {}
@@ -2502,13 +4507,24 @@ def build() -> dict[str, Any]:
                 continue
             src_list, param_name = display_inputs[sp_key]
             head, localized, raw = display_head(base, src_list, is_zh, param_name)
+            if is_zh and zh_detail:
+                # never the English row name in a Chinese list (see above)
+                raw = zh_row_detail(sp_key, param_name, head, localized,
+                                    side_token(buff["scope"], param_name, True) is not None)
+                if raw and (raw == head or raw in head or raw == localized):
+                    raw = None
+                # v6 (re-verify): do not repeat the localized origin inside the
+                # detail (「癫火・…・癫火・自身累积」)
+                if raw and localized and raw.startswith(localized + "・"):
+                    raw = raw[len(localized) + 1:] or None
             heads[sp_key] = head
             used[sp_key] = set()
             levels[sp_key] = [
                 localized,
-                step_token(param_name, is_zh),
+                (ladder_step_token(buff, is_zh) or step_token(param_name, is_zh)
+                 or owner_potency_token(buff, is_zh)),
                 side_token(buff["scope"], param_name, is_zh),
-                row_category_label(param_name, is_zh),
+                slot_category_label(buff, param_name, is_zh),
                 rate_token(buff["rates"], is_zh),
                 raw,
                 f"#{sp_key}",
@@ -2580,8 +4596,18 @@ def build() -> dict[str, Any]:
             if id_level in used[sp_key]:
                 used[sp_key].discard(raw_level)
 
+        return {buff["spEffectId"]: render(buff["spEffectId"]) for buff in named}
+
+    # Shadow run with the v6-draft rule (English Paramdex row name as the zh
+    # detail level): only to measure, in notes.userQuestions.Q4, how many
+    # Chinese display names the Chinese detail level cleans up.
+    draft_zh = disambiguate("displayNameZh", True, False)
+    detail_fixed = [b for b in buffs if zh_latin_residue(draft_zh.get(b["spEffectId"]))]
+    for field, is_zh in (("displayNameZh", True), ("displayNameEn", False)):
+        rendered = disambiguate(field, is_zh, True)
+        named = [b for b in buffs if b["spEffectId"] in rendered]
         for buff in named:
-            buff[field] = render(buff["spEffectId"])
+            buff[field] = rendered[buff["spEffectId"]]
 
         seen_display: dict[str, int] = {}
         for buff in named:
@@ -2591,6 +4617,271 @@ def build() -> dict[str, Any]:
                     f"{field} is not unique: {value!r} used by "
                     f"{seen_display[value]} and {buff['spEffectId']}")
             seen_display[value] = buff["spEffectId"]
+    display_by_id = {b["spEffectId"]: b["displayNameZh"] for b in buffs}
+    # rows the English detail used to separate but the Chinese one cannot:
+    # they now end in 「#spEffectId」 instead
+    detail_untranslated_needed = [
+        {"spEffectId": b["spEffectId"], "paramName": b["paramName"], "displayNameZh": b["displayNameZh"],
+         "withEnglishDetail": draft_zh.get(b["spEffectId"])}
+        for b in buffs
+        if zh_latin_residue(draft_zh.get(b["spEffectId"])) and DISPLAY_ID_TAIL_RE.search(b["displayNameZh"] or "")]
+    latin_left = [{"spEffectId": b["spEffectId"], "displayNameZh": b["displayNameZh"],
+                   "latin": zh_latin_residue(b["displayNameZh"])}
+                  for b in buffs if zh_latin_residue(b["displayNameZh"])]
+
+    # --- v6: loadout slots, weapon / relic affix pools, appliesTo ----------
+    # (weapons_by_id / loadout / grace_ids / permanent_ids are built before the
+    # display names, which need the primary slot -- see early_slot)
+    skills_data = load_json(SKILLS_DATASET_PATH)
+    bullet_atk_ids = {row.get("atkId_Bullet") for row in bullets.values() if ref(row.get("atkId_Bullet"))}
+    populations = AttackPopulations(atk_pc, index_param(magics), skills_data, bullet_atk_ids)
+    melee_check = melee_population_check(atk_pc, weapons_by_id, zh["weapon"])
+    skill_wep_types = {int(w["wepType"]) for w in skills_data.get("weapons", [])
+                       if "skillVariant" in w}
+    wep_type_zh = loadout["wepTypeZh"]
+
+    def wep_type_label(value: int) -> str:
+        return wep_type_zh.get(value) or WEP_TYPE_EN.get(value) or f"武器类别 {value}"
+
+    def relic_entry(attach_id: str) -> dict[str, Any]:
+        info = loadout["relicAffix"][attach_id]
+        row = attach[attach_id]
+        effect_id = int(attach_id)
+        in_catalog = effect_id in loadout["catalogById"]
+        return {
+            "attachEffectId": effect_id,
+            "catalogEffectId": effect_id if in_catalog else None,
+            "catalog": ("affixes" if in_catalog
+                        else "extraAffixes" if effect_id in loadout["extraIds"] else None),
+            "isDeepRelicAffix": bool(info["deepTables"]) or info["curse"],
+            "requiresCurse": info["pairedDeep"] and not info["unpairedDeep"],
+            "isCurse": info["curse"],
+            "compatibilityId": int(row.get("compatibilityId") or "-1"),
+            "inNormalRelicPools": bool(info["normalTables"]),
+            "fixedRelicOnly": not info["random"],
+        }
+
+    # stack caps the params cannot state on the SpEffect row itself
+    def practical_stack_cap(owner_names: list[str]) -> tuple[int | None, str | None]:
+        text = " ".join(owner_names).casefold()
+        if "evergaol" in text:
+            dist = "、".join(f"{k} 个点位 {v} 个" for k, v in loadout["evergaolSpotsPerPattern"].items())
+            span = loadout["evergaolAttachIdRange"] or ["?", "?"]
+            return loadout["evergaolMax"], (
+                f"实测：LotResultSmallBaseAndSpot 里行名含 Evergaol 的地块，每个 patternId 最多落在 "
+                f"{loadout['evergaolMax']} 个不同的 attachId 点位（{loadout['evergaolPatterns']} 个 patternId："
+                f"{dist}；attachId 共 {loadout['evergaolAttachIds']} 个、取值 {span[0]}–{span[1]}），"
+                f"即一张地图最多 {loadout['evergaolMax']} 座封印监牢；与用户反馈『最多 7 层』一致。"
+                f"范围：只覆盖 Paramdex 有行名的这 {loadout['evergaolPatterns']} 个 patternId；"
+                f"表里共 {loadout['spotPatterns']} 个 patternId，另 {loadout['unnamedSpotPatterns']} 个"
+                f"（{'–'.join(loadout['unnamedSpotPatternRange'] or ['?', '?'])}）的行全部没有行名，"
+                f"其中用到上述监牢 attachId 的有 {loadout['unnamedPatternsOnEvergaolAttachIds']} 个，"
+                "但它们是否在别的点位放监牢，参数表看不出来，未核")
+        if "night invader" in text:
+            return 4, ("用户反馈：一局最多打倒 4 名黑夜入侵者（参数表里找不到每局入侵次数上限，"
+                       "ChaosMatchingCorrectParam 7780 只给了深夜各深度的入侵者强度，未实测）")
+        return None, None
+
+    innate_without_weapon: list[dict[str, Any]] = []
+    desc_en_by_id: dict[int, str] = {}
+    goods_by_en: dict[str, list[int]] = defaultdict(list)
+    for text_id in sorted((k for k in en["goods"] if k.isdigit()), key=int):
+        if plain_text(en["goods"].get(text_id)) and plain_text(zh["goods"].get(text_id)):
+            goods_by_en[plain_text(en["goods"][text_id])].append(int(text_id))
+    slot_counts: dict[str, int] = defaultdict(int)
+    applies_counts: dict[str, dict[str, int]] = {cls: defaultdict(int) for cls in OUTPUT_CLASSES}
+    affix_to_buffs: dict[str, list[int]] = defaultdict(list)
+    relic_to_buffs: dict[str, list[int]] = defaultdict(list)
+    stack_inputs: list[dict[str, Any]] = []
+    for buff in buffs:
+        sp_key = str(buff["spEffectId"])
+        row = sp[sp_key]
+        placed = classify_source_slots(sp_key, buff["paramName"], sources[sp_key], loadout, attach,
+                                       stems, accessory_attach_ids, grace_ids, permanent_ids)
+        buff["sourceSlot"] = placed["primary"]
+        buff["sourceSlots"] = placed["slots"]
+        if placed["primary"] == "other" and placed["reason"]:
+            buff["sourceSlotReason"] = placed["reason"]
+        slot_counts[placed["primary"]] += 1
+        # v6 (verify): the in-game description of a permanent / run-stack buff
+        # lives in PermanentBuffInfo keyed by the PermanentBuffParam row, not in
+        # SpEffectInfo -- 8970000 『赐福王的余威』 had descZh=null although the
+        # game says 『根据新发现的赐福数量，提升攻击力』 (PermanentBuffInfo#8970000).
+        if placed["primary"] in ("permanent", "runStack") and not buff.get("descZh"):
+            for entry in sources[sp_key]:
+                if entry["kind"] == "permanent" and entry.get("id") is not None \
+                        and entry["via"] in ("spEffectId", "graceSpEffectId"):
+                    info_zh = plain_text(zh["permanentInfo"].get(str(entry["id"])))
+                    if info_zh:
+                        buff["descZh"] = info_zh
+                        buff["descZhSource"] = f"PermanentBuffInfo#{entry['id']}"
+                        info_en = plain_text(en["permanentInfo"].get(str(entry["id"])))
+                        if info_en:
+                            desc_en_by_id[buff["spEffectId"]] = info_en
+                        break
+
+        weapon_ids = placed["attach"].get("weaponAffix") or []
+        if weapon_ids:
+            normal = set().union(*(loadout["weaponAffix"][a]["normal"] for a in weapon_ids))
+            deep = set().union(*(loadout["weaponAffix"][a]["deep"] for a in weapon_ids))
+            roles = set().union(*(loadout["weaponAffix"][a]["roles"] for a in weapon_ids))
+            buff["weaponAffixIds"] = [int(a) for a in weapon_ids]
+            buff["weaponAffixRoles"] = sorted(roles)
+            buff["weaponAffixDeepOnly"] = not normal
+            # v6 (re-verify): the per-weapon deep-only cap counts this flag,
+            # not weaponAffixDeepOnly (which is also true on the curses)
+            buff["weaponAffixDeepOnlyPositive"] = not normal and "curse" not in roles
+            buff["scope"]["rollableWeaponTypes"] = sorted(normal | deep)
+            for attach_id in weapon_ids:
+                affix_to_buffs[attach_id].append(buff["spEffectId"])
+        relic_ids = placed["attach"].get("relicAffix") or []
+        if relic_ids:
+            buff["relicAffixes"] = [relic_entry(a) for a in relic_ids]
+            for attach_id in relic_ids:
+                relic_to_buffs[attach_id].append(buff["spEffectId"])
+        innate_ids = placed["attach"].get("weaponInnate") or []
+        if "weaponInnate" in placed["slots"]:
+            # v6 (verify): every weaponInnate buff says which weapons carry it --
+            # from the legendary-weapon AE (EquipParamWeapon.attachEffectId) and
+            # from the direct EquipParamWeapon sources (residentSpEffectId* /
+            # spEffectBehaviorId*), all of them, not only the 40 exported.
+            weapon_ids = {int(w) for a in innate_ids for w in loadout["innate"].get(a, [])}
+            weapon_ids |= {int(e["id"]) for e in sources[sp_key]
+                           if e["kind"] == "weaponPassive" and e.get("id") and not e.get("inferred")}
+            innate = {"attachEffectIds": [int(a) for a in innate_ids], "weaponIds": sorted(weapon_ids)}
+            if weapon_ids:
+                innate["wepTypes"] = sorted({int(weapons_by_id[str(w)]["wepType"]) for w in weapon_ids
+                                             if str(w) in weapons_by_id})
+            else:
+                # script-applied, found only through its Paramdex row name
+                innate["inferredFromRowName"] = True
+                innate["rowCategory"] = row_category(buff["paramName"]) or None
+                innate_without_weapon.append({"spEffectId": buff["spEffectId"], "paramName": buff["paramName"],
+                                              "displayNameZh": buff["displayNameZh"]})
+            buff["weaponInnate"] = innate
+        # v6 (verify): a relic affix that only extends a consumable to allies
+        # (7050301 "Items confer effect to all nearby allies (Exalted Flesh)")
+        # needs both the relic affix and that consumable.
+        paren = re.search(r"\(([^()]*)\)$", buff["paramName"] or "")
+        if paren and "relicAffix" in placed["slots"] and paren.group(1) in goods_by_en:
+            buff["requiresGoodsIds"] = goods_by_en[paren.group(1)]
+            if "consumable" not in buff["sourceSlots"]:
+                buff["sourceSlots"] = sorted(buff["sourceSlots"] + ["consumable"], key=lambda s: SOURCE_SLOT_ORDER[s])
+
+        # machine-readable armament-type conditions (Q3)
+        on_type = int(row.get("triggerOnWepType") or "0")
+        count_type = int(row.get("wepTypeTrigger") or "1")
+        count = int(row.get("wepTypeTriggerCount") or "0")
+        if on_type:
+            buff["scope"]["weaponTypes"] = {"mode": "attackWith", "wepTypes": [on_type],
+                                            "namesZh": [wep_type_label(on_type)],
+                                            "field": "triggerOnWepType"}
+        elif count:
+            buff["scope"]["weaponTypes"] = {"mode": "equippedCount", "wepTypes": [count_type],
+                                            "namesZh": [wep_type_label(count_type)], "count": count,
+                                            "field": "wepTypeTrigger+wepTypeTriggerCount"}
+        if row.get("triggerAttachedWeapon") == "1":
+            buff["scope"]["attachedWeaponOnly"] = True
+
+        verdicts = evaluate_applies_to(
+            row, buff["target"], buff["rates"], populations, wep_type_zh,
+            loadout["namedWepTypes"], skill_wep_types)
+        buff["appliesTo"] = OrderedDict((cls, v["value"]) for cls, v in verdicts.items())
+        detail = OrderedDict()
+        for cls, verdict in verdicts.items():
+            applies_counts[cls][verdict["value"]] += 1
+            if verdict["value"] != "yes":
+                detail[cls] = {k: verdict[k] for k in ("reason", "requires", "matchShare") if k in verdict}
+        if detail:
+            buff["appliesToDetail"] = detail
+
+        # stack input (Q5)
+        ladder = buff.get("stackLadder")
+        owner_names = [attach.get(str(e.get("attachEffectId") or e.get("id") or ""), {}).get("Name", "")
+                       for e in sources[sp_key]] + [buff.get("paramName") or ""]
+        if ladder:
+            multiplier_key = next(k for k in sorted(buff["rates"])
+                                  if RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier")
+            tier_values = [buff["rates"][multiplier_key]] + [
+                as_number(sp[str(t)][multiplier_key]) for t in ladder["tierSpEffectIds"]]
+            cap, cap_source = practical_stack_cap(owner_names)
+            stack = {
+                "mode": "ladder",
+                "paramMaxStacks": ladder["tiers"],
+                "practicalMaxStacks": cap,
+                "practicalMaxSource": cap_source,
+                "userInput": True,
+                "multiplierKey": multiplier_key,
+                "tierMultipliers": tier_values,
+                "appliesToRateKeys": sorted(buff["rates"]),
+                "perStackRatio": round(tier_values[1] / tier_values[0], 4) if len(tier_values) > 1 else None,
+            }
+            buff["stackInput"] = stack
+        elif placed["primary"] == "runStack":
+            multiplier_key = next((k for k in sorted(buff["rates"])
+                                   if RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier"), None)
+            text_hits = sorted(k for k, v in zh["speffect"].items()
+                               if buff["nameZh"] and v.startswith(buff["nameZh"] + "＋"))
+            unit = (f"层数按游戏文本计：{buff['descZhSource']}『{buff['descZh']}』"
+                    + (f"／『{desc_en_by_id[buff['spEffectId']]}』" if buff["spEffectId"] in desc_en_by_id else "")
+                    + ("——即本局新发现的赐福数，不是打倒的首领数" if "赐福" in buff["descZh"] else "")
+                    if buff.get("descZhSource") else "层数的计数单位在参数与文本里都找不到")
+            stack = {
+                "mode": "copies",
+                "paramMaxStacks": None,
+                "practicalMaxStacks": None,
+                "practicalMaxSource": "参数表没有上限：spCategory=10（stackSelf）允许同一效果多份共存；"
+                                      f"{unit}，由用户手填；每份按 perStackMultiplier 相乘是按 spCategory 推断，未实测",
+                "userInput": True,
+                "multiplierKey": multiplier_key,
+                "perStackMultiplier": buff["rates"].get(multiplier_key) if multiplier_key else None,
+                "appliesToRateKeys": sorted(buff["rates"]),
+                "uiLabelMax": len(text_hits) or None,
+                "uiLabelTextIds": [int(k) for k in text_hits][:20],
+            }
+            buff["stackInput"] = stack
+            if buff["activation"] == "passive":
+                # zero stacks at the start of a run -- never multiply by default
+                buff["activation"] = "conditional"
+                buff["activationSource"] = "stackInputRequired"
+        if buff.get("stackInput"):
+            stack_inputs.append({"spEffectId": buff["spEffectId"], "displayNameZh": buff["displayNameZh"],
+                                 "sourceSlot": buff["sourceSlot"], **{k: buff["stackInput"][k] for k in (
+                                     "mode", "paramMaxStacks", "practicalMaxStacks")}})
+
+    weapon_affix_list = []
+    for attach_id in sorted(loadout["weaponAffix"], key=int):
+        info = loadout["weaponAffix"][attach_id]
+        if attach_id not in affix_to_buffs:
+            continue
+        row = attach.get(attach_id, {})
+        name_zh, name_en = attach_names(row) if row else (None, None)
+        weapon_affix_list.append({
+            "attachEffectId": int(attach_id),
+            "nameZh": name_zh,
+            "nameEn": name_en,
+            "paramName": row.get("Name") or None,
+            "potency": potency_of(row.get("Name")),
+            "roles": sorted(info["roles"]),
+            "isDebuff": row.get("isDebuff") == "1",
+            "compatibilityId": int(row.get("compatibilityId") or "-1"),
+            "normalWepTypes": sorted(info["normal"]),
+            "deepWepTypes": sorted(info["deep"]),
+            "deepOnly": not info["normal"],
+            "deepOnlyPositive": not info["normal"] and row.get("isDebuff") != "1",
+            "tableIds": sorted(info["tables"]),
+            "spEffectIds": sorted(set(affix_to_buffs[attach_id])),
+        })
+    fixed_relics = []
+    for entry in loadout["fixedRelics"]:
+        spids = sorted({spid for a in entry["attachEffectIds"] + entry["curseAttachEffectIds"]
+                        for spid in relic_to_buffs.get(str(a), [])})
+        fixed_relics.append({
+            **entry,
+            "attachEffectNamesZh": [attach_names(attach[str(a)])[0] if str(a) in attach else None
+                                    for a in entry["attachEffectIds"]],
+            "spEffectIds": spids,
+        })
 
     # --- counts -----------------------------------------------------------
     kind_counts: dict[str, int] = defaultdict(int)
@@ -2616,13 +4907,19 @@ def build() -> dict[str, Any]:
             "name": "ELDEN RING NIGHTREIGN regulation params",
             "detail": "本地导出的 252 张参数表 raw/params/*.csv（regulation 10350000 / exe 1.3.3.0）",
             "license": "游戏内资料，仅用于同人工具的数值展示",
-            "usage": "SpEffectParam / AttachEffectParam / AttachEffectTableParam / EquipParamAccessory / EquipParamGoods / EquipParamWeapon / Magic / Bullet / PermanentBuffParam",
+            "usage": "SpEffectParam / AttachEffectParam / AttachEffectTableParam / EquipParamAccessory / EquipParamGoods / EquipParamWeapon / Magic / Bullet / PermanentBuffParam；"
+                     "v6 起另读 EquipParamCustomWeapon / ItemTableParam / ItemLotParam_map / ItemLotParam_enemy（局内武器词条池）、"
+                     "EquipParamAntique / AntiqueStandParam（遗物池与容器格数）、CharaInitParam（武器格数）、"
+                     "ChaosMatchingRankControlParam（深夜诅咒武器概率）、LotResultSmallBaseAndSpot（封印监牢点位）、"
+                     "AtkParam_Pc（攻击子类别）、BehaviorParam_PC（近战人口旁证 diagnostics.meleePopulationCheck）",
         },
         {
             "name": "ELDEN RING NIGHTREIGN message FMG",
             "detail": "本地导出的简中(zhocn)与英文(engus)文本 raw/msg/<lang>/<bnd>_dlc01/*.json（基础档与 _dlc01 增量合并）",
             "license": "游戏内资料，仅用于同人工具的数值展示",
-            "usage": "AttachEffectName / AccessoryName / GoodsName / WeaponName / MagicName / PermanentBuffName / SpEffectName / SpEffectInfo",
+            "usage": "AttachEffectName / AccessoryName / GoodsName / WeaponName / MagicName / PermanentBuffName / SpEffectName / SpEffectInfo；"
+                     "v6 起另读 AntiqueName（固定词条遗物名）、ArtsName（战技名）、CL_MenuText（武器类别、角色技艺／绝招／能力、复仇者家人名）、"
+                     "PermanentBuffInfo（永久强化／局内叠层的 descZh）",
         },
         {
             "name": "Smithbox Paramdex (NR)",
@@ -2635,6 +4932,15 @@ def build() -> dict[str, Any]:
             "url": f"https://github.com/vawser/Smithbox/blob/{SMITHBOX_COMMIT}/src/Smithbox.Data/Assets/PARAM/ER/Defs/SpEffect.xml",
             "license": "MIT",
             "usage": "字段日文说明（攻撃側ダメージ倍率 / 攻撃力倍率 等），用于确定各倍率字段的作用层",
+        },
+        # v6: appended last so the positions of the v5 entries do not move
+        {
+            "name": "本仓库的其它数据集（v6 起）",
+            "detail": "data/nightreign-affixes-v1.03.4.json（词条库，relicAffixes[].catalogEffectId 对齐与 self_check）、"
+                      "data/nightreign-relics-v1.03.4.json（extraAffixes：固定词条遗物的特殊词条）、"
+                      "data/nightreign-skills-v1.03.5.json（战技／法术的命中段 atkId，attackIndex 与 appliesTo 的人口）",
+            "license": "本仓库生成物",
+            "usage": "只读；generate_skills.py 须先于本脚本运行",
         },
     ]
     payload["notes"] = {
@@ -2758,8 +5064,17 @@ def build() -> dict[str, Any]:
                    "sources[].kind 取玩家可获得的来源而不是按 target=self 取），"
                    "而 target=self 且带 `selfInflictedStatus: true` 的是自伤（切腹、癫火自伤），必须排除；"
                    "special／flag／economy 只展示不乘；"
-                   "⑥ 用 `stacking.group` 分组去重（同组按 `spCategoryBehavior` 处理）后跨组相乘；"
-                   "⑦ 列表一律显示 `displayNameZh`（已保证唯一）。",
+                   "⑥ 用 `stacking.exclusiveKey` 分组去重（同键只留一份，按 `spCategoryBehavior` 选哪份）后跨组相乘"
+                   "（v6 起：stacking.group 是只按类别的旧口径，200 系列不看优先度、累积阶梯不合并，留作兼容；"
+                   "resetOnApply 的 group 也已改为按 ID，见 stackingRules 第 2 条）；"
+                   "⑦ 列表一律显示 `displayNameZh`（已保证唯一）。"
+                   "**v6**：第④步里『其余 scope 字段按伤害构成加权』之前，先用 buffs[].appliesTo 判断这条 buff 对所选输出"
+                   "（战技／魔法／祷告…）是否生效——no 直接虚化并显示 appliesToDetail.reason，conditional 按 requires 与 "
+                   "attackIndex 对所选条目判定；页面分栏改用 sourceSlot（见 notes.appliesTo／notes.sourceSlot）。"
+                   "武器词条栏按 slotRules 组装：常规 6 条、深夜 12 条正面词条（另有每把 1 条诅咒，最多 6 条），"
+                   "**其中 weaponAffixDeepOnlyPositive=true 的最多 6 条**（slotRules.weaponAffix.maxDeepOnlyAffixes，每把 1 条；"
+                   "诅咒也是 weaponAffixDeepOnly=true，但不计入这个上限，见 slotRules.weaponAffix.deepOnlyCapField）；"
+                   "叠层类按 stackInput 让用户填层数。",
         "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind："
                          "multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；"
                          "flag 只是开关，不参与计算；special 的每个字段语义各不相同、"
@@ -3203,6 +5518,597 @@ def build() -> dict[str, Any]:
                           f"（本次实测取值：{'、'.join(observed_behaviours)}）；"
                           "spCategory 205/206/1007/1008 虽未出现在 Paramdex 枚举里，但已按所在区间（200 系＝removePrevious、1000 系＝applyHighest）归类。",
     }
+    # ======================================================================
+    # v6 payload: slot rules, weapon-affix pools, fixed relics, attack index
+    # ======================================================================
+    buff_by_id = {b["spEffectId"]: b for b in buffs}
+    stand_normal = sorted(int(k) for k in loadout["standNormal"])
+    stand_deep = sorted(int(k) for k in loadout["standDeep"])
+    payload["slotRules"] = OrderedDict([
+        ("modes", {
+            "normal": {"zh": "常规（一般出击）", "weaponAffixesPerWeapon": loadout["normalPositiveMax"],
+                       "relicSlots": stand_normal[-1], "weaponCursesPerWeapon": loadout["normalCurseMax"],
+                       "deepOnlyAffixesPerWeapon": 0},
+            "deep": {"zh": "深夜（The Deep of Night）", "weaponAffixesPerWeapon": loadout["deepPositiveMax"],
+                     "relicSlots": stand_normal[-1] + stand_deep[-1],
+                     "weaponCursesPerWeapon": loadout["deepCurseMax"],
+                     "deepOnlyAffixesPerWeapon": loadout["deepOnlyPerWeaponMax"]},
+            "zh": "页面的『常规／深夜』开关：常规＝每把武器 1 条局内词条、3 个遗物（普通池）；"
+                  "深夜＝每把**诅咒武器** 2 条正面词条（另附 1 条负面诅咒）、3 个普通遗物＋3 个深夜遗物。"
+                  f"深夜诅咒武器的 2 条正面词条里**最多 {loadout['deepOnlyPerWeaponMax']} 条**可以是深夜专属词条"
+                  "（weaponAffixes[].deepOnlyPositive=true／buffs[].weaponAffixDeepOnlyPositive=true，"
+                  "如『提升物理攻击力』×1.08、『提升属性攻击力』、『强化魔法、祷告』）："
+                  "另一条来自常规池。6 把武器最多 "
+                  f"{len(loadout['weaponColumns']) * loadout['deepOnlyPerWeaponMax']} 条深夜专属正面词条，不是 12 条"
+                  "（见 slotRules.weaponAffix.deepOnlyPerWeaponMax／maxDeepOnlyAffixes）。"
+                  "诅咒的 deepOnly 也是 true（诅咒只出现在深夜），但**不计入**这个上限，另按每把 1 条算。",
+        }),
+        ("weaponAffix", {
+            "maxWeapons": len(loadout["weaponColumns"]),
+            "normalPerWeapon": loadout["normalPositiveMax"],
+            "deepPerWeapon": loadout["deepPositiveMax"],
+            "deepCursePerWeapon": loadout["deepCurseMax"],
+            "maxAffixesNormal": len(loadout["weaponColumns"]) * loadout["normalPositiveMax"],
+            "maxAffixesDeep": len(loadout["weaponColumns"]) * loadout["deepPositiveMax"],
+            "deepOnlyPerWeaponMax": loadout["deepOnlyPerWeaponMax"],
+            "maxDeepOnlyAffixes": len(loadout["weaponColumns"]) * loadout["deepOnlyPerWeaponMax"],
+            # v6 (re-verify): which flag the two caps above count.  The
+            # curses are deepOnly=true as well but have their own 1-per-weapon
+            # slot (deepCursePerWeapon).
+            "deepOnlyCapField": "weaponAffixDeepOnlyPositive",
+            "deepOnlyCapCountsCurses": False,
+            "duplicateWithinWeapon": {
+                "status": "unknown",
+                "likelyKey": "compatibilityId",
+                "zh": "同一把深夜诅咒武器的两条正面词条能否是同一条（或同一词条的不同档位）：参数表没有答案。"
+                      f"池的结构允许——一般武器的槽6 池（505）包含槽5 池（501）的全部成员，"
+                      f"实测 {loadout['deepPositivePairRows']} 行有两个正面槽的武器里 "
+                      f"{loadout['deepPositivePairRowsWithSharedAffix']} 行的两个池有共同成员；"
+                      "游戏是否像遗物那样按 compatibilityId 去重（遗物同一件上 compatibilityId 相同的词条不会同时出现，"
+                      "武器词条的 compatibilityId 也把同一词条的各档归成一组，如强化祷告档位1–3 都是 401020），"
+                      "EquipParamCustomWeapon／AttachEffectTableParam 里没有对应字段，未实测。"
+                      "页面按用户选择放行；建议在同一把武器选了 compatibilityId 相同的两条时给出提示，而不是直接拒绝。",
+            },
+            "evidence": {
+                "weaponColumns": loadout["weaponColumns"],
+                "reachableCustomWeaponRows": loadout["weaponReachableRows"],
+                "measuredNormalPositiveMax": loadout["normalPositiveMax"],
+                "measuredDeepPositiveMax": loadout["deepPositiveMax"],
+                "measuredDeepCurseMax": loadout["deepCurseMax"],
+                "isCursedRowsMirrorSlots1to3Into4to6": loadout["cursedRowsMirror"],
+                "slotPatternsByRarity": loadout["weaponRarityPatterns"],
+                "deepCursedWeaponRates": loadout["chaosCursedRates"],
+                "deepOnlyPositiveSlotsPerRow": loadout["deepOnlySlotsPerRow"],
+                "deepOnlyAttachEffectIds": len(loadout["deepOnlyAttachIds"]),
+                "deepOnlyPositiveAttachEffectIds": len(loadout["deepOnlyPositiveAttachIds"]),
+                "deepOnlyCurseAttachEffectIds": len(loadout["deepOnlyCurseAttachIds"]),
+                "deepOnlyPositivePotencyByPoolFamily": loadout["deepOnlyPositivePotencyByPoolFamily"],
+                "potencyCountsByPoolTier": loadout["potencyCountsByPoolTier"],
+                "deepPositivePairRows": loadout["deepPositivePairRows"],
+                "deepPositivePairRowsWithSharedAffix": loadout["deepPositivePairRowsWithSharedAffix"],
+                "distinctAttachEffectIdsInReachablePools": loadout["distinctAffixIds"],
+                "slotLayouts": loadout["slotLayouts"],
+                "blessingPools": loadout["blessingTables"],
+                "blessingPoolsBySubsetOf81x": loadout["blessingTablesBySubset"],
+            },
+            "zh": "局内武器最多 6 把（CharaInitParam 的 equip_Wep_Right_1..3／Left_1..3），"
+                  "所有已装备武器的词条都生效（词条 SpEffect 的 triggerAttachedWeapon=0，除非 scope.attachedWeaponOnly）。"
+                  "EquipParamCustomWeapon 每行 6 个词条槽：attachEffectTableId_1..3 是常规出击时的词条，"
+                  "_4..6 是同一把武器在深夜被『诅咒』后的版本。按稀有度实测（evidence.slotPatternsByRarity）："
+                  "普通（rarity 0）、优良（1）、稀有（2）／传说（3）常规都是 1 条词条；池按稀有度分档"
+                  "（501x00000／501x00100／501x00200），各池的**主档位**依次是档位1／2／3，但不是唯一档位："
+                  "优良池另含档位1 成员、稀有池另含档位1 与档位2 成员（evidence.potencyCountsByPoolTier，"
+                  "按 501X／505X 各武器组给出每个档位的成员数 [最少, 最多]）。"
+                  "深夜版的槽位布局按池族实测（evidence.slotLayouts，池 ID 的百万位，如 501＝501000000 系）有三种："
+                  "① 一般武器：槽4 一条负面诅咒（610／620 池）＋槽5 与常规相同的词条池（501／808）＋槽6 深夜池"
+                  "（505xxx00y00，比常规池多 17 种深夜专属词条，如『提升物理攻击力』『提升属性攻击力』）；"
+                  "② isCursed=1 的『Unique』武器：槽1..3 与 4..6 完全相同＝诅咒（630）＋常规池词条（501／808）＋"
+                  "『武器赐福』（810..814 池），推断只在深夜掉落；"
+                  "③ 20 行『[Hero] X+2』／『[Unique] X+2』角色武器（101750002–141755002，"
+                  "由 ItemLotParam_enemy 13000000 起行名为 [Night Assassin]／[Night Thief]／[Night Hunter]…的掉落表给出）："
+                  "槽1 与槽4＝该角色固定的 601000x00 池，[Hero] 槽5＝602000000（17 种深夜专属词条・档位1）＋槽6＝诅咒 620；"
+                  "[Unique] 槽2/5＝603000x00（成员是 81x 赐福池的子集，按赐福计，evidence.blessingPoolsBySubsetOf81x）＋槽3/6＝诅咒 630。"
+                  "weaponAffixRoles 的 blessing 按池族判（evidence.blessingPools），不按槽号。"
+                  "深夜里优良／稀有武器变成诅咒版的概率见 evidence.deepCursedWeaponRates"
+                  "（ChaosMatchingRankControlParam：各深度 25%／40%）。"
+                  "因此常规每把 1 条（最多 6 条）、深夜诅咒武器每把 2 条正面词条（最多 12 条），"
+                  f"**其中深夜专属词条每把最多 {loadout['deepOnlyPerWeaponMax']} 条、6 把最多 "
+                  f"{len(loadout['weaponColumns']) * loadout['deepOnlyPerWeaponMax']} 条**"
+                  "（evidence.deepOnlyPositiveSlotsPerRow：每行里池中含深夜专属词条的正面槽数的分布，"
+                  "深夜专属＝没有任何可掉落行的槽1..3 池含有该词条，与 weaponAffixes[].deepOnly 同一口径）。"
+                  "上限只数正面的深夜专属词条（deepOnlyCapField＝weaponAffixDeepOnlyPositive）；诅咒虽然也只出现在深夜"
+                  "（deepOnly=true），但占的是每把 1 条的诅咒槽（deepCursePerWeapon），不计入 6 条上限"
+                  f"（evidence：深夜专属 id {len(loadout['deepOnlyAttachIds'])} 个＝正面 "
+                  f"{len(loadout['deepOnlyPositiveAttachIds'])}＋诅咒 {len(loadout['deepOnlyCurseAttachIds'])}）。"
+                  "深夜专属词条的档位：一般诅咒武器的槽6（505 池）与『[Hero] X+2』的槽5（602 池）上只有档位1，"
+                  "档位2 只来自赐福池（81x／603），见 evidence.deepOnlyPositivePotencyByPoolFamily。"
+                  "同一把武器的两条正面词条能否重复见 duplicateWithinWeapon（未知）。"
+                  "每条词条能出现在哪些武器类别上见 weaponAffixes[].normalWepTypes／deepWepTypes 与 buffs[].scope.rollableWeaponTypes。",
+        }),
+        ("relic", {
+            "normal": stand_normal[-1],
+            "deepExtra": stand_deep[-1],
+            "affixesPerRelic": loadout["relicAffixSlots"],
+            "curseAffixesPerDeepRelic": loadout["relicCurseSlots"],
+            "evidence": {
+                "enabledVessels": loadout["standCount"],
+                "vesselNormalSlotCounts": loadout["standNormal"],
+                "vesselDeepSlotCounts": loadout["standDeep"],
+                "namedRelicRows": loadout["namedRelicRows"],
+                "maxAffixSlotsPerRelic": loadout["relicAffixSlots"],
+                "maxCurseSlotsPerRelic": loadout["relicCurseSlots"],
+            },
+            "zh": "每个容器（AntiqueStandParam，启用的全部是 3＋3）有 3 个普通遗物格和 3 个深夜遗物格"
+                  "（深夜格只在『深夜』生效，TutorialBody 301950）；每件遗物最多 3 条词条，深夜遗物另有最多 3 条负面词条。"
+                  "随机遗物的词条合法性沿用 core.js（普通池 100/110/200/210/300/310，深夜池 2000000/2100000/2200000，"
+                  "负面 3000000）；官方固定词条遗物整件选入，见 fixedRelics。",
+        }),
+        ("accessory", {
+            "slots": 2,
+            "measured": False,
+            "evidence": {
+                "source": "用户说明（局内两个护符格）＋游戏文本：CL_MenuText 338380「已增加护符的空格数」表明局内会开护符格。"
+                          "参数表没有护符格数字段（CharaInitParam.equip_Accessory01..04 是《艾尔登法环》沿用的 4 列，"
+                          "本作只有第 1 列有值）。",
+                "accessoryGroupUnique": all(
+                    row.get("accessoryGroup") == row["ID"] for row in accessories
+                    if zh["accessory"].get(row["ID"])),
+            },
+            "zh": "局内最多 2 个护符；EquipParamAccessory.accessoryGroup 相同的不能同时装备（本作每个护符的 group 都是自己的 ID，"
+                  "即同一护符不能装两个）。",
+        }),
+        ("consumable", {"slots": None, "zh": "不限数量，按用户勾选；同 stacking.exclusiveKey 的只取一份"}),
+        ("spellBuff", {"slots": None, "zh": "不限数量，按用户勾选；同 stacking.exclusiveKey 的只取一份"}),
+        ("weaponSkill", {"slots": None, "zh": "随所选武器的战技而定，按用户勾选"}),
+        ("weaponInnate", {"slots": None, "zh": "选了对应武器（buffs[].weaponInnate.weaponIds，wepTypes 是这些武器的类别）才有；"
+                                            "weaponIds 为空、带 inferredFromRowName=true 的只能靠行名前缀归类"
+                                            "（diagnostics.weaponInnateWithoutWeaponIds），页面只能让用户手动勾选"}),
+        ("character", {"slots": None, "zh": "随所选角色而定，按用户勾选"}),
+        ("permanent", {"slots": None, "zh": "局内获得，按用户勾选"}),
+        ("runStack", {"slots": None, "zh": "按 stackInput 让用户填层数"}),
+    ])
+    payload["weaponAffixes"] = weapon_affix_list
+    payload["weaponAffixPools"] = [
+        {
+            "tableId": int(table),
+            "roles": sorted(info["roles"]),
+            "modes": sorted(info["modes"]),
+            "slotIndexes": sorted(info["slotIndexes"]),
+            "potencies": sorted(info["potencies"]),
+            "members": info["members"],
+            "wepTypes": sorted(info["wepTypes"]),
+        }
+        for table, info in sorted(loadout["weaponTables"].items(), key=lambda kv: int(kv[0]))
+    ]
+    payload["fixedRelics"] = fixed_relics
+    payload["attackIndex"] = {
+        "zh": "appliesTo 的『人口』：每个战技／法术实际命中段的 AtkParam 子类别集合（法术再并上 Magic.subCategory1..2 流派），"
+              "以及近战／射击／致命一击的 AtkParam_Pc 行分布。appliesTo=conditional 且 requires.subCategoriesAny 存在时，"
+              "页面用所选战技／法术在这里的 subCategorySets 判定：某一段的 subs 与 requires.subCategoriesAny 有交集，"
+              "这一段才吃这条 buff（hits 是段数，可按段加权）。",
+        "populationCounts": populations.counts(),
+        "skills": populations.skill_index,
+        "spells": populations.spell_index,
+        "melee": [{"subs": sorted(k), "rows": v}
+                  for k, v in sorted(populations.rows["melee"].items(), key=lambda kv: (-kv[1], sorted(kv[0])))],
+        "ranged": [{"subs": sorted(k), "rows": v}
+                   for k, v in sorted(populations.rows["ranged"].items(), key=lambda kv: (-kv[1], sorted(kv[0])))],
+        "throw": [{"subs": sorted(k), "rows": v}
+                  for k, v in sorted(populations.rows["throw"].items(), key=lambda kv: (-kv[1], sorted(kv[0])))],
+    }
+
+    # ---- notes.userQuestions: answers built from the numbers above ----------
+    skill_items = populations.items["skill"]
+    skills_with_112 = [i for i in skill_items if any(112 in s for s in i["sets"])]
+    skills_without_112 = [i["nameZh"] for i in skill_items if i not in skills_with_112]
+    skills_with_130 = [i for i in skill_items if any(130 in s for s in i["sets"])]
+    spell_items = populations.items["sorcery"] + populations.items["incantation"]
+    spells_with_112 = [i for i in spell_items if any(112 in s for s in i["sets"])]
+    skill_attack_affixes = [b for b in buffs if b["sourceSlot"] == "weaponAffix"
+                            and 112 in b["scope"].get("subCategories", [])]
+    skill_attack_all = [b for b in buffs if 112 in b["scope"].get("subCategories", [])
+                        and b["target"] in ("self", "ally") and "damage" in b["rateGroups"]]
+    sorcery_no = Counter()
+    for b in buffs:
+        if b["target"] not in ("self", "ally") or not (set(b["rateGroups"]) & DAMAGE_GROUPS):
+            continue
+        if b["appliesTo"]["sorcery"] == "no":
+            first = b["appliesToDetail"]["sorcery"]["reason"].split("；")[0].split("：")[0].split("（")[0]
+            if first.startswith("triggerOnWepType"):
+                first = "triggerOnWepType（只对用该类武器发动的攻击）"
+            elif first.startswith("子类别限定"):
+                first = "子类别不匹配"
+            sorcery_no[first] += 1
+    equipped_count = [b for b in buffs if b["scope"].get("weaponTypes", {}).get("mode") == "equippedCount"]
+    attack_with = [b for b in buffs if b["scope"].get("weaponTypes", {}).get("mode") == "attackWith"]
+    stack_by_id = {s["spEffectId"]: buff_by_id[s["spEffectId"]] for s in stack_inputs}
+
+    def rate_of(buff: dict[str, Any]) -> str:
+        values = sorted({v for k, v in buff["rates"].items()
+                         if RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier" and RATE_FIELD_BY_KEY[k]["countsAsDamage"]})
+        return "/".join(f"×{v}" for v in values)
+
+    def ladder_text(buff: dict[str, Any]) -> str:
+        stack = buff["stackInput"]
+        tiers = stack.get("tierMultipliers") or []
+        cap = stack.get("practicalMaxStacks")
+        at_cap = f"，{cap} 层 ×{tiers[cap - 1]}" if cap and len(tiers) >= cap else ""
+        return (f"{buff['spEffectId']}『{buff['displayNameZh']}』第 1 层 ×{tiers[0]}、每层约 ×{stack['perStackRatio']}"
+                f"（第 n 层＝×{stack['perStackRatio']}^n）{at_cap}，参数表共 {stack['paramMaxStacks']} 层（满层 ×{tiers[-1]}）"
+                f"；practicalMaxStacks={cap}（{stack['practicalMaxSource'] or '参数表以外无上限依据，由用户填'}）")
+
+    q1 = (
+        "**数据是收录了的，是页面口径错了两处，另有一处数据集自身的推导错误（v6 已修）。**"
+        f"局内武器词条『提升战技攻击力』＝ AttachEffectParam／SpEffectParam "
+        + "、".join(f"{b['spEffectId']}（{rate_of(b)}）" for b in skill_attack_affixes)
+        + "，全部五种伤害倍率、magicSubCategoryChange＝[112 战技攻击, 111 蓄力战技攻击]；"
+        f"同样带 112 的还有 " + "、".join(f"{b['spEffectId']}『{b['displayNameZh']}』（{b['sourceSlot']}）"
+                                        for b in skill_attack_all if b not in skill_attack_affixes) + "。"
+        "① 数据集错误：v4 起 scope.attackContexts 把 111（蓄力战技）单独当成情境限制，给这 5 条标了 [\"chargedSkill\"]，"
+        "页面据此把它们藏到『蓄力战技』勾选项后面。magicSubCategoryChange1..3 是『命中任一即生效』："
+        f"实测 skills 数据集 {len(skill_items)} 个有伤害段的战技里 {len(skills_with_112)} 个的命中段带 112"
+        f"（没有的是 {'、'.join(skills_without_112)}——咆哮类的伤害段是咆哮后强化的普通攻击，子类别 106+130）。"
+        "v6 规定只有**全部**子类别都是情境类时才输出 attackContexts，这 5 条的 attackContexts 已删除（diagnostics.droppedAttackContexts）。"
+        "② 页面错误：v5 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都标成 sources[].kind=\"relicAffix\"，"
+        "局内武器词条与遗物词条混在一起，页面无法单列『局内武器词条』；v6 新增 buffs[].sourceSlot=\"weaponAffix\"。"
+        "③ 页面错误：ranker.js 的 meleeOnly 规则把只标 [130 近战武器攻击] 的条目（『提升近战攻击力』）判为不作用于战技，"
+        f"但实测 {len(skills_with_130)}/{len(skill_items)} 个战技的命中段带 130（只有弓系战技没有），"
+        "v6 的 appliesTo.skill 已给出 conditional＋requires.subCategoriesAny=[130]。"
+        f"**法术不会吃『提升战技攻击力』**：{len(spell_items)} 个有伤害段的法术里带 112 的有 {len(spells_with_112)} 个，"
+        "且这些词条 magParamChange＝miracleParamChange＝0，appliesTo.sorcery／incantation＝\"no\"。"
+        "页面上法术吃到的『提升攻击力（战技・×1.115）』之类，是战技**发动后给自己的全伤害增益**——"
+        "1730『[AoW] Golden Vow』×1.115（战技『黄金树立誓』）、1768『[AoW] Rallying Standard』×1.2（战技『归于麾下』）等，"
+        "magParamChange＝miracleParamChange＝1，确实作用于法术；显示名里的『战技』是**来源类别**不是生效范围。"
+        "v6 把它们归到 sourceSlot=\"weaponSkill\"，并在 sources[].artsNameZh／displayNameZh 写出战技名"
+        + (f"（例：1730 现在显示为『{buff_by_id[1730]['displayNameZh']}』，"
+           f"1768 为『{buff_by_id[1768]['displayNameZh']}』）。" if 1730 in buff_by_id and 1768 in buff_by_id else "。")
+    )
+    q2 = (
+        "v6 为每条 buff 预计算 appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional），"
+        "no 与 conditional 的理由与机读条件在 appliesToDetail。页面对 value=\"no\" 的条目应虚化并显示 reason。"
+        "对魔法判 no 的依据（target∈self/ally 且带伤害倍率的条目，按第一条理由计）："
+        + "；".join(f"{k} {v} 条" for k, v in sorcery_no.most_common())
+        + "。『提升 X 的攻击力』类（8160000–8162400，遗物词条 7330000 起）magParamChange=1，但 triggerOnWepType=X，"
+        "只对用 X 发动的攻击生效，魔法由手杖（wepType 57）、祷告由圣印记（61）施放，因此判 no。"
+        "wepParamChange=3（自身）的『强化魔法／祷告』对战技与普攻判 no；stateInfo=367 的『强化致命一击』只对 throw 判 yes。"
+        "注意 yes 只表示『这类输出吃得到』，数值还要按 rates 的属性与所选战技／法术的伤害构成加权"
+        "（纯物理倍率对纯魔力法术等于 ×1）。"
+    )
+    q3_rows = "、".join(f"{b['spEffectId']}（{b['scope']['weaponTypes']['namesZh'][0]}，{rate_of(b)}）"
+                        for b in equipped_count[:4])
+    q3 = (
+        f"遗物词条『装备三把以上类别为 X 的武器，能提升攻击力』共 {len(equipped_count)} 条（{q3_rows}…）。"
+        "条件字段是 SpEffectParam.wepTypeTrigger＝X（WEP_TYPE）＋wepTypeTriggerCount＝3，stateInfo＝2100（Use Weapon Type Trigger）："
+        "判的是**装备中**有没有 3 把该类别武器，与当前出手的武器无关；生效范围 wepParamChange＝0（不限武器）、"
+        "magParamChange＝miracleParamChange＝1、没有子类别与 triggerOnWepType 限制。"
+        "倍率是 physics／magic／fire／thunder／dark AttackRate（最终伤害倍率，减防后乘）。"
+        "**所以带三把短剑、手上用刀：刀的攻击吃得到；放魔法／祷告也吃得到**（appliesTo 六类全 yes，activation＝conditional，"
+        "scope.weaponTypes={mode:\"equippedCount\", wepTypes:[X], count:3}）。"
+        "注意 wepTypeTrigger 的默认值就是 1（短剑），短剑版的 conditions 里只看得到 wepTypeTriggerCount=3，"
+        "v6 用 scope.weaponTypes 把类别写明。"
+        f"与之相对，『提升 X 的攻击力』（{len(attack_with)} 条，triggerOnWepType＝X）只作用于**用 X 发动**的攻击："
+        "刀、法术都吃不到（scope.weaponTypes.mode=\"attackWith\"）。"
+        "『装备』是否把 6 个武器槽都算进去，参数表没有写明，按词条文本『装备三把以上』理解为 6 个武器槽都计入，未实测。"
+    )
+    fixed_by_id = [b for b in buffs if b.get("nameSource") in ("permanentBuffNameById", "attachEffectNameById")]
+    suggested = [b for b in buffs if b.get("suggestedNameZh")]
+    suggested_by_cat = Counter(row_category(b["paramName"]) for b in suggested)
+    attach_row_hits = sum(1 for b in fixed_by_id + suggested if str(b["spEffectId"]) in attach)
+    q4 = (
+        f"v5 的 {len(fixed_by_id) + len(suggested)} 条无中文名 buff "
+        + ("**没有一条是 AttachEffectParam 行**" if attach_row_hits == 0 else f"有 {attach_row_hits} 条是 AttachEffectParam 行")
+        + f"（按 spEffectId 与 AttachEffectParam 逐一比对，命中 {attach_row_hits} 条）："
+        "它们都是游戏脚本挂载、只能靠 Paramdex 行名找到的 SpEffect。"
+        f"其中 {len(fixed_by_id)} 条在别的 FMG 里有**以同一 ID 为键**的游戏文本，已补进 nameZh："
+        + "、".join(f"{b['spEffectId']}『{b['nameZh']}』（{b['nameSource']}）" for b in fixed_by_id)
+        + f"。其余 {len(suggested)} 条在任何 FMG 里都没有自己的文本，新增 suggestedNameZh（suggestedNameZhInferred=true，"
+        "suggestedNameZhSource 列出用到的游戏文本 ID），由游戏文本拼出：战技名取 ArtsName、法术名 MagicName、道具名 GoodsName、"
+        "复仇者家人名与角色技艺／绝招名取 CL_MenuText，英文尾巴按 TAIL_PHRASES_ZH 词表翻译；displayNameZh 改用它。"
+        "按类别：" + "、".join(f"[{k}] {v}" for k, v in suggested_by_cat.most_common())
+        + f"。suggestedNameZh 仍有英文残留的条数见 diagnostics.suggestedNameZhUntranslated（本版本 {len(suggested_untranslated)} 条）。"
+        "**但页面显示的是 displayNameZh，不只是名字本身**：v6 初稿在消歧限定词里还用着英文 Paramdex 行名，"
+        f"有 {len(detail_fixed)} 条 displayNameZh 仍带英文（如 7035902『提升物理攻击力（遗物・×1.1・Switching Weapons Boosts Attack Power）』、"
+        "1681『…Barbaric/Milos Roar - Right Damage Buff』），其中 "
+        f"{sum(1 for b in detail_fixed if set(b['rateGroups']) & COUNTS_AS_DAMAGE_GROUPS)} 条带 countsAsDamage 的伤害倍率、"
+        "会出现在通用排名里，另有 "
+        f"{sum(1 for b in detail_fixed if not set(b['rateGroups']) & COUNTS_AS_DAMAGE_GROUPS and set(b['rateGroups']) & CONDITIONAL_DAMAGE_GROUPS)}"
+        " 条只带特攻／致命一击这类条件伤害倍率。"
+        "现在这一级限定词改用行名的中文拼写：词干优先取所属 AttachEffectParam 行自己的名字"
+        "（7035902→AE 7035900『切换武器时，能提升物理攻击力』）、ArtsName（含『A/B C』拆开查，"
+        "『Barbaric/Milos Roar』→『野蛮咆哮』，sources[].artsNameZh 同步补上）、CL_MenuText 的角色技艺／绝招／能力名"
+        "（411010+／413010+／415010+，『Tenacity』→『不屈』）、道具／法术／SpEffect 名，尾巴按 TAIL_PHRASES_ZH；"
+        "拼不全的行不用这一级，直接落到『#spEffectId』（diagnostics.displayNameZhDetailUntranslated：原本靠英文行名区分、"
+        f"现在只能落到 #spEffectId 的条目，本版本 {len(detail_untranslated_needed)} 条）。"
+        f"另外 {len(weapon_named)} 条的 nameZh 是携带它的第一把武器名，displayNameZh 改写为『X等N把武器的固有效果』："
+        + "、".join(f"{i}『{buff_by_id[i]['nameZh']}』→『{buff_by_id[i]['displayNameZh']}』（{buff_by_id[i]['paramName']}）"
+                   for i in weapon_named) + "。"
+        f"**现在 displayNameZh 里除 NPC／HP／FP 外的拉丁字母残留：{len(latin_left)} 条**"
+        "（diagnostics.displayNameZhLatinResidue，self_check 断言为空）。"
+    )
+    sp204_buffs = sorted((b for b in buffs if b["stacking"]["spCategory"] == 204), key=lambda b: b["spEffectId"])
+    sp204_priorities = [(b["spEffectId"], b["stacking"]["categoryPriority"]) for b in sp204_buffs]
+    sp204_keys = [(b["spEffectId"], b["stacking"]["exclusiveKey"]) for b in sp204_buffs]
+    q5_items = [ladder_text(b) for b in stack_by_id.values()
+                if b["stackInput"]["mode"] == "ladder" and b["sourceSlot"] == "relicAffix"]
+    for b in stack_by_id.values():
+        stack = b["stackInput"]
+        if stack["mode"] != "copies":
+            continue
+        label_ids = stack.get("uiLabelTextIds") or []
+        q5_items.append(
+            f"{b['spEffectId']}『{b['displayNameZh']}』：PermanentBuffParam 8970000（Paramdex 行名前缀 [Boss Raid]）"
+            f"的 graceSpEffectId→SpEffect {b['spEffectId']}，每份 ×{stack['perStackMultiplier']}"
+            "（物理／魔力／火／雷／圣，含法术），spCategory=10（stackSelf，同一效果可多份共存）。"
+            + (f"**层数的计数单位是本局新发现的赐福**（游戏文本 {b['descZhSource']}『{b['descZh']}』"
+               + (f"／『{desc_en_by_id[b['spEffectId']]}』" if b["spEffectId"] in desc_en_by_id else "")
+               + "；graceSpEffectId 这个列名也指向赐福），不是打倒的首领数——v6 初稿写成『每打倒一个给赐福的首领多一份』是错的"
+               if b.get("descZhSource") else "层数的计数单位在参数与文本里都找不到")
+            + f"。N 份按 ×{stack['perStackMultiplier']}^N 相乘（按 spCategory 推断，未实测）；"
+            "参数表无上限，游戏文本备有『赐福王的余威＋1』到『＋"
+            f"{stack.get('uiLabelMax')}』（SpEffectName {label_ids[0] if label_ids else '?'}–"
+            f"{label_ids[-1] if label_ids else '?'}），页面让用户手填层数；"
+            "v5 把它标成 passive 会被默认乘进排名，v6 改为 conditional／stackInputRequired")
+    q5 = ("；".join(q5_items)
+          + "。三者都是全伤害倍率，同时作用于战技与法术（appliesTo 全 yes）。"
+          "阶梯类同一阶梯的各层互斥（spCategory 204 removePrevious，各层共用一个 categoryPriority），任何时刻只取当前层，"
+          "绝不能把各层相乘，数值见 buffs[].stackInput.tierMultipliers。另外两条阶梯 8988200『玛雷家的庇佑』（玛雷家行刑剑）、"
+          "8998000『复仇的庇佑』（剑骸大剑）各 100 层，归 sourceSlot=weaponInnate，同样带 stackInput。"
+          "**不同阶梯之间不互斥**：这四条同为 spCategory 204，但 categoryPriority 各不相同"
+          f"（{'／'.join(f'{b}={p}' for b, p in sp204_priorities)}），"
+          "204 的 350 行按优先度分成 12 组、每组是一条连续 ID 的阶梯（diagnostics.exclusiveKeyEvidence.sp204Ladders），"
+          "200 系列按『同优先度才顶替』处理（stackingRules 第 1 条），所以 stacking.exclusiveKey 各不相同，"
+          "例如封印监牢 7 层与黑夜入侵者 4 层同时生效＝两条 tierMultipliers 相乘。"
+          "旧的 stacking.group 只按类别给了同一个 \"sp204\"，按它去重会只剩一条——页面请改用 exclusiveKey。"
+          "这是参数层面的推断（优先度结构＋遗物词条可以同时装），未实测。")
+    payload["notes"]["userQuestions"] = OrderedDict([
+        ("Q1", {"question": "战技排名为什么没有局内武器「提升战技攻击力」？法术为什么会吃到战技攻击力？", "answer": q1}),
+        ("Q2", {"question": "法术不可能吃到的加成（各类武器攻击力等）应标不生效。", "answer": q2}),
+        ("Q3", {"question": "带三把不相关的短剑、用刀或放法术时，「持有 N 把 X 类武器提升攻击力」能否吃到？",
+                "answer": q3}),
+        ("Q4", {"question": "仍是英文名的 buff 怎么处理？", "answer": q4}),
+        ("Q5", {"question": "封印监牢、黑夜入侵者、赐福王的余威的层数上限与每层倍率？", "answer": q5}),
+    ])
+    payload["notes"]["sourceSlot"] = (
+        "**v6 新增** `sourceSlot`（主槽位）／`sourceSlots`（全部槽位，按 enums.sourceSlot 顺序）：这条 buff 该放进页面的哪一栏。"
+        "取值与中文说明见 enums.sourceSlot；除任务清单的九种外新增 weaponSkill（战技发动后的自身增益）与 "
+        "weaponInnate（武器固有效果、传说武器的庇佑）。判定用的是**全部**来源（不止导出的 40 条）："
+        "AttachEffectParam 行按它真正所在的池判——在 EquipParamAntique 的池里＝relicAffix，"
+        "在可掉落的 EquipParamCustomWeapon 行引用的池里＝weaponAffix，被 EquipParamWeapon.attachEffectId 引用＝weaponInnate；"
+        "只能靠 Paramdex 行名找到的脚本挂载行，先按『同族 AttachEffectParam』（同 ID 十位／百位、同词干）归，"
+        "找不到再按 [...] 前缀归。sourceSlot=\"other\" 的条目一定带 sourceSlotReason。"
+        "**sources[].kind 保持 v5 口径不变**（局内武器词条仍是 kind=\"relicAffix\"），页面分栏请改用 sourceSlot。"
+    )
+    by_id_all = {b["spEffectId"]: b for b in buffs}
+    # v6 (re-verify): the rows notes.appliesTo quotes for reading throw=1 as
+    # "critical hits only" (the opposite of the Paramdex wording)
+    throw_one_damage = sorted(
+        b["spEffectId"] for b in buffs
+        if b["scope"].get("affectsThrow")
+        and any(RATE_FIELD_BY_KEY[k]["countsAsDamage"] and RATE_FIELD_BY_KEY[k]["valueKind"] == "multiplier"
+                for k in b["rates"]))
+    # the note says every one of them is a critical-hit-only row
+    assert throw_one_damage and all(
+        by_id_all[i]["stacking"]["stateInfo"] == 367
+        or re.search(r"Critical|Throw", by_id_all[i]["paramName"] or "") for i in throw_one_damage), throw_one_damage
+    payload["notes"]["appliesTo"] = (
+        "**v6 新增** `appliesTo`：{skill, sorcery, incantation, melee, ranged, throw} → \"yes\"／\"no\"／\"conditional\"，"
+        "`appliesToDetail`：非 yes 的类别的 {reason, requires?, matchShare?}。判定只看 SpEffectParam 自己的列，按顺序叠加："
+        "① target 为 enemy／summon → 全 no；② 只有消耗／射程类字段 → 按字段归属"
+        "（战技消耗→skill、魔法消耗→sorcery、祷告消耗→incantation、射程衰减→ranged）；"
+        "③ stateInfo=367（强化致命一击）只对 throw；④ 投递方式：武器类（skill／melee／ranged）看 wepParamChange"
+        "（0 不限、1／2 限右／左手→conditional、3 自身→no、4 踢击→no）且 throwAttackParamChange=1 的行只作用于致命一击；"
+        "sorcery 看 magParamChange、incantation 看 miracleParamChange；"
+        "⑤ triggerOnWepType（出手武器类别）、triggerAttachedWeapon（只对带词条的那把武器）、"
+        "spAttribute（附加属性负载，只对被附加的武器）、atkAttribute、stateInfo=197（突刺反击）；"
+        "⑥ magicSubCategoryChange1..3（命中任一即可）对照 attackIndex 里各类输出的实测子类别："
+        "全部命中→yes、全不命中→no、部分→conditional（matchShare＝战技／法术按条目、其余按 AtkParam 行的命中比例，"
+        "requires.subCategoriesAny 给出需要的子类别，页面用 attackIndex.skills／spells 对所选条目逐段判定）。"
+        "取最严的一关。**requires 的键**：hand（1 右手／2 左手）、attackWeaponTypes（出手武器 wepType）、"
+        "attachedWeaponOnly、imbuedWeaponOnly、physicalType、attackContexts、subCategoriesAny。"
+        "**推断与未实测**：throw（致命一击）对 throwAttackParamChange=0 的武器增益判 yes 是推断，"
+        "**而且与 Paramdex 的字面说明相反**：Paramdex 对 throwAttackParamChange 的说明是"
+        "『Set whether or not it is effective against throwing attacks』（与 magParamChange 同一写法），"
+        "按字面 0＝不作用于致命一击；magParamChange=0 本数据集确实判 no，throw 却反着读成『1＝只作用于致命一击、0＝通用』。"
+        f"依据：带无条件伤害倍率且 throw=1 的 buff 只有 {len(throw_one_damage)} 条"
+        f"（{'、'.join(str(i) for i in throw_one_damage)}），全是『强化致命一击』类或专门修正致命一击的行"
+        "（stateInfo=367 或行名 Critical／Throw），没有一条是通用增益——若 0 才是『不作用于致命一击』，"
+        "所有通用增益都会漏掉致命一击、而只作用于致命一击的行反而写成 1，与这批行的用途对不上；"
+        "反证是战技『决心』1691（右手 ×1.6，throw=0）另配 1694（throw=1，×0.75『Throw Damage Adjust』）专门压低致命一击，"
+        "说明 throw=0 的增益本来就作用于致命一击、throw=1 的行只作用于致命一击；wepParamChange=3 判『不作用于武器攻击』"
+        "的依据是它只出现在『强化魔法／祷告』类（magParamChange 或 miracleParamChange=1）与命中负载上。"
+        "appliesTo 与 activation 正交：activation 回答『这份 buff 在不在身上』，appliesTo 回答『在身上时哪类输出吃得到』。"
+    )
+    payload["notes"]["weaponAffix"] = (
+        "**v6 新增**：局内武器词条（sourceSlot=weaponAffix）带 `weaponAffixIds`（AttachEffectParam id）、"
+        "`weaponAffixRoles`（affix 普通词条／curse 负面诅咒／blessing 武器赐福／fixed 某类武器固定带的词条）、"
+        "`weaponAffixDeepOnly`（只在深夜池出现）与 `scope.rollableWeaponTypes`（能出现在哪些 wepType 上，常规∪深夜）。"
+        "按词条（而不是按 SpEffect）列出的**有增伤 buff 的词条清单**在顶层 `weaponAffixes`（normalWepTypes／deepWepTypes 分开给）："
+        f"只收能对应到 buffs[] 里某条 buff 的 AttachEffect id（本版本 {len(weapon_affix_list)} 个）；"
+        f"可掉落武器的池里一共有 {loadout['distinctAffixIds']} 个带权重的 AttachEffect id"
+        "（slotRules.weaponAffix.evidence.distinctAttachEffectIdsInReachablePools，含诅咒、恢复、减伤、攻击时释放X等不改输出的词条），"
+        "不在本数据集范围内的请查词条库。"
+        "池的概览在 `weaponAffixPools`。武器类别中文名见 enums.wepType（取自 CL_MenuText 60010–60175）。"
+        "组装规则见 slotRules.weaponAffix／slotRules.modes；深夜诅咒武器每把最多 "
+        f"{loadout['deepOnlyPerWeaponMax']} 条**正面的**深夜专属词条（`weaponAffixDeepOnlyPositive`=true，"
+        "slotRules.weaponAffix.deepOnlyPerWeaponMax／deepOnlyCapField）。`weaponAffixDeepOnly` 的口径是『只在深夜池出现』，"
+        "诅咒（weaponAffixRoles 含 curse）也只出现在深夜，所以同样为 true——**上限只数 weaponAffixDeepOnlyPositive**，"
+        "诅咒另按每把 1 条（slotRules.weaponAffix.deepCursePerWeapon）算，6 条诅咒＋6 条深夜专属正面词条是合法组合。"
+        f"evidence：深夜专属 AttachEffect id 共 {len(loadout['deepOnlyAttachIds'])} 个，"
+        f"正面 {len(loadout['deepOnlyPositiveAttachIds'])} 个（deepOnlyPositiveAttachEffectIds）、"
+        f"诅咒 {len(loadout['deepOnlyCurseAttachIds'])} 个（deepOnlyCurseAttachEffectIds）。"
+        "同一把武器的两条正面词条能否相同：见 slotRules.weaponAffix.duplicateWithinWeapon（参数表里查不到，按未知处理）。"
+    )
+    payload["notes"]["relicAffix"] = (
+        "**v6 新增**：遗物词条（sourceSlot=relicAffix）带 `relicAffixes[]`："
+        "attachEffectId；catalogEffectId（=attachEffectId，且保证在 data/nightreign-affixes-v1.03.4.json 的 affixes 里，"
+        "否则为 null）；catalog（\"affixes\"／\"extraAffixes\"——后者是只出现在固定词条遗物上的特殊词条，"
+        "在 data/nightreign-relics-v1.03.4.json 的 extraAffixes 里）；isDeepRelicAffix、requiresCurse、isCurse"
+        "（按 EquipParamAntique 的池实测：深夜池、与负面槽配对的深夜池、负面池 3000000）；"
+        "compatibilityId（AttachEffectParam 原值，-1 不互斥）；inNormalRelicPools；fixedRelicOnly。"
+        "self_check 保证与词条库的 requiresCurse／isCurse／compatibilityId 完全一致。"
+        "官方固定词条遗物（名字相同、词条不同的算不同条目）在顶层 `fixedRelics`，页面可整件选入占一个遗物格。"
+        "`requiresGoodsIds`（可缺）：这条遗物效果只在使用这些道具时才出现——7050301 是遗物词条 7050100"
+        "『道具效用能扩及我方人物』把『勇者肉块』（GoodsName 1210）的效果分给队友的那一行，target=ally，"
+        "sourceSlots=[relicAffix, consumable]，要同时选了遗物词条与道具才成立。"
+    )
+    payload["notes"]["stackInput"] = (
+        "**v6 新增** `stackInput`（可缺）：需要用户填层数的叠层增益。"
+        "mode=\"ladder\"＝叠层阶梯（与 stackLadder 同一批，第 n 层用 tierMultipliers[n-1]，各层互斥不可相乘）；"
+        "mode=\"copies\"＝同一效果可多份共存（spCategory=10），N 层＝perStackMultiplier^N。"
+        "paramMaxStacks＝参数表的层数上限（copies 为 null）；practicalMaxStacks＝一局实际能叠到的上限及其来源"
+        "（practicalMaxSource 写明是实测还是用户反馈）；uiLabelMax＝游戏文本备好的『＋N』标签数。"
+        "层数数的是什么，以游戏文本为准：8970000『赐福王的余威』的 descZh（descZhSource=PermanentBuffInfo#8970000）"
+        "是『根据新发现的赐福数量，提升攻击力』——页面的输入框应提示『本局新发现的赐福数』，不是打倒的首领数。"
+        "**阶梯之间**：7069001 封印监牢、7069201 黑夜入侵者、8988200 玛雷家的庇佑、8998000 复仇的庇佑同为 spCategory 204，"
+        "但各自的 categoryPriority 不同（stacking.exclusiveKey 分别为 "
+        + "、".join(f"\"{k}\"" for _b, k in sp204_keys) +
+        "），按 200 系列『同优先度才顶替』的规则彼此独立，可以同时填层数、结果相乘；同一阶梯内各层才互斥。"
+        "旧 stacking.group 把四条都给成 \"sp204\"，页面若仍按 group 去重，用户同时填监牢与入侵者时只会算其中一条。"
+        "这是按参数结构推断（204 的 12 条阶梯各占一个优先度），未实测，页面可在这四条同时启用时给个提示。"
+    )
+    payload["notes"]["suggestedName"] = (
+        "**v6 新增** `suggestedNameZh`（可缺，只在 nameZh 为 null 时出现）＋`suggestedNameZhSource`（用到的游戏文本 ID 列表）"
+        "＋`suggestedNameZhInferred`=true：没有任何自身游戏文本的脚本挂载行，用游戏文本拼出的建议显示名；"
+        "displayNameZh 已改用它。它**不是**该 SpEffect 自己的文本，nameZh 仍保持 null。"
+        "displayNameZh 的消歧限定词（倒数第二级）同样只用中文：行名的中文拼写，拼不全就落到『#spEffectId』"
+        "（v6 复核：之前还有两级——累积阶梯的各档写『第N层』，行名没有档位时取所属词条的档位，[Weapon] 行只由永久强化授予时写"
+        "『永久强化』；落到 #spEffectId 的条目与原因见 diagnostics.displayNameZhIdFallback／Note），"
+        "self_check 保证 displayNameZh 里除 NPC／HP／FP 外没有拉丁字母（diagnostics.displayNameZhLatinResidue）。"
+        "`descZhSource`（可缺）：descZh 不是来自 SpEffectInfo 时写明出处，本版本只有 PermanentBuffInfo#<PermanentBuffParam 行>。"
+    )
+    payload["enums"]["sourceSlot"] = {k: dict(v) for k, v in SOURCE_SLOTS.items()}
+    payload["enums"]["outputClass"] = {k: dict(v) for k, v in OUTPUT_CLASSES.items()}
+    payload["enums"]["appliesToValue"] = dict(APPLIES_TO_VALUES)
+    payload["enums"]["wepType"] = {
+        str(k): {"zh": wep_type_zh.get(k), "en": v, "textId": int(loadout["wepTypeTextId"][k])
+                 if k in loadout["wepTypeTextId"] else None}
+        for k, v in sorted(WEP_TYPE_EN.items())
+    }
+    payload["enums"]["weaponAffixRole"] = {
+        "affix": "普通词条（常规／深夜的正面词条池）",
+        "curse": "负面诅咒（Weapon Curse 1/2/3 池，AttachEffectParam.isDebuff=1），只出现在深夜诅咒武器上",
+        "blessing": "武器赐福：按池族判——810000000–814000000 池（isCursed=1 武器的第 3/6 槽，按近战／弓／重型远程／法杖圣印／盾分池）"
+                    "与成员是其子集的 603000x00 池（『[Unique] X+2』角色武器的第 2/5 槽），见 slotRules.weaponAffix.evidence.blessingPools",
+        "fixed": "单成员池：某类武器固定带的词条（附加异常状态、附加属性等），不是随机抽的",
+    }
+    payload["enums"]["exclusiveScope"] = dict(EXCLUSIVE_SCOPE_LABELS)
+    payload["enums"]["stackInputMode"] = {
+        "ladder": "叠层阶梯：每层是一条独立的 SpEffect，同层互斥，取当前层",
+        "copies": "同一效果多份共存（spCategory=10 stackSelf），层数＝份数，逐份相乘",
+    }
+    payload["counts"]["buffsBySourceSlot"] = {k: slot_counts[k] for k in SOURCE_SLOTS if slot_counts.get(k)}
+    payload["counts"]["appliesToByOutput"] = {cls: {v: applies_counts[cls].get(v, 0) for v in APPLIES_TO_VALUES}
+                                              for cls in OUTPUT_CLASSES}
+    payload["counts"]["weaponAffixes"] = len(weapon_affix_list)
+    payload["counts"]["weaponAffixPools"] = len(payload["weaponAffixPools"])
+    payload["counts"]["fixedRelics"] = len(fixed_relics)
+    payload["counts"]["buffsWithStackInput"] = sum(1 for b in buffs if b.get("stackInput"))
+    payload["counts"]["buffsWithSuggestedNameZh"] = sum(1 for b in buffs if b.get("suggestedNameZh"))
+    payload["counts"]["buffsWithRelicAffixes"] = sum(1 for b in buffs if b.get("relicAffixes"))
+    payload["counts"]["buffsWithWeaponAffixIds"] = sum(1 for b in buffs if b.get("weaponAffixIds"))
+    payload["counts"]["attackPopulation"] = populations.counts()
+    payload["counts"]["buffsWithWeaponInnate"] = sum(1 for b in buffs if b.get("weaponInnate"))
+    payload["counts"]["buffsWithRequiresGoodsIds"] = sum(1 for b in buffs if b.get("requiresGoodsIds"))
+    payload["counts"]["buffsWithDescZhSource"] = sum(1 for b in buffs if b.get("descZhSource"))
+    # v6 (re-verify)
+    exclusive_members: dict[str, list[int]] = defaultdict(list)
+    for b in buffs:
+        exclusive_members[b["stacking"]["exclusiveKey"]].append(b["spEffectId"])
+    payload["counts"]["buffsByExclusiveScope"] = {
+        k: sum(1 for b in buffs if b["stacking"]["exclusiveScope"] == k)
+        for k in EXCLUSIVE_SCOPE_LABELS if any(b["stacking"]["exclusiveScope"] == k for b in buffs)}
+    payload["counts"]["exclusiveKeys"] = len(exclusive_members)
+    payload["counts"]["exclusiveKeysShared"] = sum(1 for v in exclusive_members.values() if len(v) > 1)
+    payload["counts"]["buffsWithAccumulatorLadder"] = sum(1 for b in buffs if b.get("accumulatorLadder"))
+    payload["counts"]["buffsWithWeaponAffixDeepOnlyPositive"] = sum(
+        1 for b in buffs if b.get("weaponAffixDeepOnlyPositive"))
+    payload["diagnostics"]["droppedAttackContexts"] = dropped_attack_contexts
+    # v6 (re-verify): the measurements behind stackingRules 1-2 / exclusiveKey
+    key_evidence = exclusive_key_evidence(sp, attach, load_json(AFFIX_CATALOG_PATH)["affixes"])
+    # the numbers quoted in STACKING_RULES_ZH must still hold
+    assert key_evidence["spCategory20Rows"] == 1310, key_evidence["spCategory20Rows"]
+    assert key_evidence["attachEffectPassivesBySpCategory"].get("20") == 1202, key_evidence
+    assert key_evidence["affixCatalogSuperposabilityOfSp20"].get("不可叠加") == 126, key_evidence
+    assert key_evidence["affixCatalogSuperposabilityOfSp20"].get("不同级别可叠加") == 7, key_evidence
+    per_200 = {e["spCategory"]: e for e in key_evidence["category200sPriorities"]}
+    assert (per_200[201]["rows"], per_200[201]["distinctCategoryPriority"]) == (292, 90), per_200[201]
+    assert per_200[204]["rows"] == 350 and len(key_evidence["sp204Ladders"]) == 12, per_200[204]
+    assert key_evidence["sp204LaddersAreIdBlocks"], key_evidence["sp204Ladders"]
+    ladder_prio = {l["firstSpEffectId"]: (l["categoryPriority"], l["rows"]) for l in key_evidence["sp204Ladders"]}
+    assert ladder_prio[7069001] == (11, 10) and ladder_prio[7069201] == (13, 10), ladder_prio
+    assert ladder_prio[8988200] == (5, 100) and ladder_prio[8998000] == (4, 100), ladder_prio
+    payload["diagnostics"]["exclusiveKeyEvidence"] = key_evidence
+    payload["diagnostics"]["exclusiveKeyEvidenceNote"] = (
+        "v6（复核）stacking.exclusiveKey 的依据，全部由生成器从参数表实测："
+        "spCategory20Rows＝SpEffectParam 里 spCategory=20 的行数；attachEffectPassivesBySpCategory＝AttachEffectParam "
+        "passiveSpEffectId_1..3 指向的 SpEffect 按 spCategory 计数（遗物词条与护符的被动绝大多数是 20，"
+        "若 20 跨 ID 互斥，两条遗物词条就会互相顶掉）；affixCatalogSuperposabilityOfSp20＝被动全是 20 的词条在词条库里的叠加性"
+        "（『不可叠加』＝同一词条装两次不叠，『不同级别可叠加』＝＋1 与＋2 这两个不同 ID 能同时生效）；"
+        "category200sPriorities＝200 系列每个类别的行数与不同 categoryPriority 数；sp204Ladders＝204 按 categoryPriority 分组，"
+        "每组正好是一段连续 ID 的存档阶梯（sp204LaddersAreIdBlocks=true；优先度 3 的一组中间隔了 5 个别类行），"
+        "即一条阶梯一个优先度。"
+        "self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴两档、同一护符四档、封印监牢十层）做正例，"
+        "用 77 条 spCategory=20 里明显应共存的组合（护符＋遗物＋角色被动、两条『装备三把以上X』、＋1／＋2）"
+        "与四条 204 阶梯彼此之间做反例。"
+    )
+    payload["diagnostics"]["accumulatorLadderConflicts"] = accum_conflicts
+    payload["diagnostics"]["displayNameZhIdFallback"] = [
+        {"spEffectId": b["spEffectId"], "displayNameZh": b["displayNameZh"]}
+        for b in buffs if DISPLAY_ID_TAIL_RE.search(b["displayNameZh"] or "")]
+    payload["diagnostics"]["displayNameZhIdFallbackNote"] = (
+        "v6（复核）displayNameZh 仍以『#spEffectId』收尾的条目。消歧顺序是：来源名→档位（行名的 Potency／Tier，"
+        "累积阶梯用『第N层』，行名没有档位时取所属词条 AttachEffectParam 的档位）→左右手→类别（[Weapon] 行只由 "
+        "PermanentBuffParam 授予时写『永久强化』而不是『武器』）→数值→行名的中文拼写→#spEffectId。"
+        "剩下的这些在参数上逐列相同或只差指向／条件列，没有可读的区别："
+        "7120401–7120408／7120501–7120508／7120601–7120608（同一遗物词条『出击时的武器，附加异常状态…』下 4 份逐列相同的行，"
+        "只差 atkOccurrenceSpEffectId 指向的下一行）、8660203／8660206 与 8660204／8660207（同一效果的右手／左手两份，"
+        "后两条逐列相同）、7035402／7035412（两个词条 7035400／7035410 同名，只差 invocationConditionsStateChange1）、"
+        "8882514／8882515（只差 wepParamChange 3／0）。"
+    )
+    payload["diagnostics"]["droppedAttackContextsNote"] = (
+        "v6 删除了这些条目 v5 里的 scope.attackContexts：它们的 magicSubCategoryChange 同时列了情境类子类别"
+        "（111 蓄力战技）与非情境类子类别（112 战技攻击），而 magicSubCategoryChange1..3 是『命中任一即生效』，"
+        "所有战技命中段都带 112，所以 111 不构成限制。v5 按 attackContexts 默认不计入，导致战技排名看不到『提升战技攻击力』。")
+    payload["diagnostics"]["suggestedNameZhUntranslated"] = suggested_untranslated
+    # v6 (verify): the list the page actually shows is displayNameZh
+    payload["diagnostics"]["displayNameZhLatinResidue"] = latin_left
+    payload["diagnostics"]["displayNameZhDetailUntranslated"] = detail_untranslated_needed
+    payload["diagnostics"]["displayNameZhDetailNote"] = (
+        "displayNameZh 的倒数第二级限定词（v5 起是英文 Paramdex 行名）在 v6 改为行名的中文拼写（见 notes.userQuestions.Q4）。"
+        "displayNameZhLatinResidue 列出 displayNameZh 里仍有 NPC／HP／FP 以外拉丁字母的条目，self_check 断言为空；"
+        "displayNameZhDetailUntranslated 列出原本靠英文行名区分、而行名拼不全中文的条目——它们的显示名改用『#spEffectId』结尾，"
+        f"不会出现英文（本版本 {len(detail_untranslated_needed)} 条）。"
+        f"行名拼不全中文的条目一共 {len(detail_untranslated)} 条，都不需要这一级：要么名字本来就唯一，"
+        "要么与同行名的兄弟行本来就只能靠『#spEffectId』区分（如 7120401–7120404 四行行名完全相同）。"
+        f"displayNameZhWeaponNamed：nameZh 取自携带它的第一把武器名的条目（{len(weapon_named)} 条），displayNameZh 已改写成『X等N把武器的固有效果』。")
+    payload["diagnostics"]["displayNameZhWeaponNamed"] = weapon_named
+    payload["diagnostics"]["weaponInnateWithoutWeaponIds"] = innate_without_weapon
+    payload["diagnostics"]["weaponInnateWithoutWeaponIdsNote"] = (
+        "sourceSlot 含 weaponInnate、但参数里找不到携带它的武器的条目：它们由游戏脚本挂载，只能靠 Paramdex 行名前缀"
+        "（[Flail]／[Arrow]…）归到武器固有效果，weaponInnate.weaponIds 为空并带 inferredFromRowName=true，页面不能按所选武器自动启用，"
+        "只能让用户手动勾选。其余 weaponInnate 条目的 weaponIds 来自传说武器的 EquipParamWeapon.attachEffectId"
+        "（含 [Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑，如 8980002→AE 9021400『夜与火的庇佑』→2140000）"
+        "与直接引用它的 EquipParamWeapon.residentSpEffectId*／spEffectBehaviorId*（全部来源，不止导出的 40 条）。")
+    payload["diagnostics"]["meleePopulationCheck"] = melee_check
+    payload["diagnostics"]["meleePopulationCheckNote"] = (
+        "outputClass.melee 的人口是『无名、throwFlag=0、非箭、带 130』的 AtkParam_Pc 行，130 本身就是定义口径。"
+        f"它排除的无名、无任何子类别的行共 {melee_check['unnamedNoSubcategoryRows']} 行，其中 "
+        f"{melee_check['unnamedNoSubcategoryZeroDamage']} 行没有任何伤害（如 1000460／1000470／1000480／1000591），"
+        f"{melee_check['unnamedNoSubcategoryDamaging']} 行有伤害（按行号段分布见 unnamedNoSubcategoryDamagingByIdBlock，"
+        f"{melee_check['unnamedNoSubcategoryDamagingByIdBlock'].get('<1000000', 0)} 行在 1000000 以下）；"
+        "其中被武器的 BehaviorParam_PC 实际引用的只有 unnamedNoSubcategoryDamagingReferencedByWeapons 这几行。"
+        "独立旁证：按全部有名武器的 behaviorVariationId 取 BehaviorParam_PC（refType 0＝攻击）实际引用的 AtkParam_Pc，"
+        f"有伤害的无名近战行 {melee_check['weaponBehaviorDamagingRows']} 行里带 130 的 {melee_check['weaponBehaviorRowsWith130']} 行，"
+        "不带 130 的按子类别见 weaponBehaviorRowsWithout130BySubCategories——几乎都是骑马攻击 101（本作没有骑乘，推断是沿用行），"
+        "所以『提升近战攻击力』对 melee 判 yes 与武器实际用到的攻击行一致。")
+    payload["diagnostics"]["artsNamedInferredSources"] = arts_named_sources
+    payload["diagnostics"]["attackPopulationMissingAtkIds"] = populations.missing_atk_ids[:60]
+    payload["diagnostics"]["relicAffixesOutsideCatalog"] = sorted({
+        entry["attachEffectId"] for b in buffs for entry in b.get("relicAffixes", [])
+        if entry["catalogEffectId"] is None})
+    payload["diagnostics"]["relicAffixesOutsideCatalogNote"] = (
+        "这些遗物词条只出现在官方固定词条遗物上（EquipParamAntique 单成员池），"
+        "不在词条库 affixes 里，而在 data/nightreign-relics-v1.03.4.json 的 extraAffixes 里；relicAffixes[].catalog=\"extraAffixes\"。")
     payload["buffs"] = buffs
     self_check(payload)
     return payload
@@ -3329,6 +6235,328 @@ def self_check(payload: dict[str, Any]) -> None:
     qualifying = {g["key"] for g in payload["rateFieldGroups"] if g["qualifies"]}
     for buff in buffs:
         assert any(group in qualifying for group in buff["rateGroups"]), buff["spEffectId"]
+
+    self_check_v6(payload)
+
+
+def self_check_v6(payload: dict[str, Any]) -> None:
+    """v6 invariants: slots, relic catalog alignment, appliesTo vs scope, slot rules."""
+    buffs = payload["buffs"]
+    ids = {b["spEffectId"] for b in buffs}
+    enums = payload["enums"]
+    catalog = {int(a["effectId"]): a for a in load_json(AFFIX_CATALOG_PATH)["affixes"]}
+    extra = {int(a["effectId"]) for a in load_json(RELIC_CATALOG_PATH).get("extraAffixes", [])}
+    classes = list(enums["outputClass"])
+    assert classes == list(OUTPUT_CLASSES), classes
+    weapon_affix_ids = {w["attachEffectId"] for w in payload["weaponAffixes"]}
+    field_group = {f["key"]: f["group"] for f in payload["rateFields"]}
+    slot_total: dict[str, int] = defaultdict(int)
+    for buff in buffs:
+        sp_id = buff["spEffectId"]
+        scope = buff["scope"]
+        # --- slots -----------------------------------------------------------
+        assert buff["sourceSlot"] in enums["sourceSlot"], (sp_id, buff["sourceSlot"])
+        assert buff["sourceSlots"] and buff["sourceSlots"][0] == buff["sourceSlot"], sp_id
+        assert all(s in enums["sourceSlot"] for s in buff["sourceSlots"]), sp_id
+        assert buff["sourceSlots"] == sorted(buff["sourceSlots"], key=lambda s: SOURCE_SLOT_ORDER[s]), sp_id
+        if buff["sourceSlot"] == "other":
+            assert buff.get("sourceSlotReason"), (sp_id, "other without reason")
+        else:
+            assert "sourceSlotReason" not in buff, sp_id
+        slot_total[buff["sourceSlot"]] += 1
+        # --- relic affixes: aligned with the affix catalog --------------------
+        for entry in buff.get("relicAffixes", []):
+            assert "relicAffix" in buff["sourceSlots"], sp_id
+            effect_id = entry["attachEffectId"]
+            if entry["catalogEffectId"] is not None:
+                assert entry["catalogEffectId"] == effect_id and effect_id in catalog, (sp_id, effect_id)
+                assert entry["catalog"] == "affixes", (sp_id, effect_id)
+                ref_affix = catalog[effect_id]
+                assert entry["requiresCurse"] == bool(ref_affix["requiresCurse"]), (sp_id, effect_id, "requiresCurse")
+                assert entry["isCurse"] == bool(ref_affix["isCurse"]), (sp_id, effect_id, "isCurse")
+                assert entry["compatibilityId"] == int(ref_affix["compatibilityId"]), (sp_id, effect_id, "compat")
+            else:
+                # not a random-pool affix: must be one of the fixed-relic extras
+                assert entry["catalog"] == "extraAffixes" and effect_id in extra, (sp_id, effect_id)
+                assert entry["fixedRelicOnly"], (sp_id, effect_id)
+        # --- weapon affixes --------------------------------------------------
+        if buff.get("weaponAffixIds"):
+            assert "weaponAffix" in buff["sourceSlots"], sp_id
+            assert set(buff["weaponAffixIds"]) <= weapon_affix_ids, sp_id
+            assert scope.get("rollableWeaponTypes"), sp_id
+            assert all(str(t) in enums["wepType"] for t in scope["rollableWeaponTypes"]), sp_id
+        else:
+            assert "rollableWeaponTypes" not in scope and "weaponAffixRoles" not in buff, sp_id
+        # --- appliesTo -------------------------------------------------------
+        applies = buff["appliesTo"]
+        assert list(applies) == classes, sp_id
+        detail = buff.get("appliesToDetail", {})
+        for cls, value in applies.items():
+            assert value in enums["appliesToValue"], (sp_id, cls, value)
+            if value == "yes":
+                assert cls not in detail, (sp_id, cls)
+            else:
+                assert detail.get(cls, {}).get("reason"), (sp_id, cls, "no reason")
+            if value == "conditional":
+                assert detail[cls].get("requires"), (sp_id, cls, "conditional without requires")
+        # appliesTo must not contradict scope
+        groups = {field_group[k] for k in buff["rates"]} - {"flag"}
+        economy_only = groups == {"economy"}
+        if buff["target"] in ("enemy", "summon"):
+            assert all(v == "no" for v in applies.values()), (sp_id, "enemy/summon row applies")
+        elif not economy_only:
+            if not scope["affectsSorcery"]:
+                assert applies["sorcery"] == "no", (sp_id, "sorcery flag off but applies")
+            if not scope["affectsIncantation"]:
+                assert applies["incantation"] == "no", (sp_id, "incantation flag off but applies")
+            if scope.get("weaponSlot") in (3, 4) or scope["affectsThrow"]:
+                for cls in ("skill", "melee", "ranged"):
+                    assert applies[cls] == "no", (sp_id, cls, "weaponSlot 3/4 or throw-only but applies")
+            if scope.get("weaponSlot") in (1, 2):
+                for cls in ("skill", "melee", "ranged"):
+                    assert applies[cls] != "yes", (sp_id, cls, "hand-limited but unconditional")
+            subs = set(scope.get("subCategories", []))
+            if subs and subs <= HERO_ONLY_SUBCATEGORIES:
+                assert all(v == "no" for v in applies.values()), (sp_id, "hero-only subcategory applies")
+            for cls in ("skill", "sorcery", "incantation", "melee", "ranged"):
+                if scope.get("attackContexts"):
+                    assert applies[cls] != "yes", (sp_id, cls, "attackContexts but unconditional")
+            kind = scope.get("weaponTypes", {})
+            if kind.get("mode") == "attackWith":
+                if not set(kind["wepTypes"]) & SORCERY_CATALYST_WEP_TYPES:
+                    assert applies["sorcery"] == "no", (sp_id, "attackWith non-catalyst applies to sorcery")
+                if not set(kind["wepTypes"]) & INCANTATION_CATALYST_WEP_TYPES:
+                    assert applies["incantation"] == "no", (sp_id, "attackWith non-catalyst applies to incantation")
+        # attackContexts only when every listed subcategory is situational
+        contexts = set(scope.get("attackContexts", []))
+        subs = scope.get("subCategories", [])
+        if contexts and subs:
+            situational = [v for v in subs if v in ATTACK_CONTEXT_BY_SUBCATEGORY]
+            if situational:
+                assert len(situational) == len(subs), (sp_id, "mixed subcategories produced attackContexts")
+        # --- stack input -----------------------------------------------------
+        stack = buff.get("stackInput")
+        if stack:
+            assert stack["mode"] in enums["stackInputMode"], sp_id
+            assert buff["activation"] == "conditional", (sp_id, "stack input but not conditional")
+            if stack["mode"] == "ladder":
+                ladder = buff["stackLadder"]
+                assert stack["paramMaxStacks"] == ladder["tiers"] == len(stack["tierMultipliers"]), sp_id
+                assert all(b > a for a, b in zip(stack["tierMultipliers"], stack["tierMultipliers"][1:])), sp_id
+            else:
+                assert buff["sourceSlot"] == "runStack" and not buff.get("stackLadder"), sp_id
+            if stack["practicalMaxStacks"] is not None:
+                assert stack["practicalMaxSource"], sp_id
+                if stack["paramMaxStacks"] is not None:
+                    assert stack["practicalMaxStacks"] <= stack["paramMaxStacks"], sp_id
+        elif buff.get("stackLadder") or buff["sourceSlot"] == "runStack":
+            raise AssertionError((sp_id, "ladder / run stack without stackInput"))
+        # --- names -----------------------------------------------------------
+        if buff.get("suggestedNameZh"):
+            assert not buff["nameZh"] and buff["suggestedNameZhInferred"] is True, sp_id
+            assert buff["suggestedNameZhSource"], sp_id
+            assert buff["displayNameZh"].startswith(buff["suggestedNameZh"].split("（")[0]), sp_id
+        # what the page shows must be Chinese (NPC / HP / FP excepted)
+        assert not zh_latin_residue(buff["displayNameZh"]), (sp_id, buff["displayNameZh"])
+        # --- slot-specific fields (verify round) -------------------------------
+        if "relicAffix" in buff["sourceSlots"]:
+            assert buff.get("relicAffixes"), (sp_id, "relicAffix slot without relicAffixes")
+        if "weaponAffix" in buff["sourceSlots"]:
+            assert buff.get("weaponAffixIds"), (sp_id, "weaponAffix slot without weaponAffixIds")
+        innate = buff.get("weaponInnate")
+        if "weaponInnate" in buff["sourceSlots"]:
+            assert innate is not None, (sp_id, "weaponInnate slot without weaponInnate")
+            assert bool(innate["weaponIds"]) != bool(innate.get("inferredFromRowName")), (sp_id, innate)
+            if innate["weaponIds"]:
+                assert innate.get("wepTypes") and all(str(t) in enums["wepType"] for t in innate["wepTypes"]), sp_id
+        else:
+            assert innate is None, sp_id
+        if buff.get("requiresGoodsIds"):
+            assert {"relicAffix", "consumable"} <= set(buff["sourceSlots"]), sp_id
+        if buff.get("descZhSource"):
+            assert buff["sourceSlot"] in ("permanent", "runStack") and buff.get("descZh"), sp_id
+            assert buff["descZhSource"].startswith("PermanentBuffInfo#"), sp_id
+            if stack and stack["mode"] == "copies":
+                assert buff["descZhSource"] in stack["practicalMaxSource"], (sp_id, "stack unit not from game text")
+    assert payload["counts"]["buffsBySourceSlot"] == {k: v for k, v in
+                                                     sorted(slot_total.items(), key=lambda kv: SOURCE_SLOT_ORDER[kv[0]])}
+    for cls in classes:
+        assert sum(payload["counts"]["appliesToByOutput"][cls].values()) == len(buffs), cls
+    # --- weapon affix list / fixed relics -------------------------------------
+    for affix in payload["weaponAffixes"]:
+        assert set(affix["spEffectIds"]) <= ids, affix["attachEffectId"]
+        assert set(affix["normalWepTypes"]) <= set(affix["deepWepTypes"]), affix["attachEffectId"]
+        assert affix["deepOnly"] == (not affix["normalWepTypes"]), affix["attachEffectId"]
+        assert set(affix["roles"]) <= set(enums["weaponAffixRole"]), affix["attachEffectId"]
+    for relic in payload["fixedRelics"]:
+        assert relic["relicIds"] and relic["attachEffectIds"], relic
+        for effect_id in relic["attachEffectIds"] + relic["curseAttachEffectIds"]:
+            assert effect_id in catalog or effect_id in extra, (relic["relicIds"], effect_id)
+        assert set(relic["spEffectIds"]) <= ids, relic["relicIds"]
+    # --- slot rules: every number must equal its measured evidence ----------------
+    rules = payload["slotRules"]
+    weapon = rules["weaponAffix"]
+    ev = weapon["evidence"]
+    assert weapon["maxWeapons"] == len(ev["weaponColumns"]) == 6, weapon["maxWeapons"]
+    assert weapon["normalPerWeapon"] == ev["measuredNormalPositiveMax"], weapon
+    assert weapon["deepPerWeapon"] == ev["measuredDeepPositiveMax"], weapon
+    assert weapon["deepCursePerWeapon"] == ev["measuredDeepCurseMax"], weapon
+    assert weapon["maxAffixesNormal"] == weapon["maxWeapons"] * weapon["normalPerWeapon"]
+    assert weapon["maxAffixesDeep"] == weapon["maxWeapons"] * weapon["deepPerWeapon"]
+    assert ev["isCursedRowsMirrorSlots1to3Into4to6"] is True
+    relic = rules["relic"]
+    assert [int(k) for k in relic["evidence"]["vesselNormalSlotCounts"]] == [relic["normal"]], relic
+    assert [int(k) for k in relic["evidence"]["vesselDeepSlotCounts"]] == [relic["deepExtra"]], relic
+    assert relic["affixesPerRelic"] == relic["evidence"]["maxAffixSlotsPerRelic"], relic
+    assert rules["modes"]["normal"]["weaponAffixesPerWeapon"] == weapon["normalPerWeapon"]
+    assert rules["modes"]["deep"]["weaponAffixesPerWeapon"] == weapon["deepPerWeapon"]
+    assert rules["modes"]["deep"]["relicSlots"] == relic["normal"] + relic["deepExtra"]
+    assert rules["accessory"]["measured"] is False and rules["accessory"]["evidence"]["source"]
+    # deep-only affixes: at most deepOnlyPerWeaponMax per weapon (measured per row)
+    per_row = {int(k): v for k, v in ev["deepOnlyPositiveSlotsPerRow"].items()}
+    assert sum(per_row.values()) == ev["reachableCustomWeaponRows"], per_row
+    assert weapon["deepOnlyPerWeaponMax"] == max(per_row) == 1, per_row
+    assert weapon["deepOnlyPerWeaponMax"] <= weapon["deepPerWeapon"], weapon
+    assert weapon["maxDeepOnlyAffixes"] == weapon["maxWeapons"] * weapon["deepOnlyPerWeaponMax"] == 6, weapon
+    assert rules["modes"]["deep"]["deepOnlyAffixesPerWeapon"] == weapon["deepOnlyPerWeaponMax"]
+    assert rules["modes"]["normal"]["deepOnlyAffixesPerWeapon"] == 0
+    assert sum(layout["rows"] for layout in ev["slotLayouts"]) == ev["reachableCustomWeaponRows"]
+    assert ev["distinctAttachEffectIdsInReachablePools"] >= len(payload["weaponAffixes"])
+    # blessing role by pool family (81x + the 603 subset pools), not slot index
+    blessing_pools = set(ev["blessingPools"])
+    assert set(ev["blessingPoolsBySubsetOf81x"]) <= blessing_pools
+    assert {t // 1_000_000 for t in blessing_pools} <= {603, 810, 811, 812, 813, 814}, blessing_pools
+    for pool in payload["weaponAffixPools"]:
+        assert ("blessing" in pool["roles"]) == (pool["tableId"] in blessing_pools), pool
+    # diagnostics that must stay empty / consistent
+    assert payload["diagnostics"]["displayNameZhLatinResidue"] == []
+    assert sorted(r["spEffectId"] for r in payload["diagnostics"]["weaponInnateWithoutWeaponIds"]) == sorted(
+        b["spEffectId"] for b in buffs if (b.get("weaponInnate") or {}).get("inferredFromRowName"))
+    # sources[]: v5 entries keep their positions, the v6 entry is appended
+    assert payload["sources"][-1]["name"].startswith("本仓库的其它数据集"), payload["sources"][-1]["name"]
+    self_check_v6_reverify(payload)
+
+
+PER_ID_BEHAVIOURS = ("none", "persistThroughDeath", "stackSelf", "resetOnApply", SPCATEGORY_UNKNOWN[0])
+
+
+def self_check_v6_reverify(payload: dict[str, Any]) -> None:
+    """Second verification round: exclusiveKey, relic-affix filing, deep-only cap, thrusting counter."""
+    buffs = payload["buffs"]
+    by_id = {b["spEffectId"]: b for b in buffs}
+    enums = payload["enums"]
+    assert list(enums["exclusiveScope"]) == list(EXCLUSIVE_SCOPE_LABELS), list(enums["exclusiveScope"])
+    group_members: dict[str, set[int]] = defaultdict(set)
+    for buff in buffs:
+        group_members[buff["stacking"]["group"]].add(buff["spEffectId"])
+    for buff in buffs:
+        sp_id = buff["spEffectId"]
+        st = buff["stacking"]
+        cat, prio, behaviour = st["spCategory"], st["categoryPriority"], st["spCategoryBehavior"]
+        key, scope = st["exclusiveKey"], st["exclusiveScope"]
+        # group: per id for every same-id behaviour (resetOnApply included)
+        if behaviour in PER_ID_BEHAVIOURS:
+            assert st["group"] == f"sp{cat}#{sp_id}" and group_members[st["group"]] == {sp_id}, (sp_id, st)
+        else:
+            assert st["group"] == f"sp{cat}", (sp_id, st)
+        # exclusiveKey follows exclusiveScope
+        ladder = buff.get("accumulatorLadder")
+        assert (scope == "accumulatorLadder") == bool(ladder), (sp_id, scope)
+        if scope == "perSpEffect":
+            assert behaviour in PER_ID_BEHAVIOURS and key == f"sp{cat}#{sp_id}", (sp_id, st)
+        elif scope == "category":
+            assert (behaviour in ("applyHighest", "applyFirst")
+                    or (behaviour == "removePrevious" and cat < 200)) and key == f"sp{cat}", (sp_id, st)
+        elif scope == "categoryPriority":
+            assert behaviour == "removePrevious" and 200 <= cat <= 299 and key == f"sp{cat}@p{prio}", (sp_id, st)
+        else:
+            assert key == ladder["key"], (sp_id, st, ladder)
+            assert ladder["tierSpEffectIds"][ladder["tier"] - 1] == sp_id, (sp_id, ladder)
+            assert len(ladder["tierSpEffectIds"]) == ladder["tiers"] == len(ladder["thresholds"]), ladder
+            assert ladder["thresholds"] == sorted(ladder["thresholds"]), ladder
+            # a ladder key is the category key of its category tiers, or ladder#<tier 1>
+            assert key.startswith("sp") or key == f"ladder#{ladder['tierSpEffectIds'][0]}", (sp_id, key)
+            # the page reads 「第N层」 for every tier
+            assert f"第{ladder['tier']}层" in (buff["displayNameZh"] or ""), (sp_id, buff["displayNameZh"])
+        # tiers of one accumulator ladder that are shipped share the key
+        if ladder:
+            for other in ladder["tierSpEffectIds"]:
+                if other in by_id:
+                    assert by_id[other]["stacking"]["exclusiveKey"] == key, (sp_id, other)
+
+    def same(*ids: int) -> None:
+        keys = {by_id[i]["stacking"]["exclusiveKey"] for i in ids}
+        assert len(keys) == 1, ("must exclude each other", ids, keys)
+
+    def apart(*ids: int) -> None:
+        keys = [by_id[i]["stacking"]["exclusiveKey"] for i in ids]
+        assert len(set(keys)) == len(keys), ("must stack", ids, keys)
+
+    # positives: groups the game really keeps to one at a time
+    same(3160, 3165)                          # fire / lightning grease, right hand (162)
+    same(1605000, 503550)                     # Flame, Grant Me Strength / Bloodboil Aromatic (151)
+    same(1660000, 503501)                     # Golden Vow / Uplifting Aromatic (160)
+    same(511028, 708940)                      # one cracked tear, two potencies (201 @ 226)
+    same(707201, 707215)                      # beast form levels (201 @ 70)
+    same(312505, 312506, 312507, 312508)      # Millicent's Prosthesis tiers 1..4 (tier 4 is sp20)
+    same(320804, 320805, 320806, 320807)      # Winged Sword Insignia tiers 1..4
+    same(3558, 3559, 3560, 3561)              # Thorny Cracked Tear tiers 1..4
+    same(7039900, 7039909)                    # 206 ladder, stack 1 / stack 10
+    # negatives: spCategory 20 buffs that have nothing to do with each other
+    apart(320400, 7080000, 704301)            # Red-Feathered Branchsword + 3+ daggers relic + Raider passive
+    apart(7080000, 7080600)                   # 3+ daggers + 3+ katana (6 weapons)
+    apart(7034402, 7036801)
+    apart(7005601, 7005602)                   # affix +1 / +2 (catalog: 不同级别可叠加)
+    apart(7030602, 7034402)                   # both on the fixed relic 辽阔的光耀情景
+    # ... and the four saved 204 ladders among themselves; different cracked tears
+    apart(7069001, 7069201, 8988200, 8998000)
+    apart(511028, 511029, 511030, 511031)
+    for sp_id in (7069001, 7069201, 8988200, 8998000):
+        ladder = by_id[sp_id].get("stackLadder")
+        assert ladder and by_id[sp_id]["stacking"]["exclusiveScope"] == "categoryPriority", sp_id
+    # every resetOnApply buff outside an accumulator ladder has a key of its own
+    reset_keys = [b["stacking"]["exclusiveKey"] for b in buffs
+                  if b["stacking"]["spCategoryBehavior"] == "resetOnApply" and not b.get("accumulatorLadder")]
+    assert len(reset_keys) == len(set(reset_keys)) >= 70, len(reset_keys)
+    ev = payload["diagnostics"]["exclusiveKeyEvidence"]
+    assert ev["sp204LaddersAreIdBlocks"] and payload["diagnostics"]["accumulatorLadderConflicts"] == []
+    counts = payload["counts"]
+    assert sum(counts["buffsByExclusiveScope"].values()) == len(buffs), counts["buffsByExclusiveScope"]
+    assert counts["exclusiveKeys"] == len({b["stacking"]["exclusiveKey"] for b in buffs})
+    assert counts["buffsWithAccumulatorLadder"] == sum(1 for b in buffs if b.get("accumulatorLadder"))
+
+    # relic-affix buffs the game itself labels 『遗物带来的效果』 sit in the relic column
+    for buff in buffs:
+        if buff.get("descZh") == "遗物带来的效果":
+            assert "relicAffix" in buff["sourceSlots"] and buff.get("relicAffixes"), buff["spEffectId"]
+    for sp_id in (7020002, 7020004):
+        assert [r["attachEffectId"] for r in by_id[sp_id]["relicAffixes"]] == [7020000], sp_id
+
+    # deep-only cap counts positive affixes only
+    weapon = payload["slotRules"]["weaponAffix"]
+    wev = weapon["evidence"]
+    assert weapon["deepOnlyCapField"] == "weaponAffixDeepOnlyPositive" and weapon["deepOnlyCapCountsCurses"] is False
+    assert (wev["deepOnlyPositiveAttachEffectIds"] + wev["deepOnlyCurseAttachEffectIds"]
+            == wev["deepOnlyAttachEffectIds"]), wev
+    assert wev["deepOnlyPositiveAttachEffectIds"] > 0 and wev["deepOnlyCurseAttachEffectIds"] > 0, wev
+    assert weapon["duplicateWithinWeapon"]["status"] == "unknown"
+    for buff in buffs:
+        if "weaponAffixDeepOnly" in buff:
+            assert buff["weaponAffixDeepOnlyPositive"] == (
+                buff["weaponAffixDeepOnly"] and "curse" not in buff["weaponAffixRoles"]), buff["spEffectId"]
+        else:
+            assert "weaponAffixDeepOnlyPositive" not in buff, buff["spEffectId"]
+    for affix in payload["weaponAffixes"]:
+        assert affix["deepOnlyPositive"] == (affix["deepOnly"] and not affix["isDebuff"]), affix["attachEffectId"]
+    assert any(b.get("weaponAffixDeepOnly") and not b.get("weaponAffixDeepOnlyPositive") for b in buffs)
+    # the deep-only positive affixes of the regular 505 pools are potency 1 only
+    assert wev["deepOnlyPositivePotencyByPoolFamily"].get("505") == [1], wev["deepOnlyPositivePotencyByPoolFamily"]
+
+    # thrusting counter (stateInfo 197): weapon swings / skills only
+    for buff in buffs:
+        if buff["stacking"]["stateInfo"] == 197 and buff["target"] == "self":
+            for cls in ("sorcery", "incantation", "ranged", "throw"):
+                assert buff["appliesTo"][cls] == "no", (buff["spEffectId"], cls)
 
 
 def main() -> None:
