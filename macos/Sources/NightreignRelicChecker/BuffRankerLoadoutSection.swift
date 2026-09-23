@@ -484,7 +484,7 @@ struct LoadoutLineControls: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 170)
+            .frame(minWidth: 90, maxWidth: 170)
             Spacer(minLength: 0)
         }
     }
@@ -768,7 +768,9 @@ struct BuffRankerWeaponAffixSection: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 300)
+                    // 按固有宽度排：两段等宽、按「当前武器类别（…）」撑开，类别名长时会超过原来的
+                    // 300pt 固定框、在框里居中后左右伸出（同遗物卡的分段选择，见 RelicCardView.typePicker）
+                    .fixedSize()
                 } else {
                     Text(LoadoutText.t("waFilterNone"))
                         .font(.system(size: 11))

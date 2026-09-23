@@ -147,8 +147,8 @@ zsh scripts/sync-data.sh
 - `renderer/` — 界面：`index.html` / `app.js` / `core.js`（规则与审计）/
   `styles.css`，以及存档页的 `savereport.js`（报告与 CSV 导出）与
   `savediff.js`（存档对比）。
-- `renderer/pages/` — 四个新页面（导航顺序：首领数据 → 角色属性 → 词条反查 → 增伤排名，
-  整体排在「存档检查」之后、「数据设置」之前）各自的
+- `renderer/pages/` — 四个新页面（导航位置：词条反查紧跟「词条检查」；首领数据 → 角色属性 → 增伤排名
+  排在「存档检查」之后、「数据设置」之前；主导航顺序以 `index.html` 的 `.main-nav` 为准）各自的
   `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**：
   注册方式、`ctx` 的内容、`ctx.getGameData` 的语义、样式与 CSP 约束都在那里，
   功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。其中「首领数据」按出场场合分组

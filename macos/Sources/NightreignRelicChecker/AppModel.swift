@@ -5,14 +5,14 @@ import RelicCore
 
 @MainActor
 final class AppModel: ObservableObject {
-    /// 声明顺序即主导航顺序（`allCases`）。
+    /// 声明顺序即主导航顺序（`allCases`）。「词条反查」紧跟「词条检查」：两页都是按词条查，放在一块。
     enum Page: String, CaseIterable, Identifiable {
         case checker
+        case lookup
         case library
         case saveScan
         case bosses
         case heroes
-        case lookup
         case ranker
         case data
 

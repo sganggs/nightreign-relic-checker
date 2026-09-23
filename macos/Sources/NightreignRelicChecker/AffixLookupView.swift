@@ -48,6 +48,13 @@ struct AffixLookupView: View {
     /// 互斥组最多展示多少条（最大的互斥组有 102 条，全铺会把页面挤没）。
     static let conflictLimit = affixLookupConflictLimit
 
+    // 页面外壳与「首领数据」「角色属性」「增伤排名」等页同一套尺寸：
+    // 横向留 26pt，内容最宽 1180pt，窗口更宽时整体居中。
+    static let shellMaxWidth: CGFloat = 1180
+    static let shellPadding: CGFloat = 26
+    /// 左侧列表栏的宽度；右侧详情栏占满剩下的宽度。
+    static let listWidth: CGFloat = 330
+
     @State private var index: AffixLookupIndex?
     @State private var tab: Tab = .byAffix
     @State private var affixQuery = ""
@@ -68,17 +75,26 @@ struct AffixLookupView: View {
         return "\(model.catalog.dataVersion)#\(model.catalog.affixes.count)#\(relicPart)"
     }
 
+    /// 整页不滚动：页头固定，下面的「列表 / 详情」双栏面板占满剩余高度，两栏各自滚动，
+    /// 不会出现页面滚动条和栏内滚动条叠在一起的情况。
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            Divider().overlay(AppTheme.border)
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .lookupPanel()
+                .padding(.horizontal, Self.shellPadding)
+                .padding(.top, 18)
+                .padding(.bottom, 22)
+                .frame(maxWidth: Self.shellMaxWidth, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: signature) { await rebuildIndex() }
     }
 
     // MARK: - 顶部
 
+    /// 页头的底色条与其它工具页一样横贯窗口，里面的内容与下方面板同宽、同一条左右边线。
     private var headerBar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 14) {
@@ -89,6 +105,7 @@ struct AffixLookupView: View {
                     Text("由词条反查可能出现它的遗物与出货池，也可以反过来按遗物看槽位池")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 statusPills
@@ -101,9 +118,12 @@ struct AffixLookupView: View {
             .labelsHidden()
             .frame(maxWidth: 280, alignment: .leading)
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, Self.shellPadding)
         .padding(.vertical, 20)
+        .frame(maxWidth: Self.shellMaxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(AppTheme.elevated.opacity(0.55))
+        .overlay(alignment: .bottom) { Rectangle().fill(AppTheme.border).frame(height: 1) }
     }
 
     private var statusPills: some View {
@@ -142,8 +162,11 @@ struct AffixLookupView: View {
             } else {
                 HStack(spacing: 0) {
                     listPane(index)
-                        .frame(width: 330)
-                    Divider().overlay(AppTheme.border)
+                        .frame(width: Self.listWidth)
+                        .frame(maxHeight: .infinity)
+                    Rectangle()
+                        .fill(AppTheme.border)
+                        .frame(width: 1)
                     detailPane(index)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -268,7 +291,7 @@ struct AffixLookupView: View {
 
             listFooter(text: "\(rows.count) 条词条")
         }
-        .background(AppTheme.elevated.opacity(0.35))
+        .background(AppTheme.elevated)
     }
 
     // MARK: - 遗物列表
@@ -288,7 +311,7 @@ struct AffixLookupView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(AppTheme.elevated.opacity(0.35))
+            .background(AppTheme.elevated)
         } else {
             let rows = filteredRelics(index)
             VStack(spacing: 0) {
@@ -332,7 +355,7 @@ struct AffixLookupView: View {
 
                 listFooter(text: "\(rows.count) 件遗物")
             }
-            .background(AppTheme.elevated.opacity(0.35))
+            .background(AppTheme.elevated)
         }
     }
 
@@ -345,7 +368,7 @@ struct AffixLookupView: View {
         .foregroundStyle(AppTheme.secondaryText)
         .padding(.horizontal, 14)
         .frame(height: 32)
-        .background(AppTheme.elevated)
+        .background(AppTheme.card)
         .overlay(alignment: .top) { Rectangle().fill(AppTheme.border).frame(height: 1) }
     }
 
@@ -406,6 +429,23 @@ struct AffixLookupView: View {
 }
 
 // MARK: - 列表行与小组件
+
+/// 双栏面板的外框：与 `.appCard()` 同一套圆角、描边，但不加内边距——两栏的底色与
+/// 分隔线要贴到边框，所以先按圆角裁切再描边（描边画在内容之上，不会被栏底色盖住）。
+private struct LookupPanelModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        content
+            // 详情栏的底色：比卡片暗一档，详情里的各张 `.appCard()` 能浮出来
+            .background(AppTheme.elevated.opacity(0.5))
+            .clipShape(shape)
+            .overlay(shape.stroke(AppTheme.border, lineWidth: 1))
+    }
+}
+
+private extension View {
+    func lookupPanel() -> some View { modifier(LookupPanelModifier()) }
+}
 
 struct LookupSearchField: View {
     @Binding var text: String

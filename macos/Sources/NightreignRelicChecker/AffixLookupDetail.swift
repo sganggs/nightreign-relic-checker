@@ -62,8 +62,9 @@ struct AffixLookupDetailPane: View {
                     }
                     LookupSourcesCard(catalogSources: catalogSources, relicSources: relicSources)
                 }
-                .padding(24)
-                .frame(maxWidth: 900, alignment: .leading)
+                // 详情栏装在词条反查页的双栏面板里（最宽约 800pt），不再单独限宽；
+                // 内边距比面板外的 26pt 收一档，卡片与面板边框之间留出同样的呼吸感。
+                .padding(18)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
                 EmptyStateView(
@@ -341,8 +342,9 @@ struct RelicLookupDetailPane: View {
                     if let fixed = entry.fixedEffectIDs { fixedCard(entry, fixed: fixed) }
                     LookupSourcesCard(catalogSources: catalogSources, relicSources: relicSources)
                 }
-                .padding(24)
-                .frame(maxWidth: 900, alignment: .leading)
+                // 详情栏装在词条反查页的双栏面板里（最宽约 800pt），不再单独限宽；
+                // 内边距比面板外的 26pt 收一档，卡片与面板边框之间留出同样的呼吸感。
+                .padding(18)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             } else {
                 EmptyStateView(

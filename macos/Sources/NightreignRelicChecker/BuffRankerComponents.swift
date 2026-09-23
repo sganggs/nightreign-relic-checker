@@ -53,7 +53,7 @@ struct RankerWrap: Layout {
         for row in rows {
             var x = bounds.minX
             for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
+                let size = fittedSize(subviews[index], maxWidth: bounds.width)
                 subviews[index].place(
                     at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
                     proposal: ProposedViewSize(size)
@@ -62,6 +62,14 @@ struct RankerWrap: Layout {
             }
             y += row.height + lineSpacing
         }
+    }
+
+    /// 单个标签比整行还宽时（很长的情境名），按行宽重新量一次让它折行，而不是伸出面板。
+    private func fittedSize(_ subview: LayoutSubview, maxWidth: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        guard maxWidth.isFinite, ideal.width > maxWidth else { return ideal }
+        let fitted = subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+        return CGSize(width: min(fitted.width, maxWidth), height: fitted.height)
     }
 
     private struct Row {
@@ -74,7 +82,7 @@ struct RankerWrap: Layout {
         var rows: [Row] = []
         var current = Row()
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            let size = fittedSize(subviews[index], maxWidth: maxWidth)
             let needed = current.indices.isEmpty ? size.width : current.width + spacing + size.width
             if !current.indices.isEmpty && needed > maxWidth {
                 rows.append(current)
@@ -90,6 +98,80 @@ struct RankerWrap: Layout {
         }
         if !current.indices.isEmpty { rows.append(current) }
         return rows
+    }
+}
+
+/// 等宽多列网格（非 lazy、确定性）：列数只由**这一次布局拿到的宽度**算出——
+/// 宽度 ≥ n × minColumnWidth + (n − 1) × spacing 才排 n 列，最多 maxColumns 列；
+/// 每一项的宽度恰好等于列宽，同一行的各项按最高的一项拉成等高（与 Windows 端 CSS grid 的默认拉伸一致）。
+///
+/// 用来替代遗物栏原来的 `LazyVGrid(columns: [GridItem(.adaptive(minimum: 340))])`：列数、列宽、行高
+/// 每次都按父视图当下给的宽度算，不依赖 lazy 容器什么时候把卡片实例化出来；卡片最多 6 张，
+/// 不需要 lazy。每张卡恰好拿到列宽，卡里的控件也必须能收进这个宽度（见 RelicCardView）。
+struct RankerColumnsGrid: Layout {
+    var minColumnWidth: CGFloat
+    var maxColumns: Int
+    var spacing: CGFloat = 10
+    var rowSpacing: CGFloat = 10
+
+    /// 给定宽度能排几列（至少 1 列，最多 `maxColumns` 列）。
+    static func columnCount(width: CGFloat, minColumnWidth: CGFloat, maxColumns: Int, spacing: CGFloat) -> Int {
+        let cap = max(1, maxColumns)
+        guard width.isFinite, width > 0, minColumnWidth > 0 else { return 1 }
+        let fit = Int(((width + spacing) / (minColumnWidth + spacing)).rounded(.down))
+        return min(cap, max(1, fit))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = resolvedWidth(proposal.width)
+        guard !subviews.isEmpty else { return CGSize(width: width, height: 0) }
+        let heights = rowHeights(subviews: subviews, width: width)
+        let height = heights.reduce(0, +) + rowSpacing * CGFloat(max(0, heights.count - 1))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let (columns, columnWidth) = metrics(width: bounds.width)
+        let heights = rowHeights(subviews: subviews, width: bounds.width)
+        var y = bounds.minY
+        for (row, rowHeight) in heights.enumerated() {
+            for column in 0..<columns {
+                let index = row * columns + column
+                guard index < subviews.count else { break }
+                subviews[index].place(
+                    at: CGPoint(x: bounds.minX + CGFloat(column) * (columnWidth + spacing), y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: columnWidth, height: rowHeight)
+                )
+            }
+            y += rowHeight + rowSpacing
+        }
+    }
+
+    /// 父视图没给宽度（问理想尺寸）或给了无限宽时，按「最多列数 × 最小列宽」报理想宽度，
+    /// 不拿子视图的理想宽度去撑——子视图的理想宽度往往是「一行放下全部文字」，会把面板撑出窗口。
+    private func resolvedWidth(_ proposed: CGFloat?) -> CGFloat {
+        if let proposed, proposed.isFinite { return max(0, proposed) }
+        let columns = CGFloat(max(1, maxColumns))
+        return columns * minColumnWidth + (columns - 1) * spacing
+    }
+
+    private func metrics(width: CGFloat) -> (columns: Int, columnWidth: CGFloat) {
+        let columns = Self.columnCount(width: width, minColumnWidth: minColumnWidth, maxColumns: maxColumns, spacing: spacing)
+        let columnWidth = max(0, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        return (columns, columnWidth)
+    }
+
+    /// 每一行的高度：该行各项在「宽度 = 列宽、高度不限」时的最高者。
+    private func rowHeights(subviews: Subviews, width: CGFloat) -> [CGFloat] {
+        let (columns, columnWidth) = metrics(width: width)
+        let proposal = ProposedViewSize(width: columnWidth, height: nil)
+        return stride(from: 0, to: subviews.count, by: columns).map { start in
+            subviews[start..<min(start + columns, subviews.count)]
+                .map { $0.sizeThatFits(proposal).height }
+                .max() ?? 0
+        }
     }
 }
 
