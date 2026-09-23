@@ -263,7 +263,7 @@ NightBottomSheet(onDismissRequest: () -> Unit, content: @Composable ColumnScope.
 ## 7. 性能约定
 
 - 数据集体积：buffs 2.96 MB、bosses 1.59 MB、skills 1.56 MB、relics 0.41 MB、heroes 0.17 MB（全部随 APK 打包，
-  debug APK 约 13 MB）。不要再往 APK 里加资源。
+  debug APK 约 15 MB，release 约 10 MB）。不要再往 APK 里加资源。
 - **直接解码到 DTO**（`GameDataJson.decode<T>`），**不要**对整份文件 `parseToJsonElement`——那会建出整棵 JSON 树，
   内存是 DTO 的数倍。
 - DTO 只声明页面用到的字段，所有字段给默认值（配合 `coerceInputValues`，个别行缺字段不会整份失败）；

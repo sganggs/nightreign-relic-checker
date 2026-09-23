@@ -129,7 +129,7 @@ internal fun SettingsScreen(
                 }
                 Text(
                     "应用未声明 INTERNET 权限，不收集或上传数据。搜索、判定、数值换算与存档解析都只在设备上运行；" +
-                        "存档检查只读取你选中的那一个文件，不申请存储权限。",
+                        "存档检查只读取你在系统文件选择器里选中的文件，不申请存储权限。",
                     style = MaterialTheme.typography.bodySmall,
                     color = NightColors.TextSecondary,
                 )
