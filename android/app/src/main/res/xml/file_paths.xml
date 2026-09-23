@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 存档检查页「分享报告」用的 FileProvider 路径：只暴露 cacheDir/save-reports/ 下临时生成的报告文件。 -->
+<paths>
+    <cache-path name="save_reports" path="save-reports/" />
+</paths>
