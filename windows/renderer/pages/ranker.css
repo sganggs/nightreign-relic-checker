@@ -824,7 +824,8 @@
 
 /* 窗口变窄时降列（与 macOS 端 RankerColumnsGrid 同一思路：列数只看当下宽度），
    三张卡永远排在面板边框之内。 */
-@media (max-width: 1099px) {
+/* 最小窗口 1040 逻辑像素（约 1024px 视口）仍放得下三列 300px，与 macOS RankerColumnsGrid 同阈值 */
+@media (max-width: 999px) {
   .ranker-relic-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

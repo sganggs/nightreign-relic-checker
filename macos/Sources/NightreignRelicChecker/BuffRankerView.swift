@@ -46,6 +46,8 @@ struct BuffRankerView: View {
         }
         .padding(.horizontal, 26)
         .padding(.vertical, 20)
+        .frame(maxWidth: 1180, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .background(AppTheme.elevated.opacity(0.55))
     }
 
