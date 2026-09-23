@@ -265,7 +265,7 @@ struct BuffRankerNotesSection: View {
             ForEach(Array(items.enumerated()), id: \.offset) { item in
                 HStack(alignment: .top, spacing: 7) {
                     Text("·").foregroundStyle(AppTheme.tertiaryText)
-                    Text(item.element)
+                    Text(strongText(item.element))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -274,12 +274,33 @@ struct BuffRankerNotesSection: View {
         }
     }
 
+    // 数据集原文用 Markdown 的 **粗体** 标记重点；`Text(String)` 不解析 Markdown，
+    // 这里只把成对的 ** 换成粗体，其余字符原样保留（不走完整 Markdown 解析，避免
+    // 原文里的 / [ ] * 之类被误当成语法）。Windows 端 ranker.js 的 strongHtml 同口径。
+    private func strongText(_ text: String) -> AttributedString {
+        let parts = text.components(separatedBy: "**")
+        guard parts.count >= 3 else { return AttributedString(text) }
+        var result = AttributedString()
+        for (index, part) in parts.enumerated() {
+            if index == parts.count - 1 && index % 2 == 1 {
+                result.append(AttributedString("**" + part))
+            } else if index % 2 == 1 {
+                var strong = AttributedString(part)
+                strong.inlinePresentationIntent = .stronglyEmphasized
+                result.append(strong)
+            } else {
+                result.append(AttributedString(part))
+            }
+        }
+        return result
+    }
+
     private func noteBlock(title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundStyle(AppTheme.purpleSoft)
-            Text(text)
+            Text(strongText(text))
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)

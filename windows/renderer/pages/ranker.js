@@ -3209,6 +3209,17 @@
     });
   }
 
+  // 数据集原文用 Markdown 的 **粗体** 标记重点；转义后再把成对的 ** 换成 <strong>，
+  // 否则页面会把星号原样显示出来。
+  function strongHtml(text) {
+    var parts = esc(text).split("**");
+    if (parts.length < 3) return parts.join("**");
+    return parts.map(function (part, index) {
+      if (index === parts.length - 1 && index % 2 === 1) return "**" + part;
+      return index % 2 === 1 ? "<strong>" + part + "</strong>" : part;
+    }).join("");
+  }
+
   function pill(text, kind) {
     var h = helpers();
     if (h && typeof h.pill === "function") return h.pill(text, kind);
@@ -3585,8 +3596,8 @@
       "这里只是<strong>相对构成</strong>：不含强化等级、亲和、能力值补正与 AttackElementCorrectParam，" +
       "绝对伤害不在本页范围。</p>" +
       (boundary
-        ? "<p class='ranker-quote'><span class='ranker-quote-label'>skills usage.本数据集的边界</span>" +
-          esc(boundary) + "</p>"
+        ? "<p class='ranker-quote'><span class='ranker-quote-label'>数据集说明 · 本数据集的边界</span>" +
+          strongHtml(boundary) + "</p>"
         : "");
   }
 
@@ -4449,6 +4460,8 @@
 
   function selectMeans(kind, id) {
     applySelection(kind, id);
+    // 「已按推荐填入 N 项」之类的提示只对填入时的那一招有意义，换招就清掉。
+    state.flash = "";
     renderMeansList();
     renderWeaponBlock();
     renderHits();
@@ -4811,6 +4824,7 @@
       hitContribution: hitContribution,
       hitChipPlan: hitChipPlan,
       zhFpText: zhFpText,
+      strongHtml: strongHtml,
       composition: composition,
       hitPoise: hitPoise,
       hitStamina: hitStamina,

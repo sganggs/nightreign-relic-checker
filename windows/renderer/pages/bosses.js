@@ -1874,7 +1874,7 @@
   function summaryHpHint(stats) {
     if (state.depth) {
       if (!stats.hasDepth) return TEXT.noDepthStatsText;
-      return state.party === 1 ? "含深度倍率" : "深度 1 人 " + fmtInt(stats.hpSingle);
+      return state.party === 1 ? "含深度倍率" : "深度 " + state.depth + " · 1 人 " + fmtInt(stats.hpSingle);
     }
     return state.party === 1 ? "含常驻缩放" : "1 人 " + fmtInt(stats.hpSingle);
   }

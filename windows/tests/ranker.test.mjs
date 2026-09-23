@@ -1364,3 +1364,15 @@ test("性能：索引只建一次，换构成后整套配置的评估与推荐�
   const elapsed = Date.now() - started;
   assert.ok(elapsed < 3000, "10 次「推荐填满 + 评估」用了 " + elapsed + "ms，太慢了");
 });
+
+test("strongHtml：数据集原文的 **粗体** 标记转成 <strong>，其余字符转义后原样保留", () => {
+  assert.equal(R.strongHtml("因此**绝对伤害无法还原**；支持 (a) 相对比较"),
+    "因此<strong>绝对伤害无法还原</strong>；支持 (a) 相对比较");
+  assert.equal(R.strongHtml("没有标记 <b>"), "没有标记 &lt;b&gt;");
+  assert.equal(R.strongHtml("落单的 ** 不配对"), "落单的 ** 不配对");
+  assert.equal(R.strongHtml("**开头**中间**结尾"), "<strong>开头</strong>中间**结尾");
+  // 页面里引用「本数据集的边界」时不能把星号原样显示出来（QA 实测发现）。
+  const skills = JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "resources", "skills.json"), "utf8"));
+  const html = R.strongHtml(skills.usage["本数据集的边界"]);
+  assert.ok(html.includes("<strong>") && !html.includes("**"));
+});
