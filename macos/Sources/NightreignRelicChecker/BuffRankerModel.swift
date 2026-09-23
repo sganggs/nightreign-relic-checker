@@ -106,7 +106,7 @@ final class BuffRankerModel: ObservableObject {
                         catalogError = error.localizedDescription
                     }
                 } else {
-                    catalogError = LoadoutText.relicCatalogMissing
+                    catalogError = LoadoutText.t("relicNoCatalog")
                 }
                 let index = BuffLoadoutIndex(ranker: buffs, catalog: affixes)
                 return .success(Loaded(skills: skills, buffs: buffs, loadout: index, catalogError: catalogError))
@@ -267,6 +267,11 @@ final class BuffRankerModel: ObservableObject {
         )
     }
 
+    /// 汇总里的一句话：「相对提升 +12.3%」。
+    var totalGainText: String {
+        LoadoutText.t("summaryGain") + " " + BuffFormat.gain(evaluation.total)
+    }
+
     private func refreshEvaluator() {
         guard let loadoutIndex else { return }
         let evaluator = LoadoutEvaluator(index: loadoutIndex, output: loadoutOutput)
@@ -318,6 +323,7 @@ final class BuffRankerModel: ObservableObject {
         guard copy != loadout else { return }
         loadout = copy
         modeNotice = nil
+        fillNotice = nil
         refreshLoadout()
     }
 
@@ -329,41 +335,86 @@ final class BuffRankerModel: ObservableObject {
     func setMode(_ mode: LoadoutMode) {
         guard let loadoutIndex, mode != loadout.mode else { return }
         var copy = loadout
+        let wasDeep = loadout.mode == .deep
         let removed = copy.setMode(mode, rules: loadoutIndex.slotRules, weaponAffixes: loadoutIndex.weaponAffixByID)
         loadout = copy
-        modeNotice = removed > 0 ? LoadoutText.modeTrimmed(removed) : nil
+        modeNotice = wasDeep && mode == .normal && removed > 0 ? LoadoutText.f("modeTrimmed", removed) : nil
         refreshLoadout()
-    }
-
-    func setStackSelfMultiply(_ value: Bool) {
-        mutate { $0.stackSelfCopiesMultiply = value }
     }
 
     func fillRecommended() {
         guard let evaluator else { return }
+        let before = loadout
         let filled = evaluator.recommendedFill(loadout, weaponTypeFilter: weaponTypeFilter)
+        let added = Self.addedCount(before, filled)
         mutate { $0 = filled }
+        fillNotice = added > 0 ? LoadoutText.f("fillDone", added) : LoadoutText.t("fillNothing")
     }
+
+    /// 「按推荐填满」填进了几项（武器词条按份数、遗物按格、护符按个）。
+    static func addedCount(_ before: BuffLoadout, _ after: BuffLoadout) -> Int {
+        let weapon = after.weaponAffixCounts.values.reduce(0, +) - before.weaponAffixCounts.values.reduce(0, +)
+        let relics = zip(before.relicCards, after.relicCards).filter { $0.0.isEmpty && !$0.1.isEmpty }.count
+        return max(0, weapon) + relics + max(0, after.accessories.count - before.accessories.count)
+    }
+
+    /// 「按推荐填满」的结果提示（下一次改配置时清掉）。
+    @Published private(set) var fillNotice: String?
 
     func clearLoadout() {
         guard let loadoutIndex else { return }
-        var fresh = BuffLoadout(mode: loadout.mode, rules: loadoutIndex.slotRules)
-        fresh.stackSelfCopiesMultiply = loadout.stackSelfCopiesMultiply
+        let fresh = BuffLoadout(mode: loadout.mode, rules: loadoutIndex.slotRules)
         mutate { $0 = fresh }
+    }
+
+    /// 按来源键移除（与 Windows 端 removeSource 同一口径）：wa:<词条>（减一份）/ relic:<格>（整件清空）/
+    /// relic:<格>:<行>（清掉这一行的词条与诅咒）/ acc:<格> / innate:<spEffectId>（排除当前武器固有）/ other:<行键>（取消勾选）。
+    func removeSource(_ key: String) {
+        let parts = key.split(separator: ":").compactMap { Int($0) }
+        let kind = key.split(separator: ":").first.map(String.init) ?? ""
+        mutate { loadout in
+            guard let id = parts.first else { return }
+            switch kind {
+            case "wa":
+                let next = max(0, (loadout.weaponAffixCounts[id] ?? 0) - 1)
+                loadout.weaponAffixCounts[id] = next == 0 ? nil : next
+            case "relic":
+                guard loadout.relicCards.indices.contains(id) else { return }
+                if parts.count > 1, loadout.relicCards[id].choice == .custom, (0..<3).contains(parts[1]) {
+                    loadout.relicCards[id].rows[parts[1]] = LoadoutRelicRow()
+                } else {
+                    loadout.relicCards[id] = LoadoutRelicCard(isDeepSlot: loadout.relicCards[id].isDeepSlot)
+                }
+            case "acc":
+                if loadout.accessories.indices.contains(id) { loadout.accessories.remove(at: id) }
+            case "innate":
+                loadout.excludedInnate.insert(id)
+            case "other":
+                if let members = loadoutIndex?.ladderTierOptions(id), !members.isEmpty,
+                   let offsets = loadoutIndex?.dataset.buffs.indices.filter({ loadoutIndex?.dataset.buffs[$0].accumulatorLadder?.ladderID == id }) {
+                    for offset in offsets { loadout.selectedBuffs.remove(loadoutIndex?.dataset.buffs[offset].spEffectId ?? -1) }
+                } else {
+                    loadout.selectedBuffs.remove(id)
+                }
+            default:
+                break
+            }
+        }
     }
 
     // MARK: 武器词条
 
-    /// 武器词条栏的武器类别过滤：当前武器的 wepType（法术 / 选了「全部」时为 nil）。
+    /// 武器词条栏的武器类别过滤：出手武器的类别（战技＝当前武器，魔法＝手杖，祷告＝圣印记；选了「全部」时为 nil）。
     var weaponTypeFilter: Int? {
-        guard !weaponFilterAll, skill != nil else { return nil }
-        return weapon?.wepType
+        guard !weaponFilterAll else { return nil }
+        return loadoutOutput.attackWepType
     }
 
     var weaponTypeName: String? {
-        guard let weapon else { return nil }
-        if let label = loadoutIndex?.dataset.wepTypeLabels[weapon.wepType] { return label }
-        return weapon.wepTypeZh.isEmpty ? nil : weapon.wepTypeZh
+        guard let type = loadoutOutput.attackWepType else { return nil }
+        if let label = loadoutIndex?.dataset.wepTypeLabels[type] { return label }
+        if let weapon, !weapon.wepTypeZh.isEmpty { return weapon.wepTypeZh }
+        return LoadoutText.f("wepTypeFallback", type)
     }
 
     func weaponAffixCount(_ id: Int) -> Int { loadout.weaponAffixCounts[id] ?? 0 }
@@ -378,6 +429,17 @@ final class BuffRankerModel: ObservableObject {
         if evaluation.weaponAffixUsage.used >= rules.weaponAffixCap(loadout.mode) { return false }
         if info.deepOnlyPositive && evaluation.deepOnlyUsage.used >= rules.deepOnlyCap(loadout.mode) { return false }
         return true
+    }
+
+    /// 「＋」按钮的提示：能加时是「增加」，加不了时写原因（与 Windows 端 canAddWeaponAffix 的 reason 同文）。
+    func incrementBlockReason(_ info: BuffWeaponAffixInfo) -> String {
+        guard info.isAvailable(in: loadout.mode) else { return LoadoutText.t("waNotInMode") }
+        let rules = slotRules
+        if evaluation.weaponAffixUsage.used >= rules.weaponAffixCap(loadout.mode) { return LoadoutText.t("waCapReached") }
+        if info.deepOnlyPositive && evaluation.deepOnlyUsage.used >= rules.deepOnlyCap(loadout.mode) {
+            return LoadoutText.t("waDeepOnlyCapReached")
+        }
+        return LoadoutText.t("stepUp")
     }
 
     func changeWeaponAffix(_ info: BuffWeaponAffixInfo, by delta: Int) {
@@ -427,16 +489,12 @@ final class BuffRankerModel: ObservableObject {
         }
     }
 
+    /// 换词条：这一行的旧诅咒清掉，深夜遗物需诅咒的词条自动配诅咒（LoadoutEvaluator.withRelicAffix，与 Windows 端同法）。
     func setRelicAffix(_ cardIndex: Int, row: Int, affixID: Int?) {
+        guard let evaluator else { return }
         mutate { loadout in
             guard loadout.relicCards.indices.contains(cardIndex), (0..<3).contains(row) else { return }
-            var card = loadout.relicCards[cardIndex]
-            card.choice = .custom
-            card.rows[row].affixID = affixID
-            // 换了词条：不再需要诅咒的行把诅咒清掉（诅咒只配需诅咒的词条）。
-            let needsCurse = affixID.flatMap { loadoutIndex?.catalogAffixes[$0]?.requiresCurse } ?? false
-            if !needsCurse { card.rows[row].curseID = nil }
-            loadout.relicCards[cardIndex] = card
+            loadout.relicCards[cardIndex] = evaluator.withRelicAffix(loadout.relicCards[cardIndex], row: row, affixID: affixID)
         }
     }
 
@@ -456,14 +514,12 @@ final class BuffRankerModel: ObservableObject {
             var trial = card
             trial.choice = .custom
             if let affix = candidate.item.relicAffix {
-                trial.rows[row].affixID = affix.effectID
-                if !affix.requiresCurse { trial.rows[row].curseID = nil }
+                // 与点选后的结果同一口径：旧诅咒清掉、需诅咒的词条自动配诅咒（withRelicAffix）。
+                trial = evaluator.withRelicAffix(trial, row: row, affixID: affix.effectID)
             }
             let check = loadoutIndex.relicCheck(trial)
-            // 只看这条词条自己惹出的问题（没配诅咒是下一步的事，不算）。
-            let blocking = check.issues.first { issue in
-                issue.kind != .cursePairing || issue.title != LoadoutText.curseMissingTitle
-            }
+            // 选上后这件遗物不合法的第一条原因（含诅咒池里配不上诅咒的「缺少负面词条」）。
+            let blocking = check.issues.first
             return RelicAffixChoice(candidate: candidate, blockingIssue: blocking)
         }
     }
@@ -491,8 +547,15 @@ final class BuffRankerModel: ObservableObject {
 
     /// 这张卡里某条词条 / 某件固定遗物的逐条 buff（汇总里取，便于显示状态与条件控件）。
     func lines(forRelicCard cardIndex: Int) -> [LoadoutLine] {
-        let prefix = "遗物 \(cardIndex + 1)"
-        return evaluation.lines.filter { line in line.sources.contains { $0.hasPrefix(prefix) } }
+        evaluation.lines.filter { line in
+            line.sourceKeys.contains { $0 == "relic:\(cardIndex)" || $0.hasPrefix("relic:\(cardIndex):") }
+        }
+    }
+
+    /// 某个护符格的逐条 buff。
+    func lines(forAccessory id: Int) -> [LoadoutLine] {
+        guard let slot = loadout.accessories.firstIndex(of: id) else { return [] }
+        return evaluation.lines.filter { $0.sourceKeys.contains("acc:\(slot)") }
     }
 
     // MARK: 护符 / 其它增益 / 武器固有
@@ -550,7 +613,7 @@ final class BuffRankerModel: ObservableObject {
                 }
                 // 叠层：没填过层数就先填「一局实际上限」，没有实测上限的填 1（可在行内改）。
                 for (id, input) in stackInputs where (loadout.stackCounts[id] ?? 0) == 0 {
-                    loadout.stackCounts[id] = min(input.practicalMaxStacks ?? 1, input.maxAllowedStacks)
+                    loadout.stackCounts[id] = BuffLoadoutIndex.defaultStacks(input)
                 }
             }
         }
@@ -615,6 +678,36 @@ final class BuffRankerModel: ObservableObject {
         mutate { $0.ladderTiers[ladderID] = tier <= 0 ? nil : tier }
     }
 
+    /// 多档词条选中的那一档（spEffectId；没选过就是第 1 档）。
+    func variantChoice(_ groupKey: String) -> Int? {
+        guard let loadoutIndex, let offset = loadoutIndex.selectedVariant(groupKey, loadout: loadout) else { return nil }
+        return loadoutIndex.dataset.buffs[offset].spEffectId
+    }
+
+    func setVariant(_ groupKey: String, _ spEffectId: Int) {
+        mutate { $0.variantChoices[groupKey] = spEffectId }
+    }
+
+    /// 多档词条的各档（第几档、spEffectId、倍率摘要）。
+    func variantOptions(_ groupKey: String) -> [(tier: Int, id: Int, text: String)] {
+        guard let loadoutIndex else { return [] }
+        return loadoutIndex.variantOptions(groupKey).enumerated().map { position, offset in
+            let buff = loadoutIndex.dataset.buffs[offset]
+            let tier = buff.affixVariant?.variant ?? position + 1
+            var parts: [String] = []
+            for field in loadoutIndex.dataset.rateFields where field.countsAsDamage {
+                guard let value = buff.rates[field.key], value != field.defaultValue else { continue }
+                if field.valueKind == .multiplier {
+                    parts.append(field.zh + " ×" + BuffFormat.trim(value, digits: 3))
+                } else if field.valueKind == .flat {
+                    parts.append(field.zh + " " + (value > 0 ? "+" : "") + BuffFormat.trim(value, digits: 0))
+                }
+            }
+            let rates = parts.isEmpty ? "" : LoadoutText.f("variantRates", parts.joined(separator: "、"))
+            return (tier, buff.spEffectId, LoadoutText.f("variantOption", tier, rates))
+        }
+    }
+
     func buff(_ line: LoadoutLine) -> BuffEntry? {
         guard let loadoutIndex, loadoutIndex.dataset.buffs.indices.contains(line.buffIndex) else { return nil }
         return loadoutIndex.dataset.buffs[line.buffIndex]
@@ -661,7 +754,7 @@ final class BuffRankerModel: ObservableObject {
     }
 
     var deliveryLabel: String {
-        let slot = weaponSlot == 2 ? "左手" : "右手"
+        let slot = LoadoutText.handName(weaponSlot)
         if let spell {
             let kind = spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh
             return "\(kind) · \(slot)施法器"
@@ -693,14 +786,14 @@ final class BuffRankerModel: ObservableObject {
 struct RelicAffixChoice: Identifiable {
     let candidate: LoadoutCandidate
     /// 选上以后这件遗物会不合法的原因（没配诅咒不算）。
-    let blockingIssue: CheckIssue?
+    let blockingIssue: LoadoutIssue?
 
     var id: String { candidate.id }
 }
 
 struct CurseChoice: Identifiable {
     let affix: Affix
-    let blockingIssue: CheckIssue?
+    let blockingIssue: LoadoutIssue?
 
     var id: Int { affix.effectID }
 }

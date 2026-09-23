@@ -2201,8 +2201,9 @@ private func checkRealRanking(skills: SkillDataIndex, buffs: BuffRankerIndex, co
 // 都在各自这一侧用一份独立重算的参考实现校对），因此只要两边都绿，两端的数就必然对得上；
 // 数值本身会随数据集修订变化，所以这里一律**不写绝对快照**。
 //
-// 需要人工对拍时：NR_RANKER_DUMP=1 swift run RelicCoreChecks，
-// 与 NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs 的输出逐行比。
+// 这一组校对的是旧版排名页（BuffRankerIndex.rankResult）；旧版的对拍行改走 NR_RANKER_LEGACY_DUMP。
+// 配置页的双端对拍（CASE / CONFIG 行，与 NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs
+// 逐行比）见文末的 checkLoadoutParity。
 
 private struct CrossCase {
     let key: String
@@ -2597,7 +2598,8 @@ private func checkCrossPlatformCases(
         try rankerExpect(spell.plan.total > 1, "对照：\(key) 应能给出理论叠加组合", counter: &count)
     }
 
-    if ProcessInfo.processInfo.environment["NR_RANKER_DUMP"] == "1" {
+    // 旧版排名页的对拍行（配置页的双端对拍行见 checkLoadoutParity，走 NR_RANKER_DUMP）。
+    if ProcessInfo.processInfo.environment["NR_RANKER_LEGACY_DUMP"] == "1" {
         for line in dump { print(line) }
     }
 }
@@ -2636,9 +2638,9 @@ private let loadoutSyntheticJSON = """
     "consumable": {"slots": null, "zh": "道具说明"}
   },
   "weaponAffixes": [
-    {"attachEffectId": 9001, "nameZh": "提升物理", "potency": 1, "roles": ["affix"], "compatibilityId": 500,
+    {"attachEffectId": 9001, "nameZh": "提升物理", "paramName": "[Weapon] Physical - Potency 1", "potency": 1, "roles": ["affix"], "compatibilityId": 500,
      "normalWepTypes": [1, 9], "deepWepTypes": [1, 9], "deepOnly": false, "deepOnlyPositive": false, "spEffectIds": [901]},
-    {"attachEffectId": 9002, "nameZh": "提升物理", "potency": 2, "roles": ["affix"], "compatibilityId": 500,
+    {"attachEffectId": 9002, "nameZh": "提升物理", "paramName": "[Weapon] Physical - Potency 2", "potency": 2, "roles": ["affix"], "compatibilityId": 500,
      "normalWepTypes": [9], "deepWepTypes": [9], "deepOnly": false, "deepOnlyPositive": false, "spEffectIds": [902]},
     {"attachEffectId": 9003, "nameZh": "深夜提升火", "potency": 1, "roles": ["affix"], "compatibilityId": 600,
      "normalWepTypes": [], "deepWepTypes": [1, 9], "deepOnly": true, "deepOnlyPositive": true, "spEffectIds": [903]},
@@ -2657,13 +2659,13 @@ private let loadoutSyntheticJSON = """
   },
   "counts": {"buffs": 1},
   "buffs": [
-    \(loadoutBuff(901, "提升物理1", "{\"physicsAttackRate\":1.1}", slot: "weaponAffix", extra: "\"weaponAffixIds\":[9001],"))
-    ,\(loadoutBuff(902, "提升物理2", "{\"physicsAttackRate\":1.2}", slot: "weaponAffix", extra: "\"weaponAffixIds\":[9002],"))
+    \(loadoutBuff(901, "提升物理1", "{\"physicsAttackRate\":1.1}", slot: "weaponAffix", paramName: "[Weapon] Physical - Potency 1", extra: "\"weaponAffixIds\":[9001],"))
+    ,\(loadoutBuff(902, "提升物理2", "{\"physicsAttackRate\":1.2}", slot: "weaponAffix", paramName: "[Weapon] Physical - Potency 2", extra: "\"weaponAffixIds\":[9002],"))
     ,\(loadoutBuff(903, "深夜提升火", "{\"fireAttackRate\":1.5}", slot: "weaponAffix",
                    extra: "\"weaponAffixIds\":[9003],\"weaponAffixDeepOnly\":true,\"weaponAffixDeepOnlyPositive\":true,"))
     ,\(loadoutBuff(904, "诅咒增伤", "{\"physicsAttackRate\":1.05}", slot: "weaponAffix", extra: "\"weaponAffixIds\":[9004],"))
-    ,\(loadoutBuff(905, "香药甲", "{\"physicsAttackRate\":1.3}", slot: "consumable", key: "sp151", behavior: "removePrevious"))
-    ,\(loadoutBuff(906, "香药乙", "{\"physicsAttackRate\":1.4}", slot: "consumable", key: "sp151", behavior: "removePrevious"))
+    ,\(loadoutBuff(905, "香药甲", "{\"physicsAttackRate\":1.3}", slot: "consumable", key: "sp151", behavior: "removePrevious", scope: "category"))
+    ,\(loadoutBuff(906, "香药乙", "{\"physicsAttackRate\":1.4}", slot: "consumable", key: "sp151", behavior: "removePrevious", scope: "category"))
     ,\(loadoutBuff(907, "只给法术", "{\"physicsAttackRate\":1.25}", slot: "spellBuff",
                    applies: "{\"skill\":\"no\",\"sorcery\":\"yes\",\"incantation\":\"yes\"}",
                    detail: "{\"skill\":{\"reason\":\"测试：不作用于战技\"}}"))
@@ -2676,7 +2678,7 @@ private let loadoutSyntheticJSON = """
     ,\(loadoutBuff(910, "固定遗物增火", "{\"fireAttackRate\":1.3}", slot: "relicAffix"))
     ,\(loadoutBuff(911, "阶梯叠层", "{\"physicsAttackRate\":1.05,\"fireAttackRate\":1.05}", slot: "runStack",
                    activation: "conditional",
-                   extra: "\"stackInput\":{\"mode\":\"ladder\",\"paramMaxStacks\":3,\"practicalMaxStacks\":2,\"multiplierKey\":\"fireAttackRate\",\"appliesToRateKeys\":[\"physicsAttackRate\",\"fireAttackRate\"],\"tierMultipliers\":[1.05,1.1025,1.157625],\"perStackRatio\":1.05},"))
+                   extra: "\"stackInput\":{\"mode\":\"ladder\",\"paramMaxStacks\":3,\"practicalMaxStacks\":2,\"practicalMaxSource\":\"实测：测试\",\"multiplierKey\":\"fireAttackRate\",\"appliesToRateKeys\":[\"physicsAttackRate\",\"fireAttackRate\"],\"tierMultipliers\":[1.05,1.1025,1.157625],\"perStackRatio\":1.05},"))
     ,\(loadoutBuff(912, "份数叠层", "{\"physicsAttackRate\":1.02}", slot: "runStack", activation: "conditional",
                    extra: "\"stackInput\":{\"mode\":\"copies\",\"paramMaxStacks\":null,\"practicalMaxStacks\":null,\"multiplierKey\":\"physicsAttackRate\",\"appliesToRateKeys\":[\"physicsAttackRate\"],\"perStackMultiplier\":1.02,\"uiLabelMax\":10},"))
     ,\(loadoutBuff(913, "条件护符", "{\"physicsAttackRate\":1.3}", slot: "accessory", activation: "conditional",
@@ -2689,13 +2691,13 @@ private let loadoutSyntheticJSON = """
     ,\(loadoutBuff(917, "深夜遗物物理", "{\"physicsAttackRate\":1.3}", slot: "relicAffix",
                    extra: "\"relicAffixes\":[{\"attachEffectId\":60003,\"catalogEffectId\":60003,\"catalog\":\"affixes\",\"requiresCurse\":true,\"compatibilityId\":3}],"))
     ,\(loadoutBuff(918, "累积第1档", "{\"physicsAttackRate\":1.05}", slot: "accessory", activation: "conditional",
-                   key: "sp120", behavior: "removePrevious", sourceKind: "accessory", sourceID: 5001,
+                   key: "sp120", behavior: "removePrevious", scope: "accumulatorLadder", sourceKind: "accessory", sourceID: 5001,
                    extra: "\"accumulatorLadder\":{\"key\":\"sp120\",\"tier\":1,\"tiers\":3,\"tierSpEffectIds\":[918,919,9190],\"thresholds\":[10,20,30]},"))
     ,\(loadoutBuff(919, "累积第2档", "{\"physicsAttackRate\":1.1}", slot: "accessory", activation: "conditional",
-                   key: "sp120", behavior: "removePrevious", sourceKind: "accessory", sourceID: 5001,
+                   key: "sp120", behavior: "removePrevious", scope: "accumulatorLadder", sourceKind: "accessory", sourceID: 5001,
                    extra: "\"accumulatorLadder\":{\"key\":\"sp120\",\"tier\":2,\"tiers\":3,\"tierSpEffectIds\":[918,919,9190],\"thresholds\":[10,20,30]},"))
-    ,\(loadoutBuff(920, "优先度2", "{\"physicsAttackRate\":1.5}", slot: "consumable", key: "sp1001", behavior: "applyHighest", priority: 2))
-    ,\(loadoutBuff(921, "优先度1", "{\"physicsAttackRate\":1.1}", slot: "consumable", key: "sp1001", behavior: "applyHighest", priority: 1))
+    ,\(loadoutBuff(920, "优先度2", "{\"physicsAttackRate\":1.5}", slot: "consumable", key: "sp1001", behavior: "applyHighest", priority: 2, scope: "category"))
+    ,\(loadoutBuff(921, "优先度1", "{\"physicsAttackRate\":1.1}", slot: "consumable", key: "sp1001", behavior: "applyHighest", priority: 1, scope: "category"))
     ,\(loadoutBuff(922, "短剑词条", "{\"fireAttackRate\":1.2}", slot: "weaponAffix", extra: "\"weaponAffixIds\":[9005],"))
     ,\(loadoutBuff(923, "突刺反击", "{\"physicsAttackRate\":1.4}", slot: "consumable",
                    applies: "{\"skill\":\"conditional\",\"sorcery\":\"no\",\"incantation\":\"no\"}",
@@ -2706,6 +2708,16 @@ private let loadoutSyntheticJSON = """
                    extra: "\"relicAffixes\":[{\"attachEffectId\":60005,\"catalogEffectId\":60005,\"catalog\":\"affixes\",\"compatibilityId\":5}],"))
     ,\(loadoutBuff(925, "武器固有", "{\"physicsAttackRate\":1.08}", slot: "weaponInnate",
                    extra: "\"weaponInnate\":{\"attachEffectIds\":[],\"weaponIds\":[31],\"wepTypes\":[9]},"))
+    ,\(loadoutBuff(926, "档位一", "{\"fireAttackPower\":30}", slot: "relicAffix", key: "affix#60007", direction: "mixed", scope: "affixVariant",
+                   extra: "\"relicAffixes\":[{\"attachEffectId\":60007,\"catalogEffectId\":60007,\"catalog\":\"affixes\",\"compatibilityId\":7,\"exclusivityId\":100}],\"affixVariant\":{\"key\":\"affix#60007\",\"attachEffectId\":60007,\"variant\":1,\"variants\":2},"))
+    ,\(loadoutBuff(927, "档位二", "{\"fireAttackPower\":40}", slot: "relicAffix", key: "affix#60007", direction: "mixed", scope: "affixVariant",
+                   extra: "\"relicAffixes\":[{\"attachEffectId\":60007,\"catalogEffectId\":60007,\"catalog\":\"affixes\",\"compatibilityId\":7,\"exclusivityId\":100}],\"affixVariant\":{\"key\":\"affix#60007\",\"attachEffectId\":60007,\"variant\":2,\"variants\":2},"))
+    ,\(loadoutBuff(928, "队友那一行", "{\"physicsAttackRate\":1.3}", slot: "weaponSkill", target: "ally",
+                   extra: "\"selfAllyPair\":{\"role\":\"ally\",\"counterpartSpEffectId\":929},"))
+    ,\(loadoutBuff(929, "自己那一行", "{\"physicsAttackRate\":1.2}", slot: "weaponSkill",
+                   extra: "\"selfAllyPair\":{\"role\":\"self\",\"counterpartSpEffectId\":928},"))
+    ,\(loadoutBuff(930, "振奋香", "{\"physicsAttackRate\":1.15}", slot: "consumable", target: "ally"))
+    ,\(loadoutBuff(931, "需道具", "{\"physicsAttackRate\":1.1}", slot: "consumable", extra: "\"requiresGoodsIds\":[1210],"))
   ]
 }
 """
@@ -2714,16 +2726,17 @@ private func loadoutBuff(
     _ id: Int, _ name: String, _ rates: String, slot: String,
     applies: String = "{\"skill\":\"yes\",\"sorcery\":\"yes\",\"incantation\":\"yes\"}",
     detail: String = "{}", activation: String = "passive", key: String? = nil,
-    behavior: String = "stackSelf", priority: Int = 0, target: String = "self",
+    behavior: String = "stackSelf", priority: Int = 0, target: String = "self", direction: String = "increase",
+    scope: String = "perSpEffect", paramName: String? = nil,
     sourceKind: String = "relicAffix", sourceID: Int = 1, extra: String = ""
 ) -> String {
     let exclusiveKey = key ?? "sp10#\(id)"
     return """
-    {"spEffectId": \(id), "nameZh": "\(name)", "displayNameZh": "\(name)", "paramName": "[Test] \(name)",
+    {"spEffectId": \(id), "nameZh": "\(name)", "displayNameZh": "\(name)", "paramName": "\(paramName ?? "[Test] \(name)")",
      "sources": [{"kind": "\(sourceKind)", "id": \(sourceID), "via": "test", "nameZh": "\(name)来源"}],
-     "rates": \(rates), "rateGroups": ["damage"], "direction": "increase", "scope": {},
+     "rates": \(rates), "rateGroups": ["damage"], "direction": "\(direction)", "scope": {},
      "stacking": {"stateInfo": 0, "spCategory": 10, "spCategoryBehavior": "\(behavior)", "categoryPriority": \(priority),
-                  "saveCategory": -1, "group": "\(exclusiveKey)", "exclusiveKey": "\(exclusiveKey)", "exclusiveScope": "perSpEffect"},
+                  "saveCategory": -1, "group": "\(exclusiveKey)", "exclusiveKey": "\(exclusiveKey)", "exclusiveScope": "\(scope)"},
      \(extra)
      "duration": -1, "permanent": true, "target": "\(target)", "targetSource": "default",
      "activation": "\(activation)", "activationSource": "noEvidence",
@@ -2731,7 +2744,7 @@ private func loadoutBuff(
     """
 }
 
-/// 合成词条库：60001/60002 普通池、60004 与 60001 同互斥、60003 深夜 A 池需诅咒、69001 诅咒。
+/// 合成词条库：60001/60002 普通池、60004 与 60001 同互斥、60003 深夜 A 池需诅咒、69001/69002 诅咒。
 private let loadoutSyntheticCatalog: [Affix] = [
     Affix(effectID: 60001, name: "遗物物理", compatibilityID: 1, sortID: 10, poolIDs: [110, 210, 310]),
     Affix(effectID: 60002, name: "遗物火", compatibilityID: 2, sortID: 20, poolIDs: [110, 210, 310]),
@@ -2739,6 +2752,7 @@ private let loadoutSyntheticCatalog: [Affix] = [
     Affix(effectID: 60004, name: "同互斥", compatibilityID: 1, sortID: 40, poolIDs: [110, 210, 310]),
     Affix(effectID: 60005, name: "附魔负载", compatibilityID: 5, sortID: 50, poolIDs: [110, 210, 310]),
     Affix(effectID: 60006, name: "旧池词条", compatibilityID: 6, sortID: 60, poolIDs: [100]),
+    Affix(effectID: 60007, name: "出击附加火", compatibilityID: 7, sortID: 70, poolIDs: [110, 210, 310]),
     Affix(effectID: 69001, name: "诅咒甲", compatibilityID: 9001, sortID: 900, poolIDs: [3_000_000], isCurse: true),
     Affix(effectID: 69002, name: "诅咒乙", compatibilityID: 9001, sortID: 901, poolIDs: [3_000_000], isCurse: true)
 ]
@@ -2755,16 +2769,17 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     try rankerExpect(
         rules.weaponAffixCap(.normal) == 6 && rules.weaponAffixCap(.deep) == 12
             && rules.deepOnlyCap(.normal) == 0 && rules.deepOnlyCap(.deep) == 6
-            && rules.curseCap(.normal) == 0 && rules.curseCap(.deep) == 6
             && rules.relicSlots(.normal) == 3 && rules.relicSlots(.deep) == 6 && rules.accessorySlots == 2,
-        "slotRules 的上限应照数据读出（常规 6 / 深夜 12，深夜专属 0 / 6，诅咒 0 / 6，遗物 3 / 6，护符 2）",
+        "slotRules 的上限应照数据读出（常规 6 / 深夜 12，深夜专属 0 / 6，遗物 3 / 6，护符 2）",
         counter: &count
     )
     try rankerExpect(
         index.slotlessItems[.consumable]?.contains { $0.buffIndices.contains { index.dataset.buffs[$0].spEffectId == 914 } } != true,
-        "target = enemy 的条目不该进任何栏",
-        counter: &count
+        "target = enemy 的条目不该进任何栏", counter: &count
     )
+    try rankerExpect(index.cursePoolID == 3_000_000, "诅咒池从词条库现算（只装诅咒的池）", counter: &count)
+    try rankerExpect(index.variantOptions("affix#60007").map { index.dataset.buffs[$0].spEffectId } == [926, 927],
+                     "多档词条按数据 affixVariant 分组、按档位排好", counter: &count)
 
     let shares = halfSlashHalfFire()
     let skillOutput = LoadoutOutput(outputClass: .skill, skillID: 77, weaponWepType: 9, hand: 1, shares: shares)
@@ -2777,6 +2792,9 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
         guard let value = index.indexByID[id] else { throw CheckFailure(description: "增伤排名：合成数据缺 #\(id)") }
         return value
     }
+    func status(_ evaluation: LoadoutEvaluation, _ id: Int) -> LoadoutLineStatus? {
+        evaluation.lines.first { $0.spEffectId == id }?.status
+    }
 
     // ① appliesTo 分流：no / yes / hand / subCategoriesAny / attackContexts / 用户确认
     let skillNo = evaluator.verdict(forBuffAt: try offset(907))!
@@ -2787,121 +2805,162 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     )
     try rankerExpect(sorceryEvaluator.verdict(forBuffAt: try offset(907))?.isApplicable == true,
                      "同一条对魔法 = yes 应生效", counter: &count)
-    try rankerExpect(evaluator.verdict(forBuffAt: try offset(908))?.isApplicable == false,
+    try rankerExpect(evaluator.verdict(forBuffAt: try offset(908))?.state == .no,
                      "requires.hand = 2 在右手时应不生效", counter: &count)
     let leftEvaluator = LoadoutEvaluator(
         index: index,
         output: LoadoutOutput(outputClass: .skill, skillID: 77, weaponID: 31, weaponWepType: 9, hand: 2, shares: shares)
     )
-    try rankerExpect(leftEvaluator.verdict(forBuffAt: try offset(908))?.isApplicable == true,
+    try rankerExpect(leftEvaluator.verdict(forBuffAt: try offset(908))?.state == .yes,
                      "requires.hand = 2 在左手时应生效", counter: &count)
     let partial = evaluator.verdict(forBuffAt: try offset(909))!
     try rankerExpectClose(partial.fraction, 0.75, "subCategoriesAny 按 attackIndex 段数折算（3/4 段带 112）", counter: &count)
-    try rankerExpect(sorceryEvaluator.verdict(forBuffAt: try offset(909))?.isApplicable == false,
+    try rankerExpect(partial.notes.first == LoadoutText.f("requireSubsPartial", "战技", 3, 4, "[112 战技攻击]"),
+                     "部分段命中写明近似（实际 \(partial.notes)）", counter: &count)
+    try rankerExpect(sorceryEvaluator.verdict(forBuffAt: try offset(909))?.state == .no,
                      "对魔法 = no 的子类别条目不生效", counter: &count)
-    try rankerExpect(evaluator.verdict(forBuffAt: try offset(923))?.isApplicable == false,
-                     "requires.attackContexts 未勾选情境时不生效", counter: &count)
+    try rankerExpect(evaluator.verdict(forBuffAt: try offset(923))?.state == .context,
+                     "requires.attackContexts 未勾选情境时要勾情境", counter: &count)
     let contextEvaluator = LoadoutEvaluator(
         index: index,
         output: LoadoutOutput(outputClass: .skill, skillID: 77, weaponID: 31, weaponWepType: 9, hand: 1,
                               shares: shares, attackContexts: ["thrustingCounter"])
     )
-    try rankerExpect(contextEvaluator.verdict(forBuffAt: try offset(923))?.isApplicable == true,
+    try rankerExpect(contextEvaluator.verdict(forBuffAt: try offset(923))?.state == .yes,
                      "勾选对应情境后生效", counter: &count)
     let imbued = evaluator.verdict(forBuffAt: try offset(924))!
-    try rankerExpect(imbued.isApplicable && imbued.needsConfirmation
+    try rankerExpect(imbued.state == .pending && imbued.needs.count == 2
                         && imbued.requirements.contains { $0.key == "unknown-未来条件" },
                      "imbuedWeaponOnly 与认不出的键交给用户确认（不直接判不生效）", counter: &count)
+    let goods = evaluator.verdict(forBuffAt: try offset(931))!
+    try rankerExpect(goods.state == .pending && goods.needs.first == LoadoutText.f("requireGoods", LoadoutText.f("goodsFallback", 1210)),
+                     "requiresGoodsIds：要确认，道具名缺失退「道具 #id」（实际 \(goods.needs)）", counter: &count)
     try rankerExpect(evaluator.attackContextOptions().map(\.key) == ["thrustingCounter"],
                      "攻击情境勾选项只列 requires.attackContexts 里出现的", counter: &count)
 
-    // ② 单条倍率：部分段折算 = Σ 占比 × (1 + f × (m − 1))
+    // ② 单条倍率：部分段折算 = Σ 占比 × (1 + f × (m − 1))；不占槽位的栏勾选即确认
     var loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.selectedBuffs = [909]
     var result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * (1 + 0.75 * 0.2) + 0.5, "部分段生效按段数折算", counter: &count)
+    try rankerExpectClose(result.total, 0.5 * (1 + 0.75 * 0.2) + 0.5, "部分段生效按段数折算", tolerance: 1e-12, counter: &count)
 
-    // ③ exclusiveKey 去重：同键取有效倍率高的；applyHighest 取 categoryPriority 小的
+    // ③ exclusiveKey 去重：同键取有效倍率高的；applyHighest 取 categoryPriority 小的并提示
     loadout.selectedBuffs = [905, 906, 920, 921]
     result = evaluator.evaluate(loadout)
-    let status = Dictionary(result.lines.map { ($0.spEffectId, $0.status) }, uniquingKeysWith: { first, _ in first })
-    try rankerExpect(status[906] == .counted && status[905] == .replaced(by: 906),
+    try rankerExpect(status(result, 906) == .counted && status(result, 905) == .duplicate(by: 906),
                      "同一 exclusiveKey 只留有效倍率高的一份", counter: &count)
-    try rankerExpect(status[921] == .counted && status[920] == .replaced(by: 921),
+    try rankerExpect(status(result, 921) == .counted && status(result, 920) == .duplicate(by: 921),
                      "applyHighest 两份取 categoryPriority 数值小的（哪怕倍率低）", counter: &count)
-    try rankerExpectClose(result.total, 0.5 * 1.4 * 1.1 + 0.5, "去重后逐通道连乘再加权", counter: &count)
+    try rankerExpect(result.lines.first { $0.spEffectId == 920 }?.reasons.first
+                        == LoadoutText.f("reasonDupPriority", "优先度1", "sp1001", 1, 2),
+                     "被 categoryPriority 压掉的一份写明原因", counter: &count)
+    try rankerExpect(result.warnings.map(\.kind) == ["duplicate", "priority"]
+                        && result.warnings[1].text == LoadoutText.f("warnPriority", "sp1001", "优先度1", "优先度2"),
+                     "汇总提示被压掉的项（实际 \(result.warnings.map(\.text))）", counter: &count)
+    try rankerExpectClose(result.total, 0.5 * 1.4 * 1.1 + 0.5, "去重后逐通道连乘再加权", tolerance: 1e-12, counter: &count)
 
-    // ④ 同一效果多份：默认只计一份并提示；打开 stackSelf 多份相乘后按份数相乘
+    // ④ 同一效果多份：stackSelf（按 ID 互斥）各份相乘并提示；多档词条同一词条两件只算一份
     loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.weaponAffixCounts = [9001: 2]
     result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * 1.1 + 0.5, "同一词条装两份默认只计一份", counter: &count)
-    try rankerExpect(result.warnings.contains { $0.hasPrefix("同一效果装了多份，默认按一份计（保守口径）；数据 stackingRules 认为 stackSelf 可多份相乘") },
-                     "stackSelf 的同一效果多份：提示默认按一份计、数据认为可相乘（实际 \(result.warnings)）", counter: &count)
-    try rankerExpect(result.lines.first { $0.spEffectId == 901 }?.statusText.hasPrefix("装了 2 份：默认按一份计") == true
-                        && !result.warnings.contains { $0.contains("重复获得只刷新") },
-                     "stackSelf 条目的状态不能写成「重复获得只刷新」（那是 resetOnApply 的语义）", counter: &count)
-    loadout.stackSelfCopiesMultiply = true
-    result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * 1.1 * 1.1 + 0.5, "stackSelf 多份相乘打开后按份数相乘", counter: &count)
-    loadout.stackSelfCopiesMultiply = false
-    // 不同档位：各自独立键相乘 + 提示「参数推断，未实测」
+    try rankerExpectClose(result.total, 0.5 * 1.1 * 1.1 + 0.5, "stackSelf 两份相乘", tolerance: 1e-12, counter: &count)
+    try rankerExpect(result.warnings.map(\.kind) == ["copiesStackSelf"]
+                        && result.warnings[0].text == LoadoutText.f("warnCopiesStackSelf", "提升物理1 ×2"),
+                     "stackSelf 多份相乘要提示「参数推断」（实际 \(result.warnings.map(\.text))）", counter: &count)
+    try rankerExpect(result.lines.first?.countedCopies == 2 && result.lines.first?.notes == [LoadoutText.f("noteCopiesStackSelf", 2)],
+                     "这一条记份数与说明", counter: &count)
+    // 不同档位：各自独立键相乘 + 同族提示（行名去掉「 - Potency N」后相同）
     loadout.weaponAffixCounts = [9001: 1, 9002: 1]
     result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * 1.1 * 1.2 + 0.5, "同一词条的不同档位按独立键相乘", counter: &count)
-    try rankerExpect(result.warnings.contains { $0.contains("参数推断，未实测") && $0.contains("不同档位") },
-                     "不同档位相乘要标「参数推断，未实测」", counter: &count)
-    try rankerExpect(result.warnings.contains { $0.contains("提升物理（档位1）、提升物理（档位2）") }
-                        && !result.warnings.contains { $0.contains("（）") },
-                     "档位提示要写明档位（不能是空括号）（实际 \(result.warnings)）", counter: &count)
+    try rankerExpectClose(result.total, 0.5 * 1.1 * 1.2 + 0.5, "同一词条的不同档位按独立键相乘", tolerance: 1e-12, counter: &count)
+    try rankerExpect(result.warnings.contains { $0.kind == "tiers" && $0.text.contains("参数推断，未实测") },
+                     "不同档位相乘要标「参数推断，未实测」（实际 \(result.warnings.map(\.text))）", counter: &count)
     try rankerExpect(index.selectedTierFamilies(loadout) == [[9001, 9002]], "同名两档应分到同一词条", counter: &count)
 
-    // ⑤ 叠层输入：阶梯取 tierMultipliers[n-1]、份数取 perStack^n，0 层不计、越界夹到参数上限、超过实际上限提示
+    // ⑤ 叠层输入：缺省 0 层不计；阶梯取 tierMultipliers[n-1]、份数取 perStack^n；越界夹到参数上限、超过实际上限提示
     loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.selectedBuffs = [911, 912]
     result = evaluator.evaluate(loadout)
-    try rankerExpect(result.lines.allSatisfy { $0.status == .noStacks }, "层数为 0 时不计入", counter: &count)
+    try rankerExpect(result.lines.allSatisfy { $0.status == .zeroStacks }, "层数缺省 0，不计入", counter: &count)
     loadout.stackCounts = [911: 2, 912: 5]
     result = evaluator.evaluate(loadout)
     try rankerExpectClose(result.total, 0.5 * 1.1025 * pow(1.02, 5) + 0.5 * 1.1025,
-                          "阶梯第 2 层 ×1.1025（物理+火），份数 5 层 ×1.02^5（只乘物理）", counter: &count)
+                          "阶梯第 2 层 ×1.1025（物理+火），份数 5 层 ×1.02^5（只乘物理）", tolerance: 1e-12, counter: &count)
     loadout.stackCounts = [911: 9]
     result = evaluator.evaluate(loadout)
-    try rankerExpect(result.lines.first { $0.spEffectId == 911 }?.stacks == 3,
-                     "阶梯层数应夹到参数表层数 3", counter: &count)
-    try rankerExpect(result.warnings.contains { $0.contains("超过一局实际能叠到的 2 层") },
-                     "超过 practicalMaxStacks 要提示", counter: &count)
+    let ladderLine = result.lines.first { $0.spEffectId == 911 }
+    try rankerExpect(ladderLine?.stacks == 3, "阶梯层数应夹到参数表层数 3", counter: &count)
+    try rankerExpect(ladderLine?.notes == [LoadoutText.f("stackOverPractical", 3, 2, "实测"), LoadoutText.f("stackOverParam", 3)],
+                     "超过一局实际上限与参数表层数都要提示（实际 \(ladderLine?.notes ?? [])）", counter: &count)
+    try rankerExpect(BuffLoadoutIndex.defaultStacks(index.dataset.buffs[try offset(911)].stackInput!) == 2
+                        && BuffLoadoutIndex.defaultStacks(index.dataset.buffs[try offset(912)].stackInput!) == 1,
+                     "勾选时预填：一局实际上限，没有就 1", counter: &count)
 
     // ⑥ 条件型：占槽位的栏选中≠条件成立；勾「条件成立」后才计入
     loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.accessories = [5000]
     result = evaluator.evaluate(loadout)
-    try rankerExpect(result.lines.first?.status == .needsConfirmation, "条件型护符默认不计入", counter: &count)
+    try rankerExpect(result.lines.first?.status == .pending
+                        && result.lines.first?.needs == [LoadoutText.t("activationNeed.conditional")],
+                     "条件型护符默认不计入", counter: &count)
     loadout.confirmed = [913]
     result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * 1.3 + 0.5, "勾「条件成立」后计入", counter: &count)
-    // 累积阶梯：选档
+    try rankerExpectClose(result.total, 0.5 * 1.3 + 0.5, "勾「条件成立」后计入", tolerance: 1e-12, counter: &count)
+    // 累积阶梯：没选层不计；选层即确认
     loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.accessories = [5001]
+    result = evaluator.evaluate(loadout)
+    try rankerExpect(result.lines.allSatisfy { $0.status == .tierOff } && result.lines.first?.reasons == [LoadoutText.t("reasonTierNone")],
+                     "累积阶梯没选层时一层都不算", counter: &count)
     loadout.ladderTiers = [918: 2]
     result = evaluator.evaluate(loadout)
-    let ladderStatus = Dictionary(result.lines.map { ($0.spEffectId, $0.status) }, uniquingKeysWith: { first, _ in first })
-    try rankerExpect(ladderStatus[919] == .counted && ladderStatus[918] == .tierNotSelected,
-                     "累积阶梯只计选中的那一档", counter: &count)
-    // tiers 写着 3、数据里只有 2 档：选档只列 1、2，「条件成立时」按第 2 档，一览每档按自己算
+    try rankerExpect(status(result, 919) == .counted && status(result, 918) == .tierOff,
+                     "累积阶梯只计选中的那一层（选层即确认）", counter: &count)
     try rankerExpect(index.ladderTierOptions(918) == [1, 2] && index.ladderTopTier(918) == 2,
-                     "选档只列数据里真实存在的档（实际 \(index.ladderTierOptions(918))）", counter: &count)
+                     "选层只列数据里真实存在的层（实际 \(index.ladderTierOptions(918))）", counter: &count)
     if let ladderItem = index.accessoryItem(5001) {
         let ladderCandidate = evaluator.candidate(for: ladderItem, loadout: BuffLoadout(mode: .normal, rules: rules))
-        try rankerExpectClose(ladderCandidate.potential, 0.5 * 1.1 + 0.5, "累积阶梯的潜在倍率取实际存在的最高档", counter: &count)
+        try rankerExpectClose(ladderCandidate.potential, 0.5 * 1.1 + 0.5, "累积阶梯的潜在倍率取实际存在的最高层", counter: &count)
+        try rankerExpect(ladderCandidate.needsConfirmation && ladderCandidate.status == .tierOff,
+                         "没选层的候选：要选层", counter: &count)
     } else {
         throw CheckFailure(description: "增伤排名：合成数据缺护符 5001")
     }
-    let overviewByID = Dictionary(evaluator.overview().map { ($0.spEffectId, $0.multiplier) }, uniquingKeysWith: { first, _ in first })
-    try rankerExpectClose(overviewByID[918] ?? 1, 0.5 * 1.05 + 0.5, "一览：累积阶梯第 1 档按第 1 档自己算", counter: &count)
-    try rankerExpectClose(overviewByID[919] ?? 1, 0.5 * 1.1 + 0.5, "一览：累积阶梯第 2 档按第 2 档自己算", counter: &count)
+    let overviewByID = Dictionary(evaluator.overview().map { ($0.spEffectId, $0) }, uniquingKeysWith: { first, _ in first })
+    try rankerExpectClose(overviewByID[918]?.multiplier ?? 1, 0.5 * 1.05 + 0.5, "一览：累积阶梯第 1 层按第 1 层自己算", counter: &count)
+    try rankerExpectClose(overviewByID[919]?.multiplier ?? 1, 0.5 * 1.1 + 0.5, "一览：累积阶梯第 2 层按第 2 层自己算", counter: &count)
+    try rankerExpect(overviewByID[912]?.assumesOneStack == false && overviewByID[911]?.multiplier ?? 0 > 1,
+                     "一览：叠层取一局实际上限，没有就退『＋N』标签数", counter: &count)
+    try rankerExpect(overviewByID[914] == nil && overviewByID[928]?.isApplicable == false
+                        && overviewByID[930]?.isApplicable == true,
+                     "一览只收能进计算的；selfAllyPair 的队友那一行不生效，普通 ally 照常", counter: &count)
 
-    // ⑦ 武器固有：当前武器自带的自动计入，可去掉
+    // ⑦ 作用对象：ally 照常计入；selfAllyPair 的 Allies 那一行不计入
+    loadout = BuffLoadout(mode: .normal, rules: rules)
+    loadout.selectedBuffs = [928, 929, 930]
+    result = evaluator.evaluate(loadout)
+    try rankerExpect(status(result, 928) == .no && result.lines.first { $0.spEffectId == 928 }?.reasons == [LoadoutText.t("reasonAllyPair")]
+                        && status(result, 929) == .counted && status(result, 930) == .counted,
+                     "selfAllyPair：施放者自己只计 Self 那一行", counter: &count)
+
+    // ⑧ 多档词条：同一组只算选中的一档（默认第 1 档），可改选；exclusivityId 同组提示
+    loadout = BuffLoadout(mode: .normal, rules: rules)
+    loadout.relicCards[0] = LoadoutRelicCard(isDeepSlot: false, choice: .custom, rows: [LoadoutRelicRow(affixID: 60007)])
+    result = evaluator.evaluate(loadout)
+    try rankerExpect(status(result, 926) == .counted && status(result, 927) == .variantOff,
+                     "多档词条默认第 1 档", counter: &count)
+    try rankerExpect(result.lines.first { $0.spEffectId == 927 }?.reasons == [LoadoutText.f("reasonVariantOff", 2, 1)],
+                     "未选的档写明按第几档计算", counter: &count)
+    try rankerExpectClose(result.weightedFlat, 15, "加算只算选中的一档（火 30 × 火占比 0.5）", tolerance: 1e-12, counter: &count)
+    loadout.variantChoices = ["affix#60007": 927]
+    result = evaluator.evaluate(loadout)
+    try rankerExpect(status(result, 927) == .counted && status(result, 926) == .variantOff, "改选第 2 档", counter: &count)
+    loadout.relicCards[1] = loadout.relicCards[0]
+    result = evaluator.evaluate(loadout)
+    try rankerExpect(result.lines.first { $0.spEffectId == 927 }.map { $0.copies == 2 && $0.countedCopies == 1 } == true,
+                     "多档词条（exclusiveScope=affixVariant）同一词条两件只算一份", counter: &count)
+
+    // ⑨ 武器固有：当前武器自带的自动列入，可去掉
     loadout = BuffLoadout(mode: .normal, rules: rules)
     result = armedEvaluator.evaluate(loadout)
     try rankerExpect(result.countedLines.map(\.spEffectId) == [925], "当前武器自带的固有效果应自动计入", counter: &count)
@@ -2911,7 +2970,7 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     loadout.excludedInnate = [925]
     try rankerExpect(armedEvaluator.evaluate(loadout).countedLines.isEmpty, "去掉后不再计入", counter: &count)
 
-    // ⑧ 槽位上限：常规不列深夜专属与诅咒；武器类别过滤；深夜推荐填满不越界
+    // ⑩ 槽位上限：常规不列深夜专属与诅咒；武器类别过滤；深夜推荐填满不越界
     let normalWA = evaluator.candidates(for: .weaponAffix, loadout: BuffLoadout(mode: .normal, rules: rules))
     try rankerExpect(Set(normalWA.map(\.item.id)) == ["wa-9001", "wa-9002", "wa-9005"],
                      "常规模式不列深夜专属词条与诅咒（实际 \(normalWA.map(\.item.id))）", counter: &count)
@@ -2924,7 +2983,6 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
         "已选的词条即使不在当前武器类别也要列出（否则在这一栏里减不掉）", counter: &count
     )
     var deep = BuffLoadout(mode: .deep, rules: rules)
-    deep.stackSelfCopiesMultiply = true
     deep = evaluator.recommendedFill(deep, weaponTypeFilter: nil)
     let deepEval = evaluator.evaluate(deep)
     try rankerExpect(deepEval.weaponAffixUsage.used == 12 && !deepEval.weaponAffixUsage.isOver,
@@ -2934,100 +2992,125 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     try rankerExpect(deep.weaponAffixCounts[9004] == nil, "推荐填满不推荐诅咒", counter: &count)
     try rankerExpect(deepEval.violations.isEmpty, "推荐填满后不应有超限（实际 \(deepEval.violations)）", counter: &count)
     var over = BuffLoadout(mode: .deep, rules: rules)
-    over.weaponAffixCounts = [9003: 7, 9001: 6, 9004: 7]
+    over.weaponAffixCounts = [9003: 7, 9001: 6]
     let overEval = evaluator.evaluate(over)
     try rankerExpect(overEval.weaponAffixUsage.used == 13 && overEval.weaponAffixUsage.isOver
-                        && overEval.deepOnlyUsage.isOver && overEval.curseUsage.isOver
-                        && overEval.violations.count == 3,
-                     "超过 12 条 / 深夜专属 6 条 / 诅咒 6 条都要报出来（实际 \(overEval.violations)）", counter: &count)
+                        && overEval.deepOnlyUsage.isOver && overEval.violations.count == 2,
+                     "超过 12 条 / 深夜专属 6 条都要报出来（实际 \(overEval.violations)）", counter: &count)
     let removed = over.setMode(.normal, rules: rules, weaponAffixes: index.weaponAffixByID)
-    try rankerExpect(removed == 14 && over.weaponAffixCounts == [9001: 6] && over.relicCards.count == 3,
-                     "切回常规应去掉深夜专属与诅咒、裁到 6 条、遗物卡回到 3 张（去掉 \(removed)，剩 \(over.weaponAffixCounts)）",
+    try rankerExpect(removed == 7 && over.weaponAffixCounts == [9001: 6] && over.relicCards.count == 3,
+                     "切回常规应去掉深夜专属、裁到 6 条、遗物卡回到 3 张（去掉 \(removed)，剩 \(over.weaponAffixCounts)）",
                      counter: &count)
 
-    // ⑨ 自组遗物合法性：部分选、互斥、出货池、深夜诅咒配对；不合法的整件不计入
+    // ⑪ 自组遗物合法性：部分选（补占位再调 LegalityChecker）、互斥、出货池、深夜诅咒配对；不合法的整件不计入
     func card(_ ids: [Int?], curses: [Int?] = [nil, nil, nil], deep: Bool = false) -> LoadoutRelicCard {
         LoadoutRelicCard(
             isDeepSlot: deep, choice: .custom,
             rows: (0..<3).map { LoadoutRelicRow(affixID: ids.indices.contains($0) ? ids[$0] : nil, curseID: curses[$0]) }
         )
     }
-    try rankerExpect(index.relicCheck(card([60001, 60002])).status == .valid, "两条不同互斥池的普通词条可成立", counter: &count)
+    let two = index.relicCheck(card([60001, 60002]))
+    try rankerExpect(two.status == .partial && two.message == LoadoutText.f("relicPartial", 2, 1),
+                     "两条不同互斥池的普通词条：预检通过", counter: &count)
     let conflict = index.relicCheck(card([60001, 60004]))
-    try rankerExpect(conflict.status == .invalid && conflict.issues.map(\.title) == ["同一互斥池"],
-                     "同一互斥池的两条应非法", counter: &count)
-    try rankerExpect(index.relicCheck(card([60006])).issues.map(\.title) == ["不在当前出货池"],
+    try rankerExpect(conflict.status == .invalid && conflict.issues.map(\.title) == [LoadoutText.t("checkConflictTitle")]
+                        && conflict.issues[0].detail == LoadoutText.f("checkConflictDetail", "遗物物理、同互斥"),
+                     "同一互斥池的两条应非法（占位词条不出现在文案里）", counter: &count)
+    try rankerExpect(index.relicCheck(card([60006])).issues.map(\.title) == [LoadoutText.t("checkPoolTitle")],
                      "旧池词条不在 1.03 普通出货池", counter: &count)
-    let fullInvalid = index.relicCheck(card([60001, 60002, 60004]))
-    let checker = LegalityChecker()
-    let direct = checker.check(checker.canonicalOrder(
-        [60001, 60002, 60004].compactMap { id in loadoutSyntheticCatalog.first { $0.effectID == id } }
-    ), mode: .currentNormal)
-    try rankerExpect(fullInvalid.issues.map(\.title) == direct.issues.map(\.title) && fullInvalid.message == direct.message,
-                     "三条时应直接复用 LegalityChecker 的结论与文案", counter: &count)
-    let partialConflict = BuffLoadoutIndex.partialIssues(
-        [60001, 60004].compactMap { id in loadoutSyntheticCatalog.first { $0.effectID == id } }, mode: .currentNormal
-    )
-    try rankerExpect(partialConflict.map(\.detail) == direct.issues.filter { $0.kind == .conflict }.map(\.detail),
-                     "不满三条时的互斥文案应与 LegalityChecker 逐字相同", counter: &count)
+    let full = index.relicCheck(card([60001, 60002, 60005]))
+    try rankerExpect(full.status == .valid && full.message == LoadoutText.t("relicValidNormal"), "三条合法", counter: &count)
     let deepMissing = index.relicCheck(card([60003], deep: true))
-    try rankerExpect(deepMissing.status == .invalid && deepMissing.issues.contains { $0.title == "需诅咒的词条缺少负面词条" },
-                     "深夜需诅咒的词条没配诅咒应非法", counter: &count)
-    try rankerExpect(index.relicCheck(card([60003], curses: [69001, nil, nil], deep: true)).status == .valid,
-                     "配上诅咒后合法", counter: &count)
+    try rankerExpect(deepMissing.status == .invalid && deepMissing.issues.map(\.detail)
+                        == [LoadoutText.f("curseMissingDetail", 1, "深夜遗物物理")] && deepMissing.warnings.isEmpty,
+                     "深夜需诅咒的词条没配诅咒应非法（与存档审计同文）", counter: &count)
+    let deepPaired = index.relicCheck(card([60003], curses: [69001, nil, nil], deep: true))
+    try rankerExpect(deepPaired.status == .partial && deepPaired.warnings.map(\.title) == [LoadoutText.t("cursePairingTitle")],
+                     "配上诅咒后预检通过，并写明诅咒配对已校验", counter: &count)
     try rankerExpect(index.relicCheck(card([60001], deep: true)).status == .invalid,
                      "普通池词条放不进深夜遗物格", counter: &count)
     try rankerExpect(index.relicCheck(card([60003, nil], curses: [69001, 69002, nil], deep: true))
-                        .issues.contains { $0.title == "多余的负面词条" },
+                        .issues.contains { $0.title == LoadoutText.t("curseUnexpectedTitle") },
                      "不需要诅咒的行携带诅咒应报「多余的负面词条」", counter: &count)
+    let twin = index.relicCheck(card([60003, 60003], curses: [69001, 69001, nil], deep: true))
+    try rankerExpect(twin.issues.contains { $0.title == LoadoutText.t("curseDuplicateTitle") && $0.detail.hasPrefix("同一词条在一件遗物上重复出现") }
+                        && twin.issues.contains { $0.title == LoadoutText.t("curseConflictTitle") },
+                     "涉及诅咒的重复与互斥（与存档审计同文）", counter: &count)
+    try rankerExpect(evaluator.pickCurse(for: card([60003], deep: true), row: 0) == 69001, "配诅咒：ID 小的先试", counter: &count)
+    // 换词条（与 Windows 端 withRelicAffix / autoAssignCurses 同法）：需诅咒的词条自动配诅咒；换成另一条需诅咒的词条时
+    // 旧诅咒清掉重配；不需诅咒的行、普通遗物格不带诅咒。
+    let picked = evaluator.withRelicAffix(LoadoutRelicCard(isDeepSlot: true), row: 0, affixID: 60003)
+    try rankerExpect(picked == card([60003], curses: [69001, nil, nil], deep: true)
+                        && index.relicCheck(picked).status == .partial,
+                     "深夜遗物选需诅咒的词条：自动配上 ID 最小的合法诅咒、预检通过", counter: &count)
+    try rankerExpect(evaluator.withRelicAffix(card([60003], curses: [69002, nil, nil], deep: true), row: 0, affixID: 60003)
+                        .rows[0].curseID == 69001,
+                     "换成另一条需诅咒的词条：旧诅咒清掉后重配（不沿用）", counter: &count)
+    try rankerExpect(evaluator.withRelicAffix(card([60003], curses: [69001, nil, nil], deep: true), row: 0, affixID: 60001)
+                        .rows.allSatisfy { $0.curseID == nil },
+                     "换成不需诅咒的词条：这一行的诅咒清掉", counter: &count)
+    try rankerExpect(evaluator.withRelicAffix(LoadoutRelicCard(isDeepSlot: false), row: 0, affixID: 60003)
+                        .rows.allSatisfy { $0.curseID == nil },
+                     "普通遗物格不带诅咒", counter: &count)
+    try rankerExpect(evaluator.autoAssignCurses(card([60003, 60001], deep: true))
+                        == card([60003, 60001], curses: [69001, nil, nil], deep: true)
+                        && evaluator.autoAssignCurses(card([60001, 60003], curses: [69002, 69002, nil], deep: true))
+                        == card([60001, 60003], curses: [nil, 69002, nil], deep: true),
+                     "autoAssignCurses：需诅咒的行补配、已配的保留、不需诅咒的行清掉", counter: &count)
     loadout = BuffLoadout(mode: .deep, rules: rules)
     loadout.excludedInnate = [925]
     loadout.relicCards[3] = card([60003], deep: true)
     result = evaluator.evaluate(loadout)
-    try rankerExpect(result.lines.first { $0.spEffectId == 917 }?.status == .invalidRelic && abs(result.total - 1) < 1e-12,
+    try rankerExpect(status(result, 917) == .relicInvalid && abs(result.total - 1) < 1e-12,
                      "不合法的自组遗物整件不计入", counter: &count)
     loadout.relicCards[3] = card([60003], curses: [69001, nil, nil], deep: true)
     result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * 1.3 + 0.5, "合法后计入（诅咒只占位）", counter: &count)
-    // 固定遗物：非增伤词条只显示
+    try rankerExpectClose(result.total, 0.5 * 1.3 + 0.5, "合法后计入（诅咒只占位）", tolerance: 1e-12, counter: &count)
     let fixed = index.fixedRelicItem(0)
     try rankerExpect(fixed?.infoLines.map(\.counted) == [false, false] && fixed?.infoLines.last?.text == "词条 #7101",
                      "固定遗物的非增伤词条只显示；缺中文名退「词条 #id」", counter: &count)
 
-    // ⑩ 推荐填满：固定遗物（火 ×1.3）胜过自组；同一效果第二件不再加；护符不重复
+    // ⑫ 推荐填满：武器词条同一条可以多份（stackSelf 相乘）；条件型护符不推荐；再点一次不变
     let normalFilled = evaluator.recommendedFill(BuffLoadout(mode: .normal, rules: rules), weaponTypeFilter: 9)
     let normalEval = evaluator.evaluate(normalFilled)
-    try rankerExpect(normalFilled.relicCards[0].choice == .fixed(0), "第一张卡应选固定遗物", counter: &count)
-    try rankerExpect(normalFilled.relicCards[1].customAffixIDs.sorted() == [60001, 60002],
-                     "第二张卡自组两条（实际 \(normalFilled.relicCards[1].customAffixIDs)）", counter: &count)
-    try rankerExpect(normalFilled.relicCards[2].isEmpty, "第三张卡没有正增益就留空", counter: &count)
+    try rankerExpect(normalFilled.weaponAffixCounts == [9002: 6], "同一词条多份（stackSelf 各份相乘）：取 ×1.2 那条填满 6 份（实际 \(normalFilled.weaponAffixCounts)）",
+                     counter: &count)
     try rankerExpect(normalEval.relicChecks.allSatisfy { $0.status != .invalid }, "推荐的遗物都必须合法", counter: &count)
-    try rankerExpect(normalFilled.accessories.isEmpty, "条件型护符没确认就不推荐", counter: &count)
+    try rankerExpect(normalFilled.accessories.isEmpty, "条件型护符不推荐", counter: &count)
     try rankerExpect(evaluator.recommendedFill(normalFilled, weaponTypeFilter: 9) == normalFilled,
                      "填满后再点一次不应再变", counter: &count)
-    try rankerExpect(normalEval.weaponAffixUsage.used <= 6, "常规推荐不超过 6 条", counter: &count)
+    try rankerExpect(normalEval.countedLines.allSatisfy { index.dataset.buffs[$0.buffIndex].activation == "passive" },
+                     "推荐填满只挑被动", counter: &count)
 
-    // ⑪ 汇总连乘：总倍率 = 计入条目逐通道连乘后加权（独立重算）
+    // ⑬ 汇总连乘：总倍率 = 计入条目逐通道连乘后加权（独立重算）
     try checkLoadoutTotal(normalEval, shares: shares, "合成推荐配置", counter: &count)
 }
 
-/// 独立重算：计入条目的 channelMultiplier 逐通道相乘，再按占比加权；同一互斥键只能出现一次。
+/// 独立重算：计入条目的 channelMultiplier 逐通道相乘，再按占比加权；各栏小计同法；同一互斥键只能出现一次。
 private func checkLoadoutTotal(
     _ evaluation: LoadoutEvaluation, shares: [Double], _ label: String, counter count: inout Int
 ) throws {
-    var product = Array(repeating: 1.0, count: SkillDamageChannel.allCases.count)
-    for line in evaluation.countedLines {
-        for index in product.indices { product[index] *= line.channelMultiplier[index] }
+    func weighted(_ lines: [LoadoutLine]) -> Double {
+        var product = Array(repeating: 1.0, count: SkillDamageChannel.allCases.count)
+        for line in lines {
+            for index in product.indices { product[index] *= line.channelMultiplier[index] }
+        }
+        var sum = 0.0
+        var weight = 0.0
+        for index in product.indices where shares[index] > 0 {
+            sum += shares[index] * product[index]
+            weight += shares[index]
+        }
+        return weight > 0 ? sum / weight : 1
     }
-    var sum = 0.0
-    var weight = 0.0
-    for index in product.indices where shares[index] > 0 {
-        sum += shares[index] * product[index]
-        weight += shares[index]
-    }
-    let reference = weight > 0 ? sum / weight : 1
-    try rankerExpectClose(evaluation.total, reference, "\(label)：总倍率应等于计入条目逐通道连乘后加权",
+    try rankerExpectClose(evaluation.total, weighted(evaluation.countedLines), "\(label)：总倍率应等于计入条目逐通道连乘后加权",
                           tolerance: 1e-9, counter: &count)
+    for column in LoadoutSummaryColumn.allCases {
+        try rankerExpectClose(
+            evaluation.columnSubtotals[column] ?? 1, weighted(evaluation.countedLines.filter { $0.summaryColumn == column }),
+            "\(label)：\(column.title) 小计", tolerance: 1e-9, counter: &count
+        )
+    }
     let keys = evaluation.countedLines.map(\.exclusiveKey)
     try rankerExpect(Set(keys).count == keys.count, "\(label)：同一互斥键只能计入一份", counter: &count)
 }
@@ -3060,36 +3143,11 @@ private func loadoutOutput(
     )
 }
 
-/// 双端对照的一行摘要（NR_LOADOUT_DUMP=1 时打印，与 Windows 端同名输出逐行比）。
-private func loadoutDump(
-    _ key: String, _ loadout: BuffLoadout, index: BuffLoadoutIndex, evaluation: LoadoutEvaluation
-) -> String {
-    var parts: [String] = ["LOADOUT \(key)", "mode=\(loadout.mode.rawValue)"]
-    parts.append("total=" + String(format: "%.9f", evaluation.total))
-    parts.append("weaponAffixes=" + loadout.weaponAffixCounts.keys.sorted()
-        .map { "\($0)x\(loadout.weaponAffixCounts[$0] ?? 0)" }.joined(separator: ","))
-    let relics = loadout.relicCards.map { card -> String in
-        switch card.choice {
-        case .empty: return "-"
-        case .fixed(let fixedIndex): return "fixed:\(index.dataset.fixedRelics[fixedIndex].relicID)"
-        case .custom:
-            return "custom:" + card.rows.map { row in
-                "\(row.affixID.map(String.init) ?? "-")" + (row.curseID.map { "/\($0)" } ?? "")
-            }.joined(separator: "+")
-        }
-    }
-    parts.append("relics=" + relics.joined(separator: "|"))
-    parts.append("accessories=" + loadout.accessories.map(String.init).joined(separator: ","))
-    parts.append("counted=" + evaluation.countedLines.map(\.spEffectId).sorted().map(String.init).joined(separator: ","))
-    return parts.joined(separator: " ")
-}
-
 private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex, counter count: inout Int) throws {
     let catalog = try CatalogLoader.load(from: resourceURL("affixes.json"))
     let index = BuffLoadoutIndex(ranker: buffs, catalog: catalog.affixes)
     let rules = index.slotRules
     let dataset = index.dataset
-    var dump: [String] = []
 
     // ① 结构：v6 字段都在、上限照数据
     try rankerExpect(index.supportsLoadout, "真实增益数据应支持配置页（slotRules + appliesTo）", counter: &count)
@@ -3103,17 +3161,21 @@ private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex
                         && !index.fixedRelicItems.isEmpty && !index.accessoryItems.isEmpty,
                      "四个占槽位的栏都应有候选", counter: &count)
     try rankerExpect(dataset.userQuestions.count >= 5, "notes.userQuestions 应有 Q1–Q5", counter: &count)
-    try rankerExpect(
-        dataset.buffs.allSatisfy { !$0.stacking.exclusiveKey.isEmpty },
-        "每条 buff 都应有 exclusiveKey", counter: &count
-    )
-    // 列表口径：只收 self / ally、increase / mixed
-    for (offset, buff) in dataset.buffs.enumerated() where index.listable[offset] {
-        guard buff.target == "self" || buff.target == "ally", buff.direction != "decrease" else {
-            throw CheckFailure(description: "增伤排名：#\(buff.spEffectId) 不该进配置页（target \(buff.target)）")
-        }
+    try rankerExpect(index.cursePoolID == 3_000_000, "诅咒池从词条库现算（与 core.js DEEP_CURSE_POOL_ID 同值）", counter: &count)
+    // 列表口径：只收带伤害字段、self / ally、不是减益的
+    for (offset, buff) in dataset.buffs.enumerated() {
+        let expected = index.countsAsDamage[offset] && (buff.target == "self" || buff.target == "ally") && buff.direction != "decrease"
+        try rankerExpect(index.listable[offset] == expected, "#\(buff.spEffectId) 能不能进配置页", counter: &count)
+        try rankerExpect(!buff.stacking.exclusiveKey.isEmpty, "#\(buff.spEffectId) 应有 exclusiveKey", counter: &count)
     }
-    count += 1
+    // 多档词条：只读数据 affixVariant，7 组 × 4 档
+    try rankerExpect(index.variantMembers.count == 7 && index.variantMembers.values.allSatisfy { $0.count == 4 },
+                     "多档词条 7 组 × 4 档（数据 affixVariant，不按 compatibilityId 猜）", counter: &count)
+    let exclusivityAffixes = Set(dataset.buffs.flatMap { buff in
+        buff.relicAffixes.filter { $0.exclusivityId == 100 }.map(\.attachEffectId)
+    })
+    try rankerExpect(dataset.buffs.filter { $0.selfAllyPair != nil }.count == 6 && exclusivityAffixes.count == 7,
+                     "selfAllyPair 6 条、exclusivityId=100 的词条 7 条（实际 \(exclusivityAffixes.count)）", counter: &count)
 
     // ② appliesTo 分流：yes 生效、no 不生效（魔法排除 magParamChange=0；法术排除 112 类）
     let skillOutput = try loadoutOutput(skills: skills, skillID: 1177, weaponID: 9040000)
@@ -3140,91 +3202,91 @@ private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex
             default:
                 break
             }
+            count += 1
         }
         try rankerExpect(yes > 0 && no > 0, "\(cls)：应同时有生效与不生效的条目（yes \(yes) / no \(no)）", counter: &count)
-        // 候选列表里被判生效的条目，其 buff 至少有一条 appliesTo ≠ no。
-        for column in [LoadoutColumn.weaponAffix, .accessory, .consumable, .spellBuff] {
-            for candidate in evaluator.candidates(for: column, loadout: BuffLoadout(mode: .deep, rules: rules))
-            where candidate.isApplicable {
-                guard candidate.item.buffIndices.contains(where: { dataset.buffs[$0].appliesTo[cls] != "no" }) else {
-                    throw CheckFailure(description: "增伤排名：\(cls) 候选「\(candidate.item.title)」全是 no 却判生效")
-                }
-            }
-        }
-        count += 1
     }
-    let sorceryEvaluator = LoadoutEvaluator(index: index, output: sorceryOutput)
-    let magZero = dataset.buffs.indices.filter { offset in
-        index.listable[offset] && (dataset.buffs[offset].appliesToDetail["sorcery"]?.reason.hasPrefix("magParamChange=0") ?? false)
-    }
-    try rankerExpect(!magZero.isEmpty && magZero.allSatisfy { sorceryEvaluator.verdict(forBuffAt: $0)?.isApplicable == false },
-                     "魔法：magParamChange=0 的 \(magZero.count) 条全部不生效", counter: &count)
     let skillEvaluator = LoadoutEvaluator(index: index, output: skillOutput)
-    let skillAttack = dataset.buffs.indices.filter { offset in
-        index.listable[offset] && dataset.buffs[offset].appliesToDetail["skill"]?.requires?.subCategoriesAny.contains(112) == true
-            && dataset.buffs[offset].activation == "passive"
-    }
-    try rankerExpect(!skillAttack.isEmpty, "应有带 112（战技攻击）子类别条件的条目", counter: &count)
-    for offset in skillAttack {
-        let id = dataset.buffs[offset].spEffectId
-        try rankerExpect(skillEvaluator.verdict(forBuffAt: offset)?.isApplicable == true,
-                         "尸横遍野（每段都带 112）应吃到 #\(id)", counter: &count)
-        try rankerExpect(sorceryEvaluator.verdict(forBuffAt: offset)?.isApplicable == false
-                            && LoadoutEvaluator(index: index, output: incantationOutput).verdict(forBuffAt: offset)?.isApplicable == false,
-                         "法术吃不到 112 类 #\(id)", counter: &count)
-    }
-    if let spellOnly = index.indexByID[330000] {
-        try rankerExpect(skillEvaluator.verdict(forBuffAt: spellOnly)?.isApplicable == false
-                            && sorceryEvaluator.verdict(forBuffAt: spellOnly)?.isApplicable == true,
-                         "『强化魔法』（330000）只对魔法生效", counter: &count)
+    let sorceryEvaluator = LoadoutEvaluator(index: index, output: sorceryOutput)
+    let incantationEvaluator = LoadoutEvaluator(index: index, output: incantationOutput)
+    for id in [8350000, 8350001, 8350002, 7006700, 312300] {
+        guard let offset = index.indexByID[id] else { continue }
+        try rankerExpect(skillEvaluator.verdict(forBuffAt: offset)?.state == .yes
+                            && sorceryEvaluator.verdict(forBuffAt: offset)?.state == .no
+                            && incantationEvaluator.verdict(forBuffAt: offset)?.state == .no,
+                         "#\(id)：尸横遍野（每段都带 112）吃得到，法术吃不到", counter: &count)
     }
 
-    // ③ 叠层换算：封印监牢 7 层 ×1.4072、超过 7 层提示、夹到 10 层；赐福王的余威 5 份 ×1.02^5
+    // ②b 自组深夜遗物换词条（复核回归，Windows ranker_config.test.mjs 有同一组断言）：深夜遗物 1 选「提升物理攻击力＋４」(6001401)
+    // 两端都自动配上「受到损伤时，会累积中毒量表」(6820000)，预检通过、条目计入；换成另一条需诅咒的词条时旧诅咒清掉重配。
+    try rankerExpect(index.catalogAffixes[6001401]?.requiresCurse == true && index.catalogAffixes[6260000]?.requiresCurse == true,
+                     "6001401、6260000 都是需诅咒的深夜词条", counter: &count)
+    var cursed = BuffLoadout(mode: .deep, rules: rules)
+    cursed.relicCards[3] = skillEvaluator.withRelicAffix(cursed.relicCards[3], row: 0, affixID: 6001401)
+    try rankerExpect(cursed.relicCards[3].choice == .custom && cursed.relicCards[3].rows.map(\.affixID) == [6001401, nil, nil]
+                        && cursed.relicCards[3].rows.map(\.curseID) == [6820000, nil, nil]
+                        && skillEvaluator.pickCurse(for: LoadoutRelicCard(isDeepSlot: true, choice: .custom, rows: [LoadoutRelicRow(affixID: 6001401)]), row: 0) == 6820000,
+                     "深夜遗物 1 选「提升物理攻击力＋４」：自动配上「受到损伤时，会累积中毒量表」", counter: &count)
+    let cursedEval = skillEvaluator.evaluate(cursed)
+    let cursedLines = cursedEval.lines.filter { line in line.sourceKeys.contains { $0.hasPrefix("relic:3") } }
+    try rankerExpect(cursedEval.relicChecks[3].status == .partial && !cursedLines.isEmpty
+                        && cursedLines.allSatisfy { $0.status != .relicInvalid } && cursedLines.contains { $0.status == .counted },
+                     "配上诅咒后预检通过、整件计入", counter: &count)
+    let manualCurse = LoadoutRelicCard(isDeepSlot: true, choice: .custom,
+                                       rows: [LoadoutRelicRow(affixID: 6001401, curseID: index.curseAffixes[1].effectID)])
+    try rankerExpect(index.relicCheck(manualCurse).status == .partial
+                        && skillEvaluator.withRelicAffix(manualCurse, row: 0, affixID: 6260000).rows.map(\.curseID) == [6820000, nil, nil],
+                     "手动改成第二条诅咒后换成另一条需诅咒的词条：旧诅咒清掉、按新词条重配", counter: &count)
+    if let free = index.relicAffixItems.compactMap(\.relicAffix).first(where: { index.isRelicAffixEligible($0, deepSlot: true) && !$0.requiresCurse }) {
+        let clearedRow = LoadoutRelicCard(isDeepSlot: true, choice: .custom,
+                                          rows: [LoadoutRelicRow(affixID: 6001401), LoadoutRelicRow(affixID: free.effectID)])
+        try rankerExpect(skillEvaluator.withRelicAffix(clearedRow, row: 1, affixID: nil).rows.map(\.curseID) == [6820000, nil, nil],
+                         "另一行手动清掉的诅咒：换任一行的词条时一并补配", counter: &count)
+    } else {
+        throw CheckFailure(description: "增伤排名：深夜遗物候选里应有不需诅咒的词条")
+    }
+    try rankerExpect(skillEvaluator.withRelicAffix(LoadoutRelicCard(isDeepSlot: false), row: 0, affixID: 6001401).rows.allSatisfy { $0.curseID == nil },
+                     "普通遗物格不带诅咒", counter: &count)
+
+    // ③ 叠层换算：封印监牢 7 层 ×1.4072、夹到 10 层；赐福王的余威 5 份 ×1.02^5；两条阶梯同时生效相乘并提示
     var stackLoadout = BuffLoadout(mode: .normal, rules: rules)
     stackLoadout.selectedBuffs = [8970000]
     stackLoadout.stackCounts = [8970000: 5]
     var stackEval = skillEvaluator.evaluate(stackLoadout)
     try rankerExpectClose(stackEval.total, pow(1.02, 5), "赐福王的余威 5 份 = ×1.02^5", tolerance: 1e-9, counter: &count)
-    if let evergaol = index.relicAffixItem(7060000) {
-        var card = LoadoutRelicCard(isDeepSlot: false, choice: .custom)
-        card.rows[0].affixID = 7060000
-        stackLoadout = BuffLoadout(mode: .normal, rules: rules)
-        stackLoadout.relicCards[0] = card
-        stackLoadout.stackCounts = [7069001: 7]
-        stackEval = skillEvaluator.evaluate(stackLoadout)
-        try rankerExpectClose(stackEval.total, 1.4072, "封印监牢 7 层 = ×1.4072", tolerance: 1e-9, counter: &count)
-        stackLoadout.stackCounts = [7069001: 12]
-        stackEval = skillEvaluator.evaluate(stackLoadout)
-        try rankerExpect(stackEval.lines.first { $0.spEffectId == 7069001 }?.stacks == 10
-                            && stackEval.warnings.contains { $0.contains("超过一局实际能叠到的 7 层") },
-                         "封印监牢层数夹到参数表 10 层并提示超过 7 层", counter: &count)
-        try rankerExpectClose(stackEval.total, 1.6289, "封印监牢 10 层 = ×1.6289", tolerance: 1e-9, counter: &count)
-        _ = evergaol
-        // 不同阶梯互不顶替：封印监牢 + 黑夜入侵者同时生效、相乘并提示
-        var both = stackLoadout
-        var second = LoadoutRelicCard(isDeepSlot: false, choice: .custom)
-        second.rows[0].affixID = 7060200
-        both.relicCards[1] = second
-        both.stackCounts = [7069001: 7, 7069201: 4]
-        let bothEval = skillEvaluator.evaluate(both)
-        try rankerExpectClose(bothEval.total, 1.4072 * 1.3108, "封印监牢 7 层 × 黑夜入侵者 4 层相乘",
-                              tolerance: 1e-9, counter: &count)
-        try rankerExpect(bothEval.warnings.contains { $0.hasPrefix("不同叠层阶梯互不顶替") }, "两条阶梯同时生效要提示", counter: &count)
-    }
+    var evergaol = LoadoutRelicCard(isDeepSlot: false, choice: .custom)
+    evergaol.rows[0].affixID = 7060000
+    stackLoadout = BuffLoadout(mode: .normal, rules: rules)
+    stackLoadout.relicCards[0] = evergaol
+    try rankerExpect(skillEvaluator.evaluate(stackLoadout).lines.first { $0.spEffectId == 7069001 }?.status == .zeroStacks,
+                     "封印监牢没填层数不计入", counter: &count)
+    stackLoadout.stackCounts = [7069001: 7]
+    stackEval = skillEvaluator.evaluate(stackLoadout)
+    try rankerExpectClose(stackEval.total, 1.4072, "封印监牢 7 层 = ×1.4072", tolerance: 1e-9, counter: &count)
+    stackLoadout.stackCounts = [7069001: 12]
+    stackEval = skillEvaluator.evaluate(stackLoadout)
+    try rankerExpect(stackEval.lines.first { $0.spEffectId == 7069001 }.map { $0.stacks == 10 && $0.notes.count == 2 } == true,
+                     "封印监牢层数夹到参数表 10 层并提示超过 7 层、超过参数表", counter: &count)
+    try rankerExpectClose(stackEval.total, 1.6289, "封印监牢 10 层 = ×1.6289", tolerance: 1e-9, counter: &count)
+    var both = stackLoadout
+    var second = LoadoutRelicCard(isDeepSlot: false, choice: .custom)
+    second.rows[0].affixID = 7060200
+    both.relicCards[1] = second
+    both.stackCounts = [7069001: 7, 7069201: 4]
+    let bothEval = skillEvaluator.evaluate(both)
+    try rankerExpectClose(bothEval.total, 1.4072 * 1.3108, "封印监牢 7 层 × 黑夜入侵者 4 层相乘", tolerance: 1e-9, counter: &count)
+    try rankerExpect(bothEval.warnings.contains { $0.kind == "ladders" }, "两条阶梯同时生效要提示", counter: &count)
 
     // ④ exclusiveKey 真实例子：狂热香药与『火焰啊，赐予我力量！』同为 sp151，只留一份
     var keyLoadout = BuffLoadout(mode: .normal, rules: rules)
     keyLoadout.selectedBuffs = [503550, 1605000]
     let keyEval = skillEvaluator.evaluate(keyLoadout)
     try rankerExpect(keyEval.countedLines.count == 1
-                        && keyEval.lines.contains { if case .replaced = $0.status { return true } else { return false } },
+                        && keyEval.lines.contains { if case .duplicate = $0.status { return true } else { return false } },
                      "sp151 的两份只计一份", counter: &count)
     try checkLoadoutTotal(keyEval, shares: skillOutput.shares, "sp151", counter: &count)
 
-    // ④b 复核修复：档位分组、累积阶梯的实际档位、叠层潜在倍率、同一效果多份的文案、固定遗物同名词条
-    try checkLoadoutReviewFixes(index: index, skillEvaluator: skillEvaluator, skillOutput: skillOutput, counter: &count)
-
-    // ⑤ 遗物合法性接入（真实词条库）：合法一组、非法一组、深夜诅咒配对
+    // ⑤ 遗物合法性接入（真实词条库）
     func customCard(_ ids: [Int], curses: [Int?] = [nil, nil, nil], deep: Bool = false) -> LoadoutRelicCard {
         LoadoutRelicCard(
             isDeepSlot: deep, choice: .custom,
@@ -3232,53 +3294,432 @@ private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex
         )
     }
     let legal = index.relicCheck(customCard([7001400, 7044100, 7032700]))
-    try rankerExpect(legal.status == .valid && legal.message == "该三词条组合合法，顺序正确",
+    try rankerExpect(legal.status == .valid && legal.message == LoadoutText.t("relicValidNormal"),
                      "提升物理攻击力 + 强化王城古龙信仰的祷告 + 【女爵】… 应合法（\(legal.message)）", counter: &count)
     let illegal = index.relicCheck(customCard([7001400, 7001600, 7044100]))
-    try rankerExpect(illegal.status == .invalid && illegal.issues.contains { $0.kind == .conflict },
+    try rankerExpect(illegal.status == .invalid && illegal.issues.contains { $0.kind == "conflict" },
                      "提升物理攻击力 + 提升火属性攻击力（同一互斥池 100）应非法", counter: &count)
     try rankerExpect(index.relicCheck(customCard([7006700])).status == .invalid,
                      "固定遗物专属词条（没有出货池）不能自组", counter: &count)
     let deepNoCurse = index.relicCheck(customCard([6001700], deep: true))
-    try rankerExpect(deepNoCurse.status == .invalid && deepNoCurse.issues.contains { $0.title == "需诅咒的词条缺少负面词条" },
+    try rankerExpect(deepNoCurse.status == .invalid && deepNoCurse.issues.contains { $0.title == LoadoutText.t("curseMissingTitle") },
                      "深夜需诅咒词条没配诅咒应非法", counter: &count)
     let deepLegal = index.relicCheck(customCard([6001700, 7044100, 7030600], curses: [6820000, nil, nil], deep: true))
-    try rankerExpect(deepLegal.status == .valid && deepLegal.warnings.contains { $0.kind == .cursePairing },
-                     "深夜三条 + 诅咒应通过正面预检（\(deepLegal.issues.map(\.detail))）", counter: &count)
+    try rankerExpect(deepLegal.status == .valid && deepLegal.warnings.map(\.kind) == ["cursePairing"],
+                     "深夜三条 + 诅咒应合法（\(deepLegal.issues.map(\.detail))）", counter: &count)
 
-    // ⑥ 三组双端对照输入
-    // A：尸横遍野 + 尸山血海，常规，推荐填满
-    let fillA = skillEvaluator.recommendedFill(BuffLoadout(mode: .normal, rules: rules), weaponTypeFilter: skillOutput.weaponWepType)
-    let evalA = skillEvaluator.evaluate(fillA)
-    try checkLoadoutFill(fillA, evalA, index: index, key: "A", counter: &count)
-    try checkLoadoutTotal(evalA, shares: skillOutput.shares, "对照 A", counter: &count)
-    try rankerExpect(fillA.weaponAffixCounts.values.reduce(0, +) == 6, "对照 A：常规应填满 6 条武器词条", counter: &count)
-    try rankerExpect(fillA.weaponAffixCounts[8350002] == 1, "对照 A：应选到『提升战技攻击力（档位3）』", counter: &count)
-    try rankerExpect(evalA.total > 1, "对照 A：总倍率应大于 1", counter: &count)
-    dump.append(loadoutDump("corpse-piler-normal-fill", fillA, index: index, evaluation: evalA))
+    // ⑥ 三组双端对照配置 + 与参考实现逐项一致（见 checkLoadoutParity）
+    try checkLoadoutParity(skills: skills, index: index, catalog: catalog.affixes, counter: &count)
+    // ⑦ 文案常量表与说明区（两端逐字一致的锚点）
+    try checkLoadoutTexts(index: index, counter: &count)
+}
 
-    // B：死亡雷击，深夜，推荐填满
-    let incantationEvaluator = LoadoutEvaluator(index: index, output: incantationOutput)
-    let fillB = incantationEvaluator.recommendedFill(BuffLoadout(mode: .deep, rules: rules), weaponTypeFilter: nil)
-    let evalB = incantationEvaluator.evaluate(fillB)
-    try checkLoadoutFill(fillB, evalB, index: index, key: "B", counter: &count)
-    try checkLoadoutTotal(evalB, shares: incantationOutput.shares, "对照 B", counter: &count)
-    try rankerExpect(fillB.relicCards.count == 6, "对照 B：深夜应有 6 张遗物卡", counter: &count)
-    try rankerExpect(evalB.weaponAffixUsage.used == 12, "对照 B：深夜应填满 12 条武器词条", counter: &count)
-    for card in fillB.relicCards where card.isDeepSlot && card.choice == .custom {
-        for row in card.rows {
-            guard let affixID = row.affixID, let affix = catalog.affixes.first(where: { $0.effectID == affixID }) else { continue }
-            try rankerExpect(!affix.requiresCurse || row.curseID != nil,
-                             "对照 B：深夜需诅咒的词条必须配诅咒（\(affix.name)）", counter: &count)
+// MARK: - 配置页：双端对照（与 windows/tests/ranker_crosscheck.test.mjs 同一组输入、同一种对拍行）
+
+/// 独立重算的参考实现（不复用 BuffLoadout 的任何分支），逐字对应 Windows 端 ranker_crosscheck 的 referenceConfig。
+private struct LoadoutReference {
+    let dataset: BuffDataset
+    let fields: [String: BuffRateField]
+    let byID: [Int: BuffEntry]
+
+    init(dataset: BuffDataset) {
+        self.dataset = dataset
+        fields = Dictionary(dataset.rateFields.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        byID = Dictionary(dataset.buffs.map { ($0.spEffectId, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    static let physical: [SkillDamageChannel] = [.slash, .strike, .pierce, .standard, .physicalOther]
+    static let multiplierChannels: [String: [SkillDamageChannel]] = [
+        "physicsAttackRate": physical, "physicsAttackPowerRate": physical,
+        "magicAttackRate": [.magic], "magicAttackPowerRate": [.magic],
+        "fireAttackRate": [.fire], "fireAttackPowerRate": [.fire],
+        "thunderAttackRate": [.lightning], "thunderAttackPowerRate": [.lightning],
+        "darkAttackRate": [.holy], "darkAttackPowerRate": [.holy],
+        "slashAttackRate": [.slash], "slashAttackPowerRate": [.slash],
+        "blowAttackRate": [.strike], "blowAttackPowerRate": [.strike],
+        "thrustAttackRate": [.pierce], "thrustAttackPowerRate": [.pierce],
+        "neutralAttackRate": [.standard], "neutralAttackPowerRate": [.standard]
+    ]
+    static let flatChannels: [String: [SkillDamageChannel]] = [
+        "physicsAttackPower": physical, "magicAttackPower": [.magic], "fireAttackPower": [.fire],
+        "thunderAttackPower": [.lightning], "darkAttackPower": [.holy]
+    ]
+
+    func countsAsDamage(_ buff: BuffEntry) -> Bool {
+        buff.rates.contains { key, value in
+            guard let field = fields[key] else { return false }
+            return field.countsAsDamage && value != field.defaultValue
         }
     }
-    try rankerExpect(evalB.countedLines.allSatisfy { dataset.buffs[$0.buffIndex].appliesTo["incantation"] != "no" },
-                     "对照 B：计入的条目对祷告都不能是 no", counter: &count)
-    dump.append(loadoutDump("death-lightning-deep-fill", fillB, index: index, evaluation: evalB))
 
-    // C：狮子斩 + 大剑，常规，2 件固定遗物（安定者的遗志 2070、王的黑夜 2100）+ 1 件自组遗物；确认 7035902
+    func listable(_ buff: BuffEntry) -> Bool {
+        countsAsDamage(buff) && (buff.target == "self" || buff.target == "ally") && buff.direction != "decrease"
+    }
+
+    struct Verdict {
+        var ok: Bool
+        var weight: Double = 1
+        var manual = false
+        var restricted: SkillDamageChannel?
+    }
+
+    func verdict(_ buff: BuffEntry, _ output: LoadoutOutput) -> Verdict {
+        let cls = output.outputClass.rawValue
+        let value = buff.appliesTo[cls]
+        guard value == "yes" || value == "conditional" else { return Verdict(ok: false) }
+        var result = Verdict(ok: true, manual: !buff.requiresGoodsIds.isEmpty)
+        if value == "yes" { return result }
+        guard let requires = buff.appliesToDetail[cls]?.requires else {
+            result.manual = true
+            return result
+        }
+        var any = false
+        if let hand = requires.hand {
+            any = true
+            if hand != output.hand { return Verdict(ok: false) }
+        }
+        if !requires.attackWeaponTypes.isEmpty {
+            any = true
+            let own = output.outputClass == .skill ? output.weaponWepType : (output.outputClass == .sorcery ? 57 : 61)
+            guard let own, requires.attackWeaponTypes.contains(own) else { return Verdict(ok: false) }
+        }
+        if !requires.subCategoriesAny.isEmpty {
+            any = true
+            let sets = output.outputClass == .skill
+                ? output.skillID.flatMap { dataset.attackIndex.skills[$0] }
+                : output.spellID.flatMap { dataset.attackIndex.spells[$0] }
+            if let sets, !sets.isEmpty {
+                var matched = 0
+                var total = 0
+                for set in sets {
+                    total += set.hits
+                    if set.subs.contains(where: { requires.subCategoriesAny.contains($0) }) { matched += set.hits }
+                }
+                if matched == 0 { return Verdict(ok: false) }
+                result.weight = Double(matched) / Double(total)
+            } else {
+                result.manual = true
+            }
+        }
+        if !requires.attackContexts.isEmpty {
+            any = true
+            if !requires.attackContexts.contains(where: { output.attackContexts.contains($0) }) { return Verdict(ok: false) }
+        }
+        if let physical = requires.physicalType {
+            any = true
+            let channel = [SkillDamageChannel.slash, .strike, .pierce, .standard][physical]
+            result.restricted = channel
+            if !(output.shares[channel.rawValue] > 0) { return Verdict(ok: false) }
+        }
+        if requires.imbuedWeaponOnly || requires.attachedWeaponOnly || !requires.unknownKeys.isEmpty {
+            any = true
+            result.manual = true
+        }
+        if !any { result.manual = true }
+        return result
+    }
+
+    func paramMax(_ input: BuffStackInput) -> Int {
+        guard input.mode == "ladder" else { return 99 }
+        let tiers = input.tierMultipliers.count
+        if let param = input.paramMaxStacks, param > 0 { return tiers > 0 ? min(param, tiers) : param }
+        return max(tiers, 1)
+    }
+
+    func tables(_ buff: BuffEntry, _ verdict: Verdict, stacks: Int?, copies: Int) -> (table: [Double], flat: [Double]) {
+        var table = Array(repeating: 1.0, count: SkillDamageChannel.allCases.count)
+        var flat = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+        var rates = buff.rates
+        if let input = buff.stackInput, let stacks {
+            let value = input.mode == "ladder"
+                ? input.tierMultipliers[min(stacks, input.tierMultipliers.count) - 1]
+                : pow(input.perStackMultiplier ?? 1, Double(stacks))
+            for key in input.appliesToRateKeys.isEmpty ? [input.multiplierKey] : input.appliesToRateKeys { rates[key] = value }
+        }
+        for field in dataset.rateFields {
+            guard let value = rates[field.key], field.countsAsDamage, value.isFinite, value != field.defaultValue else { continue }
+            if field.valueKind == .multiplier, let channels = Self.multiplierChannels[field.key], value > 0 {
+                for channel in channels where verdict.restricted == nil || verdict.restricted == channel {
+                    table[channel.rawValue] *= value
+                }
+            } else if field.valueKind == .flat, let channels = Self.flatChannels[field.key] {
+                for channel in channels { flat[channel.rawValue] += value }
+            }
+        }
+        for index in table.indices {
+            if verdict.weight < 1 {
+                table[index] = 1 + (table[index] - 1) * verdict.weight
+                flat[index] *= verdict.weight
+            }
+            if copies > 1 {
+                table[index] = pow(table[index], Double(copies))
+                flat[index] *= Double(copies)
+            }
+        }
+        return (table, flat)
+    }
+
+    func weighted(_ table: [Double], _ shares: [Double]) -> Double {
+        var sum = 0.0
+        var weight = 0.0
+        for index in table.indices where shares[index] > 0 {
+            sum += shares[index] * table[index]
+            weight += shares[index]
+        }
+        return weight > 0 ? sum / weight : 1
+    }
+
+    /// 一览（「条件全部成立」）的参考值。
+    func overview(_ buff: BuffEntry, _ output: LoadoutOutput) -> Double? {
+        guard listable(buff), buff.selfAllyPair?.role != "ally" else { return nil }
+        let verdict = verdict(buff, output)
+        guard verdict.ok else { return nil }
+        var stacks: Int?
+        if let input = buff.stackInput {
+            let soft = (input.practicalMaxStacks ?? 0) > 0 ? input.practicalMaxStacks! : ((input.uiLabelMax ?? 0) > 0 ? input.uiLabelMax! : 1)
+            stacks = min(soft, paramMax(input))
+        }
+        return weighted(tables(buff, verdict, stacks: stacks, copies: 1).table, output.shares)
+    }
+
+    struct ConfigResult {
+        var total: Double
+        var subtotals: [String: Double]
+        var ids: [String]
+    }
+
+    func config(_ loadout: BuffLoadout, index: BuffLoadoutIndex, output: LoadoutOutput) -> ConfigResult {
+        var sources: [(id: Int, copies: Int, column: String)] = []
+        for id in loadout.weaponAffixCounts.keys.sorted() {
+            let count = loadout.weaponAffixCounts[id] ?? 0
+            guard count > 0, let raw = dataset.weaponAffixes.first(where: { $0.attachEffectId == id }) else { continue }
+            for spID in raw.spEffectIds where byID[spID].map(listable) == true { sources.append((spID, count, "weaponAffix")) }
+        }
+        for card in loadout.relicCards {
+            switch card.choice {
+            case .empty: break
+            case .fixed(let fixedIndex):
+                for spID in dataset.fixedRelics[fixedIndex].spEffectIds where byID[spID].map(listable) == true {
+                    sources.append((spID, 1, "relic"))
+                }
+            case .custom:
+                for affixID in card.rows.compactMap(\.affixID) {
+                    for buff in dataset.buffs where listable(buff) && buff.relicAffixes.contains(where: { $0.catalogEffectId == affixID }) {
+                        sources.append((buff.spEffectId, 1, "relic"))
+                    }
+                }
+            }
+        }
+        for talisman in loadout.accessories {
+            for buff in dataset.buffs where listable(buff) && buff.sourceSlot == "accessory"
+                && buff.sources.contains(where: { $0.kind == "accessory" && $0.sourceID == talisman }) {
+                sources.append((buff.spEffectId, 1, "accessory"))
+            }
+        }
+        if output.outputClass == .skill, let weaponID = output.weaponID {
+            for buff in dataset.buffs where listable(buff) && (buff.weaponInnate?.weaponIds.contains(weaponID) ?? false) {
+                sources.append((buff.spEffectId, 1, "other"))
+            }
+        }
+        var order: [Int] = []
+        var merged: [Int: (copies: Int, column: String)] = [:]
+        for source in sources {
+            if let one = merged[source.id] {
+                merged[source.id] = (one.copies + source.copies, one.column)
+            } else {
+                order.append(source.id)
+                merged[source.id] = (source.copies, source.column)
+            }
+        }
+        struct Candidate {
+            let id: Int
+            let key: String
+            let value: Double
+            let flat: Double
+            let table: [Double]
+            let column: String
+            let copies: Int
+            let highest: Bool
+            let priority: Int
+        }
+        var candidates: [Candidate] = []
+        for id in order {
+            guard let buff = byID[id], let one = merged[id] else { continue }
+            if let variant = buff.affixVariant {
+                let chosen = loadout.variantChoices[variant.groupKey]
+                    ?? dataset.buffs.first { $0.affixVariant?.groupKey == variant.groupKey && $0.affixVariant?.variant == 1 }?.spEffectId
+                if chosen != buff.spEffectId { continue }
+            }
+            if buff.selfAllyPair?.role == "ally" { continue }
+            let verdict = verdict(buff, output)
+            guard verdict.ok else { continue }
+            var stacks: Int?
+            var selected = false
+            if let ladder = buff.accumulatorLadder {
+                guard loadout.ladderTiers[ladder.tierSpEffectIds.first ?? -1] == ladder.tier else { continue }
+                selected = true
+            }
+            if let input = buff.stackInput {
+                let value = min(max(0, loadout.stackCounts[buff.spEffectId] ?? 0), paramMax(input))
+                guard value > 0 else { continue }
+                stacks = value
+                selected = true
+            }
+            let needs = !selected && (verdict.manual || buff.activation != "passive")
+            if needs && !loadout.confirmed.contains(buff.spEffectId) { continue }
+            let multiply = buff.stacking.spCategoryBehavior == "stackSelf"
+                && (buff.stacking.exclusiveScope.isEmpty || buff.stacking.exclusiveScope == "perSpEffect")
+            let computed = tables(buff, verdict, stacks: stacks, copies: multiply ? one.copies : 1)
+            let value = weighted(computed.table, output.shares)
+            let flat = weighted(computed.flat, output.shares)
+            if abs(value - 1) <= 1e-9 && flat <= 1e-9 { continue }
+            candidates.append(Candidate(
+                id: id, key: buff.stacking.exclusiveKey, value: value, flat: flat, table: computed.table,
+                column: one.column, copies: multiply ? one.copies : 1,
+                highest: buff.stacking.spCategoryBehavior == "applyHighest", priority: buff.stacking.categoryPriority
+            ))
+        }
+        var winners: [String: Candidate] = [:]
+        for one in candidates {
+            guard let current = winners[one.key] else { winners[one.key] = one; continue }
+            let better: Bool
+            if one.highest && current.highest && one.priority != current.priority {
+                better = one.priority < current.priority
+            } else if abs(one.value - current.value) > 1e-9 {
+                better = one.value > current.value
+            } else if abs(one.flat - current.flat) > 1e-9 {
+                better = one.flat > current.flat
+            } else {
+                better = one.id < current.id
+            }
+            if better { winners[one.key] = one }
+        }
+        let list = Array(winners.values)
+        func product(_ items: [Candidate]) -> Double {
+            var table = Array(repeating: 1.0, count: SkillDamageChannel.allCases.count)
+            for item in items { for index in table.indices { table[index] *= item.table[index] } }
+            return weighted(table, output.shares)
+        }
+        var subtotals: [String: Double] = [:]
+        for column in ["weaponAffix", "relic", "accessory", "other"] {
+            subtotals[column] = product(list.filter { $0.column == column })
+        }
+        return ConfigResult(
+            total: product(list), subtotals: subtotals,
+            ids: list.sorted { $0.id < $1.id }.map { "\($0.id)" + ($0.copies > 1 ? "x\($0.copies)" : "") }
+        )
+    }
+}
+
+/// 一整套配置的对拍行（与 Windows 端 ranker.js 的 configDumpLine 同一格式）。
+private func loadoutConfigDump(_ key: String, _ loadout: BuffLoadout, index: BuffLoadoutIndex, evaluation: LoadoutEvaluation) -> String {
+    let sub = LoadoutSummaryColumn.allCases.map {
+        "\($0.rawValue):" + String(format: "%.9f", evaluation.columnSubtotals[$0] ?? 1)
+    }.joined(separator: ",")
+    let weaponAffixes = loadout.weaponAffixCounts.keys.sorted()
+        .filter { (loadout.weaponAffixCounts[$0] ?? 0) > 0 }
+        .map { "\($0)x\(loadout.weaponAffixCounts[$0] ?? 0)" }.joined(separator: ",")
+    let relics = loadout.relicCards.map { card -> String in
+        switch card.choice {
+        case .empty: return "-"
+        case .fixed(let fixedIndex): return "F\(index.dataset.fixedRelics[fixedIndex].relicID)"
+        case .custom:
+            return "C" + card.rows.map { row in
+                (row.affixID.map(String.init) ?? "-") + (row.curseID.map { "/\($0)" } ?? "")
+            }.joined(separator: "+")
+        }
+    }.joined(separator: "|")
+    let counted = evaluation.countedLines.sorted { $0.spEffectId < $1.spEffectId }
+        .map { "\($0.spEffectId)" + ($0.countedCopies > 1 ? "x\($0.countedCopies)" : "") }.joined(separator: ",")
+    return "CONFIG \(key) mode=\(loadout.mode.rawValue) total=" + String(format: "%.9f", evaluation.total)
+        + " sub=\(sub) weaponAffixes=\(weaponAffixes) relics=\(relics)"
+        + " accessories=" + loadout.accessories.map(String.init).joined(separator: ",") + " counted=\(counted)"
+}
+
+/// 一个输出手段的对拍行（与 Windows 端 caseDumpLine 同一格式）。
+private func loadoutCaseDump(_ key: String, selected: [Int], shares: [Double], rows: [LoadoutOverviewRow]) -> String {
+    let useful = rows.filter { $0.isApplicable && $0.multiplier > 1.0000001 }
+    let selectedText: String = selected.map(String.init).joined(separator: ",")
+    let sharesText: String = shares.map { String(format: "%.9f", $0) }.joined(separator: ",")
+    let applicable: Int = rows.filter(\.isApplicable).count
+    let top: [String] = useful.prefix(10).map { row in "\(row.spEffectId):" + String(format: "%.9f", row.multiplier) }
+    return "CASE \(key) selected=\(selectedText) shares=\(sharesText) applicable=\(applicable) useful=\(useful.count) top10="
+        + top.joined(separator: ",")
+}
+
+private func checkLoadoutParity(
+    skills: SkillDataIndex, index: BuffLoadoutIndex, catalog: [Affix], counter count: inout Int
+) throws {
+    let dataset = index.dataset
+    let rules = index.slotRules
+    let reference = LoadoutReference(dataset: dataset)
+    var dump: [String] = []
+
+    // ① 七组构成用例：一览（条件全部成立）逐条与参考实现一致，前 10 名降序
+    let cases: [(key: String, skillID: Int?, spellID: Int?, weaponID: Int?, only: Set<Int>?)] = [
+        ("corpse-piler-full", 1177, nil, 9040000, nil),
+        ("corpse-piler-last", 1177, nil, 9040000, [303400305]),
+        ("lions-claw-greatsword", 100, nil, 3180000, nil),
+        ("lions-claw-flame-greatsword", 100, nil, 3180500, nil),
+        ("firebreather", 223, nil, 24020000, nil),
+        ("death-lightning", nil, 5040, nil, nil),
+        ("comet", nil, 4021, nil, nil)
+    ]
+    for item in cases {
+        let segments: [SkillSegment]
+        let output: LoadoutOutput
+        if let skillID = item.skillID, let skill = skills.skillsByID[skillID], let weaponID = item.weaponID,
+           let weapon = skills.weaponsByID[weaponID] {
+            segments = skills.segments(for: skill, weapon: weapon)
+            let selected = item.only ?? SkillDamageMath.defaultSelection(segments)
+            let composition = SkillDamageMath.composition(of: segments, selected: selected)
+            output = LoadoutOutput(outputClass: .skill, skillID: skillID, weaponID: weaponID, weaponWepType: weapon.wepType,
+                                   hand: 1, shares: composition.shares)
+        } else if let spellID = item.spellID, let spell = skills.spellsByID[spellID] {
+            segments = skills.segments(for: spell)
+            let composition = SkillDamageMath.composition(of: segments, selected: SkillDamageMath.defaultSelection(segments))
+            output = LoadoutOutput(outputClass: spell.isSorcery ? .sorcery : .incantation, spellID: spellID, hand: 1,
+                                   shares: composition.shares)
+        } else {
+            throw CheckFailure(description: "增伤排名：对照用例 \(item.key) 找不到输出手段")
+        }
+        let selected = item.only ?? SkillDamageMath.defaultSelection(segments)
+        let evaluator = LoadoutEvaluator(index: index, output: output)
+        let rows = evaluator.overview()
+        try rankerExpect(Set(rows.map(\.spEffectId)) == Set(dataset.buffs.filter(reference.listable).map(\.spEffectId)),
+                         "对照 \(item.key)：一览只收能进计算的条目", counter: &count)
+        for row in rows {
+            guard let buff = reference.byID[row.spEffectId] else { continue }
+            let expected = reference.overview(buff, output)
+            if let expected {
+                try rankerExpect(row.isApplicable, "对照 \(item.key)：#\(row.spEffectId) 参考判生效", counter: &count)
+                try rankerExpectClose(row.multiplier, expected, "对照 \(item.key)：#\(row.spEffectId) 的有效倍率",
+                                      tolerance: 1e-9, counter: &count)
+            } else {
+                try rankerExpect(!row.isApplicable, "对照 \(item.key)：#\(row.spEffectId) 参考判不生效", counter: &count)
+            }
+        }
+        let useful = rows.filter { $0.isApplicable && $0.multiplier > 1.0000001 }
+        try rankerExpect(!useful.isEmpty && zip(useful, useful.dropFirst()).allSatisfy { $0.multiplier >= $1.multiplier - 1e-12 },
+                         "对照 \(item.key)：一览按有效倍率降序", counter: &count)
+        dump.append(loadoutCaseDump(item.key, selected: segments.map(\.atkId).filter { selected.contains($0) },
+                                    shares: output.shares, rows: rows))
+    }
+
+    // ② 三组配置对照
+    let skillOutput = try loadoutOutput(skills: skills, skillID: 1177, weaponID: 9040000)
+    let incantationOutput = try loadoutOutput(skills: skills, spellID: 5040)
     let lionOutput = try loadoutOutput(skills: skills, skillID: 100, weaponID: 3180000)
+    let skillEvaluator = LoadoutEvaluator(index: index, output: skillOutput)
+    let incantationEvaluator = LoadoutEvaluator(index: index, output: incantationOutput)
     let lionEvaluator = LoadoutEvaluator(index: index, output: lionOutput)
+
+    // A：尸横遍野 + 尸山血海，常规，推荐填满
+    let fillA = skillEvaluator.recommendedFill(BuffLoadout(mode: .normal, rules: rules), weaponTypeFilter: skillOutput.attackWepType)
+    // B：死亡雷击，深夜，推荐填满（武器词条按施法器圣印记的类别过滤）
+    let fillB = incantationEvaluator.recommendedFill(BuffLoadout(mode: .deep, rules: rules),
+                                                     weaponTypeFilter: incantationOutput.attackWepType)
+    // C：狮子斩 + 大剑：固定遗物 2070、2100（勾 7035902）+ 自组 [7060000, 7120100, 7260400] + 护符 1230、2040 + 封印监牢 7 层
     guard let steady = dataset.fixedRelics.firstIndex(where: { $0.relicIds.contains(2070) }),
           let kingNight = dataset.fixedRelics.firstIndex(where: { $0.relicIds.contains(2100) }) else {
         throw CheckFailure(description: "增伤排名：对照 C 找不到固定遗物 2070 / 2100")
@@ -3286,221 +3727,184 @@ private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex
     var loadoutC = BuffLoadout(mode: .normal, rules: rules)
     loadoutC.relicCards[0] = LoadoutRelicCard(isDeepSlot: false, choice: .fixed(steady))
     loadoutC.relicCards[1] = LoadoutRelicCard(isDeepSlot: false, choice: .fixed(kingNight))
-    loadoutC.relicCards[2] = customCard([7001400, 7044100, 7032700])
+    loadoutC.relicCards[2] = LoadoutRelicCard(isDeepSlot: false, choice: .custom, rows: [
+        LoadoutRelicRow(affixID: 7060000), LoadoutRelicRow(affixID: 7120100), LoadoutRelicRow(affixID: 7260400)
+    ])
+    loadoutC.accessories = [1230, 2040]
+    loadoutC.stackCounts = [7069001: 7]
     loadoutC.confirmed = [7035902]
-    let evalC = lionEvaluator.evaluate(loadoutC)
-    try checkLoadoutTotal(evalC, shares: lionOutput.shares, "对照 C", counter: &count)
-    try rankerExpect(evalC.relicChecks.map(\.status) == [.valid, .valid, .valid], "对照 C：三张遗物卡都合法", counter: &count)
-    let countedC = Set(evalC.countedLines.map(\.spEffectId))
-    try rankerExpect(countedC.isSuperset(of: [7006700, 7035902]),
-                     "对照 C：『提升战技攻击力』与确认过的『切换武器时，能提升物理攻击力』应计入", counter: &count)
-    try rankerExpect(!countedC.contains(7035703), "对照 C：没确认的条件型不计入", counter: &count)
-    try rankerExpect(evalC.lines.contains { $0.spEffectId == 7001400 && $0.sources.contains { $0.hasPrefix("遗物 3") } },
-                     "对照 C：自组遗物的词条应计入（来源写明遗物 3）", counter: &count)
-    dump.append(loadoutDump("lions-claw-fixed2-custom1", loadoutC, index: index, evaluation: evalC))
 
-    // ⑦ 文案常量表与分栏口径（两端对照的锚点）
-    try checkLoadoutTexts(index: index, counter: &count)
-
-    if ProcessInfo.processInfo.environment["NR_LOADOUT_DUMP"] == "1" {
-        for line in dump { print(line) }
-    }
-}
-
-/// 复核修复的真实数据回归：
-///   * 档位按词条本身分组（paramName 去掉「 - Potency N」），compatibilityId 是大组不能用；
-///   * 累积阶梯的「最高档」取数据里实际收录的档（7037604 写着 tiers = 4，只有 3 档）；
-///   * 叠层条目的潜在倍率不低于当前、没有上限的标「按 1 层」；
-///   * 同一效果多份：stackSelf 与其它类别的提示分开写；
-///   * 固定遗物里的同名词条原样保留（视图按位置做 id）。
-private func checkLoadoutReviewFixes(
-    index: BuffLoadoutIndex, skillEvaluator: LoadoutEvaluator, skillOutput: LoadoutOutput, counter count: inout Int
-) throws {
-    let rules = index.slotRules
-    let dataset = index.dataset
-
-    // 档位：两条不同词条（同为 compatibilityId 401020）不报；compatibilityId = -1 的同一词条两档要报
-    var tiers = BuffLoadout(mode: .normal, rules: rules)
-    tiers.weaponAffixCounts = [8320500: 1, 8350000: 1]
-    try rankerExpect(
-        index.weaponAffixByID[8320500]?.compatibilityId == index.weaponAffixByID[8350000]?.compatibilityId,
-        "前提：提升近战攻击力与提升战技攻击力同属一个 compatibilityId 大组", counter: &count
-    )
-    var tierEval = skillEvaluator.evaluate(tiers)
-    try rankerExpect(index.selectedTierFamilies(tiers).isEmpty && !tierEval.warnings.contains { $0.contains("不同档位") },
-                     "两条不同的词条不能当成同一词条的不同档位（实际 \(tierEval.warnings)）", counter: &count)
-    tiers.weaponAffixCounts = [8660000: 1, 8660001: 1]
-    tierEval = skillEvaluator.evaluate(tiers)
-    try rankerExpect(index.selectedTierFamilies(tiers) == [[8660000, 8660001]],
-                     "compatibilityId = -1 的同一词条两档要分到一组（实际 \(index.selectedTierFamilies(tiers))）", counter: &count)
-    try rankerExpect(tierEval.warnings.contains { warning in
-        warning.contains("不同档位") && warning.contains("血量偏低时，提升攻击力（档位1）")
-            && warning.contains("血量偏低时，提升攻击力（档位2）") && warning.contains("参数推断，未实测")
-    }, "同一词条两档要提示并写明档位（实际 \(tierEval.warnings)）", counter: &count)
-    for info in dataset.weaponAffixes where info.potency != nil {
-        let key = BuffLoadoutIndex.weaponAffixFamilyKey(info)
-        try rankerExpect(!key.contains("Potency"), "词条分组键应去掉「 - Potency N」（#\(info.attachEffectId)：\(key)）", counter: &count)
-    }
-
-    // 累积阶梯：7037604–7037606 写着 tiers = 4，buffs[] 只有 3 档
-    let relicLadder = index.indexByID[7037604].flatMap { dataset.buffs[$0].accumulatorLadder }
-    try rankerExpect(relicLadder?.tiers == 4 && index.ladderTierOptions(7037604) == [1, 2, 3]
-                        && index.ladderTopTier(7037604) == 3,
-                     "7037604 的 tiers = 4 但只有 3 档：选档只列 1–3（实际 \(index.ladderTierOptions(7037604))）", counter: &count)
-    if let glass = dataset.fixedRelics.firstIndex(where: { $0.relicIds.contains(19051) }),
-       let glassItem = index.fixedRelicItem(glass) {
-        var glassLoadout = BuffLoadout(mode: .normal, rules: rules)
-        glassLoadout.relicCards[0] = LoadoutRelicCard(isDeepSlot: false, choice: .fixed(glass))
-        glassLoadout.confirmed = Set(glassItem.buffIndices.map { dataset.buffs[$0].spEffectId })
-        var tierTotals: [Double] = []
-        for tier in 1...3 {
-            glassLoadout.ladderTiers = [7037604: tier]
-            tierTotals.append(skillEvaluator.evaluate(glassLoadout).total)
-        }
-        try rankerExpect(tierTotals[0] > 1 && tierTotals[0] < tierTotals[1] && tierTotals[1] < tierTotals[2],
-                         "玻璃项链第 1–3 档应逐档升高（实际 \(tierTotals)）", counter: &count)
-        let glassCandidate = skillEvaluator.candidate(for: glassItem, loadout: BuffLoadout(mode: .normal, rules: rules))
-        try rankerExpectClose(glassCandidate.potential, tierTotals[2], "玻璃项链的「条件成立时」按实际最高档（第 3 档）算",
-                              tolerance: 1e-9, counter: &count)
-    } else {
-        throw CheckFailure(description: "增伤排名：找不到固定遗物『玻璃项链』(#19051)")
-    }
-    // 一览：同一阶梯的各档按自己的档位算——生效的档都 > 1，且按档位不降
-    let overview = skillEvaluator.overview()
-    var ladderRows: [Int: [(tier: Int, multiplier: Double)]] = [:]
-    for row in overview where row.verdict.isApplicable {
-        guard let ladder = dataset.buffs[row.buffIndex].accumulatorLadder else { continue }
-        ladderRows[ladder.ladderID, default: []].append((ladder.tier, row.multiplier))
-    }
-    try rankerExpect(ladderRows[7037604]?.count == 3, "一览里 7037604–7037606 三档都应生效", counter: &count)
-    for (ladderID, rows) in ladderRows {
-        let sorted = rows.sorted { $0.tier < $1.tier }
-        try rankerExpect(sorted.allSatisfy { $0.multiplier > 1 + 1e-9 },
-                         "一览：阶梯 \(ladderID) 的每一档都应按自己的档位算出 > 1（实际 \(sorted.map(\.multiplier))）",
-                         counter: &count)
-        try rankerExpect(zip(sorted, sorted.dropFirst()).allSatisfy { $0.multiplier <= $1.multiplier + 1e-12 },
-                         "一览：阶梯 \(ladderID) 按档位不降（实际 \(sorted.map(\.multiplier))）", counter: &count)
-    }
-
-    // 叠层：玛雷家的庇佑（参数表 100 层、没有实际上限）——填 30 层后潜在倍率不低于当前；没填时标「按 1 层」
-    if let mareOffset = index.indexByID[8988200], let weaponID = dataset.buffs[mareOffset].weaponInnate?.weaponIds.first {
-        let mareOutput = LoadoutOutput(
-            outputClass: .skill, skillID: skillOutput.skillID, weaponID: weaponID,
-            weaponWepType: skillOutput.weaponWepType, hand: 1, shares: skillOutput.shares
-        )
-        let mareEvaluator = LoadoutEvaluator(index: index, output: mareOutput)
-        if mareEvaluator.verdict(forBuffAt: mareOffset)?.isApplicable == true {
-            var mare = BuffLoadout(mode: .normal, rules: rules)
-            mare.stackCounts = [8988200: 30]
-            let filled = mareEvaluator.candidates(for: .weaponInnate, loadout: mare).first { $0.item.id == "bf-8988200" }
-            try rankerExpect(filled.map { $0.multiplier > 1.3 && $0.potential >= $0.multiplier - 1e-12 } == true,
-                             "玛雷家的庇佑 30 层：潜在倍率不应低于当前（实际 \(filled?.multiplier ?? 0) / \(filled?.potential ?? 0)）",
-                             counter: &count)
-            let empty = mareEvaluator.candidates(for: .weaponInnate, loadout: BuffLoadout(mode: .normal, rules: rules))
-                .first { $0.item.id == "bf-8988200" }
-            try rankerExpect(empty?.potentialAssumesOneStack == true,
-                             "玛雷家的庇佑没填层数：潜在倍率只按 1 层，要标出来", counter: &count)
-            try rankerExpect(mareEvaluator.overview().first { $0.spEffectId == 8988200 }?.assumesOneStack == true,
-                             "一览里没有上限的叠层条目标「按 1 层」", counter: &count)
-        }
-    } else {
-        throw CheckFailure(description: "增伤排名：找不到『玛雷家的庇佑』(#8988200) 或它的武器")
-    }
-
-    // 同一效果多份：非 stackSelf（resetOnApply）的遗物词条装两件，按数据只算一份（开关打开也不相乘）
-    let empty = BuffLoadout(mode: .normal, rules: rules)
-    let resetAffix = index.relicAffixItems.first { item in
-        guard let affix = item.relicAffix, index.isRelicAffixEligible(affix, deepSlot: false) else { return false }
-        let plain = item.buffIndices.allSatisfy { offset in
-            dataset.buffs[offset].stacking.spCategoryBehavior == "resetOnApply"
-                && skillEvaluator.verdict(forBuffAt: offset)?.fraction == 1
-        }
-        return plain && skillEvaluator.candidate(for: item, loadout: empty).potential > 1 + 1e-9
-    }
-    if let resetAffix, case .relicAffix(let effectID) = resetAffix.kind {
-        let ids = Set(resetAffix.buffIndices.map { dataset.buffs[$0].spEffectId })
-        var once = BuffLoadout(mode: .normal, rules: rules)
-        once.relicCards[0] = LoadoutRelicCard(isDeepSlot: false, choice: .custom, rows: [LoadoutRelicRow(affixID: effectID)])
-        once.confirmed = ids
-        var twice = once
-        twice.relicCards[1] = once.relicCards[0]
-        twice.stackSelfCopiesMultiply = true
-        let onceEval = skillEvaluator.evaluate(once)
-        let twiceEval = skillEvaluator.evaluate(twice)
-        try rankerExpect(twiceEval.warnings.contains { $0.hasPrefix("同一效果装了多份，按数据 stackingRules 只算一份") }
-                            && twiceEval.lines.contains { $0.statusText.hasPrefix("装了 2 份：同一 spEffectId 多份只算一份") },
-                         "resetOnApply 的「\(resetAffix.title)」装两件：按数据只算一份（实际 \(twiceEval.warnings)）",
-                         counter: &count)
-        try rankerExpect(onceEval.total > 1 + 1e-9, "resetOnApply 的「\(resetAffix.title)」确认后应计入", counter: &count)
-        try rankerExpectClose(twiceEval.total, onceEval.total, "resetOnApply 两件只计一份（开关打开也不相乘）",
-                              tolerance: 1e-9, counter: &count)
-    } else {
-        throw CheckFailure(description: "增伤排名：找不到对尸横遍野生效的 resetOnApply 遗物词条")
-    }
-
-    // 固定遗物同名词条：#1520 三条『出击时，会持有“星光碎片”』原样保留（视图按位置做 id，不能按文本）
-    let starlight = index.fixedRelicItems.first { $0.fixedRelic?.relicIds.contains(1520) == true }
-    try rankerExpect(starlight.map { $0.infoLines.count == 3 && Set($0.infoLines.map(\.text)).count == 1 } == true,
-                     "固定遗物 #1520 的三条同名词条应原样保留", counter: &count)
-}
-
-/// 配置页文案常量表：条数、锚点与由数据现算的数字；以及不占槽位栏的分组口径。
-private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {
-    let rules = LoadoutText.pageRules
-    try rankerExpect(rules.count == 10 && rules.allSatisfy { $0.count > 40 }, "本页口径应是 10 条且都有正文", counter: &count)
-    let anchors = [
-        "生效判定一律取数据的 appliesTo", "activation 不是 passive 的条目", "有效倍率沿用原排名页算法",
-        "总倍率＝全部计入条目按 stacking.exclusiveKey 去重", "同一 spEffectId 装了多份", "局内武器词条只按总数计槽位",
-        "自组遗物严格沿用词条检查页的口径", "「按推荐填满」只填占槽位的三栏", "武器固有效果", "列表只收 target 为自己或队友"
+    let configs: [(key: String, loadout: BuffLoadout, evaluator: LoadoutEvaluator, output: LoadoutOutput, filled: Bool)] = [
+        ("corpse-piler-normal-fill", fillA, skillEvaluator, skillOutput, true),
+        ("death-lightning-deep-fill", fillB, incantationEvaluator, incantationOutput, true),
+        ("lions-claw-2fixed-1custom-2talismans-evergaol7", loadoutC, lionEvaluator, lionOutput, false)
     ]
-    for (position, anchor) in anchors.enumerated() {
-        try rankerExpect(rules[position].hasPrefix(anchor), "本页口径第 \(position + 1) 条应以「\(anchor)」开头", counter: &count)
+    for config in configs {
+        let evaluation = config.evaluator.evaluate(config.loadout)
+        let expected = reference.config(config.loadout, index: index, output: config.output)
+        try rankerExpectClose(evaluation.total, expected.total, "对照 \(config.key)：总倍率", tolerance: 1e-9, counter: &count)
+        for column in LoadoutSummaryColumn.allCases {
+            try rankerExpectClose(evaluation.columnSubtotals[column] ?? 1, expected.subtotals[column.rawValue] ?? 1,
+                                  "对照 \(config.key)：\(column.rawValue) 小计", tolerance: 1e-9, counter: &count)
+        }
+        let ids = evaluation.countedLines.sorted { $0.spEffectId < $1.spEffectId }
+            .map { "\($0.spEffectId)" + ($0.countedCopies > 1 ? "x\($0.countedCopies)" : "") }
+        try rankerExpect(ids == expected.ids, "对照 \(config.key)：计入条目集合（含份数）\(ids) vs \(expected.ids)", counter: &count)
+        try checkLoadoutTotal(evaluation, shares: config.output.shares, "对照 \(config.key)", counter: &count)
+        try rankerExpect(evaluation.total > 1, "对照 \(config.key)：这套配置应当增伤", counter: &count)
+        try rankerExpect(evaluation.violations.isEmpty && evaluation.relicChecks.allSatisfy { $0.status != .invalid },
+                         "对照 \(config.key)：不越界、遗物合法（\(evaluation.violations)）", counter: &count)
+        if config.filled {
+            try rankerExpect(config.evaluator.recommendedFill(config.loadout, weaponTypeFilter: config.output.attackWepType) == config.loadout,
+                             "对照 \(config.key)：填满后再填一次不变（确定性）", counter: &count)
+            try rankerExpect(evaluation.countedLines.allSatisfy { line in
+                let buff = dataset.buffs[line.buffIndex]
+                return buff.activation == "passive" && buff.stackInput == nil && buff.accumulatorLadder == nil && line.needs.isEmpty
+            }, "对照 \(config.key)：推荐填满不选条件型、叠层与累积阶梯", counter: &count)
+            let fixed = config.loadout.relicCards.compactMap(\.fixedIndex)
+            try rankerExpect(Set(fixed).count == fixed.count && Set(config.loadout.accessories).count == config.loadout.accessories.count,
+                             "对照 \(config.key)：固定遗物与护符不重复", counter: &count)
+        }
+        dump.append(loadoutConfigDump(config.key, config.loadout, index: index, evaluation: evaluation))
     }
-    let conclusions = LoadoutText.dataConclusions(dataset: index.dataset)
-    let stackCount = index.dataset.buffs.filter { $0.stackInput != nil }.count
-    try rankerExpect(conclusions.count == 9 + stackCount, "研究结论应是 9 条 + 每条叠层一条（实际 \(conclusions.count)）", counter: &count)
-    try rankerExpect(conclusions.contains { $0.contains("（\(index.slotRules.maxAffixesDeep) 条）") }
-                        && conclusions.contains { $0.contains("按未知处理") },
-                     "研究结论里的上限照数据现算，并写明「同一把武器两条正面词条能否重复」未知", counter: &count)
+    let evalA = skillEvaluator.evaluate(fillA)
+    try rankerExpect(evalA.weaponAffixUsage.used == rules.maxAffixesNormal, "对照 A：常规应填满 6 条武器词条", counter: &count)
+    let evalB = incantationEvaluator.evaluate(fillB)
+    try rankerExpect(fillB.relicCards.count == 6 && evalB.weaponAffixUsage.used == rules.maxAffixesDeep,
+                     "对照 B：深夜 6 张遗物卡、填满 12 条武器词条", counter: &count)
+    for card in fillB.relicCards where card.choice == .custom {
+        for row in card.rows {
+            guard let affixID = row.affixID, let affix = catalog.first(where: { $0.effectID == affixID }) else { continue }
+            try rankerExpect(affix.requiresCurse == (row.curseID != nil),
+                             "对照 B：需诅咒的词条配诅咒、不需要的不带（\(affix.name)）", counter: &count)
+        }
+    }
+    try rankerExpect(evalB.countedLines.allSatisfy { dataset.buffs[$0.buffIndex].appliesTo["incantation"] != "no" },
+                     "对照 B：计入的条目对祷告都不能是 no", counter: &count)
+    let evalC = lionEvaluator.evaluate(loadoutC)
+    let countedC = Set(evalC.countedLines.map(\.spEffectId))
+    try rankerExpect(evalC.relicChecks.map(\.status) == [.fixed, .fixed, .valid], "对照 C：两件固定遗物 + 一件合法自组", counter: &count)
+    try rankerExpect(countedC.isSuperset(of: [7006700, 7035902, 7069001, 312300]) && !countedC.contains(7035703)
+                        && !countedC.contains(320400),
+                     "对照 C：勾过的条件型与封印监牢计入，没勾的条件型不计入（红羽七刃剑放进护符栏≠条件成立）", counter: &count)
+    try rankerExpect(evalC.lines.first { $0.spEffectId == 7069001 }?.stacks == 7, "对照 C：封印监牢 7 层", counter: &count)
+    try rankerExpect(evalC.lines.filter { dataset.buffs[$0.buffIndex].affixVariant?.groupKey == "affix#7120100" && $0.status != .variantOff }
+                        .map(\.status) == [.pending],
+                     "对照 C：多档词条只留第 1 档，imbuedWeaponOnly 要确认", counter: &count)
+
+    if ProcessInfo.processInfo.environment["NR_RANKER_DUMP"] == "1" {
+        for line in dump { print(line) }
+        print("TEXT count=\(LoadoutText.table.count) digest=\(loadoutTextDigest()) brief=\(loadoutBriefDigest(LoadoutText.briefNotes(index: index)))")
+    }
+}
+
+// MARK: - 配置页：文案常量表（两端逐字一致）
+
+/// FNV-1a 32 位（按 UTF-8 字节），与 windows/tests/ranker_crosscheck.test.mjs 的 fnv1a 逐位相同。
+private func loadoutFNV1a(_ text: String) -> String {
+    var hash: UInt32 = 0x811c_9dc5
+    for byte in Array(text.utf8) {
+        hash = (hash ^ UInt32(byte)) &* 0x0100_0193
+    }
+    return String(format: "%08x", hash)
+}
+
+/// 文案常量表：点号路径排序后逐行「路径=文案」（按 UTF-16 码元比较，与 JS 的默认比较一致；键全是 ASCII）。
+private func loadoutTextDigest() -> String {
+    let keys = LoadoutText.table.keys.sorted { Array($0.utf16).lexicographicallyPrecedes(Array($1.utf16)) }
+    return loadoutFNV1a(keys.map { $0 + "=" + (LoadoutText.table[$0] ?? "") }.joined(separator: "\n"))
+}
+
+/// 说明区：ASCII 数字归一成 # 之后的摘要。
+private func loadoutBriefDigest(_ notes: [String]) -> String {
+    var normalized = ""
+    var lastWasDigit = false
+    for character in notes.joined(separator: "\n") {
+        if character.isASCII && character.isNumber {
+            if !lastWasDigit { normalized.append("#") }
+            lastWasDigit = true
+        } else {
+            normalized.append(character)
+            lastWasDigit = false
+        }
+    }
+    return loadoutFNV1a(normalized)
+}
+
+/// 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新（Windows 端 TEXT_TABLE_DIGEST / BRIEF_DIGEST）。
+private let loadoutTextTableCount = 332
+private let loadoutTextTableDigest = "854da404"
+private let loadoutBriefNotesDigest = "ad04314d"
+
+private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {
+    try rankerExpect(LoadoutText.table.count == loadoutTextTableCount,
+                     "文案常量表条数 \(LoadoutText.table.count)（Windows 端 TEXT 展开后同数）", counter: &count)
+    try rankerExpect(loadoutTextDigest() == loadoutTextTableDigest,
+                     "文案常量表摘要应与 Windows 端相同（实际 \(loadoutTextDigest())）", counter: &count)
+    for (key, value) in LoadoutText.table {
+        try rankerExpect(!value.isEmpty, "文案 \(key) 应是非空文案", counter: &count)
+    }
+    // 源码里 LoadoutText.t / f 用到的键都必须在表里（缺键会原样显示键名）。
+    let sources = ["Sources/RelicCore/BuffLoadout.swift"] + [
+        "BuffRankerView.swift", "BuffRankerModel.swift", "BuffRankerLoadoutSection.swift", "BuffRankerRelicSection.swift",
+        "BuffRankerRankingSection.swift", "BuffRankerComponents.swift"
+    ].map { "Sources/NightreignRelicChecker/" + $0 }
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let pattern = try NSRegularExpression(pattern: #"\b[tf]\("([A-Za-z0-9_.]*[A-Za-z0-9_])"[,)]"#)
+    var used = 0
+    for path in sources {
+        guard let text = try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) else { continue }
+        let range = NSRange(text.startIndex..., in: text)
+        for match in pattern.matches(in: text, range: range) {
+            guard let keyRange = Range(match.range(at: 1), in: text) else { continue }
+            let key = String(text[keyRange])
+            used += 1
+            try rankerExpect(LoadoutText.table[key] != nil, "\(path) 用到的文案键 \(key) 不在常量表里", counter: &count)
+        }
+    }
+    try rankerExpect(used > 100, "应当扫到大量文案键（实际 \(used)）", counter: &count)
+    try rankerExpect(LoadoutText.fmt("第 {0} 行：{1}", ["2", "名"]) == "第 2 行：名"
+                        && LoadoutText.fmt("{0}{0}", ["a"]) == "aa" && LoadoutText.fmt("{1}", ["a"]) == "",
+                     "fmt 按位置替换，缺的参数替换成空串（与 Windows fmt 同一口径）", counter: &count)
+
+    // 说明区：条数与数字照数据现算；正文与 Windows 端逐字相同（数字归一后的摘要）
+    let notes = LoadoutText.briefNotes(index: index)
+    try rankerExpect(loadoutBriefDigest(notes) == loadoutBriefNotesDigest,
+                     "说明区正文应与 Windows 端 briefNotes 相同（实际 \(loadoutBriefDigest(notes))）", counter: &count)
+    let decreases = index.dataset.buffs.indices.filter {
+        index.countsAsDamage[$0] && index.dataset.buffs[$0].direction == "decrease"
+    }.count
+    let all = notes.joined(separator: "\n")
+    try rankerExpect(all.contains("direction=decrease 的 \(decreases) 条") && all.contains("7 组 28 条")
+                        && all.contains(String(index.cursePoolID)) && all.contains("子类别 112 战技攻击／111 蓄力战技攻击")
+                        && !all.contains("{"),
+                     "说明区的条数、诅咒池、子类别照数据现算，格式串都填满了", counter: &count)
+    try rankerExpect(LoadoutText.skillOnlySubCategories(index.dataset) == ["112 战技攻击", "111 蓄力战技攻击"],
+                     "「提升战技攻击力」的子类别从 attackIndex 现算", counter: &count)
+    for buff in index.dataset.buffs where buff.stackInput != nil {
+        try rankerExpect(all.contains(buff.displayName), "\(buff.displayName) 的叠层说明要出现在说明区", counter: &count)
+    }
     try rankerExpect(Set(LoadoutColumn.allCases.map(\.title)).count == LoadoutColumn.allCases.count,
                      "11 个栏目的中文名互不相同", counter: &count)
     try rankerExpect(LoadoutText.stripTierSuffix("连刺破露滴（第1层）") == "连刺破露滴"
-                        && LoadoutText.stripTierSuffix("提升攻击力") == "提升攻击力",
-                     "累积阶梯合成一项时去掉「（第N层）」", counter: &count)
+                        && LoadoutText.familyName("提升攻击力（档位2）") == "提升攻击力"
+                        && LoadoutText.familyName("提升物理攻击力＋２") == "提升物理攻击力",
+                     "累积阶梯合成一项时去掉「（第N层）」，同族名去掉括注与＋N", counter: &count)
     let hero = LoadoutText.heroGroup(paramName: "[Skill - Revenant] Family Buff")
     try rankerExpect(hero.hero == "复仇者" && hero.kind == "技艺", "角色栏按 Paramdex 行名分到角色", counter: &count)
 
-    // 不占槽位的栏：累积阶梯各档合成一项；角色栏每项都有分组
+    // 不占槽位的栏：累积阶梯各层合成一项；角色栏每项都有分组；武器固有另走 innateItems
     let consumables = index.slotlessItems[.consumable] ?? []
     let ladderItems = consumables.filter { item in
         item.buffIndices.contains { index.dataset.buffs[$0].accumulatorLadder != nil }
     }
     try rankerExpect(!ladderItems.isEmpty && ladderItems.allSatisfy { $0.buffIndices.count > 1 },
-                     "道具栏的累积阶梯应合成一项（各档在同一项里）", counter: &count)
+                     "道具栏的累积阶梯应合成一项（各层在同一项里）", counter: &count)
     try rankerExpect(!consumables.contains { $0.title.hasSuffix("（第1层）") }, "合成后的标题不再带「第1层」", counter: &count)
     try rankerExpect((index.slotlessItems[.character] ?? []).allSatisfy { ($0.groupTitle ?? "").isEmpty == false },
                      "角色栏每一项都要分到某个角色", counter: &count)
     let allSlotless = index.slotlessItems.values.flatMap { $0 }.flatMap(\.buffIndices)
     try rankerExpect(Set(allSlotless).count == allSlotless.count, "同一条 buff 不应出现在两个不占槽位的栏里", counter: &count)
-}
-
-/// 推荐填满不越界：武器词条 / 深夜专属 / 诅咒 / 护符都不超、遗物全部合法、固定遗物不重复、再填一次不变。
-private func checkLoadoutFill(
-    _ loadout: BuffLoadout, _ evaluation: LoadoutEvaluation, index: BuffLoadoutIndex, key: String,
-    counter count: inout Int
-) throws {
-    try rankerExpect(evaluation.violations.isEmpty, "对照 \(key)：推荐填满后不应有超限（\(evaluation.violations)）", counter: &count)
-    try rankerExpect(!evaluation.weaponAffixUsage.isOver && !evaluation.deepOnlyUsage.isOver
-                        && evaluation.curseUsage.used == 0,
-                     "对照 \(key)：武器词条 \(evaluation.weaponAffixUsage.text)、深夜专属 \(evaluation.deepOnlyUsage.text)、不推荐诅咒",
-                     counter: &count)
-    try rankerExpect(evaluation.relicChecks.allSatisfy { $0.status != .invalid }, "对照 \(key)：推荐的遗物都合法", counter: &count)
-    let fixed = loadout.relicCards.compactMap(\.fixedIndex)
-    try rankerExpect(Set(fixed).count == fixed.count, "对照 \(key)：同一件固定遗物不能装两件", counter: &count)
-    try rankerExpect(loadout.accessories.count <= 2 && Set(loadout.accessories).count == loadout.accessories.count,
-                     "对照 \(key)：护符 ≤ 2 且不重复", counter: &count)
-    try rankerExpect(loadout.relicCards.allSatisfy { card in
-        card.fixedIndex.map { (index.dataset.fixedRelics[$0].isDeepRelic) == card.isDeepSlot } ?? true
-    }, "对照 \(key)：固定遗物只进对应的遗物格", counter: &count)
-    try rankerExpect(evaluation.countedLines.allSatisfy { $0.multiplier > 0 }, "对照 \(key)：计入条目倍率为正", counter: &count)
+    try rankerExpect(index.slotlessItems[.weaponInnate] == nil && !index.innateItems(forWeapon: nil).isEmpty,
+                     "武器固有不进一般的不占槽位栏；没有武器时仍列出全部固有效果（手动勾选）", counter: &count)
 }

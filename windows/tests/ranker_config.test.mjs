@@ -117,7 +117,7 @@ test("诅咒不进正面词条栏，也不计入深夜专属上限（deepOnlyCap
   curses.forEach((affix) => assert.equal(cfgIndex.weaponAffixById[affix.attachEffectId], undefined));
 });
 
-test("深夜切回常规：去掉深夜专属，再从最后加入的开始削到常规上限", () => {
+test("深夜切回常规：去掉深夜专属，再按 AttachEffect id 从大到小削到常规上限，深夜遗物格清空", () => {
   let config = R.emptyConfig();
   config.runMode = "deep";
   const deepOnly = cfgIndex.weaponAffixes.filter((affix) => affix.deepOnlyPositive).slice(0, 2);
@@ -129,7 +129,9 @@ test("深夜切回常规：去掉深夜专属，再从最后加入的开始削�
   assert.equal(back.runMode, "normal");
   assert.equal(usage.used, rules.weaponAffix.maxAffixesNormal);
   assert.equal(usage.deepOnlyUsed, 0);
-  assert.deepEqual(back.weaponAffixes.map((one) => one.id), normal.slice(0, usage.cap).map((affix) => affix.id), "保留先加入的");
+  assert.deepEqual(back.weaponAffixes.map((one) => one.id).sort((a, b) => a - b),
+    normal.map((affix) => affix.id).sort((a, b) => a - b).slice(0, usage.cap), "保留 id 小的");
+  assert.equal(R.trimmedCount(cfgIndex, config, back), 11 - usage.cap);
   assert.equal(R.weaponAffixUsage(cfgIndex, config).used, 11, "不改原配置");
 });
 
@@ -168,15 +170,23 @@ test("武器类别过滤：按 normalWepTypes / deepWepTypes 过滤与按 scope.
 
 // ------------------------------------------------------------------ exclusiveKey 去重
 
-test("同一词条放两份：互斥键相同只计一份，汇总给出提示", () => {
+test("同一词条放两份：stackSelf（按 ID 互斥）的各份相乘并提示「参数推断」，照样占两个槽位", () => {
   const skillAttack = cfgIndex.weaponAffixById[8350002];
   assert.ok(skillAttack, "提升战技攻击力（档位3）");
+  assert.equal(skillAttack.entries[0].copiesMultiply, true, "spCategory 10 stackSelf、exclusiveScope=perSpEffect");
   const single = R.evaluateConfig(cfgIndex, corpse, withAffixes([8350002]), Core);
   const twice = R.evaluateConfig(cfgIndex, corpse, withAffixes([8350002, 8350002]), Core);
-  close(twice.total.multiplier, single.total.multiplier, "两份与一份总倍率相同");
-  assert.equal(twice.items.filter((item) => item.state === "duplicate").length, 1);
-  assert.ok(twice.warnings.some((warning) => warning.kind === "duplicate" && warning.text.indexOf(skillAttack.entries[0].key) !== -1));
+  const item = twice.counted.find((one) => one.entry.id === skillAttack.entries[0].id);
+  assert.equal(item.copies, 2);
+  assert.equal(item.countedCopies, 2);
+  R.TYPE_KEYS.forEach((type) => close(item.table[type], Math.pow(single.counted[0].table[type], 2), type + " 两份相乘"));
+  assert.ok(twice.total.multiplier > single.total.multiplier);
+  assert.equal(twice.items.filter((one) => one.state === "duplicate").length, 0, "同一 spEffectId 合并成一条，不是互斥键去重");
+  assert.ok(twice.warnings.some((warning) => warning.kind === "copiesStackSelf" && warning.text.indexOf("未实测") !== -1));
   assert.equal(R.weaponAffixUsage(cfgIndex, withAffixes([8350002, 8350002])).used, 2, "多份照样占槽位");
+  // 多档词条（exclusiveScope=affixVariant）同一词条装两件只算一份（notes.affixVariant），即使 spCategory 是 10。
+  assert.equal(index.byId[7120001].behavior, "stackSelf");
+  assert.equal(index.byId[7120001].copiesMultiply, false);
 });
 
 test("不同档位（档位1/2/3）是不同互斥键：各自计入相乘，并标注「参数推断，未实测」", () => {
@@ -187,27 +197,30 @@ test("不同档位（档位1/2/3）是不同互斥键：各自计入相乘，并
   assert.ok(result.warnings.some((warning) => warning.kind === "tiers" && warning.text.indexOf("未实测") !== -1));
 });
 
-test("跨栏同键：遗物与武器词条共用一个互斥键时只留倍率高的那份", () => {
+test("跨栏同键：不同物品的累积阶梯共用 sp120 时只留倍率高的那份", () => {
   // 累积阶梯的各档（米莉森的义手、带翼剑徽章、连续攻击遗物…）共用 sp120。
   const config = R.emptyConfig();
   config.accessories = [1250, 2080];
+  config.tiers[312505] = R.ladderTopTier(cfgIndex.ladders, 312505).id;
+  config.tiers[320804] = R.ladderTopTier(cfgIndex.ladders, 320804).id;
   const result = R.evaluateConfig(cfgIndex, corpse, config, Core);
   const counted = result.counted.filter((item) => item.entry.key === "sp120");
   assert.equal(counted.length, 1, "两个护符的累积阶梯同键，只计一份");
   const dup = result.items.filter((item) => item.entry.key === "sp120" && item.state === "duplicate");
   assert.equal(dup.length, 1);
   assert.ok(counted[0].multiplier >= dup[0].multiplier);
+  assert.ok(result.warnings.some((warning) => warning.kind === "duplicate" && warning.text.indexOf("sp120") !== -1));
 });
 
 // ------------------------------------------------------------------ 遗物合法性
 
-test("自组普通遗物：一组合法示例走 Core.check（currentNormal）", () => {
+test("自组普通遗物：一组合法示例走 Core.check（currentNormal），文案取本页常量表", () => {
   const card = customCard([7001402, 7260400, 7120100]);
   const check = R.checkCustomRelic(card, "normal", cfgIndex.catalog, Core);
   const direct = Core.check(Core.canonicalOrder([7001402, 7260400, 7120100].map((id) => affixById.get(id))), "currentNormal");
   assert.equal(direct.status, "valid");
   assert.equal(check.status, "valid");
-  assert.equal(check.message, direct.message, "文案沿用 Core.check");
+  assert.equal(check.message, R.TEXT.relicValidNormal, "两端同一句（不直接用 Core.check 的 message）");
   assert.equal(check.issues.length, 0);
 });
 
@@ -245,7 +258,7 @@ test("自组遗物：不足三条时用占位词条补足预检；词条重复�
   assert.equal(R.checkCustomRelic(R.emptyRelicCard(), "normal", cfgIndex.catalog, Core).status, "empty");
 });
 
-test("自组深夜遗物：requiresCurse 的词条必须配诅咒；诅咒不计增伤但要占位", () => {
+test("自组深夜遗物：requiresCurse 的词条必须配诅咒；诅咒不计增伤但要占位；文案与深夜遗物审计同文", () => {
   const needsCurse = cfgIndex.relicCandidates.deep.find((candidate) => candidate.affix.requiresCurse);
   const free = cfgIndex.relicCandidates.deep.find((candidate) => !candidate.affix.requiresCurse &&
     candidate.affix.compatibilityId !== needsCurse.affix.compatibilityId);
@@ -255,24 +268,42 @@ test("自组深夜遗物：requiresCurse 的词条必须配诅咒；诅咒不计
   const issue = missing.issues.find((one) => one.kind === "curseMissing");
   assert.equal(issue.title, "需诅咒的词条缺少负面词条");
   assert.equal(issue.detail, "第 1 行的正面词条需要配对负面词条：" + needsCurse.affix.name);
+  // 与 core.js auditRelic → auditDeepRelic 的同一句逐字相同。
+  const core = readFileSync(path.join(repoRoot, "windows", "renderer", "core.js"), "utf8");
+  ["需诅咒的词条缺少负面词条", "的正面词条需要配对负面词条：", "多余的负面词条", "的正面词条不需要负面词条，却携带负面词条：",
+    "负面词条不在诅咒池", "的负面词条不在诅咒池："].forEach((fragment) => {
+    assert.ok(core.indexOf(fragment) !== -1, "core.js 里应当有「" + fragment + "」");
+  });
 
   const assigned = R.autoAssignCurses(customCard([needsCurse.id, free.id]), "deep", cfgIndex.catalog, Core);
-  assert.ok(assigned.curseIds[0] != null, "自动配上第一条合法诅咒");
+  assert.equal(assigned.curseIds[0], cfgIndex.catalog.curses[0].effectId, "自动配上 effectId 最小的合法诅咒");
   assert.equal(assigned.curseIds[1], null, "不需诅咒的那行不配");
+  assert.equal(R.pickCurse(customCard([needsCurse.id]), 0, cfgIndex.catalog, Core), assigned.curseIds[0]);
   const ok = R.checkCustomRelic(assigned, "deep", cfgIndex.catalog, Core);
-  assert.notEqual(ok.status, "invalid");
-  // Core 的「深夜模式仅作预检，仍需校验负面词条配对」在本页已经做完配对后不再照抄，换成「诅咒配对已校验」。
-  assert.equal(ok.warnings.some((warning) => warning.kind === "cursePairing"), false);
-  const pairing = ok.warnings.find((warning) => warning.kind === "cursePairingChecked");
-  assert.ok(pairing && pairing.title === R.TEXT.relicCursePairingTitle);
-  assert.ok(pairing.detail.indexOf(String(cfgIndex.catalog.cursePoolId)) !== -1);
-  assert.equal(missing.warnings.some((warning) => warning.kind === "cursePairing" || warning.kind === "cursePairingChecked"), false,
-    "配对没过时既不照抄预检提示，也不说已校验");
+  assert.equal(ok.status, "partial");
+  // Core 的「深夜模式仅作预检」在本页做完配对后不再照抄，换成「诅咒配对已校验」。
+  assert.equal(ok.warnings.length, 1);
+  assert.equal(ok.warnings[0].title, R.TEXT.cursePairingTitle);
+  assert.ok(ok.warnings[0].detail.indexOf(String(cfgIndex.catalog.cursePoolId)) !== -1);
+  assert.equal(missing.warnings.length, 0, "配对没过时不说已校验");
 
   const extra = R.checkCustomRelic(customCard([free.id], [assigned.curseIds[0]]), "deep", cfgIndex.catalog, Core);
   assert.ok(extra.issues.some((one) => one.kind === "curseUnexpected" && one.title === "多余的负面词条"));
   const notCurse = R.checkCustomRelic(customCard([needsCurse.id], [free.id]), "deep", cfgIndex.catalog, Core);
   assert.ok(notCurse.issues.some((one) => one.kind === "curseMismatch"), "正面词条当诅咒用要报「不在诅咒池」");
+  // 只有诅咒、没有正面词条的行：也是多余的负面词条（与存档审计同一口径）。
+  const orphan = R.checkCustomRelic(customCard([null], [assigned.curseIds[0]]), "deep", cfgIndex.catalog, Core);
+  assert.equal(orphan.status, "invalid");
+  assert.ok(orphan.issues.some((one) => one.kind === "curseUnexpected"));
+  // 两行配同一条诅咒：词条重复（与存档审计同文）。
+  const twin = R.autoAssignCurses(customCard([needsCurse.id]), "deep", cfgIndex.catalog, Core);
+  const other = cfgIndex.relicCandidates.deep.find((candidate) => candidate.affix.requiresCurse &&
+    candidate.affix.compatibilityId !== needsCurse.affix.compatibilityId && candidate.id !== needsCurse.id);
+  if (other) {
+    const dupCurse = customCard([needsCurse.id, other.id], [twin.curseIds[0], twin.curseIds[0]]);
+    const dupCheck = R.checkCustomRelic(dupCurse, "deep", cfgIndex.catalog, Core);
+    assert.ok(dupCheck.issues.some((one) => one.title === R.TEXT.curseDuplicateTitle && one.detail.indexOf("同一词条在一件遗物上重复出现") === 0));
+  }
 
   // 诅咒本身不计增伤：配置里只算正面词条的条目。
   const config = R.emptyConfig();
@@ -428,10 +459,16 @@ test("叠层：不同存档阶梯（sp204 不同优先度）可同时计入并�
   const config = R.emptyConfig();
   config.relics[0] = customCard([evergaol.id]);
   config.relics[1] = customCard([invader.id]);
+  const unset = R.evaluateConfig(cfgIndex, corpse, config, Core);
+  assert.equal(unset.counted.filter((item) => /^sp204@p/.test(item.entry.key)).length, 0, "没填层数就不计入");
+  config.stacks[7069001] = 7;
+  config.stacks[7069201] = 4;
   const result = R.evaluateConfig(cfgIndex, corpse, config, Core);
   const counted = result.counted.filter((item) => /^sp204@p/.test(item.entry.key));
   assert.equal(counted.length, 2, "exclusiveKey 不同，两条都计入");
-  assert.ok(result.warnings.some((warning) => warning.kind === "ladder204"));
+  assert.ok(result.warnings.some((warning) => warning.kind === "ladders" && warning.text.indexOf("未实测") !== -1));
+  close(result.total.multiplier, index.byId[7069001].stackInput.tierMultipliers[6] * index.byId[7069201].stackInput.tierMultipliers[3],
+    "封印监牢 7 层 × 黑夜入侵者 4 层（五种伤害都乘，对尸横遍野的斩＋火构成就是两者之积）");
 });
 
 // ------------------------------------------------------------------ 汇总连乘
@@ -547,9 +584,9 @@ test("推荐填满：同一件固定遗物不会放进两格，同一护符不�
 
 // ------------------------------------------------------------------ 其它栏
 
-test("当前武器的固有效果自动列入（可排除）但不算亲手放入：条件型默认未确认，换一把武器就没有", () => {
-  const innateEntry = index.entries.find((entry) => entry.innate && entry.countsAsDamage &&
-    (entry.innate.weaponIds || []).length && entry.appliesTo.skill !== "no");
+test("当前武器的固有效果自动列入（可排除）但不算用户确认：条件型默认未确认，换一把武器就没有", () => {
+  const innateEntry = index.entries.find((entry) => entry.innate && entry.listable &&
+    (entry.innate.weaponIds || []).length && entry.appliesTo.skill !== "no" && !entry.stackInput);
   assert.ok(innateEntry);
   const weaponId = innateEntry.innate.weaponIds[0];
   const weapon = skills._weaponById[weaponId];
@@ -560,17 +597,18 @@ test("当前武器的固有效果自动列入（可排除）但不算亲手放�
   assert.ok(auto.indexOf(innateEntry) !== -1);
   const result = R.evaluateConfig(cfgIndex, output, R.emptyConfig(), Core);
   const item = result.items.find((one) => one.entry.id === innateEntry.id);
-  assert.ok(item && item.auto && item.explicit === false, "当前武器固有：自动列入，但不算用户亲手放入");
+  assert.ok(item && item.auto && item.autoConfirm === false, "当前武器固有：自动列入，但不算用户确认");
   if (innateEntry.activation !== "passive") {
     assert.equal(item.state, "pending", "条件型固有效果默认不计入（notes.ranking ③）");
     const ticked = R.emptyConfig();
     ticked.ticks[innateEntry.id] = true;
     const after = R.evaluateConfig(cfgIndex, output, ticked, Core).items.find((one) => one.entry.id === innateEntry.id);
-    assert.equal(after.state, "counted", "勾选「条件成立」后计入");
+    assert.ok(after.state === "counted" || after.state === "neutral", "勾选「条件成立」后计入");
   }
-  const off = R.emptyConfig();
-  off.innateOff[innateEntry.id] = true;
+  const off = R.removeSource(cfgIndex, R.emptyConfig(), "innate:" + innateEntry.id);
   assert.equal(R.evaluateConfig(cfgIndex, output, off, Core).items.some((one) => one.entry.id === innateEntry.id), false);
+  const back = R.toggleOtherRow(cfgIndex, output, off, innateEntry.ladderGroup != null ? innateEntry.ladderGroup : innateEntry.id, true);
+  assert.equal(back.innateOff[innateEntry.id], undefined, "在其它栏重新勾上就恢复");
   assert.equal(R.currentInnateEntries(cfgIndex, corpse).indexOf(innateEntry), -1);
   assert.deepEqual(R.currentInnateEntries(cfgIndex, comet), [], "法术没有武器");
 });
@@ -596,16 +634,17 @@ test("回归：蒙格温圣矛的条件型固有效果不会在空配置里自�
   const item = on.items.find((one) => one.entry.id === 8981903);
   assert.equal(item.state, "counted");
   close(on.total.multiplier, item.multiplier, "勾选后总倍率等于这一条");
-  // 其它栏的这一行：状态按「未亲手放入」显示（条件未确认），分数仍是确认后能拿到的。
+  // 其它栏的这一行：当前按「未确认」（×1），条件成立时的倍率是确认后能拿到的。
   const row = R.otherRowsFor(cfgIndex, mohg, R.emptyConfig(), "weaponInnate").find((one) => one.key === 8981903);
   assert.ok(row && row.auto && row.selected);
   assert.equal(row.state, "pending");
-  close(row.score, item.multiplier, "行分数＝确认后的倍率");
+  close(row.score, 1, "未确认时当前倍率 ×1");
+  close(row.potential, item.multiplier, "条件成立时的倍率＝确认后的倍率");
   // 叠层类固有效果（玛雷家的庇佑 / 复仇的庇佑）自动列入时默认 0 层。
   [8988200, 8998000].forEach((id) => {
     const entry = index.byId[id];
     assert.ok(entry.stackInput && entry.innate);
-    assert.equal(R.stacksFor(entry, R.emptyConfig(), false), 0);
+    assert.equal(R.stacksFor(entry, R.emptyConfig()), 0);
   });
   const stackWeapon = skills._weaponById[index.byId[8988200].innate.weaponIds[0]];
   if (stackWeapon && typeof stackWeapon.skillVariant === "number" && skills._skillById[stackWeapon.swordArtsParamId]) {
@@ -615,53 +654,55 @@ test("回归：蒙格温圣矛的条件型固有效果不会在空配置里自�
   }
 });
 
-test("回归：一件自组遗物只带「附加异常状态出血」(7120600)，总倍率不因它下降（×0.85⁴ 不再出现）", () => {
+test("回归：一件自组遗物只带「附加异常状态出血」(7120600)，总倍率不因它下降（减益不进配置页）", () => {
   const ticked = R.emptyConfig();
   ticked.ticks[8981903] = true;
   const base = R.evaluateConfig(cfgIndex, mohg, ticked, Core).total.multiplier;
   [7120400, 7120500, 7120600].forEach((affixId) => {
+    assert.equal(cfgIndex.relicAffixEntries.get(affixId), undefined, affixId + " 的四档都是 ×0.85 减益，不进配置页");
     const config = R.cloneConfig(ticked);
     config.relics[0] = customCard([affixId]);
     const result = R.evaluateConfig(cfgIndex, mohg, config, Core);
     assert.notEqual(result.relicChecks[0].status, "invalid");
-    assert.ok(result.total.multiplier >= 0.85, affixId + " 让总倍率掉到 " + result.total.multiplier);
     close(result.total.multiplier, base, affixId + " 的 ×0.85 是减益（direction=decrease），不进增伤");
-    const own = result.items.filter((item) => item.column === "relic" && item.entry.countsAsDamage);
-    assert.equal(own.filter((item) => item.state === "variantOff").length, 3, "四档只留一档");
-    const chosen = own.filter((item) => item.state !== "variantOff");
-    assert.equal(chosen.length, 1);
-    assert.equal(chosen[0].state, "no");
-    assert.equal(chosen[0].reasons[0], R.TEXT.reasonDecrease);
+    assert.equal(result.items.filter((item) => item.column === "relic").length, 0);
     assert.equal(result.warnings.some((warning) => warning.kind === "tiers"), false, "不再提示「不同档位同时计入」");
   });
-  // 自组下拉里这条词条也不再显示 ×0.522。
-  const row = R.relicAffixRows(cfgIndex, mohg, ticked, "normal").find((one) => one.id === 7120600);
-  assert.ok(row);
-  close(row.score, 1, "下拉里的分数");
-  assert.equal(row.state, "no");
+  // 自组下拉里也没有这条（没有能进计算的条目）。
+  assert.equal(R.relicAffixRows(cfgIndex, mohg, ticked, "normal").some((one) => one.id === 7120600), false);
+  // 减益在「逐条评估」里仍判「不生效」并写明原因。
+  const bleedTier = index.byId[7120601];
+  const state = R.evaluateEntry(bleedTier, R.makeEnv(cfgIndex, mohg, R.emptyConfig(), { ownVariant: true }), { column: "relic" });
+  assert.equal(state.state, "no");
+  assert.equal(state.reasons[0], R.TEXT.reasonDecrease);
 });
 
-test("回归：「附加魔力属性攻击力」四档只算选中的一档，加算不再四档相加", () => {
+test("回归：「附加魔力属性攻击力」四档只算选中的一档，加算不再四档相加；两件同一词条只算一份", () => {
   const members = index.variants["affix#7120000"];
   const config = R.emptyConfig();
   config.relics[0] = customCard([7120000]);
-  const result = R.evaluateConfig(cfgIndex, mohg, config, Core);
+  members.forEach((entry) => { config.ticks[entry.id] = true; });   // imbuedWeaponOnly：要确认
+  const magicWeapon = outputFor("skill", 1177, 9040000);
+  const result = R.evaluateConfig(cfgIndex, magicWeapon, config, Core);
   const own = result.items.filter((item) => item.column === "relic" && item.entry.variantGroup === "affix#7120000");
   assert.equal(own.length, 4);
-  const counted = own.filter((item) => item.state === "counted");
-  assert.equal(counted.length, 1);
-  assert.equal(counted[0].entry.id, members[0].id, "默认第 1 档");
-  close(result.total.flat, counted[0].flat, "汇总的加算只有一档");
+  const chosen = own.filter((item) => item.state !== "variantOff");
+  assert.equal(chosen.length, 1);
+  assert.equal(chosen[0].entry.id, members[0].id, "默认第 1 档");
   close(result.total.multiplier, 1, "加算不进连乘");
   config.variants["affix#7120000"] = members[3].id;
-  const fourth = R.evaluateConfig(cfgIndex, mohg, config, Core);
-  assert.deepEqual(fourth.counted.filter((item) => item.column === "relic").map((item) => item.entry.id), [members[3].id]);
-  // 同一词条放在两件遗物上：键已合并，只计一份。
+  const fourth = R.evaluateConfig(cfgIndex, magicWeapon, config, Core);
+  assert.deepEqual(fourth.items.filter((item) => item.entry.variantGroup === "affix#7120000" && item.state !== "variantOff")
+    .map((item) => item.entry.id), [members[3].id]);
+  // 同一词条放在两件遗物上：同一 spEffectId 合并，exclusiveScope=affixVariant → 只算一份。
   const twice = R.cloneConfig(config);
   twice.relics[1] = customCard([7120000]);
-  const both = R.evaluateConfig(cfgIndex, mohg, twice, Core);
-  assert.equal(both.counted.filter((item) => item.entry.key === "affix#7120000").length, 1);
-  // 固定遗物整件带进来的多档同样只留一档（且条件型默认未确认）。
+  const both = R.evaluateConfig(cfgIndex, magicWeapon, twice, Core);
+  const merged = both.items.filter((item) => item.entry.id === members[3].id);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].copies, 2);
+  assert.equal(merged[0].countedCopies, 1);
+  // 固定遗物整件带进来的多档同样只留一档（且 imbuedWeaponOnly 默认未确认）。
   const water = cfgIndex.fixedRelics.find((relic) => relic.entries.some((entry) => entry.id === 7120001));
   assert.ok(water, "细腻的水滴情景带 7120001–04");
   const fixed = R.emptyConfig();
@@ -669,26 +710,67 @@ test("回归：「附加魔力属性攻击力」四档只算选中的一档，�
   const fixedResult = R.evaluateConfig(cfgIndex, mohg, fixed, Core);
   const fixedOwn = fixedResult.items.filter((item) => item.entry.variantGroup === "affix#7120000");
   assert.equal(fixedOwn.filter((item) => item.state !== "variantOff").length, 1);
+  assert.equal(fixedOwn.find((item) => item.state !== "variantOff").state, "pending");
+  // 7 条「出击时的武器，附加…」同属 exclusivityId=100：两条不同词条同时计入时提示。
+  const pair = R.emptyConfig();
+  pair.relics[0] = customCard([7120000]);
+  pair.relics[1] = customCard([7120100]);
+  [7120001, 7120101].forEach((id) => { pair.ticks[id] = true; });
+  const flame = outputFor("skill", 100, 3180500);
+  const warned = R.evaluateConfig(cfgIndex, flame, pair, Core);
+  if (warned.counted.filter((item) => item.column === "relic").length >= 2) {
+    assert.ok(warned.warnings.some((warning) => warning.kind === "exclusivity"));
+  }
 });
 
-test("回归：深夜遗物「【无赖】技艺命中敌人时，能降低对方的攻击力」(6500400 → 7500401) 不再按 ×0.87 计入", () => {
+test("自组深夜遗物换词条：需诅咒的词条自动配诅咒，换成另一条需诅咒的词条时清掉旧诅咒重配（与 macOS withRelicAffix 同法）", () => {
+  // 复核回归：深夜遗物 1 选「提升物理攻击力＋４」(6001401) —— 两端都应自动配上诅咒池里 effectId 最小的合法诅咒
+  // 「受到损伤时，会累积中毒量表」(6820000)，预检通过、条目计入；macOS 端 BuffRankerChecks 有同一组断言。
+  const phys = cfgIndex.catalog.byId.get(6001401);
+  assert.equal(phys.requiresCurse, true);
+  const picked = R.withRelicAffix(R.emptyRelicCard(), "deep", 0, 6001401, cfgIndex.catalog, Core);
+  assert.equal(picked.type, "custom");
+  assert.deepEqual(picked.affixIds, [6001401, null, null]);
+  assert.deepEqual(picked.curseIds, [6820000, null, null], "自动配上「受到损伤时，会累积中毒量表」");
+  assert.equal(picked.curseIds[0], R.pickCurse(customCard([6001401]), 0, cfgIndex.catalog, Core));
+  assert.equal(R.checkCustomRelic(picked, "deep", cfgIndex.catalog, Core).status, "partial");
+  const config = R.emptyConfig();
+  config.runMode = "deep";
+  config.relics[3] = picked;
+  const result = R.evaluateConfig(cfgIndex, corpse, config, Core);
+  assert.equal(result.relicChecks[3].status, "partial");
+  const fromCard = result.items.filter((item) => (item.keys || []).some((key) => key.indexOf("relic:3") === 0));
+  assert.ok(fromCard.length > 0 && fromCard.every((item) => item.state !== "relicInvalid"), "配上诅咒后整件计入");
+  assert.ok(fromCard.some((item) => item.state === "counted"));
+  // 用户手动改成第二条诅咒，再把这一行换成另一条需诅咒的词条：旧诅咒清掉、按新词条重配。
+  const manual = customCard([6001401], [cfgIndex.catalog.curses[1].effectId]);
+  assert.equal(R.checkCustomRelic(manual, "deep", cfgIndex.catalog, Core).status, "partial");
+  const swapped = R.withRelicAffix(manual, "deep", 0, 6260000, cfgIndex.catalog, Core);
+  assert.equal(cfgIndex.catalog.byId.get(6260000).requiresCurse, true);
+  assert.deepEqual(swapped.curseIds, [6820000, null, null], "换词条后重配，不沿用旧诅咒");
+  // 换成不需诅咒的词条：这一行的诅咒清掉；普通遗物格不带诅咒。
+  const free = cfgIndex.relicCandidates.deep.find((candidate) => !candidate.affix.requiresCurse);
+  assert.deepEqual(R.withRelicAffix(swapped, "deep", 0, free.id, cfgIndex.catalog, Core).curseIds, [null, null, null]);
+  assert.deepEqual(R.withRelicAffix(R.emptyRelicCard(), "normal", 0, 6001401, cfgIndex.catalog, Core).curseIds, [null, null, null]);
+  // 另一行手动清掉的诅咒：换任一行的词条时一并补配（autoAssignCurses 逐行补）。
+  const cleared = customCard([6001401, free.id], [null, null]);
+  assert.deepEqual(R.withRelicAffix(cleared, "deep", 1, null, cfgIndex.catalog, Core).curseIds, [6820000, null, null]);
+});
+
+test("回归：深夜遗物「【无赖】技艺命中敌人时，能降低对方的攻击力」(6500400 → 7500401) 不进增伤", () => {
   const config = R.emptyConfig();
   config.runMode = "deep";
   config.relics[3] = R.autoAssignCurses(customCard([6500400]), "deep", cfgIndex.catalog, Core);
   const result = R.evaluateConfig(cfgIndex, corpse, config, Core);
   assert.notEqual(result.relicChecks[3].status, "invalid");
-  const item = result.items.find((one) => one.entry.id === 7500401);
-  assert.ok(item);
-  assert.equal(item.state, "no");
-  assert.equal(item.reasons[0], R.TEXT.reasonDecrease);
+  assert.equal(result.items.some((one) => one.entry.id === 7500401), false, "减益不进配置页");
   close(result.total.multiplier, 1);
-  const row = R.relicAffixRows(cfgIndex, corpse, config, "deep").find((one) => one.id === 6500400);
-  assert.ok(!row || row.state === "no", "自组下拉里显示为不生效");
+  assert.equal(R.relicAffixRows(cfgIndex, corpse, config, "deep").some((one) => one.id === 6500400), false);
 });
 
-test("其它栏：勾选即视为条件成立；累积阶梯一行、只算选中的那层", () => {
-  const config = R.emptyConfig();
-  config.others[3558] = true;
+test("其它栏：勾选即视为条件成立；累积阶梯一行、勾上时先选最高层，只算选中的那层；叠层勾上时先填一局实际上限", () => {
+  const config = R.toggleOtherRow(cfgIndex, corpse, R.emptyConfig(), 3558, true);
+  assert.equal(config.tiers[3558], R.ladderTopTier(cfgIndex.ladders, 3558).id, "预选最高层");
   const result = R.evaluateConfig(cfgIndex, corpse, config, Core);
   const ladder = result.items.filter((item) => item.entry.ladderGroup === 3558);
   assert.ok(ladder.length >= 2);
@@ -697,7 +779,16 @@ test("其它栏：勾选即视为条件成立；累积阶梯一行、只算选�
   const rows = R.otherRowsFor(cfgIndex, corpse, config, "consumable");
   const row = rows.find((one) => one.key === 3558);
   assert.equal(row.selected, true);
-  rows.forEach((one, i) => { if (i) assert.ok(rows[i - 1].score >= one.score); });
+  rows.forEach((one, i) => {
+    if (i && rows[i - 1].applicable === one.applicable) assert.ok(rows[i - 1].score >= one.score - 1e-9);
+  });
+  const unticked = R.toggleOtherRow(cfgIndex, corpse, config, 3558, false);
+  assert.equal(unticked.others[3558], undefined);
+  const grace = R.toggleOtherRow(cfgIndex, corpse, R.emptyConfig(), 8970000, true);
+  assert.equal(grace.stacks[8970000], 1, "赐福王的余威没有实测上限：先填 1 份");
+  const graceResult = R.evaluateConfig(cfgIndex, corpse, grace, Core);
+  assert.equal(graceResult.items.find((item) => item.entry.id === 8970000).state, "counted");
+  assert.deepEqual(R.removeSource(cfgIndex, grace, "other:8970000").others, {});
 });
 
 test("护符与遗物候选行：按有效倍率降序，状态取「最接近生效」的那一条", () => {

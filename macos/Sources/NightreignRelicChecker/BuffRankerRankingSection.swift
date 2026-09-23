@@ -11,13 +11,13 @@ struct BuffRankerOverviewSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            RankerDisclosure(title: LoadoutText.overviewTitle + "（\(model.overviewVisibleRows.count) 条）", isOn: $isOpen) {
+            RankerDisclosure(title: LoadoutText.t("overviewTitle") + " · " + LoadoutText.t("overviewPill"), isOn: $isOpen) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(LoadoutText.overviewSubtitle)
+                    Text(LoadoutText.f("overviewCount", model.overviewVisibleRows.count))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
-                    RankerSearchField(placeholder: LoadoutText.overviewSearch, text: $model.overviewQuery)
+                    RankerSearchField(placeholder: LoadoutText.t("overviewSearch"), text: $model.overviewQuery)
                         .frame(maxWidth: 380)
                     LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(Array(model.overviewPageRows.enumerated()), id: \.element.id) { item in
@@ -39,20 +39,20 @@ struct BuffRankerOverviewSection: View {
                 Button {
                     model.goToOverviewPage(model.overviewPage - 1)
                 } label: {
-                    Label("上一页", systemImage: "chevron.left").font(.caption)
+                    Label(LoadoutText.t("overviewPrev"), systemImage: "chevron.left").font(.caption)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.overviewPage == 0)
                 .foregroundStyle(model.overviewPage == 0 ? AppTheme.tertiaryText : AppTheme.purpleSoft)
 
-                Text("第 \(model.overviewPage + 1) / \(model.overviewPageCount) 页 · 每页 \(model.overviewPageSize) 条")
+                Text(LoadoutText.f("overviewPage", model.overviewPage + 1, model.overviewPageCount, model.overviewPageSize))
                     .font(.caption)
                     .foregroundStyle(AppTheme.secondaryText)
 
                 Button {
                     model.goToOverviewPage(model.overviewPage + 1)
                 } label: {
-                    Label("下一页", systemImage: "chevron.right").font(.caption)
+                    Label(LoadoutText.t("overviewNext"), systemImage: "chevron.right").font(.caption)
                 }
                 .buttonStyle(.plain)
                 .disabled(model.overviewPage + 1 >= model.overviewPageCount)
@@ -75,29 +75,35 @@ private struct OverviewRow: View {
                 .frame(width: 30, alignment: .trailing)
             Text(row.displayName)
                 .font(.system(size: 12))
-                .foregroundStyle(row.verdict.isApplicable ? .white : AppTheme.tertiaryText)
+                .foregroundStyle(row.isApplicable ? .white : AppTheme.tertiaryText)
                 .lineLimit(1)
             Pill(text: row.column.title, color: LoadoutPalette.column(row.column))
             Pill(text: row.verdict.label, color: LoadoutPalette.verdict(row.verdict))
             if row.activation != "passive" {
                 Pill(
-                    text: row.activation == "activated" ? LoadoutText.badgeActivated : LoadoutText.badgeConditional,
+                    text: row.activation == "activated" ? LoadoutText.t("badges.activated") : LoadoutText.t("badges.conditional"),
                     color: AppTheme.amber
                 )
             }
             Spacer(minLength: 6)
-            if let reason = row.verdict.blockedReason {
+            if !row.isApplicable, let reason = row.reasons.first {
                 Text(reason)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .lineLimit(1)
+                    .frame(maxWidth: 280, alignment: .trailing)
+            } else if let note = row.notes.first {
+                Text(note)
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
                     .lineLimit(1)
                     .frame(maxWidth: 280, alignment: .trailing)
             }
             if row.assumesOneStack {
-                Text(LoadoutText.overviewOneStack)
+                Text(LoadoutText.t("overviewOneStack"))
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.amber)
-                    .help(LoadoutText.overviewOneStackHelp)
+                    .help(LoadoutText.t("overviewOneStackHelp"))
             }
             Text(BuffFormat.multiplier(row.multiplier))
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
@@ -107,7 +113,7 @@ private struct OverviewRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.white.opacity(0.02)))
-        .opacity(row.verdict.isApplicable ? 1 : 0.55)
+        .opacity(row.isApplicable ? 1 : 0.55)
         .help("SpEffect #\(row.spEffectId) · 互斥键 \(row.exclusiveKey)")
     }
 }
@@ -117,7 +123,6 @@ private struct OverviewRow: View {
 struct BuffRankerNotesSection: View {
     @ObservedObject var model: BuffRankerModel
     @State private var showPageRules = false
-    @State private var showConclusions = false
     @State private var showQuestions = false
     @State private var showCaveats = false
     @State private var showUsage = false
@@ -127,19 +132,19 @@ struct BuffRankerNotesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeading(title: LoadoutText.noteTitle, subtitle: LoadoutText.noteSubtitle, symbol: "info.circle")
+            SectionHeading(title: LoadoutText.t("briefHeading"), subtitle: LoadoutText.t("briefIntro"), symbol: "info.circle")
 
-            RankerDisclosure(title: LoadoutText.pageRulesTitle(LoadoutText.pageRules.count), isOn: $showPageRules) {
-                bulletList(LoadoutText.pageRules)
+            if let index = model.loadoutIndex {
+                let notes = LoadoutText.briefNotes(index: index)
+                RankerDisclosure(title: LoadoutText.t("briefHeading") + "（\(notes.count)）", isOn: $showPageRules) {
+                    bulletList(notes)
+                }
             }
 
             if let buffs = model.buffs {
-                RankerDisclosure(title: LoadoutText.conclusionsTitle, isOn: $showConclusions) {
-                    bulletList(LoadoutText.dataConclusions(dataset: buffs.dataset))
-                }
                 if !buffs.dataset.userQuestions.isEmpty {
                     RankerDisclosure(
-                        title: LoadoutText.questionsTitle(buffs.dataset.userQuestions.count), isOn: $showQuestions
+                        title: LoadoutText.f("questionsTitle", buffs.dataset.userQuestions.count), isOn: $showQuestions
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(buffs.dataset.userQuestions) { item in

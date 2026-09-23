@@ -722,19 +722,22 @@ test("indexBuff：带出 v6 的来源槽位 / appliesTo / 互斥键 / 叠层输�
   assert.equal(prosthesis.ladderTier, 2);
   assert.equal(index.entries.length, buffs.buffs.length, "索引应当覆盖全表");
   index.entries.forEach((entry) => {
-    if (entry.keyInferred) {
-      // 数据还没有 affixVariant 时推断出的多档组：键合并成 affix#<词条 ID>（与数据将来给的键同形）。
-      assert.equal(entry.key, "affix#" + entry.buff.relicAffixes[0].attachEffectId, entry.id + " 的推断互斥键");
-      return;
-    }
     assert.equal(entry.key, entry.buff.stacking.exclusiveKey, entry.id + " 的互斥键必须原样取 exclusiveKey");
+    const listable = entry.countsAsDamage && (entry.target === "self" || entry.target === "ally") && entry.direction !== "decrease";
+    assert.equal(entry.listable, listable, entry.id + " 能不能进配置页：带伤害字段、作用于自己或队友、不是减益");
   });
+  // selfAllyPair：Self／Allies 两行成对，role 与 target 一致。
+  assert.equal(byId[1876].pairRole, "self");
+  assert.equal(byId[1877].pairRole, "ally");
+  assert.equal(byId[1877].target, "ally");
+  assert.deepEqual(byId[7050301].goodsIds, [1210], "requiresGoodsIds 原样带出");
 });
 
 // ------------------------------------------------------------------ 多档词条（affixVariant）
 
-test("多档词条：数据没有 affixVariant 时按参数结构推断，恰好是 schema 复核三轮列出的 7 组 × 4 档", () => {
-  assert.equal(buffs.buffs.some((buff) => buff.affixVariant), false, "当前数据还没有 affixVariant（有了就改走数据分支）");
+test("多档词条：一律读数据的 affixVariant，恰好是 schema 复核三轮列出的 7 组 × 4 档（不按 compatibilityId 或行名猜）", () => {
+  const tagged = buffs.buffs.filter((buff) => buff.affixVariant);
+  assert.equal(tagged.length, 28, "数据给了 28 条 affixVariant");
   const groups = index.variants;
   const expected = [7120000, 7120100, 7120200, 7120300, 7120400, 7120500, 7120600];
   assert.deepEqual(Object.keys(groups).sort(), expected.map((id) => "affix#" + id).sort());
@@ -743,32 +746,36 @@ test("多档词条：数据没有 affixVariant 时按参数结构推断，恰好
     assert.deepEqual(members.map((entry) => entry.id), [1, 2, 3, 4].map((n) => attachId + n), attachId + " 的四档");
     members.forEach((entry, i) => {
       assert.equal(entry.variantTier, i + 1);
-      assert.equal(entry.variantSource, "inferred");
-      assert.equal(entry.key, "affix#" + attachId);
+      assert.equal(entry.variantGroup, entry.buff.affixVariant.key);
+      assert.equal(entry.key, "affix#" + attachId, "互斥键原样取数据的 exclusiveKey");
       assert.equal(entry.variantMembers, members);
     });
   });
-  // 状态负载行（7120405 等）不含伤害倍率，不进组，键不变。
+  // 状态负载行（7120405 等）不是档位，不进组。
   assert.equal(index.byId[7120405].variantGroup, null);
-  assert.equal(index.byId[7120405].key, buffs.buffs.find((buff) => buff.spEffectId === 7120405).stacking.exclusiveKey);
-  // 累积阶梯、叠层、连续三阶段（8885220–22 各自一个键、同时存在）都不能被并成一组。
+  // 累积阶梯、叠层、连续三阶段（8885220–22 各自一个键、同时存在）都不是多档词条。
   [7037604, 7069001, 8885220, 8885221].forEach((id) => assert.equal(index.byId[id].variantGroup, null, id + " 不是多档词条"));
+  // 同一 compatibilityId 的不同词条（7 条「出击时的武器，附加…」同为 200）不会被并成一组。
+  assert.equal(Object.keys(groups).length, 7);
 });
 
 test("多档词条：同一组只算选中的那一档（默认第 1 档），config.variants 可以改选", () => {
   const members = index.variants["affix#7120000"];
   const config = R.emptyConfig();
-  const first = members.map((entry) => R.evaluateEntry(entry, env(out({ shares: shares({ slash: 0.5, magic: 0.5 }) }), config), { explicit: true }));
-  assert.deepEqual(first.map((item) => item.state), ["counted", "variantOff", "variantOff", "variantOff"]);
-  assert.ok(first[1].reasons[0].indexOf("第 1 档") !== -1 && first[1].reasons[0].indexOf("未实测") !== -1);
+  const mixed = out({ shares: shares({ slash: 0.5, magic: 0.5 }) });
+  const first = members.map((entry) => R.evaluateEntry(entry, env(mixed, config), { column: "other", autoConfirm: true }));
+  assert.equal(first[0].state === "variantOff", false, "第 1 档是选中的那一档");
+  assert.deepEqual(first.slice(1).map((item) => item.state), ["variantOff", "variantOff", "variantOff"]);
+  assert.ok(first[1].reasons[0].indexOf("第 1 档") !== -1 && first[1].reasons[0].indexOf("affixVariant") !== -1);
   config.variants["affix#7120000"] = members[2].id;
-  const third = members.map((entry) => R.evaluateEntry(entry, env(out(), config), { explicit: true }).state);
-  assert.deepEqual(third, ["variantOff", "variantOff", "counted", "variantOff"]);
+  const third = members.map((entry) => R.evaluateEntry(entry, env(mixed, config), { column: "other", autoConfirm: true }).state);
+  assert.deepEqual(third.map((state) => state === "variantOff"), [true, true, false, true]);
   assert.equal(R.selectedVariant(members[0], config).tier, 3);
   assert.equal(R.selectedVariant(members[0], R.emptyConfig()).tiers, 4);
+  assert.ok(R.TEXT.variantNoMapping.indexOf("映射") !== -1, "选档控件写明参数里查不到武器类别 → 档位的映射");
 });
 
-test("多档词条：数据给了 affixVariant 就只用数据，不再推断", () => {
+test("多档词条：数据没标 affixVariant 的一律不成组（结构再像也不推断）", () => {
   const base = { target: "self", activation: "passive", direction: "increase",
     appliesTo: { skill: "yes", sorcery: "yes", incantation: "yes" } };
   const data = {
@@ -780,43 +787,40 @@ test("多档词条：数据给了 affixVariant 就只用数据，不再推断", 
       Object.assign({ spEffectId: 12, paramName: "[Relic] A - Potency 2", rates: { physicsAttackRate: 1.2 },
         relicAffixes: [{ attachEffectId: 10 }], stacking: { exclusiveKey: "affix#10" },
         affixVariant: { key: "affix#10", attachEffectId: 10, variant: 2, variants: 2 } }, base),
-      // 结构上像多档、但数据没标 affixVariant：有数据字段时不推断。
       Object.assign({ spEffectId: 21, paramName: "[Relic] B - Potency 1", rates: { physicsAttackRate: 1.1 },
-        relicAffixes: [{ attachEffectId: 20 }], stacking: { exclusiveKey: "sp10#21" } }, base),
+        relicAffixes: [{ attachEffectId: 20, compatibilityId: 5 }], stacking: { exclusiveKey: "sp10#21" } }, base),
       Object.assign({ spEffectId: 22, paramName: "[Relic] B - Potency 2", rates: { physicsAttackRate: 1.2 },
-        relicAffixes: [{ attachEffectId: 20 }], stacking: { exclusiveKey: "sp10#22" } }, base)
+        relicAffixes: [{ attachEffectId: 20, compatibilityId: 5 }], stacking: { exclusiveKey: "sp10#22" } }, base)
     ]
   };
   const own = R.indexBuffs(data);
   assert.deepEqual(Object.keys(own.variants), ["affix#10"]);
-  assert.equal(own.byId[11].variantSource, "data");
   assert.equal(own.byId[12].variantTier, 2);
   assert.equal(own.byId[21].variantGroup, null);
   assert.equal(own.byId[21].key, "sp10#21");
-  // 同样两条去掉 affixVariant：推断成一组，键合并。
   const bare = R.indexBuffs({ rateFields: buffs.rateFields, buffs: data.buffs.slice(2) });
-  assert.deepEqual(Object.keys(bare.variants), ["affix#20"]);
-  assert.equal(bare.byId[22].key, "affix#20");
-  assert.equal(bare.byId[22].keyInferred, true);
+  assert.deepEqual(Object.keys(bare.variants), [], "没有 affixVariant 就没有多档组");
+  assert.equal(bare.byId[22].key, "sp10#22");
 });
 
 // ------------------------------------------------------------------ 减益（notes.ranking ②）
 
 test("evaluateEntry：direction=decrease 一律不计入（notes.ranking 第②步），mixed 照常计入", () => {
   const debuff = synth(-40, { rates: { physicsAttackRate: 0.87 }, direction: "decrease" });
-  const item = R.evaluateEntry(debuff, env(out()), { explicit: true });
+  const item = R.evaluateEntry(debuff, env(out()), { column: "other", autoConfirm: true });
   assert.equal(item.state, "no");
   assert.equal(item.reasons[0], R.TEXT.reasonDecrease);
-  const mixed = synth(-41, { rates: { physicsAttackPower: -30, magicAttackPower: 33 }, direction: "mixed" });
-  assert.equal(R.evaluateEntry(mixed, env(out()), { explicit: true }).state, "counted");
+  assert.equal(debuff.listable, false, "减益不进配置页各栏");
+  const mixed = synth(-41, { rates: { physicsAttackPower: 30, magicAttackPower: 33 }, direction: "mixed" });
+  assert.equal(R.evaluateEntry(mixed, env(out()), { column: "other", autoConfirm: true }).state, "counted");
   // 真实数据：【无赖】技艺命中敌人时降低对方攻击力（7500401），target=self、appliesTo.skill=yes，但它是减益。
   const raider = index.byId[7500401];
   assert.equal(raider.direction, "decrease");
   assert.equal(raider.appliesTo.skill, "yes");
-  assert.equal(R.evaluateEntry(raider, env(out()), { explicit: true }).state, "no");
+  assert.equal(R.evaluateEntry(raider, env(out()), { column: "other", autoConfirm: true }).state, "no");
   index.entries.forEach((entry) => {
     if (entry.direction !== "decrease") return;
-    const state = R.evaluateEntry(entry, env(out()), { explicit: true }).state;
+    const state = R.evaluateEntry(entry, env(out()), { column: "other", autoConfirm: true }).state;
     assert.notEqual(state, "counted", entry.id + " 是减益，不能计入");
     assert.notEqual(state, "pending", entry.id + " 是减益，不该等用户确认");
   });
@@ -997,60 +1001,87 @@ test("stackedRates：ladder 取 tierMultipliers[n−1]（超出按最后一层�
   assert.equal(grace.rates[grace.stackInput.multiplierKey], grace.stackInput.perStackMultiplier, "原 rates 不被改写");
 });
 
-test("stacksFor / stackWarnings：亲手放入默认实际上限（没有就 1 层），随整件带入默认 0；超出上限给提示", () => {
+test("stacksFor / stackWarnings：层数缺省 0（填层数才算确认），勾选不占槽位的行时预填一局实际上限；超出上限给提示", () => {
   const evergaol = index.byId[7069001];
   const invader = index.byId[7069201];
   const grace = index.byId[8970000];
-  assert.equal(R.stacksFor(evergaol, R.emptyConfig(), true), evergaol.stackInput.practicalMaxStacks);
-  assert.equal(R.stacksFor(evergaol, R.emptyConfig(), false), 0);
-  assert.equal(R.stacksFor(grace, R.emptyConfig(), true), 1, "参数表无上限时默认 1 份");
+  assert.equal(R.stacksFor(evergaol, R.emptyConfig()), 0, "没填过层数就是 0");
+  assert.equal(R.defaultStacks(evergaol), evergaol.stackInput.practicalMaxStacks, "预填一局实际上限");
+  assert.equal(R.defaultStacks(grace), 1, "参数表无上限、也没有实测上限的预填 1 份");
   const config = R.emptyConfig();
   config.stacks[invader.id] = 3.7;
-  assert.equal(R.stacksFor(invader, config, false), 3, "层数取整，且用户填过就不看来源");
-  assert.equal(R.stackWarnings(evergaol, 7).length, 0);
-  assert.ok(R.stackWarnings(evergaol, 8)[0].indexOf("7") !== -1, "超过一局实际上限要提示");
-  assert.ok(R.stackWarnings(evergaol, 12).length === 2, "超过参数表层数再多一条");
-  assert.ok(R.stackWarnings(grace, 11)[0].indexOf("10") !== -1, "copies 超过游戏文本备好的＋N 标签要提示");
+  assert.equal(R.stacksFor(invader, config), 3, "层数取整");
+  assert.equal(R.stackWarnings(evergaol, 7, 7).length, 0);
+  assert.ok(R.stackWarnings(evergaol, 8, 8)[0].indexOf("7") !== -1, "超过一局实际上限要提示");
+  assert.equal(R.stackWarnings(evergaol, 12, R.stackParamMax(evergaol)).length, 2, "超过参数表层数再多一条（按参数表上限计算）");
+  assert.ok(R.stackWarnings(grace, 11, 11)[0].indexOf("10") !== -1, "copies 超过游戏文本备好的＋N 标签要提示");
   assert.equal(R.stackParamMax(evergaol), evergaol.stackInput.paramMaxStacks);
+  assert.equal(R.stackParamMax(grace), R.COPIES_CEILING, "份数型参数表无上限，页面按 99 截断误输入");
+  assert.equal(R.setStacks(R.emptyConfig(), evergaol, 99).stacks[evergaol.id], R.stackParamMax(evergaol));
+  assert.equal(R.setStacks(R.emptyConfig(), evergaol, -3).stacks[evergaol.id], 0);
 });
 
-test("累积阶梯：同一组只算选中的那一层，默认取数据里收录的最高层", () => {
+test("累积阶梯：同一组只算选中的那一层；没选层就一层都不算（选层即确认）", () => {
   const config = R.emptyConfig();
   const members = cfgIndex.ladders[312505];
   assert.ok(members && members.length >= 3);
   const top = members[members.length - 1];
   members.forEach((entry) => {
-    const item = R.evaluateEntry(entry, env(out(), config), { column: "accessory", explicit: true });
-    assert.equal(item.state, entry.id === top.id ? "counted" : "tierOff", entry.id + " 的状态");
+    const item = R.evaluateEntry(entry, env(out(), config), { column: "accessory" });
+    assert.equal(item.state, "tierOff", entry.id + " 没选层时不计入");
+    assert.equal(item.reasons[0], R.TEXT.reasonTierNone);
   });
   config.tiers[312505] = members[0].id;
-  const chosen = R.evaluateEntry(members[0], env(out(), config), { column: "accessory", explicit: true });
-  assert.equal(chosen.state, "counted");
+  const chosen = R.evaluateEntry(members[0], env(out(), config), { column: "accessory" });
+  assert.equal(chosen.state, "counted", "选层即视为条件成立（不用再勾「条件成立」）");
+  assert.equal(R.evaluateEntry(top, env(out(), config), { column: "accessory" }).state, "tierOff");
   assert.equal(R.selectedLadderTier(top, config, cfgIndex.ladders).tier, 1);
+  assert.equal(R.ladderTopTier(cfgIndex.ladders, 312505).id, top.id);
 });
 
 // ------------------------------------------------------------------ 单条评估
 
-test("evaluateEntry：条件型——亲手放入默认已确认，随整件带入默认未确认，ticks 可以覆盖", () => {
+test("evaluateEntry：条件型——占槽位的栏放进来≠条件成立，要勾「条件成立」；「其它增益」栏勾选即确认", () => {
   const conditional = synth(-12, { activation: "conditional" });
   const config = R.emptyConfig();
-  const explicit = R.evaluateEntry(conditional, env(out(), config), { explicit: true });
-  assert.equal(explicit.state, "counted");
-  assert.equal(explicit.needs.length, 1);
-  assert.equal(explicit.ticked, true);
-  const implicit = R.evaluateEntry(conditional, env(out(), config), { explicit: false });
-  assert.equal(implicit.state, "pending");
+  const slotted = R.evaluateEntry(conditional, env(out(), config), { column: "relic" });
+  assert.equal(slotted.state, "pending");
+  assert.equal(slotted.needs.length, 1);
+  assert.equal(slotted.needs[0], R.TEXT.activationNeed.conditional);
+  const slotless = R.evaluateEntry(conditional, env(out(), config), { column: "other", autoConfirm: true });
+  assert.equal(slotless.state, "counted");
+  assert.equal(slotless.ticked, true);
   config.ticks[-12] = true;
-  assert.equal(R.evaluateEntry(conditional, env(out(), config), { explicit: false }).state, "counted");
-  config.ticks[-12] = false;
-  assert.equal(R.evaluateEntry(conditional, env(out(), config), { explicit: true }).state, "pending");
+  assert.equal(R.evaluateEntry(conditional, env(out(), config), { column: "weaponAffix" }).state, "counted", "勾了就计入");
+  const strict = R.makeEnv(cfgIndex, out(), config, { strict: true });
+  assert.equal(R.evaluateEntry(conditional, strict, { column: "other", autoConfirm: true }).state, "pending", "推荐口径不计条件型");
+  const assume = R.makeEnv(cfgIndex, out(), R.emptyConfig(), { assumeAll: true });
+  assert.equal(R.evaluateEntry(conditional, assume, { column: "relic" }).state, "counted", "「条件全部成立」口径当成立");
+  // 「装备三把以上 X」：说明写出数量与类别。
+  const equipped = synth(-19, { activation: "conditional", scope: { weaponTypes: { mode: "equippedCount", wepTypes: [1], namesZh: ["短剑"], count: 3 } } });
+  assert.equal(R.activationNote(equipped, out()), R.fmt(R.TEXT.activationNeed.equipped, 3, "短剑"));
+  // 需同时使用道具（requiresGoodsIds）：要确认。
+  const goods = synth(-18, { requiresGoodsIds: [1210] });
+  const verdict = R.appliesVerdict(goods, out());
+  assert.equal(verdict.state, "pending");
+  assert.ok(verdict.needs[0].indexOf("道具") !== -1);
 });
 
-test("evaluateEntry：作用于队友 / 敌人 / 召唤物的一律不计入自己的输出", () => {
-  assert.equal(R.evaluateEntry(synth(-13, { target: "ally" }), env(out()), { explicit: true }).state, "no");
-  assert.equal(R.evaluateEntry(synth(-14, { target: "enemy" }), env(out()), { explicit: true }).state, "no");
-  assert.equal(R.evaluateEntry(synth(-15, { target: "summon" }), env(out()), { explicit: true }).state, "no");
-  assert.equal(R.evaluateEntry(synth(-16, { rates: { saAttackPowerRate: 2 } }), env(out()), { explicit: true }).state, "noDamage");
+test("evaluateEntry：作用对象只留自己与队友；selfAllyPair 的 Allies 那一行不算施放者自己", () => {
+  assert.equal(R.evaluateEntry(synth(-13, { target: "ally" }), env(out()), { column: "other", autoConfirm: true }).state, "counted",
+    "ally＝自己与／或附近队友（notes.target），照常计入");
+  const pairAlly = synth(-27, { target: "ally", selfAllyPair: { role: "ally", counterpartSpEffectId: -28 } });
+  const pairItem = R.evaluateEntry(pairAlly, env(out()), { column: "other", autoConfirm: true });
+  assert.equal(pairItem.state, "no");
+  assert.equal(pairItem.reasons[0], R.TEXT.reasonAllyPair);
+  const pairSelf = synth(-28, { selfAllyPair: { role: "self", counterpartSpEffectId: -27 } });
+  assert.equal(R.evaluateEntry(pairSelf, env(out()), { column: "other", autoConfirm: true }).state, "counted");
+  assert.equal(R.evaluateEntry(synth(-14, { target: "enemy" }), env(out()), { column: "other", autoConfirm: true }).state, "no");
+  assert.equal(R.evaluateEntry(synth(-15, { target: "summon" }), env(out()), { column: "other", autoConfirm: true }).state, "no");
+  assert.equal(R.evaluateEntry(synth(-16, { rates: { saAttackPowerRate: 2 } }), env(out()), { column: "other" }).state, "noDamage");
+  // 真实数据：共享圣律 1877（队友那一行）不计入。
+  const holy = out({ mode: "incantation", shares: shares({ holy: 1 }) });
+  assert.equal(R.evaluateEntry(index.byId[1877], env(holy), { column: "other", autoConfirm: true }).state, "no");
 });
 
 test("evaluateEntry：有效倍率 = Σ 占比 × 倍率表；攻击力倍率层与伤害倍率层相乘；加算只按占比加权", () => {
@@ -1080,31 +1111,47 @@ test("dedupeItems：同一互斥键只留一份（取倍率高的），不同键
   assert.ok(items[0].reasons[0].indexOf("sp160") !== -1);
 });
 
-test("dedupeItems：同一效果两份——stackSelf 也只计一份，并写明数据口径与本页口径不同", () => {
+test("同一效果多份：stackSelf（spCategory 10）各份相乘并提示「参数推断」，其余只算一份", () => {
   const e = env(out());
   const one = synth(-23);
-  const items = [
-    R.evaluateEntry(one, e, { explicit: true, label: "武器 A" }),
-    R.evaluateEntry(one, e, { explicit: true, label: "武器 B" })
-  ];
-  const winners = R.dedupeItems(items);
-  assert.equal(winners.length, 1);
-  assert.equal(items[1].state, "duplicate");
-  assert.ok(items[1].reasons[0].indexOf("stackSelf") !== -1 && items[1].reasons[0].indexOf("未实测") !== -1);
+  const merged = R.mergeSources([
+    { entry: one, column: "weaponAffix", copies: 2, label: "武器 A", key: "wa:1" },
+    { entry: one, column: "relic", copies: 1, label: "遗物 1", key: "relic:0" }
+  ]);
+  assert.equal(merged.length, 1, "同一 spEffectId 合并成一条");
+  assert.equal(merged[0].copies, 3);
+  assert.equal(merged[0].column, "weaponAffix", "栏目取第一个来源");
+  const item = R.evaluateEntry(one, e, merged[0]);
+  assert.equal(item.state, "counted");
+  assert.equal(item.countedCopies, 3);
+  assert.ok(Math.abs(item.table.slash - Math.pow(1.2, 3)) < 1e-12, "三份相乘");
+  assert.ok(item.notes.some((note) => note.indexOf("stackSelf") !== -1 && note.indexOf("参数推断") !== -1));
   const refresh = synth(-24, { stacking: { spCategory: 20, spCategoryBehavior: "resetOnApply", exclusiveKey: "sp20#-24" } });
-  const refreshItems = [R.evaluateEntry(refresh, e, { explicit: true }), R.evaluateEntry(refresh, e, { explicit: true })];
-  R.dedupeItems(refreshItems);
-  assert.ok(refreshItems[1].reasons[0].indexOf("只刷新") !== -1);
+  const single = R.evaluateEntry(refresh, e, { column: "relic", copies: 2 });
+  assert.equal(single.countedCopies, 1);
+  assert.ok(Math.abs(single.table.slash - 1.2) < 1e-12, "非 stackSelf 只算一份");
+  assert.ok(single.notes.some((note) => note.indexOf("只算一份") !== -1));
+  const warnings = R.configWarnings([item, single], [item, single]);
+  assert.ok(warnings.some((w) => w.kind === "copiesStackSelf" && w.text.indexOf("未实测") !== -1));
+  assert.ok(warnings.some((w) => w.kind === "copiesSingle"));
 });
 
 test("prefersItem：两边都是 applyHighest 时按 categoryPriority 取数值小的，否则比有效倍率", () => {
   const e = env(out());
   const low = synth(-25, { rates: { physicsAttackRate: 1.1 }, stacking: { spCategory: 1001, spCategoryBehavior: "applyHighest", categoryPriority: 1, exclusiveKey: "sp1001" } });
   const high = synth(-26, { rates: { physicsAttackRate: 1.5 }, stacking: { spCategory: 1001, spCategoryBehavior: "applyHighest", categoryPriority: 5, exclusiveKey: "sp1001" } });
-  const a = R.evaluateEntry(low, e, { explicit: true });
-  const b = R.evaluateEntry(high, e, { explicit: true });
+  const a = R.evaluateEntry(low, e, { column: "other", autoConfirm: true });
+  const b = R.evaluateEntry(high, e, { column: "other", autoConfirm: true });
   assert.equal(R.prefersItem(a, b), true, "priority 1 优先于 5，即使倍率更低");
   assert.equal(R.prefersItem(b, a), false);
+  // 被压掉的那一份写明是按 categoryPriority 压掉的，汇总也给出提示。
+  const items = [b, a];
+  R.dedupeItems(items);
+  assert.equal(b.state, "duplicate");
+  assert.ok(b.reasons[0].indexOf("categoryPriority") !== -1 && b.reasons[0].indexOf("压掉") !== -1);
+  const warnings = R.configWarnings(items, [a]);
+  assert.equal(warnings[0].kind, "priority");
+  assert.ok(warnings[0].text.indexOf("applyHighest") !== -1);
 });
 
 // ------------------------------------------------------------------ 槽位规则
@@ -1187,14 +1234,15 @@ test("自组遗物候选：只收能增伤、且 Core.isEligible 认可当前模
   });
 });
 
-test("availableContexts：只统计 requires.attackContexts 里真正要求过的情境，中文名取 enums.attackContext", () => {
-  const contexts = index.contexts;
+test("availableContexts：只统计当前输出类别下 requires.attackContexts 里真正要求过的情境，中文名取 enums.attackContext", () => {
+  const contexts = R.availableContexts(buffs, index.entries, "skill");
   assert.ok(contexts.length > 0);
   contexts.forEach((one) => {
     assert.equal(one.zh, buffs.enums.attackContext[one.key].zh);
     assert.ok(one.count > 0);
   });
-  assert.deepEqual(R.availableContexts({}, []), []);
+  assert.deepEqual(R.availableContexts(buffs, index.entries, "incantation"), [], "祷告没有要求攻击情境的条目");
+  assert.deepEqual(R.availableContexts({}, [], "skill"), []);
 });
 
 // ------------------------------------------------------------------ 文案常量表

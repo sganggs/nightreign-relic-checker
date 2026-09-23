@@ -1,18 +1,24 @@
-// 增伤排名页的**双端对照用例**：macOS 端由同事并行实现同一套「自己组配置」算法，
-// 两端用同一组输入、同一套断言口径。
+// 增伤排名页的**双端对照用例**：macOS 端（RelicCore/BuffLoadout.swift，自检在
+// RelicCoreChecks/BuffRankerChecks.swift 的 checkLoadoutParity）按同一套口径实现，两端用同一组输入、
+// 同一套断言口径、同一种对拍行格式。
 //
 // 每一端都在自己这一侧用一份**独立重算的参考实现**校对「同一算法的中间量」——构成占比、
-// 「全部增益一览」前 10 名的有效倍率、整套配置的总倍率与计入条目集合（参考实现不复用被测代码的任何分支）。
-// 两边都绿，两端算出来的数就必然对得上；数值会随数据集修订变化，所以一律**不写绝对快照**。
+// 「全部增益一览」前 10 名的有效倍率、整套配置的总倍率、各栏小计与计入条目集合（参考实现不复用被测
+// 代码的任何分支，容差 1e-9，比任务要求的 1e-6 更严）。两边都绿，两端算出来的数就必然对得上；
+// 数值会随数据集修订变化，所以一律**不写绝对快照**。文案常量表与说明区另用摘要锁住逐字一致
+// （摘要常量两端相同，见文末）。
 //
 // 固定的三组配置对照输入（任务清单）：
-//   ① 尸横遍野 + 尸山血海，常规模式：按推荐填满后的总倍率与计入条目集合；
-//   ② 死亡雷击，深夜模式：按推荐填满后的总倍率与计入条目集合；
-//   ③ 狮子斩 + 大剑：2 件固定遗物（安定者的遗志、辽阔的幽静情景）＋ 1 件自组遗物。
+//   A 尸横遍野 + 尸山血海，常规模式：按推荐填满；
+//   B 死亡雷击，深夜模式：按推荐填满；
+//   C 狮子斩 + 大剑：2 件固定遗物（安定者的遗志 2070、王的黑夜 2100，勾「切换武器时，能提升物理攻击力」
+//     7035902）＋ 1 件自组遗物（封印监牢 7060000 / 出击时附加火 7120100 / 对陷入冻伤的敌人 7260400）
+//     ＋ 2 个护符（战士壶碎片 1230、红羽七刃剑 2040）＋ 封印监牢 7 层。
 //
 // 需要人工对拍时：
 //   NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs
-// 会打出 CASE / CONFIG 两种行（同一格式），与 macOS 端逐行比即可。
+//   NR_RANKER_DUMP=1 swift run RelicCoreChecks
+// 两端都打出 CASE / CONFIG 两种行（同一格式，见 ranker.js 的 caseDumpLine / configDumpLine），逐行比即可。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -34,7 +40,7 @@ const index = R.indexBuffs(buffs);
 const cfgIndex = R.buildConfigIndex(buffs, index, catalog, Core);
 const DUMP = process.env.NR_RANKER_DUMP === "1";
 
-// 构成用例（与旧版对照用例同一组输入）。
+// 构成用例（两端同一组输入）。
 const CASES = [
   // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
   { key: "corpse-piler-full", kind: "skill", id: 1177, weaponId: 9040000, only: null },
@@ -55,6 +61,7 @@ const CASES = [
 const ELEMENTS = R.ELEMENTS;
 const TYPE_KEYS = R.TYPE_KEYS;
 const PHYS = ["slash", "blow", "thrust", "neutral", "physNone"];
+const EPS = 1e-9;
 
 // ---- 参考实现（故意不复用被测代码的分支）--------------------------------
 
@@ -102,8 +109,14 @@ const FIELD_CHANNELS = {
   thrustAttackRate: ["thrust"], thrustAttackPowerRate: ["thrust"],
   neutralAttackRate: ["neutral"], neutralAttackPowerRate: ["neutral"]
 };
+const FLAT_CHANNELS = {
+  physicsAttackPower: PHYS, magicAttackPower: ["magic"], fireAttackPower: ["fire"],
+  thunderAttackPower: ["lightning"], darkAttackPower: ["holy"]
+};
 const FIELDS = {};
 (buffs.rateFields || []).forEach((field) => { FIELDS[field.key] = field; });
+const BUFF = {};
+buffs.buffs.forEach((buff) => { BUFF[buff.spEffectId] = buff; });
 
 function countsAsDamage(buff) {
   return Object.keys(buff.rates || {}).some((key) => {
@@ -112,56 +125,22 @@ function countsAsDamage(buff) {
   });
 }
 
-// 同一遗物词条下的多档（affixVariant）参考分组，独立重写：数据有 affixVariant 就按它；没有时按
-// 「同一 relicAffixes[0].attachEffectId、行名去掉 ' - Potency N' 后相同、倍率字段集合相同、各自一个
-// exclusiveKey、至少两条」分组。每组默认只算第 1 档（数据给的 variant=1，推断时取 ID 最小的），
-// 互斥键合并为 affix#<词条 ID>。返回 spEffectId → { group, first }。
-function referenceVariants() {
-  const out = {};
-  const withData = buffs.buffs.filter((buff) => buff.affixVariant);
-  if (withData.length) {
-    const firsts = {};
-    withData.forEach((buff) => {
-      const key = buff.affixVariant.key || "affix#" + buff.affixVariant.attachEffectId;
-      if (buff.affixVariant.variant === 1) firsts[key] = buff.spEffectId;
-    });
-    withData.forEach((buff) => {
-      const key = buff.affixVariant.key || "affix#" + buff.affixVariant.attachEffectId;
-      out[buff.spEffectId] = { group: key, first: firsts[key] };
-    });
-    return out;
-  }
-  const buckets = new Map();
-  buffs.buffs.forEach((buff) => {
-    if (!countsAsDamage(buff) || buff.stackInput || buff.accumulatorLadder || buff.accumulatorStages || buff.selfAllyPair) return;
-    const links = buff.relicAffixes || [];
-    if (links.length !== 1) return;
-    const name = String(buff.paramName || "").replace(/\s*-\s*Potency\s*\d+\s*$/i, "");
-    const bucket = links[0].attachEffectId + "|" + name + "|" + Object.keys(buff.rates || {}).sort().join(",");
-    if (!buckets.has(bucket)) buckets.set(bucket, []);
-    buckets.get(bucket).push(buff);
-  });
-  buckets.forEach((members) => {
-    if (members.length < 2) return;
-    if (new Set(members.map((buff) => buff.stacking.exclusiveKey)).size !== members.length) return;
-    const group = "affix#" + members[0].relicAffixes[0].attachEffectId;
-    const first = Math.min(...members.map((buff) => buff.spEffectId));
-    members.forEach((buff) => { out[buff.spEffectId] = { group, first }; });
-  });
-  return out;
+// 能进配置页的条目：带伤害字段、作用于自己或队友、不是减益。
+function listable(buff) {
+  return countsAsDamage(buff) && (buff.target === "self" || buff.target === "ally") && buff.direction !== "decrease";
 }
-const VARIANTS = referenceVariants();
 
-// appliesTo 判定（notes.appliesTo 的口径，独立重写）。
+// appliesTo 判定（notes.appliesTo 的口径，独立重写）。manual＝要用户确认。
 function referenceVerdict(buff, out) {
   const cls = out.mode;
   const value = (buff.appliesTo || {})[cls];
-  if (value === "yes") return { ok: true, weight: 1, manual: false, restricted: null };
-  if (value !== "conditional") return { ok: false };
+  if (value !== "yes" && value !== "conditional") return { ok: false };
+  let manual = (buff.requiresGoodsIds || []).length > 0;
+  if (value === "yes") return { ok: true, weight: 1, manual, restricted: null };
   const requires = (((buff.appliesToDetail || {})[cls]) || {}).requires || {};
   let weight = 1;
-  let manual = Object.keys(requires).length === 0;
   let restricted = null;
+  if (Object.keys(requires).length === 0) manual = true;
   for (const key of Object.keys(requires)) {
     const need = requires[key];
     if (key === "hand") {
@@ -193,6 +172,12 @@ function referenceVerdict(buff, out) {
   return { ok: true, weight, manual, restricted };
 }
 
+function paramMax(si) {
+  if (si.mode !== "ladder") return 99;
+  const tiers = (si.tierMultipliers || []).length;
+  return si.paramMaxStacks > 0 ? (tiers ? Math.min(si.paramMaxStacks, tiers) : si.paramMaxStacks) : Math.max(tiers, 1);
+}
+
 // 叠层输入（notes.stackInput）：ladder 第 n 层取 tierMultipliers[n-1]，copies 取 perStackMultiplier^n，
 // 替换 appliesToRateKeys 那几个字段。
 function referenceRates(buff, stacks) {
@@ -206,101 +191,164 @@ function referenceRates(buff, stacks) {
   return rates;
 }
 
-function referenceTable(buff, verdict, stacks) {
-  const perChannel = {};
-  TYPE_KEYS.forEach((key) => { perChannel[key] = 1; });
+// 单条的逐通道倍率与加算：部分段命中按 1 + (m − 1) × 占比，stackSelf 多份再乘方。
+function referenceTables(buff, verdict, stacks, copies) {
+  const table = {};
+  const flat = {};
+  TYPE_KEYS.forEach((key) => { table[key] = 1; flat[key] = 0; });
   const rates = referenceRates(buff, stacks);
   Object.keys(rates).forEach((key) => {
     const field = FIELDS[key];
     const value = rates[key];
-    if (!field || field.countsAsDamage !== true || field.valueKind !== "multiplier") return;
-    if (typeof value !== "number" || !isFinite(value) || value <= 0 || value === field.default) return;
-    (FIELD_CHANNELS[key] || []).forEach((channel) => {
-      if (verdict.restricted && channel !== verdict.restricted) return;
-      perChannel[channel] *= value;
-    });
+    if (!field || field.countsAsDamage !== true || typeof value !== "number" || !isFinite(value) || value === field.default) return;
+    if (field.valueKind === "multiplier" && FIELD_CHANNELS[key] && value > 0) {
+      FIELD_CHANNELS[key].forEach((channel) => {
+        if (verdict.restricted && channel !== verdict.restricted) return;
+        table[channel] *= value;
+      });
+    } else if (field.valueKind === "flat" && FLAT_CHANNELS[key]) {
+      FLAT_CHANNELS[key].forEach((channel) => { flat[channel] += value; });
+    }
   });
-  if (verdict.weight < 1) {
-    TYPE_KEYS.forEach((key) => { perChannel[key] = 1 + (perChannel[key] - 1) * verdict.weight; });
-  }
-  return perChannel;
+  TYPE_KEYS.forEach((key) => {
+    if (verdict.weight < 1) {
+      table[key] = 1 + (table[key] - 1) * verdict.weight;
+      flat[key] *= verdict.weight;
+    }
+    if (copies > 1) {
+      table[key] = Math.pow(table[key], copies);
+      flat[key] *= copies;
+    }
+  });
+  return { table, flat };
 }
 
 function weighted(table, shares) {
-  return TYPE_KEYS.reduce((sum, key) => sum + shares[key] * table[key], 0);
+  let sum = 0;
+  let weight = 0;
+  TYPE_KEYS.forEach((key) => {
+    if (!(shares[key] > 0)) return;
+    sum += shares[key] * table[key];
+    weight += shares[key];
+  });
+  return weight > 0 ? sum / weight : 1;
 }
 
-// 一条 buff 在「亲手放入」口径下对当前输出的有效倍率（一览的参考值）。
-// 叠层类亲手放入时默认一局实际能达到的层数（没有就 1 层）。
-function referenceMultiplier(buff, out) {
-  if (buff.direction === "decrease") return null;
+// 一览（「条件全部成立」）的参考值：叠层取一局实际上限（没有就退『＋N』标签数，再没有 1 层）。
+function referenceOverview(buff, out) {
+  if (!listable(buff)) return null;
+  if (buff.selfAllyPair && buff.selfAllyPair.role === "ally") return null;
   const verdict = referenceVerdict(buff, out);
   if (!verdict.ok) return null;
-  const stacks = buff.stackInput ? (buff.stackInput.practicalMaxStacks || 1) : null;
-  return weighted(referenceTable(buff, verdict, stacks), out.shares);
+  const si = buff.stackInput;
+  const soft = si ? (si.practicalMaxStacks > 0 ? si.practicalMaxStacks : (si.uiLabelMax > 0 ? si.uiLabelMax : 1)) : null;
+  const stacks = si ? Math.min(soft, paramMax(si)) : null;
+  return weighted(referenceTables(buff, verdict, stacks, 1).table, out.shares);
 }
 
-// 整套配置的参考总倍率：独立地从配置展开 spEffectId，按 多档只留第 1 档 / target / direction（减益不计）/
-// appliesTo / activation 过滤，按 exclusiveKey 去重（同键取有效倍率高的，再相同取 id 小的），
-// 逐伤害类型连乘后按占比加权。当前武器固有自动列入但不算亲手放入（条件型默认未确认）。
+const SUMMARY_COLUMN = { weaponAffix: "weaponAffix", relic: "relic", accessory: "accessory" };
+
+// 整套配置的参考值：独立地从配置展开 spEffectId（同一 ID 合并份数），按 多档只留选中的一档 / 作用对象
+// （含 selfAllyPair）/ 减益 / appliesTo / 累积阶梯选层 / 叠层层数 / 确认（占槽位的栏要勾「条件成立」）过滤，
+// 份数按 stackSelf 且按 ID 互斥的相乘，×1 且没有正加算的不算，按 exclusiveKey 去重（applyHighest 比
+// categoryPriority，其余取有效倍率高的，再比加算，再取 id 小的），逐伤害类型连乘后按占比加权；各栏小计同法。
 function referenceConfig(config, out) {
   const deep = config.runMode === "deep";
   const relicSlots = deep ? buffs.slotRules.modes.deep.relicSlots : buffs.slotRules.modes.normal.relicSlots;
-  const byId = {};
-  buffs.buffs.forEach((buff) => { byId[buff.spEffectId] = buff; });
   const sources = [];
-  config.weaponAffixes.forEach((one) => {
+  config.weaponAffixes.slice().sort((a, b) => a.id - b.id).forEach((one) => {
     const raw = buffs.weaponAffixes.find((affix) => affix.attachEffectId === one.id);
-    for (let copy = 0; copy < one.count; copy += 1) {
-      raw.spEffectIds.forEach((id) => sources.push({ id, explicit: true }));
-    }
+    raw.spEffectIds.filter((id) => BUFF[id] && listable(BUFF[id])).forEach((id) => sources.push({ id, copies: one.count, column: "weaponAffix" }));
   });
   config.relics.slice(0, relicSlots).forEach((card) => {
     if (card.type === "fixed") {
       const relic = buffs.fixedRelics.find((one) => one.relicIds.join("-") === card.key);
-      relic.spEffectIds.forEach((id) => sources.push({ id, explicit: false }));
+      relic.spEffectIds.filter((id) => BUFF[id] && listable(BUFF[id])).forEach((id) => sources.push({ id, copies: 1, column: "relic" }));
     } else if (card.type === "custom") {
       card.affixIds.filter((id) => id != null).forEach((affixId) => {
-        buffs.buffs.filter((buff) => (buff.relicAffixes || []).some((link) => link.catalogEffectId === affixId))
-          .forEach((buff) => sources.push({ id: buff.spEffectId, explicit: true }));
+        buffs.buffs.filter((buff) => listable(buff) && (buff.relicAffixes || []).some((link) => link.catalogEffectId === affixId))
+          .forEach((buff) => sources.push({ id: buff.spEffectId, copies: 1, column: "relic" }));
       });
     }
   });
   config.accessories.filter((id) => id != null).forEach((talismanId) => {
-    buffs.buffs.filter((buff) => (buff.sourceSlots || []).indexOf("accessory") !== -1 &&
+    buffs.buffs.filter((buff) => listable(buff) && buff.sourceSlot === "accessory" &&
       (buff.sources || []).some((source) => source.kind === "accessory" && source.id === talismanId))
-      .forEach((buff) => sources.push({ id: buff.spEffectId, explicit: true }));
+      .forEach((buff) => sources.push({ id: buff.spEffectId, copies: 1, column: "accessory" }));
   });
   if (out.mode === "skill" && out.weapon) {
-    buffs.buffs.filter((buff) => buff.weaponInnate && (buff.weaponInnate.weaponIds || []).indexOf(out.weapon.id) !== -1)
-      .forEach((buff) => sources.push({ id: buff.spEffectId, explicit: false }));
+    buffs.buffs.filter((buff) => listable(buff) && buff.weaponInnate && (buff.weaponInnate.weaponIds || []).indexOf(out.weapon.id) !== -1)
+      .forEach((buff) => sources.push({ id: buff.spEffectId, copies: 1, column: "other" }));
   }
-  const winners = {};
+  const merged = new Map();
   sources.forEach((source) => {
-    const buff = byId[source.id];
-    if (!buff || !countsAsDamage(buff)) return;
-    const variant = VARIANTS[buff.spEffectId];
-    if (variant && variant.first !== buff.spEffectId) return;
-    if (buff.target !== "self" || buff.direction === "decrease") return;
-    assert.ok(!buff.stackInput && !buff.accumulatorLadder, "参考实现不处理叠层；对照用例里不该出现 " + buff.spEffectId);
+    const one = merged.get(source.id);
+    if (one) one.copies += source.copies;
+    else merged.set(source.id, { id: source.id, copies: source.copies, column: source.column });
+  });
+  const variantPick = (buff) => {
+    const key = buff.affixVariant.key || "affix#" + buff.affixVariant.attachEffectId;
+    const chosen = (config.variants || {})[key];
+    if (chosen != null) return chosen;
+    return buffs.buffs.find((one) => one.affixVariant && (one.affixVariant.key || "affix#" + one.affixVariant.attachEffectId) === key &&
+      one.affixVariant.variant === 1).spEffectId;
+  };
+  const candidates = [];
+  merged.forEach((one) => {
+    const buff = BUFF[one.id];
+    if (buff.affixVariant && variantPick(buff) !== buff.spEffectId) return;
+    if (buff.selfAllyPair && buff.selfAllyPair.role === "ally") return;
     const verdict = referenceVerdict(buff, out);
     if (!verdict.ok) return;
-    const needsConfirm = verdict.manual || buff.activation !== "passive";
-    if (needsConfirm && !source.explicit) return;
-    const table = referenceTable(buff, verdict);
-    const value = weighted(table, out.shares);
-    const key = variant ? variant.group : buff.stacking.exclusiveKey;
-    const current = winners[key];
-    if (!current || value > current.value || (value === current.value && buff.spEffectId < current.id)) {
-      winners[key] = { id: buff.spEffectId, value, table };
+    let stacks = null;
+    let selected = false;
+    if (buff.accumulatorLadder) {
+      const group = buff.accumulatorLadder.tierSpEffectIds[0];
+      if ((config.tiers || {})[group] !== buff.spEffectId) return;
+      selected = true;
     }
+    if (buff.stackInput) {
+      stacks = Math.min(Math.max(0, Math.floor((config.stacks || {})[buff.spEffectId] || 0)), paramMax(buff.stackInput));
+      if (!(stacks > 0)) return;
+      selected = true;
+    }
+    const needs = !selected && (verdict.manual || buff.activation !== "passive");
+    if (needs && !(config.ticks || {})[buff.spEffectId]) return;
+    const multiply = buff.stacking.spCategoryBehavior === "stackSelf" &&
+      (!buff.stacking.exclusiveScope || buff.stacking.exclusiveScope === "perSpEffect");
+    const tables = referenceTables(buff, verdict, stacks, multiply ? one.copies : 1);
+    const value = weighted(tables.table, out.shares);
+    const flat = weighted(tables.flat, out.shares);
+    if (Math.abs(value - 1) <= EPS && flat <= EPS) return;
+    candidates.push({ id: buff.spEffectId, key: buff.stacking.exclusiveKey, value, flat, table: tables.table,
+      column: SUMMARY_COLUMN[one.column] || "other", copies: multiply ? one.copies : 1,
+      highest: buff.stacking.spCategoryBehavior === "applyHighest", priority: buff.stacking.categoryPriority });
   });
-  const perType = {};
-  TYPE_KEYS.forEach((key) => { perType[key] = 1; });
-  Object.keys(winners).forEach((key) => TYPE_KEYS.forEach((type) => { perType[type] *= winners[key].table[type]; }));
+  const winners = {};
+  candidates.forEach((one) => {
+    const current = winners[one.key];
+    let better = !current;
+    if (current) {
+      if (one.highest && current.highest && one.priority !== current.priority) better = one.priority < current.priority;
+      else if (Math.abs(one.value - current.value) > EPS) better = one.value > current.value;
+      else if (Math.abs(one.flat - current.flat) > EPS) better = one.flat > current.flat;
+      else better = one.id < current.id;
+    }
+    if (better) winners[one.key] = one;
+  });
+  const product = (list) => {
+    const perType = {};
+    TYPE_KEYS.forEach((key) => { perType[key] = 1; });
+    list.forEach((one) => TYPE_KEYS.forEach((type) => { perType[type] *= one.table[type]; }));
+    return weighted(perType, out.shares);
+  };
+  const list = Object.keys(winners).map((key) => winners[key]);
+  const subtotals = {};
+  R.COLUMN_ORDER.forEach((column) => { subtotals[column] = product(list.filter((one) => one.column === column)); });
   return {
-    total: weighted(perType, out.shares),
-    ids: Object.keys(winners).map((key) => winners[key].id).sort((a, b) => a - b)
+    total: product(list),
+    subtotals,
+    ids: list.map((one) => one.id + (one.copies > 1 ? "x" + one.copies : "")).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
   };
 }
 
@@ -321,16 +369,13 @@ function runCase(def) {
   });
   const comp = R.composition(selected, weapon, isSpell);
   const out = R.makeOutput({ mode: def.kind, meansId: def.id, weapon, hand: 1, shares: comp.shares, contexts: {} }, buffs);
-  const rows = R.overviewRows(cfgIndex, out, R.emptyConfig());
-  const counted = rows.filter((row) => row.state === "counted" && row.multiplier > R.USEFUL_EPSILON);
-  return { def, weapon, hits, selected, comp, out, rows, counted, isSpell };
+  const rows = R.overviewRows(cfgIndex, out);
+  const useful = rows.filter((row) => row.applicable && row.multiplier > R.USEFUL_EPSILON);
+  return { def, weapon, hits, selected, comp, out, rows, useful, isSpell };
 }
 
 const results = {};
 CASES.forEach((def) => { results[def.key] = runCase(def); });
-
-const buffById = {};
-(buffs.buffs || []).forEach((buff) => { buffById[buff.spEffectId] = buff; });
 
 function close(actual, expected, message) {
   assert.ok(
@@ -361,47 +406,34 @@ CASES.forEach((def) => {
     close(run.comp.total, reference.total, "相对伤害总量应与参考实现一致");
   });
 
-  test("对照用例 " + def.key + "：一览前 10 名与有效倍率（Σ 占比 × 适用倍率连乘，部分段按段加权）", () => {
-    const top = run.counted.slice(0, 10);
-    assert.equal(top.length, Math.min(10, run.counted.length));
+  test("对照用例 " + def.key + "：一览前 10 名与有效倍率（条件全部成立、Σ 占比 × 适用倍率连乘，部分段按段加权）", () => {
+    const top = run.useful.slice(0, 10);
     assert.ok(top.length > 0, "应有生效的条目");
     top.forEach((row, i) => {
-      if (i) assert.ok(top[i - 1].multiplier >= row.multiplier, "前 10 名必须按有效倍率降序");
-      const buff = buffById[row.entry.id];
+      if (i) assert.ok(top[i - 1].multiplier >= row.multiplier - 1e-12, "前 10 名必须按有效倍率降序");
+      const buff = BUFF[row.entry.id];
       assert.ok(buff, "一览里出现了数据集里没有的 #" + row.entry.id);
-      const expected = referenceMultiplier(buff, run.out);
+      const expected = referenceOverview(buff, run.out);
       assert.notEqual(expected, null, "#" + row.entry.id + " 参考实现判为不生效");
       close(row.multiplier, expected, "#" + row.entry.id + " 的有效倍率");
     });
   });
 
-  test("对照用例 " + def.key + "：生效判定分流与参考实现逐条一致", () => {
+  test("对照用例 " + def.key + "：一览只收能进计算的条目，生效判定分流与参考实现逐条一致", () => {
     let checked = 0;
+    const listed = new Set(run.rows.map((row) => row.entry.id));
+    buffs.buffs.forEach((buff) => assert.equal(listed.has(buff.spEffectId), listable(buff), "#" + buff.spEffectId + " 进不进一览"));
     run.rows.forEach((row) => {
       const buff = row.entry.buff;
-      const variant = VARIANTS[buff.spEffectId];
-      if (variant && variant.first !== buff.spEffectId) {
-        assert.equal(row.state, "variantOff", "#" + buff.spEffectId + " 是多档词条里未选的档");
-        return;
-      }
-      assert.notEqual(row.state, "variantOff", "#" + buff.spEffectId + " 不是多档词条里未选的档");
-      if (buff.target !== "self") {
-        assert.equal(row.state, "no", "#" + buff.spEffectId + " 不作用于自己");
-        return;
-      }
-      if (buff.direction === "decrease") {
-        assert.equal(row.state, "no", "#" + buff.spEffectId + " 是减益（notes.ranking ②）");
-        return;
-      }
-      const verdict = referenceVerdict(buff, run.out);
+      const expected = referenceOverview(buff, run.out);
       checked += 1;
-      if (!verdict.ok) {
-        assert.ok(row.state === "no" || row.state === "context", "#" + buff.spEffectId + " 参考判不生效，页面却是 " + row.state);
-        if (verdict.context) assert.equal(row.state, "context");
+      if (expected === null) {
+        assert.equal(row.applicable, false, "#" + buff.spEffectId + " 参考判不生效，页面却是 " + row.state);
+        if (buff.selfAllyPair && buff.selfAllyPair.role === "ally") assert.equal(row.reasons[0], R.TEXT.reasonAllyPair);
       } else {
-        assert.ok(row.state !== "no" && row.state !== "context", "#" + buff.spEffectId + " 参考判生效，页面却是 " + row.state);
+        assert.equal(row.applicable, true, "#" + buff.spEffectId + " 参考判生效，页面却是 " + row.state);
+        close(row.multiplier, expected, "#" + buff.spEffectId + " 的有效倍率");
       }
-      if (row.state === "counted") assert.notEqual(buff.appliesTo[def.kind], "no");
     });
     assert.ok(checked > 100, "逐条比对的样本太少");
   });
@@ -415,8 +447,8 @@ test("对照：构成相同的两次选段，一览与推荐配置必须逐项�
   assert.ok(full.selected.length > last.selected.length, "全段应比只勾一段多");
   TYPE_KEYS.forEach((key) => close(full.comp.shares[key], last.comp.shares[key], key + " 占比应一致"));
   assert.deepEqual(
-    full.counted.slice(0, 10).map((row) => row.entry.id),
-    last.counted.slice(0, 10).map((row) => row.entry.id),
+    full.useful.slice(0, 10).map((row) => row.entry.id),
+    last.useful.slice(0, 10).map((row) => row.entry.id),
     "构成相同 → 前 10 名必须完全相同"
   );
   const fillFull = R.recommendFill(cfgIndex, full.out, R.emptyConfig(), Core, full.weapon.wepType).config;
@@ -431,10 +463,10 @@ test("对照：同一战技换一把带火属性的武器，只加火的条目�
   assert.ok(flame.comp.shares.fire > 0, "火焰大剑的火占比应大于 0");
   assert.deepEqual(plain.selected.map((hit) => hit.atkId), flame.selected.map((hit) => hit.atkId),
     "同一战技同一套段，换武器不该改变选段");
-  const fireOnly = flame.counted.filter((row) => row.table.fire > 1 &&
+  const fireOnly = flame.useful.filter((row) => row.table.fire > 1 &&
     TYPE_KEYS.every((key) => key === "fire" || Math.abs(row.table[key] - 1) < 1e-9));
   assert.ok(fireOnly.length > 0, "火焰大剑下应能进来只加火的条目");
-  const plainIds = new Set(plain.counted.map((row) => row.entry.id));
+  const plainIds = new Set(plain.useful.map((row) => row.entry.id));
   fireOnly.forEach((row) => assert.ok(!plainIds.has(row.entry.id), "只加火的条目对纯物理构成没有收益（#" + row.entry.id + "）"));
 });
 
@@ -510,16 +542,19 @@ const CONFIG_CASES = [
     filled: true
   },
   {
-    key: "lions-claw-2fixed-1custom",
+    key: "lions-claw-2fixed-1custom-2talismans-evergaol7",
     output: () => outputOf("skill", 100, 3180000),
     build: () => {
       const config = R.emptyConfig();
       config.relics[0] = fixedCard("2070");   // 安定者的遗志：提升近战攻击力 + 提升战技攻击力
-      config.relics[1] = fixedCard("1750");   // 辽阔的幽静情景：提升物理攻击力＋２（另有条件型）
-      const custom = R.emptyRelicCard();      // 自组：提升物理攻击力＋１ / 对陷入冻伤的敌人 / 出击时的武器附加火属性
+      config.relics[1] = fixedCard("2100");   // 王的黑夜：切换武器时…（条件型；只勾 7035902）
+      const custom = R.emptyRelicCard();      // 自组：封印监牢 / 出击时附加火 / 对陷入冻伤的敌人
       custom.type = "custom";
-      custom.affixIds = [7001401, 7260400, 7120100];
+      custom.affixIds = [7060000, 7120100, 7260400];
       config.relics[2] = custom;
+      config.accessories = [1230, 2040];      // 战士壶碎片（提升战技攻击力）、红羽七刃剑（条件型，未勾）
+      config.stacks[7069001] = 7;             // 封印监牢 7 层
+      config.ticks[7035902] = true;           // 切换武器时，能提升物理攻击力：条件成立
       return config;
     },
     filled: false
@@ -536,10 +571,17 @@ CONFIG_CASES.forEach((def) => {
 CONFIG_CASES.forEach((def) => {
   const run = configResults[def.key];
 
-  test("配置对照 " + def.key + "：总倍率与计入条目集合等于参考实现", () => {
+  test("配置对照 " + def.key + "：总倍率、各栏小计与计入条目集合等于参考实现", () => {
     const reference = referenceConfig(run.config, run.out);
     close(run.result.total.multiplier, reference.total, "总倍率");
-    assert.deepEqual(run.result.counted.map((item) => item.entry.id).sort((a, b) => a - b), reference.ids, "计入条目集合");
+    R.COLUMN_ORDER.forEach((column) => {
+      close(run.result.byColumn[column].multiplier, reference.subtotals[column], column + " 小计");
+    });
+    assert.deepEqual(
+      run.result.counted.slice().sort((a, b) => a.entry.id - b.entry.id)
+        .map((item) => item.entry.id + (item.countedCopies > 1 ? "x" + item.countedCopies : "")),
+      reference.ids, "计入条目集合（含份数）"
+    );
     assert.ok(run.result.total.multiplier > 1, "这套配置应当增伤");
   });
 
@@ -550,6 +592,7 @@ CONFIG_CASES.forEach((def) => {
     assert.ok(slots.relic.used <= slots.relic.cap);
     assert.ok(slots.accessory.used <= slots.accessory.cap);
     run.result.relicChecks.forEach((check) => assert.notEqual(check.status, "invalid", JSON.stringify(check.issues)));
+    assert.deepEqual(run.result.violations, []);
     const keys = run.result.counted.map((item) => item.entry.key);
     assert.equal(new Set(keys).size, keys.length);
   });
@@ -559,78 +602,127 @@ CONFIG_CASES.forEach((def) => {
       // 推荐是确定性的：同样输入再填一次得到同一套配置，且已满不再加东西。
       const again = R.recommendFill(cfgIndex, run.out, run.config, Core, R.outputWepType(run.out));
       assert.equal(again.added.length, 0);
-      const fresh = def.build(run.out);
-      assert.deepEqual(fresh, run.config, "推荐填满必须是确定性的");
+      assert.deepEqual(def.build(run.out), run.config, "推荐填满必须是确定性的");
+      // 不选条件型、叠层与累积阶梯。
+      run.result.counted.forEach((item) => {
+        assert.equal(item.entry.activation, "passive", item.entry.id + " 不是被动");
+        assert.equal(item.entry.stackInput, null);
+        assert.equal(item.entry.accLadder, null);
+        assert.equal(item.needs.length, 0);
+      });
+      // 平局取 ID 小者：推荐的武器词条里，没有哪条能被 ID 更小、推荐口径总倍率相同的候选替换。
+      const picks = run.config.weaponAffixes.map((one) => one.id);
+      assert.ok(picks.length > 0);
       if (def.key.indexOf("deep") !== -1) {
         assert.equal(run.config.runMode, "deep");
-        assert.equal(slotsCap(run.result).relic, buffs.slotRules.modes.deep.relicSlots);
+        assert.equal(run.result.caps.relics, buffs.slotRules.modes.deep.relicSlots);
+        assert.equal(run.result.slots.weaponAffix.used, buffs.slotRules.weaponAffix.maxAffixesDeep, "深夜填满 12 条");
         run.result.counted.forEach((item) => {
           assert.notEqual(item.entry.id, 8350000, "祷告不吃提升战技攻击力");
         });
+        run.config.relics.forEach((card) => {
+          if (card.type !== "custom") return;
+          card.affixIds.forEach((id, row) => {
+            if (id == null) return;
+            const affix = catalog.affixes.find((one) => one.effectId === id);
+            assert.equal(card.curseIds[row] != null, affix.requiresCurse === true, "需诅咒的配诅咒、不需要的不带");
+          });
+        });
       } else {
-        assert.equal(run.result.slots.weaponAffix.cap, buffs.slotRules.weaponAffix.maxAffixesNormal);
+        assert.equal(run.result.slots.weaponAffix.used, buffs.slotRules.weaponAffix.maxAffixesNormal, "常规填满 6 条");
       }
     } else {
       assert.equal(run.result.relicChecks[0].status, "fixed");
       assert.equal(run.result.relicChecks[1].status, "fixed");
       assert.equal(run.result.relicChecks[2].status, "valid", "自组遗物三条合法：" + JSON.stringify(run.result.relicChecks[2].issues));
-      const pending = run.result.items.filter((item) => item.column === "relic" && item.state === "pending");
-      pending.forEach((item) => assert.equal(item.explicit, false, "只有随固定遗物整件带入的条件型才是未确认"));
-      const flatOnly = run.result.items.filter((item) => item.column === "relic" && item.entry.hasFlat && !item.entry.hasMultiplier);
-      assert.ok(flatOnly.length > 0, "附加火属性是攻击力加算");
-      flatOnly.forEach((item) => R.TYPE_KEYS.forEach((type) => assert.equal(item.table[type], 1, "加算不进连乘")));
+      const counted = new Set(run.result.counted.map((item) => item.entry.id));
+      assert.ok(counted.has(7006700) && counted.has(7035902) && counted.has(7069001) && counted.has(312300));
+      assert.ok(!counted.has(7035703), "王的黑夜里没勾的条件型不计入");
+      assert.ok(!counted.has(320400), "红羽七刃剑是条件型，放进护符栏≠条件成立");
+      const evergaol = run.result.items.find((item) => item.entry.id === 7069001);
+      assert.equal(evergaol.stacks, 7);
+      close(evergaol.multiplier, BUFF[7069001].stackInput.tierMultipliers[6], "封印监牢 7 层");
+      const fire = run.result.items.filter((item) => item.entry.variantGroup === "affix#7120100");
+      assert.equal(fire.filter((item) => item.state !== "variantOff").length, 1, "多档词条只留第 1 档");
+      assert.equal(fire.find((item) => item.state !== "variantOff").state, "pending", "imbuedWeaponOnly 要确认");
     }
   });
 });
 
-function slotsCap(result) {
-  return { relic: result.slots.relic.cap };
+// ---- 两端逐字一致：文案常量表与说明区的摘要 ------------------------------
+
+// FNV-1a 32 位（按 UTF-8 字节），与 macOS 端 BuffRankerChecks.swift 的 loadoutDigest 逐位相同。
+function fnv1a(text) {
+  const bytes = Buffer.from(text, "utf8");
+  let hash = 0x811c9dc5;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }
+
+// 文案常量表：点号路径排序后逐行「路径=文案」。
+function textTableDigest() {
+  const flat = R.flattenText(R.TEXT);
+  const keys = Object.keys(flat).sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+  return { count: keys.length, digest: fnv1a(keys.map((key) => key + "=" + flat[key]).join("\n")) };
+}
+
+// 说明区：数字归一成 # 之后的摘要（数据改数值不影响，措辞一漂移就分叉）。
+function briefDigest(notes) {
+  return fnv1a(notes.join("\n").replace(/[0-9]+/g, "#"));
+}
+
+// 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新。
+const TEXT_TABLE_DIGEST = "854da404";
+const TEXT_TABLE_COUNT = 332;
+const BRIEF_DIGEST = "ad04314d";
+
+test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
+  const { count, digest } = textTableDigest();
+  assert.equal(count, TEXT_TABLE_COUNT, "文案条数");
+  assert.equal(digest, TEXT_TABLE_DIGEST, "文案常量表摘要（macOS 端 checkLoadoutParity 断言同一个值）");
+});
+
+test("文案常量表：ranker.js 里引用到的每个 TEXT.路径 都真的存在（macOS 端 checkLoadoutTexts 同样扫源码）", () => {
+  const source = readFileSync(path.join(repoRoot, "windows", "renderer", "pages", "ranker.js"), "utf8");
+  const paths = [...new Set(source.match(/\bTEXT(?:\.[A-Za-z_][A-Za-z0-9_]*)+/g) || [])];
+  assert.ok(paths.length > 100, "应扫到足量的文案引用");
+  const missing = paths.filter((ref) => {
+    let node = R.TEXT;
+    for (const part of ref.split(".").slice(1)) {
+      if (node == null || typeof node !== "object" || !(part in node)) return true;
+      node = node[part];
+    }
+    return node === undefined;
+  });
+  assert.deepEqual(missing, []);
+});
+
+test("两端逐字一致：说明区（口径说明）的正文与 macOS 端 LoadoutText.briefNotes 同一个摘要", () => {
+  const notes = R.briefNotes(buffs, cfgIndex);
+  assert.equal(briefDigest(notes), BRIEF_DIGEST);
+});
 
 test("对照：七组构成用例与三组配置用例都真的算出了东西（并在需要时打出对拍行）", () => {
   assert.equal(CASES.length, 7);
   assert.equal(CONFIG_CASES.length, 3);
   const kinds = new Set(CASES.map((def) => def.kind));
   assert.ok(kinds.has("skill") && kinds.has("sorcery") && kinds.has("incantation"));
-  CASES.forEach((def) => assert.ok(results[def.key].counted.length > 0, def.key + " 应有生效条目"));
-  // 参考实现的多档分组不能是空转：schema 复核三轮列出的 7 组词条（每组 4 档）都要分出来。
-  const variantGroups = new Set(Object.keys(VARIANTS).map((id) => VARIANTS[id].group));
-  assert.equal(variantGroups.size, 7);
-  assert.equal(Object.keys(VARIANTS).length, 28);
+  CASES.forEach((def) => assert.ok(results[def.key].useful.length > 0, def.key + " 应有生效条目"));
+  assert.equal(Object.keys(index.variants).length, 7, "多档词条 7 组（数据 affixVariant）");
 
   if (DUMP) {
     CASES.forEach((def) => {
       const run = results[def.key];
-      const shares = TYPE_KEYS.map((key) => run.comp.shares[key].toFixed(9)).join(",");
-      const top = run.counted.slice(0, 10).map((row) => row.entry.id + ":" + row.multiplier.toFixed(9)).join(",");
-      const states = {};
-      run.rows.forEach((row) => { states[row.state] = (states[row.state] || 0) + 1; });
-      console.log(
-        "CASE " + def.key +
-        " selected=" + run.selected.map((hit) => hit.atkId).join(",") +
-        " shares=" + shares +
-        " counted=" + run.counted.length +
-        " top10=" + top +
-        " states=" + Object.keys(states).sort().map((key) => key + ":" + states[key]).join("|")
-      );
+      console.log(R.caseDumpLine(def.key, run.selected.map((hit) => hit.atkId), run.comp, run.rows));
     });
     CONFIG_CASES.forEach((def) => {
       const run = configResults[def.key];
-      const slots = run.result.slots;
-      console.log(
-        "CONFIG " + def.key +
-        " mode=" + run.config.runMode +
-        " total=" + run.result.total.multiplier.toFixed(9) +
-        " weaponAffix=" + run.config.weaponAffixes.map((one) => one.id + "x" + one.count).join(",") +
-        " relics=" + run.config.relics.slice(0, slots.relic.cap).map((card) => card.type === "fixed" ? "F" + card.key
-          : (card.type === "custom" ? "C" + card.affixIds.filter((id) => id != null).join("+") +
-            (card.curseIds.some((id) => id != null) ? "/" + card.curseIds.filter((id) => id != null).join("+") : "") : "-")).join(",") +
-        " accessories=" + run.config.accessories.map((id) => id == null ? "-" : id).join(",") +
-        " counted=" + run.result.counted.map((item) => item.entry.id).sort((a, b) => a - b).join(",") +
-        " slots=" + slots.weaponAffix.used + "/" + slots.weaponAffix.cap + ":" + slots.weaponAffix.deepOnlyUsed + "/" +
-        slots.weaponAffix.deepOnlyCap + ":" + slots.relic.used + "/" + slots.relic.cap + ":" +
-        slots.accessory.used + "/" + slots.accessory.cap
-      );
+      console.log(R.configDumpLine(def.key, run.config, run.result));
     });
+    console.log("TEXT count=" + textTableDigest().count + " digest=" + textTableDigest().digest +
+      " brief=" + briefDigest(R.briefNotes(buffs, cfgIndex)));
   }
 });

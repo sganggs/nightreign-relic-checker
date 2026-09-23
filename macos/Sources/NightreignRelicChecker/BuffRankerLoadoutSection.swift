@@ -2,7 +2,7 @@ import RelicCore
 import SwiftUI
 
 // 「增伤排名」配置页：汇总面板、局内武器词条栏、护符栏、其它增益栏，以及共用的候选行与条件控件。
-// 文案全部取自 RelicCore 的 `LoadoutText`（两端对照用的常量表）。
+// 文案全部取自 RelicCore 的 `LoadoutText.table`（与 Windows 端 ranker.js 的 TEXT 按点号路径逐键同文）。
 
 // MARK: - 配色
 
@@ -23,20 +23,39 @@ enum LoadoutPalette {
         }
     }
 
+    static func summary(_ column: LoadoutSummaryColumn) -> Color {
+        switch column {
+        case .weaponAffix: return Self.column(.weaponAffix)
+        case .relic: return Self.column(.relic)
+        case .accessory: return Self.column(.accessory)
+        case .other: return AppTheme.green
+        }
+    }
+
     static func verdict(_ verdict: LoadoutVerdict) -> Color {
         if !verdict.isApplicable { return AppTheme.red.opacity(0.85) }
         if verdict.isPartial || verdict.value == .conditional || verdict.needsConfirmation { return AppTheme.amber }
         return AppTheme.green
     }
 
+    static func status(_ status: LoadoutLineStatus) -> Color {
+        switch status {
+        case .counted: return AppTheme.green
+        case .pending, .context, .zeroStacks, .tierOff: return AppTheme.amber
+        case .relicInvalid: return AppTheme.red
+        default: return AppTheme.tertiaryText
+        }
+    }
+
     static func badge(_ text: String) -> Color {
         switch text {
-        case LoadoutText.badgeDeepOnly, LoadoutText.modeDeep: return Color(red: 0.55, green: 0.60, blue: 0.99)
-        case LoadoutText.badgeCurse, LoadoutText.badgeRequiresCurse: return AppTheme.red.opacity(0.85)
-        case LoadoutText.badgeBlessing: return Color(red: 0.99, green: 0.85, blue: 0.45)
-        case LoadoutText.badgeAutoInnate, LoadoutText.badgeCurrentSkill: return AppTheme.green
-        case LoadoutText.badgeConditional, LoadoutText.badgeActivated, LoadoutText.badgeStack, LoadoutText.badgeLadder,
-             LoadoutText.badgeOutsideWeaponType, LoadoutText.badgeInferredTiers:
+        case LoadoutText.t("badges.deepOnly"), LoadoutText.t("runMode.deep"): return Color(red: 0.55, green: 0.60, blue: 0.99)
+        case LoadoutText.t("badges.curse"), LoadoutText.t("badges.requiresCurse"): return AppTheme.red.opacity(0.85)
+        case LoadoutText.t("badges.blessing"): return Color(red: 0.99, green: 0.85, blue: 0.45)
+        case LoadoutText.t("badges.autoInnate"), LoadoutText.t("badges.currentSkill"): return AppTheme.green
+        case LoadoutText.t("badges.conditional"), LoadoutText.t("badges.activated"), LoadoutText.t("badges.ladder"),
+             LoadoutText.t("badges.copies"), LoadoutText.t("badges.accLadder"), LoadoutText.t("badges.variant"),
+             LoadoutText.t("badges.outsideWeaponType"), LoadoutText.t("badges.inferredTiers"):
             return AppTheme.amber
         default: return AppTheme.secondaryText
         }
@@ -51,7 +70,7 @@ struct BuffRankerSummarySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeading(title: LoadoutText.summaryTitle, subtitle: LoadoutText.summarySubtitle, symbol: "sum")
+            SectionHeading(title: LoadoutText.t("summaryHeading"), subtitle: LoadoutText.t("summaryColumnNote"), symbol: "sum")
 
             controls
             totalRow
@@ -66,66 +85,84 @@ struct BuffRankerSummarySection: View {
         .appCard()
     }
 
+    private var modeHint: String {
+        let rules = model.slotRules
+        return LoadoutText.f(
+            "runModeHint", rules.weaponAffixCap(.normal), rules.relicSlots(.normal), rules.weaponAffixCap(.deep),
+            rules.deepOnlyCap(.deep), rules.relicSlots(.deep), rules.relicNormal, rules.relicSlots(.deep) - rules.relicNormal
+        )
+    }
+
     private var controls: some View {
-        HStack(spacing: 12) {
-            Text(LoadoutText.modeLabel)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(AppTheme.secondaryText)
-            Picker(LoadoutText.modeLabel, selection: Binding(
-                get: { model.loadout.mode },
-                set: { model.setMode($0) }
-            )) {
-                ForEach(LoadoutMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 150)
-            .help(model.slotRules.modesZh.isEmpty ? LoadoutText.modeHelp : model.slotRules.modesZh)
-
-            Spacer(minLength: 0)
-
-            Button {
-                model.fillRecommended()
-            } label: {
-                Label(LoadoutText.fillButton, systemImage: "wand.and.stars")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Text(LoadoutText.t("runModeLabel"))
                     .font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(AppTheme.purple)
-            .help(LoadoutText.fillHelp)
+                    .foregroundStyle(AppTheme.secondaryText)
+                Picker(LoadoutText.t("runModeAria"), selection: Binding(
+                    get: { model.loadout.mode },
+                    set: { model.setMode($0) }
+                )) {
+                    ForEach(LoadoutMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 150)
+                .help(modeHint)
 
-            Button(LoadoutText.clearButton) { model.clearLoadout() }
-                .buttonStyle(.bordered)
-                .font(.system(size: 12))
+                Spacer(minLength: 0)
+
+                Button {
+                    model.fillRecommended()
+                } label: {
+                    Label(LoadoutText.t("fillButton"), systemImage: "wand.and.stars")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppTheme.purple)
+                .disabled(!model.loadoutOutput.hasComposition)
+                .help(LoadoutText.t("fillNote"))
+
+                Button(LoadoutText.t("clearButton")) { model.clearLoadout() }
+                    .buttonStyle(.bordered)
+                    .font(.system(size: 12))
+            }
+            Text(modeHint)
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var totalRow: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(LoadoutText.totalLabel)
+                Text(LoadoutText.t("summaryTotal"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AppTheme.tertiaryText)
-                Text(BuffFormat.multiplier(model.evaluation.total, digits: 3))
+                Text(model.evaluation.hasComposition ? BuffFormat.multiplier(model.evaluation.total, digits: 3) : "—")
                     .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(model.evaluation.total > 1.0000001 ? AppTheme.green : AppTheme.secondaryText)
-                Text(LoadoutText.totalGain(model.evaluation.total))
+                Text(model.totalGainText)
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.tertiaryText)
+                if model.evaluation.weightedFlat >= 0.05 || model.evaluation.weightedFlat <= -0.05 {
+                    Text(LoadoutText.t("summaryFlat") + " " + LoadoutText.f("flatInline", BuffFormat.signedFlat(model.evaluation.weightedFlat)))
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.amber)
+                        .help(LoadoutText.t("summaryFlatNote"))
+                }
             }
             Divider().frame(height: 48).overlay(AppTheme.border)
             RankerWrap(spacing: 6, lineSpacing: 6) {
-                usagePill(LoadoutText.usageWeaponAffix, model.evaluation.weaponAffixUsage)
+                usagePill(LoadoutText.t("usageWeaponAffix"), model.evaluation.weaponAffixUsage)
                 if model.loadout.mode == .deep {
-                    usagePill(LoadoutText.usageDeepOnly, model.evaluation.deepOnlyUsage)
-                    if model.evaluation.curseUsage.used > 0 {
-                        usagePill(LoadoutText.usageCurse, model.evaluation.curseUsage)
-                    }
+                    usagePill(LoadoutText.t("usageDeepOnly"), model.evaluation.deepOnlyUsage)
                 }
-                usagePill(LoadoutText.usageRelic, model.evaluation.relicUsage)
-                usagePill(LoadoutText.usageAccessory, model.evaluation.accessoryUsage)
+                usagePill(LoadoutText.t("usageRelic"), model.evaluation.relicUsage)
+                usagePill(LoadoutText.t("usageAccessory"), model.evaluation.accessoryUsage)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -140,17 +177,10 @@ struct BuffRankerSummarySection: View {
 
     private var toggles: some View {
         HStack(spacing: 16) {
-            Toggle(LoadoutText.showInapplicable, isOn: $model.showInapplicable)
+            Toggle(LoadoutText.t("showInactive"), isOn: $model.showInapplicable)
                 .toggleStyle(.switch)
                 .font(.caption)
-                .help(LoadoutText.showInapplicableHelp)
-            Toggle(LoadoutText.stackSelfToggle, isOn: Binding(
-                get: { model.loadout.stackSelfCopiesMultiply },
-                set: { model.setStackSelfMultiply($0) }
-            ))
-            .toggleStyle(.switch)
-            .font(.caption)
-            .help(LoadoutText.stackSelfHelp)
+                .help(LoadoutText.t("showInactiveHelp"))
             Spacer(minLength: 0)
             Text(model.deliveryLabel)
                 .font(.system(size: 11))
@@ -160,43 +190,34 @@ struct BuffRankerSummarySection: View {
 
     private var contexts: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(LoadoutText.attackContextsLabel)
-                    .font(.system(size: 11))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                RankerWrap(spacing: 6, lineSpacing: 5) {
-                    ForEach(model.contextOptions) { option in
-                        RankerFilterChip(
-                            text: "\(option.zh) \(option.count)",
-                            isOn: model.includedAttackContexts.contains(option.key),
-                            color: AppTheme.amber
-                        ) {
-                            model.toggleAttackContext(option.key)
-                        }
+            Text(LoadoutText.t("contextsLabel"))
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.tertiaryText)
+            RankerWrap(spacing: 6, lineSpacing: 5) {
+                ForEach(model.contextOptions) { option in
+                    RankerFilterChip(
+                        text: "\(option.zh) \(option.count)",
+                        isOn: model.includedAttackContexts.contains(option.key),
+                        color: AppTheme.amber
+                    ) {
+                        model.toggleAttackContext(option.key)
                     }
                 }
             }
-            Text(LoadoutText.attackContextsNote)
-                .font(.system(size: 10))
-                .foregroundStyle(AppTheme.tertiaryText)
         }
     }
 
-    @ViewBuilder
     private var subtotals: some View {
-        let columns = LoadoutColumn.allCases.filter { model.evaluation.columnSubtotals[$0] != nil }
-        if !columns.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LoadoutText.subtotalsLabel)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                RankerWrap(spacing: 6, lineSpacing: 5) {
-                    ForEach(columns) { column in
-                        Pill(
-                            text: column.title + " " + BuffFormat.multiplier(model.evaluation.columnSubtotals[column] ?? 1),
-                            color: LoadoutPalette.column(column)
-                        )
-                    }
+        VStack(alignment: .leading, spacing: 4) {
+            Text(LoadoutText.t("summarySubtotals"))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(AppTheme.tertiaryText)
+            RankerWrap(spacing: 6, lineSpacing: 5) {
+                ForEach(LoadoutSummaryColumn.allCases) { column in
+                    Pill(
+                        text: column.title + " " + BuffFormat.multiplier(model.evaluation.columnSubtotals[column] ?? 1),
+                        color: LoadoutPalette.summary(column)
+                    )
                 }
             }
         }
@@ -205,16 +226,20 @@ struct BuffRankerSummarySection: View {
     @ViewBuilder
     private var messages: some View {
         let evaluation = model.evaluation
-        if model.modeNotice != nil || !evaluation.violations.isEmpty || !evaluation.warnings.isEmpty {
+        let notices = [model.modeNotice, model.fillNotice].compactMap { $0 }
+        if !notices.isEmpty || !evaluation.violations.isEmpty || !evaluation.warnings.isEmpty || !evaluation.hasComposition {
             VStack(alignment: .leading, spacing: 4) {
-                if let notice = model.modeNotice {
-                    messageLine(notice, color: AppTheme.amber, symbol: "arrow.uturn.backward.circle")
+                if !evaluation.hasComposition {
+                    messageLine(LoadoutText.t("summaryNoComposition"), color: AppTheme.amber, symbol: "exclamationmark.triangle")
+                }
+                ForEach(notices, id: \.self) { notice in
+                    messageLine(notice, color: AppTheme.green, symbol: "checkmark.circle")
                 }
                 ForEach(evaluation.violations, id: \.self) { text in
                     messageLine(text, color: AppTheme.red, symbol: "xmark.octagon")
                 }
-                ForEach(evaluation.warnings, id: \.self) { text in
-                    messageLine(text, color: AppTheme.amber, symbol: "exclamationmark.triangle")
+                ForEach(evaluation.warnings) { warning in
+                    messageLine(warning.text, color: AppTheme.amber, symbol: "exclamationmark.triangle")
                 }
             }
         }
@@ -234,10 +259,10 @@ struct BuffRankerSummarySection: View {
 
     private var countedList: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(LoadoutText.countedTitle + "（\(model.evaluation.countedLines.count)）")
+            Text(LoadoutText.f("summaryCounted", model.evaluation.countedLines.count))
                 .font(.system(size: 12, weight: .semibold))
             if model.evaluation.countedLines.isEmpty {
-                Text(LoadoutText.countedEmpty)
+                Text(LoadoutText.t("summaryEmpty"))
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.tertiaryText)
             } else {
@@ -252,15 +277,17 @@ struct BuffRankerSummarySection: View {
 
     @ViewBuilder
     private var uncountedList: some View {
-        // 累积阶梯没选中的各档只留一行（放选档控件），其余档不重复列出。
+        // 未选的档不列；累积阶梯没选中的各层只留一行（放选层控件）；不生效的默认隐藏。
         let lines = model.evaluation.lines
         let uncounted = lines.filter { line in
-            guard !line.status.isCounted else { return false }
-            guard line.status == .tierNotSelected, let ladder = model.buff(line)?.accumulatorLadder else { return true }
+            guard !line.status.isCounted, line.status != .variantOff else { return false }
+            if !model.showInapplicable && (line.status == .no || line.status == .context) { return false }
+            guard line.status == .tierOff, let ladder = model.buff(line)?.accumulatorLadder else { return true }
             return LoadoutLineControls.ownsLadderPicker(line, ladder: ladder, siblings: lines, model: model)
         }
+        let hidden = lines.filter { $0.status == .no || $0.status == .context }.count
         if !uncounted.isEmpty {
-            RankerDisclosure(title: LoadoutText.uncountedTitle(uncounted.count), isOn: $showUncounted) {
+            RankerDisclosure(title: LoadoutText.f("summaryUncounted", uncounted.count), isOn: $showUncounted) {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(uncounted) { line in
                         LoadoutSummaryLineRow(model: model, line: line)
@@ -268,10 +295,24 @@ struct BuffRankerSummarySection: View {
                 }
             }
         }
+        if !model.showInapplicable && hidden > 0 {
+            Text(LoadoutText.f("summaryHiddenNo", hidden, LoadoutText.t("showInactive")))
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.tertiaryText)
+        }
     }
 }
 
-/// 汇总面板里的一条：名称、来源、状态、贡献倍率与条件控件。
+extension BuffFormat {
+    /// 攻击力加算带符号：正数写「+」，四舍五入后为 0 写「0」（与 Windows fmtFlat 同一口径）。
+    static func signedFlat(_ value: Double) -> String {
+        var text = trim(value, digits: 1)
+        if text == "-0" { text = "0" }
+        return (value > 0 && text != "0" ? "+" : "") + text
+    }
+}
+
+/// 汇总面板里的一条：名称、来源、状态、贡献倍率、条件控件与移除按钮。
 struct LoadoutSummaryLineRow: View {
     @ObservedObject var model: BuffRankerModel
     let line: LoadoutLine
@@ -287,24 +328,37 @@ struct LoadoutSummaryLineRow: View {
                         Text(line.displayName)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(line.status.isCounted ? .white : AppTheme.secondaryText)
-                        Pill(text: line.column.title, color: LoadoutPalette.column(line.column))
+                        Pill(text: line.status.title, color: LoadoutPalette.status(line.status))
                     }
-                    Text(line.sources.joined(separator: "、") + " · " + line.statusText)
+                    Text(line.sources.joined(separator: "、") + " · " + line.exclusiveKey)
                         .font(.system(size: 10))
-                        .foregroundStyle(line.status.isCounted ? AppTheme.tertiaryText : AppTheme.amber)
+                        .foregroundStyle(AppTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
+                    if !line.status.isCounted, !line.reasons.isEmpty {
+                        Text(line.reasons.joined(separator: "；"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(AppTheme.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !line.notes.isEmpty {
+                        Text(line.notes.joined(separator: "；"))
+                            .font(.system(size: 10))
+                            .foregroundStyle(AppTheme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(BuffFormat.multiplier(line.multiplier))
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundStyle(line.status.isCounted && line.multiplier > 1 ? AppTheme.green : AppTheme.tertiaryText)
-                    Text(LoadoutText.contributionLabel)
+                    Text(LoadoutText.t("summaryContribution"))
                         .font(.system(size: 9))
                         .foregroundStyle(AppTheme.tertiaryText)
                 }
+                removeButtons
             }
-            LoadoutLineControls(model: model, line: line, allowConfirm: showsConfirm, siblings: model.evaluation.lines)
+            LoadoutLineControls(model: model, line: line, siblings: model.evaluation.lines)
                 .padding(.leading, 12)
         }
         .padding(.vertical, 5)
@@ -312,74 +366,82 @@ struct LoadoutSummaryLineRow: View {
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.025)))
     }
 
-    /// 只有占槽位的栏（和当前武器自带）需要单独勾「条件成立」；不占槽位的栏勾选即确认。
-    private var showsConfirm: Bool {
-        line.column.isSlotted || line.sources.contains(LoadoutText.sourceAutoInnate)
+    /// 移除：按来源键（与 Windows 端汇总行的「移除」按钮同一口径）。
+    private var removeButtons: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(line.sourceKeys.enumerated()), id: \.offset) { position, key in
+                Button {
+                    model.removeSource(key)
+                } label: {
+                    Image(systemName: "minus.circle")
+                        .foregroundStyle(AppTheme.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help((key.hasPrefix("innate:") ? LoadoutText.t("innateRemove") : LoadoutText.t("summaryRemove"))
+                      + (line.sources.indices.contains(position) ? "：" + line.sources[position] : ""))
+            }
+        }
     }
 }
 
-// MARK: - 条件 / 层数 / 选档控件
+// MARK: - 条件 / 层数 / 选层 / 选档控件
 
 struct LoadoutLineControls: View {
     @ObservedObject var model: BuffRankerModel
     let line: LoadoutLine
-    let allowConfirm: Bool
-    /// 同一处列出的其它行（累积阶梯的各档只在一行上给选档控件）。
+    /// 同一处列出的其它行（累积阶梯的各层只在一行上给选层控件）。
     let siblings: [LoadoutLine]
 
     var body: some View {
-        if let buff = model.buff(line), line.verdict.isApplicable,
-           line.status != .curse, line.status != .invalidRelic {
-            if let input = buff.stackInput {
-                stackControl(input)
-            } else if let ladder = buff.accumulatorLadder {
-                if Self.ownsLadderPicker(line, ladder: ladder, siblings: siblings, model: model) {
+        if let buff = model.buff(line), line.status != .no, line.status != .context, line.status != .relicInvalid {
+            VStack(alignment: .leading, spacing: 4) {
+                if let input = buff.stackInput {
+                    stackControl(input, grace: LoadoutText.isGraceStack(buff))
+                }
+                if let ladder = buff.accumulatorLadder,
+                   Self.ownsLadderPicker(line, ladder: ladder, siblings: siblings, model: model) {
                     ladderControl(ladder)
                 }
-            } else if allowConfirm && line.verdict.needsConfirmation {
-                confirmControl
+                if let variant = buff.affixVariant, line.status != .variantOff {
+                    variantControl(variant)
+                }
+                if !line.needs.isEmpty && !line.autoConfirm {
+                    confirmControl
+                }
             }
         }
     }
 
-    /// 累积阶梯的选档控件放在哪一行：有计入的档就放在那一档，否则放在第 1 档。
+    /// 累积阶梯的选层控件放在哪一行：选中的那一层（没选就第 1 层）。
     static func ownsLadderPicker(
         _ line: LoadoutLine, ladder: BuffAccumulatorLadder, siblings: [LoadoutLine], model: BuffRankerModel
     ) -> Bool {
-        let counted = siblings.first { other in
-            other.status.isCounted && model.buff(other)?.accumulatorLadder?.ladderID == ladder.ladderID
-        }
-        if let counted { return counted.id == line.id }
-        return ladder.tier == 1
+        let picked = model.ladderTier(ladder.ladderID)
+        if model.ladderTierOptions(ladder).contains(picked) { return ladder.tier == picked }
+        return ladder.tier == (model.ladderTierOptions(ladder).first ?? 1)
     }
 
     private var confirmControl: some View {
         HStack(spacing: 8) {
-            Toggle(LoadoutText.confirmLabel, isOn: Binding(
+            Toggle(LoadoutText.t("summaryTick"), isOn: Binding(
                 get: { model.isConfirmed(line.spEffectId) },
                 set: { _ in model.toggleConfirmed(line.spEffectId) }
             ))
             .toggleStyle(.checkbox)
             .font(.system(size: 11))
-            .help(LoadoutText.confirmHelp)
-            if let note = line.verdict.activationNote ?? userRequirement {
-                Text(note)
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.tertiaryText)
-                    .lineLimit(2)
-            }
+            .help(LoadoutText.t("summaryTickHelp"))
+            Text(line.needs.joined(separator: "；"))
+                .font(.system(size: 10))
+                .foregroundStyle(AppTheme.tertiaryText)
+                .lineLimit(2)
             Spacer(minLength: 0)
         }
     }
 
-    private var userRequirement: String? {
-        line.verdict.requirements.first { $0.state == .needsUser }?.text
-    }
-
-    private func stackControl(_ input: BuffStackInput) -> some View {
+    private func stackControl(_ input: BuffStackInput, grace: Bool) -> some View {
         let current = model.stacks(line.spEffectId)
         return HStack(spacing: 8) {
-            Text(LoadoutText.stacksLabel)
+            Text(LoadoutText.t(input.isLadder ? "stackLabel" : "stackLabelCopies"))
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.secondaryText)
             Stepper(
@@ -397,7 +459,7 @@ struct LoadoutLineControls: View {
                     .frame(minWidth: 24, alignment: .trailing)
             }
             .fixedSize()
-            Text(LoadoutText.stacksHint(input))
+            Text(LoadoutText.stackHints(input, grace: grace).joined(separator: "；"))
                 .font(.system(size: 10))
                 .foregroundStyle(AppTheme.tertiaryText)
                 .lineLimit(2)
@@ -407,22 +469,42 @@ struct LoadoutLineControls: View {
 
     private func ladderControl(_ ladder: BuffAccumulatorLadder) -> some View {
         HStack(spacing: 8) {
-            Text(LoadoutText.ladderLabel)
+            Text(LoadoutText.t("tierSelectLabel"))
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.secondaryText)
-            Picker(LoadoutText.ladderLabel, selection: Binding(
+            Picker(LoadoutText.t("tierSelectLabel"), selection: Binding(
                 get: { model.ladderTier(ladder.ladderID) },
                 set: { model.setLadderTier(ladder.ladderID, $0) }
             )) {
-                Text(LoadoutText.ladderNone).tag(0)
+                Text(LoadoutText.t("tierNone")).tag(0)
                 ForEach(model.ladderTierOptions(ladder), id: \.self) { tier in
-                    Text(LoadoutText.ladderTier(
-                        tier, threshold: ladder.thresholds.indices.contains(tier - 1) ? ladder.thresholds[tier - 1] : nil
-                    )).tag(tier)
+                    Text(ladder.thresholds.indices.contains(tier - 1)
+                         ? LoadoutText.f("tierLabelThreshold", tier, BuffFormat.trim(ladder.thresholds[tier - 1], digits: 0))
+                         : LoadoutText.f("tierLabel", tier)).tag(tier)
                 }
             }
             .labelsHidden()
-            .frame(width: 150)
+            .frame(width: 170)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func variantControl(_ variant: BuffAffixVariant) -> some View {
+        HStack(spacing: 8) {
+            Text(LoadoutText.t("variantLabel"))
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.secondaryText)
+            Picker(LoadoutText.t("variantLabel"), selection: Binding(
+                get: { model.variantChoice(variant.groupKey) ?? line.spEffectId },
+                set: { model.setVariant(variant.groupKey, $0) }
+            )) {
+                ForEach(model.variantOptions(variant.groupKey), id: \.id) { option in
+                    Text(option.text).tag(option.id)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 360)
+            .help(LoadoutText.t("variantNoMapping"))
             Spacer(minLength: 0)
         }
     }
@@ -435,8 +517,6 @@ struct LoadoutCandidateRow<Leading: View>: View {
     @ObservedObject var model: BuffRankerModel
     let candidate: LoadoutCandidate
     let isSelected: Bool
-    /// 占槽位的栏：选中≠条件成立，展开后给「条件成立」勾选。
-    let allowConfirm: Bool
     /// 视图额外加的徽标（例如同一词条的不同档位同时选中时的「参数推断，未实测」）。
     var extraBadges: [String] = []
     @ViewBuilder let leading: () -> Leading
@@ -468,13 +548,13 @@ struct LoadoutCandidateRow<Leading: View>: View {
                         .foregroundStyle(candidate.multiplier > 1.0000001 ? AppTheme.green : AppTheme.secondaryText)
                     if abs(candidate.potential - candidate.multiplier) > 0.0000001 {
                         Text(candidate.potentialAssumesOneStack
-                             ? LoadoutText.potentialTextOneStack(candidate.potential)
-                             : LoadoutText.potentialText(candidate.potential))
+                             ? LoadoutText.f("potentialOneStack", BuffFormat.multiplier(candidate.potential))
+                             : LoadoutText.f("potentialText", BuffFormat.multiplier(candidate.potential)))
                             .font(.system(size: 10))
                             .foregroundStyle(AppTheme.amber)
                     }
-                    if candidate.weightedFlat > 0 {
-                        Text(LoadoutText.flatText(candidate.weightedFlat))
+                    if candidate.weightedFlat >= 0.05 || candidate.weightedFlat <= -0.05 {
+                        Text(LoadoutText.f("flatInline", BuffFormat.signedFlat(candidate.weightedFlat)))
                             .font(.system(size: 10))
                             .foregroundStyle(AppTheme.amber)
                     }
@@ -493,7 +573,7 @@ struct LoadoutCandidateRow<Leading: View>: View {
             }
             if isSelected && !expanded {
                 ForEach(inlineLines) { line in
-                    LoadoutLineControls(model: model, line: line, allowConfirm: allowConfirm, siblings: candidate.lines)
+                    LoadoutLineControls(model: model, line: line, siblings: selectedLines)
                         .padding(.leading, 30)
                 }
             }
@@ -512,15 +592,23 @@ struct LoadoutCandidateRow<Leading: View>: View {
         .opacity(candidate.isApplicable ? 1 : 0.5)
     }
 
-    /// 选中后直接在行内给出的控件：层数、选档、（占槽位的栏）条件成立。
+    /// 选中后，这一项在汇总里的逐条（控件以汇总为准：条件、层数、选层、选档都按整套配置算）。
+    private var selectedLines: [LoadoutLine] {
+        let ids = Set(candidate.item.buffIndices)
+        return model.evaluation.lines.filter { ids.contains($0.buffIndex) }
+    }
+
+    /// 选中后直接在行内给出的控件：层数、选层、选档、（占槽位的栏）条件成立。
     private var inlineLines: [LoadoutLine] {
-        candidate.lines.filter { line in
-            guard line.verdict.isApplicable, let buff = model.buff(line) else { return false }
-            if buff.stackInput != nil { return true }
-            if let ladder = buff.accumulatorLadder {
-                return LoadoutLineControls.ownsLadderPicker(line, ladder: ladder, siblings: candidate.lines, model: model)
+        selectedLines.filter { line in
+            guard let buff = model.buff(line), line.status != .no, line.status != .context, line.status != .variantOff else {
+                return false
             }
-            return allowConfirm && line.verdict.needsConfirmation
+            if buff.stackInput != nil || buff.affixVariant != nil { return true }
+            if let ladder = buff.accumulatorLadder {
+                return LoadoutLineControls.ownsLadderPicker(line, ladder: ladder, siblings: selectedLines, model: model)
+            }
+            return !line.needs.isEmpty && !line.autoConfirm
         }
     }
 
@@ -530,27 +618,26 @@ struct LoadoutCandidateRow<Leading: View>: View {
            candidate.item.buffIndices.contains(where: { offset in
                model.loadoutIndex?.dataset.buffs[offset].sources.contains { $0.artsId == skillID } ?? false
            }) {
-            result.insert(LoadoutText.badgeCurrentSkill, at: 0)
+            result.insert(LoadoutText.t("badges.currentSkill"), at: 0)
         }
         return result
     }
 
     private var summary: String {
         if !candidate.isApplicable {
-            return LoadoutText.appliesNo + "：" + (candidate.blockedReason ?? LoadoutText.appliesNoFallback)
+            return LoadoutText.t("verdict.no") + "：" + (candidate.blockedReason ?? LoadoutText.t("verdictNoFallback"))
         }
         var parts: [String] = []
         if let group = candidate.item.groupTitle, !group.isEmpty { parts.append(group) }
         if !candidate.item.subtitle.isEmpty { parts.append(candidate.item.subtitle) }
-        let ladderCounted = candidate.lines.contains { $0.status.isCounted && model.buff($0)?.accumulatorLadder != nil }
-        if let line = candidate.lines.first(where: { line in
-            !line.status.isCounted && line.verdict.isApplicable && !(ladderCounted && line.status == .tierNotSelected)
-        }) {
-            parts.append(line.statusText)
-        } else if let partial = candidate.lines.first(where: { $0.verdict.isPartial }) {
-            parts.append(partial.statusText)
-        } else if let first = candidate.lines.first {
-            parts.append(first.verdict.label)
+        if candidate.status.isCounted {
+            if let partial = candidate.lines.first(where: { $0.verdict.isPartial }) {
+                parts.append(partial.verdict.label)
+            } else if let first = candidate.lines.first {
+                parts.append(first.verdict.label)
+            }
+        } else {
+            parts.append(([candidate.status.title] + candidate.reasons).joined(separator: "："))
         }
         return parts.joined(separator: " · ")
     }
@@ -572,14 +659,14 @@ struct LoadoutCandidateRow<Leading: View>: View {
                         .font(.system(size: 11))
                         .foregroundStyle(info.counted ? .white : AppTheme.tertiaryText)
                     if !info.counted {
-                        Text(LoadoutText.relicNonDamage)
+                        Text(LoadoutText.t("relicNonDamage"))
                             .font(.system(size: 10))
                             .foregroundStyle(AppTheme.tertiaryText)
                     }
                 }
             }
             ForEach(candidate.lines) { line in
-                LoadoutLineDetail(model: model, line: line, allowConfirm: allowConfirm, siblings: candidate.lines)
+                LoadoutLineDetail(model: model, line: line)
             }
         }
         .padding(.leading, 30)
@@ -590,8 +677,6 @@ struct LoadoutCandidateRow<Leading: View>: View {
 struct LoadoutLineDetail: View {
     @ObservedObject var model: BuffRankerModel
     let line: LoadoutLine
-    let allowConfirm: Bool
-    let siblings: [LoadoutLine]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -599,13 +684,14 @@ struct LoadoutLineDetail: View {
                 Text(line.displayName)
                     .font(.system(size: 11, weight: .semibold))
                 Pill(text: line.verdict.label, color: LoadoutPalette.verdict(line.verdict))
+                Pill(text: line.status.title, color: LoadoutPalette.status(line.status))
                 Spacer(minLength: 0)
                 Text(BuffFormat.multiplier(line.multiplier))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(line.multiplier > 1 ? AppTheme.green : AppTheme.tertiaryText)
             }
             if let reason = line.verdict.blockedReason {
-                RankerDetailRow(label: LoadoutText.appliesNo, value: reason, tint: AppTheme.red.opacity(0.85))
+                RankerDetailRow(label: LoadoutText.t("verdict.no"), value: reason, tint: AppTheme.red.opacity(0.85))
             }
             ForEach(line.verdict.requirements) { requirement in
                 HStack(alignment: .top, spacing: 6) {
@@ -619,20 +705,23 @@ struct LoadoutLineDetail: View {
                 }
             }
             if let note = line.verdict.activationNote {
-                RankerDetailRow(label: LoadoutText.detailActivation, value: note, tint: AppTheme.amber)
+                RankerDetailRow(label: LoadoutText.t("detailActivation"), value: note, tint: AppTheme.amber)
             }
-            if !line.status.isCounted || line.copies > 1 {
-                RankerDetailRow(label: LoadoutText.detailStatus, value: line.statusText, tint: AppTheme.secondaryText)
+            if !line.status.isCounted || !line.notes.isEmpty {
+                RankerDetailRow(
+                    label: LoadoutText.t("detailStatus"),
+                    value: (line.status.isCounted ? line.notes : line.reasons + line.notes).joined(separator: "；"),
+                    tint: AppTheme.secondaryText
+                )
             }
-            LoadoutLineControls(model: model, line: line, allowConfirm: allowConfirm, siblings: siblings)
             if let buff = model.buff(line) {
                 RankerDetailRow(
-                    label: LoadoutText.detailKey,
+                    label: LoadoutText.t("detailKey"),
                     value: line.exclusiveKey + " · " + (buff.paramName ?? "—") + " · SpEffect #\(line.spEffectId)",
                     tint: AppTheme.tertiaryText
                 )
                 if let desc = buff.descZh {
-                    RankerDetailRow(label: LoadoutText.detailDesc, value: desc, tint: AppTheme.secondaryText)
+                    RankerDetailRow(label: LoadoutText.t("detailDesc"), value: desc, tint: AppTheme.secondaryText)
                 }
             }
         }
@@ -667,34 +756,44 @@ struct BuffRankerWeaponAffixSection: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: LoadoutColumn.weaponAffix.title,
-                subtitle: LoadoutText.weaponAffixSubtitle,
+                subtitle: LoadoutText.f("waIntro", model.slotRules.maxWeapons),
                 symbol: "hammer",
                 tint: LoadoutPalette.column(.weaponAffix)
             )
             HStack(spacing: 10) {
-                if model.skill != nil, let name = model.weaponTypeName {
-                    Picker("", selection: $model.weaponFilterAll) {
-                        Text(LoadoutText.weaponFilterCurrent(name)).tag(false)
-                        Text(LoadoutText.weaponFilterAll).tag(true)
+                if let name = model.weaponTypeName {
+                    Picker(LoadoutText.t("waFilterAria"), selection: $model.weaponFilterAll) {
+                        Text(LoadoutText.f("waFilterWeapon", name)).tag(false)
+                        Text(LoadoutText.t("waFilterAll")).tag(true)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .frame(width: 300)
                 } else {
-                    Text(LoadoutText.weaponFilterNoWeapon)
+                    Text(LoadoutText.t("waFilterNone"))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.tertiaryText)
                 }
-                RankerSearchField(placeholder: LoadoutText.weaponAffixSearch, text: $model.weaponAffixQuery)
+                RankerSearchField(placeholder: LoadoutText.t("waSearch"), text: $model.weaponAffixQuery)
                     .frame(maxWidth: 260)
                 Spacer(minLength: 0)
                 Text(usageText)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AppTheme.secondaryText)
             }
+            if model.evaluation.lines.contains(where: { $0.column == .weaponAffix && $0.copies > 1 }) {
+                Text(LoadoutText.t("waCopiesHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.amber)
+            }
+            if let loadoutIndex = model.loadoutIndex, !loadoutIndex.selectedTierFamilies(model.loadout).isEmpty {
+                Text(LoadoutText.t("waTierHint"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            }
             let rows = model.visibleWeaponAffixCandidates
             if rows.isEmpty {
-                Text(LoadoutText.weaponAffixEmpty)
+                Text(LoadoutText.t("waEmpty"))
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             } else {
@@ -710,9 +809,9 @@ struct BuffRankerWeaponAffixSection: View {
     }
 
     private var usageText: String {
-        var text = LoadoutText.usageWeaponAffix + " " + model.evaluation.weaponAffixUsage.text
+        var text = LoadoutText.f("waUsage", model.evaluation.weaponAffixUsage.used, model.evaluation.weaponAffixUsage.cap)
         if model.loadout.mode == .deep {
-            text += " · " + LoadoutText.usageDeepOnly + " " + model.evaluation.deepOnlyUsage.text
+            text += " · " + LoadoutText.f("waDeepOnlyUsage", model.evaluation.deepOnlyUsage.used, model.evaluation.deepOnlyUsage.cap)
         }
         return text
     }
@@ -722,23 +821,27 @@ struct BuffRankerWeaponAffixSection: View {
         if let info = candidate.item.weaponAffix {
             let count = model.weaponAffixCount(info.attachEffectId)
             LoadoutCandidateRow(
-                model: model, candidate: candidate, isSelected: count > 0, allowConfirm: true,
-                extraBadges: (model.isOutsideWeaponFilter(info) ? [LoadoutText.badgeOutsideWeaponType] : [])
-                    + (model.hasSelectedTierSibling(info) ? [LoadoutText.badgeInferredTiers] : [])
+                model: model, candidate: candidate, isSelected: count > 0,
+                extraBadges: (model.isOutsideWeaponFilter(info) ? [LoadoutText.t("badges.outsideWeaponType")] : [])
+                    + (model.hasSelectedTierSibling(info) ? [LoadoutText.t("badges.inferredTiers")] : [])
             ) {
                 HStack(spacing: 4) {
-                    stepButton("minus", enabled: count > 0) { model.changeWeaponAffix(info, by: -1) }
+                    stepButton("minus", enabled: count > 0, help: LoadoutText.t("stepDown")) {
+                        model.changeWeaponAffix(info, by: -1)
+                    }
                     Text("\(count)")
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
                         .foregroundStyle(count > 0 ? .white : AppTheme.tertiaryText)
                         .frame(width: 20)
-                    stepButton("plus", enabled: model.canIncrementWeaponAffix(info)) { model.changeWeaponAffix(info, by: 1) }
+                    stepButton("plus", enabled: model.canIncrementWeaponAffix(info), help: model.incrementBlockReason(info)) {
+                        model.changeWeaponAffix(info, by: 1)
+                    }
                 }
             }
         }
     }
 
-    private func stepButton(_ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    private func stepButton(_ symbol: String, enabled: Bool, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol + ".circle.fill")
                 .font(.system(size: 16))
@@ -746,6 +849,7 @@ struct BuffRankerWeaponAffixSection: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .help(help)
     }
 }
 
@@ -758,16 +862,16 @@ struct BuffRankerAccessorySection: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: LoadoutColumn.accessory.title,
-                subtitle: LoadoutText.accessorySubtitle,
+                subtitle: LoadoutText.f("accIntro", model.slotRules.accessorySlots),
                 symbol: "seal",
                 tint: LoadoutPalette.column(.accessory)
             )
             HStack {
-                Text(LoadoutText.usageAccessory + " " + model.evaluation.accessoryUsage.text)
+                Text(LoadoutText.t("usageAccessory") + " " + model.evaluation.accessoryUsage.text)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AppTheme.secondaryText)
                 if model.accessoryFull {
-                    Pill(text: LoadoutText.accessoryFull, color: AppTheme.green)
+                    Pill(text: LoadoutText.t("accFull"), color: AppTheme.green)
                 }
                 Spacer(minLength: 0)
             }
@@ -775,7 +879,7 @@ struct BuffRankerAccessorySection: View {
                 ForEach(model.visibleAccessoryCandidates) { candidate in
                     if case .accessory(let id) = candidate.item.kind {
                         let selected = model.isAccessorySelected(id)
-                        LoadoutCandidateRow(model: model, candidate: candidate, isSelected: selected, allowConfirm: true) {
+                        LoadoutCandidateRow(model: model, candidate: candidate, isSelected: selected) {
                             Button {
                                 model.toggleAccessory(id)
                             } label: {
@@ -783,6 +887,7 @@ struct BuffRankerAccessorySection: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(!selected && model.accessoryFull)
+                            .help(selected ? LoadoutText.t("accRemove") : LoadoutText.t("accPlaceholder"))
                         }
                     }
                 }
@@ -800,7 +905,7 @@ struct BuffRankerOtherSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeading(title: LoadoutText.otherTitle, subtitle: LoadoutText.otherSubtitle, symbol: "square.grid.2x2")
+            SectionHeading(title: LoadoutText.t("columns.other"), subtitle: LoadoutText.t("otherIntro"), symbol: "square.grid.2x2")
             RankerWrap(spacing: 6, lineSpacing: 6) {
                 ForEach(LoadoutColumn.otherColumns) { column in
                     RankerFilterChip(
@@ -813,7 +918,7 @@ struct BuffRankerOtherSection: View {
                 }
             }
             HStack(spacing: 10) {
-                RankerSearchField(placeholder: LoadoutText.otherSearch, text: $model.otherQuery)
+                RankerSearchField(placeholder: LoadoutText.t("otherSearch"), text: $model.otherQuery)
                     .frame(maxWidth: 360)
                 Spacer(minLength: 0)
             }
@@ -825,7 +930,7 @@ struct BuffRankerOtherSection: View {
             }
             let rows = model.visibleOtherCandidates
             if rows.isEmpty {
-                Text(LoadoutText.otherEmpty)
+                Text(LoadoutText.t("otherEmpty"))
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             } else if model.otherColumn == .character || model.otherColumn == .weaponInnate {
@@ -841,7 +946,12 @@ struct BuffRankerOtherSection: View {
     }
 
     private var columnNote: String? {
-        if model.otherColumn == .weaponInnate && model.skill == nil { return LoadoutText.innateNoWeapon }
+        if model.otherColumn == .weaponInnate {
+            if model.skill == nil { return LoadoutText.t("otherInnateNoWeapon") }
+            if (model.otherCandidates[.weaponInnate] ?? []).contains(where: \.item.isAutoInnate) {
+                return LoadoutText.t("otherInnateHint")
+            }
+        }
         return model.slotRules.slotlessZh[model.otherColumn.sourceSlotKey]
     }
 
@@ -849,7 +959,7 @@ struct BuffRankerOtherSection: View {
         var order: [String] = []
         var groups: [String: [LoadoutCandidate]] = [:]
         for candidate in rows {
-            let key = candidate.item.groupTitle ?? LoadoutText.heroUnknown
+            let key = candidate.item.groupTitle ?? LoadoutText.t("characterOther")
             if groups[key] == nil { order.append(key) }
             groups[key, default: []].append(candidate)
         }
@@ -866,9 +976,7 @@ struct BuffRankerOtherSection: View {
 
     private func row(_ candidate: LoadoutCandidate) -> some View {
         let selected = model.isSelected(candidate.item)
-        return LoadoutCandidateRow(
-            model: model, candidate: candidate, isSelected: selected, allowConfirm: candidate.item.isAutoInnate
-        ) {
+        return LoadoutCandidateRow(model: model, candidate: candidate, isSelected: selected) {
             Button {
                 model.toggleSlotless(candidate.item)
             } label: {
@@ -876,8 +984,8 @@ struct BuffRankerOtherSection: View {
             }
             .buttonStyle(.plain)
             .help(candidate.item.isAutoInnate
-                  ? (selected ? LoadoutText.innateRemove : LoadoutText.innateRestore)
-                  : LoadoutText.confirmHelp)
+                  ? (selected ? LoadoutText.t("innateRemove") : LoadoutText.t("innateRestore"))
+                  : LoadoutText.t("selectUse"))
         }
     }
 }

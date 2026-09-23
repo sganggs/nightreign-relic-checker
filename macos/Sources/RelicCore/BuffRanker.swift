@@ -516,6 +516,10 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
     public let accumulatorLadder: BuffAccumulatorLadder?
     /// 只在使用这些道具（GoodsName id）时才成立。
     public let requiresGoodsIds: [Int]
+    /// 同一条遗物词条下互为替代的档位（复核三轮；同一组只生效一档，notes.affixVariant）。
+    public let affixVariant: BuffAffixVariant?
+    /// 同一战技成对的 Self／Allies 两行（复核三轮；算施放者自己只计 Self 那一行，notes.selfAllyPair）。
+    public let selfAllyPair: BuffSelfAllyPair?
 
     public var id: Int { spEffectId }
 
@@ -591,6 +595,8 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
             BuffAccumulatorLadder.self, forKey: .accumulatorLadder
         )).flatMap { $0 }
         requiresGoodsIds = container.buffIntArray(.requiresGoodsIds)
+        affixVariant = (try? container.decodeIfPresent(BuffAffixVariant.self, forKey: .affixVariant)).flatMap { $0 }
+        selfAllyPair = (try? container.decodeIfPresent(BuffSelfAllyPair.self, forKey: .selfAllyPair)).flatMap { $0 }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -602,6 +608,7 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         case sourceSlot, sourceSlots, sourceSlotReason, appliesTo, appliesToDetail
         case weaponAffixIds, weaponAffixRoles, weaponAffixDeepOnly, weaponAffixDeepOnlyPositive
         case relicAffixes, weaponInnate, stackInput, accumulatorLadder, requiresGoodsIds
+        case affixVariant, selfAllyPair
     }
 
     /// 同族＝Paramdex 行名去掉档位后缀后相同（`[Item - Level 3] X` → `[Item] X`、
@@ -2227,6 +2234,8 @@ public struct BuffRelicAffixRef: Sendable, Hashable, Decodable {
     public let compatibilityId: Int
     public let inNormalRelicPools: Bool
     public let fixedRelicOnly: Bool
+    /// AttachEffectParam.exclusivityId：已装备的几件遗物之间是否互斥（-1＝没有；复核三轮）。
+    public let exclusivityId: Int
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -2239,11 +2248,55 @@ public struct BuffRelicAffixRef: Sendable, Hashable, Decodable {
         compatibilityId = container.buffInt(.compatibilityId, default: -1)
         inNormalRelicPools = container.buffBool(.inNormalRelicPools)
         fixedRelicOnly = container.buffBool(.fixedRelicOnly)
+        exclusivityId = container.buffInt(.exclusivityId, default: -1)
     }
 
     private enum CodingKeys: String, CodingKey {
         case attachEffectId, catalogEffectId, catalog, isDeepRelicAffix, requiresCurse, isCurse
-        case compatibilityId, inNormalRelicPools, fixedRelicOnly
+        case compatibilityId, inNormalRelicPools, fixedRelicOnly, exclusivityId
+    }
+}
+
+/// buffs[].affixVariant：同一条遗物词条下互为替代的档位（按出击武器类别只生效一档）。
+public struct BuffAffixVariant: Sendable, Hashable, Decodable {
+    public let key: String
+    public let attachEffectId: Int
+    /// 第几档（按 spEffectId 升序，从 1 开始）。
+    public let variant: Int
+    public let variants: Int
+    public let variantSpEffectIds: [Int]
+
+    /// 组键：数据的 key，缺失时退「affix#<词条 id>」。
+    public var groupKey: String { key.isEmpty ? "affix#\(attachEffectId)" : key }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = container.buffString(.key)
+        attachEffectId = container.buffInt(.attachEffectId, default: -1)
+        variant = container.buffInt(.variant, default: 0)
+        variants = container.buffInt(.variants, default: 0)
+        variantSpEffectIds = container.buffIntArray(.variantSpEffectIds)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key, attachEffectId, variant, variants, variantSpEffectIds
+    }
+}
+
+/// buffs[].selfAllyPair：同一战技成对的 Self／Allies 两行。
+public struct BuffSelfAllyPair: Sendable, Hashable, Decodable {
+    /// self / ally（与 target 一致）。
+    public let role: String
+    public let counterpartSpEffectId: Int
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = container.buffString(.role)
+        counterpartSpEffectId = container.buffInt(.counterpartSpEffectId, default: -1)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, counterpartSpEffectId
     }
 }
 
@@ -2678,9 +2731,11 @@ public struct BuffWeaponAffixInfo: Sendable, Hashable, Decodable, Identifiable {
     public var isBlessing: Bool { roles.contains("blessing") }
     public var isFixed: Bool { roles.contains("fixed") && !roles.contains("affix") }
 
-    /// 这个模式下能不能出现：常规不出深夜专属（含诅咒），深夜全都能出。
+    /// 这个模式下能不能出现（两端同一口径）：常规看 normalWepTypes 且不出深夜专属（含诅咒），
+    /// 深夜看 deepWepTypes（缺失时退常规的类别表）。
     public func isAvailable(in mode: LoadoutMode) -> Bool {
-        mode == .deep || (!deepOnly && !isCurse)
+        if mode == .deep { return !weaponTypes(in: .deep).isEmpty }
+        return !deepOnly && !isCurse && !normalWepTypes.isEmpty
     }
 
     /// 这个模式下能出现在哪些武器类别上。
@@ -2770,16 +2825,44 @@ public struct BuffSubCategorySet: Sendable, Hashable, Decodable {
 public struct BuffAttackIndex: Sendable, Hashable, Decodable {
     public let skills: [Int: [BuffSubCategorySet]]
     public let spells: [Int: [BuffSubCategorySet]]
+    /// 近战普通攻击／弓弩射击的子类别人口（{subs, rows}；只用 subs）。
+    public let melee: [BuffSubCategorySet]
+    public let ranged: [BuffSubCategorySet]
 
-    public init(skills: [Int: [BuffSubCategorySet]] = [:], spells: [Int: [BuffSubCategorySet]] = [:]) {
+    public init(
+        skills: [Int: [BuffSubCategorySet]] = [:], spells: [Int: [BuffSubCategorySet]] = [:],
+        melee: [BuffSubCategorySet] = [], ranged: [BuffSubCategorySet] = []
+    ) {
         self.skills = skills
         self.spells = spells
+        self.melee = melee
+        self.ranged = ranged
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         skills = Self.table(container, .skills)
         spells = Self.table(container, .spells)
+        melee = Self.population(container, .melee)
+        ranged = Self.population(container, .ranged)
+    }
+
+    private static func population(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [BuffSubCategorySet] {
+        guard let raw = try? container.decodeIfPresent([BuffFailable<PopulationRow>].self, forKey: key) else { return [] }
+        return raw.compactMap(\.value).map { BuffSubCategorySet(subs: $0.subs, hits: $0.rows) }
+    }
+
+    private struct PopulationRow: Decodable {
+        let subs: [Int]
+        let rows: Int
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            subs = container.buffIntArray(.subs)
+            rows = max(0, container.buffInt(.rows, default: 0))
+        }
+
+        private enum CodingKeys: String, CodingKey { case subs, rows }
     }
 
     private static func table(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [Int: [BuffSubCategorySet]] {
@@ -2803,7 +2886,7 @@ public struct BuffAttackIndex: Sendable, Hashable, Decodable {
         private enum CodingKeys: String, CodingKey { case subCategorySets }
     }
 
-    private enum CodingKeys: String, CodingKey { case skills, spells }
+    private enum CodingKeys: String, CodingKey { case skills, spells, melee, ranged }
 }
 
 /// notes.userQuestions 的一问一答。

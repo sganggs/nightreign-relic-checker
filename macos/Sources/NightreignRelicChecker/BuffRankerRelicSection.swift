@@ -27,12 +27,12 @@ struct BuffRankerRelicSection: View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeading(
                 title: LoadoutColumn.relic.title,
-                subtitle: LoadoutText.relicSubtitle,
+                subtitle: LoadoutText.f("relicIntro", model.slotRules.relicNormal, model.slotRules.relicDeepExtra),
                 symbol: "diamond",
                 tint: LoadoutPalette.column(.relic)
             )
             if let error = model.catalogError {
-                Text(LoadoutText.relicCatalogMissing + "（\(error)）")
+                Text(LoadoutText.t("relicNoCatalog") + "（\(error)）")
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.amber)
             }
@@ -67,23 +67,23 @@ struct RelicCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text(LoadoutText.relicCardTitle(cardIndex + 1, deep: card.isDeepSlot))
+                Text(LoadoutText.relicCardTitle(cardIndex, normalCount: model.slotRules.relicNormal, deep: card.isDeepSlot))
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(card.isDeepSlot ? LoadoutPalette.badge(LoadoutText.badgeDeepOnly) : .white)
+                    .foregroundStyle(card.isDeepSlot ? LoadoutPalette.badge(LoadoutText.t("badges.deepOnly")) : .white)
                 Spacer(minLength: 0)
-                Picker("", selection: choiceBinding) {
-                    Text(LoadoutText.relicChoiceEmpty).tag(ChoiceKind.empty)
+                Picker(LoadoutText.t("relicTypeAria"), selection: choiceBinding) {
+                    Text(LoadoutText.t("relicType.empty")).tag(ChoiceKind.empty)
                     if hasFixedOption {
-                        Text(LoadoutText.relicChoiceFixed).tag(ChoiceKind.fixed)
+                        Text(LoadoutText.t("relicType.fixed")).tag(ChoiceKind.fixed)
                     }
-                    Text(LoadoutText.relicChoiceCustom).tag(ChoiceKind.custom)
+                    Text(LoadoutText.t("relicType.custom")).tag(ChoiceKind.custom)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: hasFixedOption ? 190 : 130)
             }
             if card.isDeepSlot && !hasFixedOption {
-                Text(LoadoutText.relicNoDeepFixed)
+                Text(LoadoutText.t("relicFixedNone"))
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
             }
@@ -112,7 +112,7 @@ struct RelicCardView: View {
     private var borderColor: Color {
         switch check.status {
         case .invalid: return AppTheme.red.opacity(0.6)
-        case .valid: return card.isEmpty ? AppTheme.border : AppTheme.purple.opacity(0.35)
+        case .valid, .partial, .fixed: return card.isEmpty ? AppTheme.border : AppTheme.purple.opacity(0.35)
         case .empty: return AppTheme.border
         }
     }
@@ -169,7 +169,7 @@ struct RelicCardView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(info.counted ? .white : AppTheme.tertiaryText)
                         if !info.counted {
-                            Text(LoadoutText.relicNonDamage)
+                            Text(LoadoutText.t("relicNonDamage"))
                                 .font(.system(size: 10))
                                 .foregroundStyle(AppTheme.tertiaryText)
                         }
@@ -193,14 +193,14 @@ struct RelicCardView: View {
         let affix = affixID.flatMap { model.loadoutIndex?.catalogAffixes[$0] }
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(LoadoutText.relicRowLabel(row + 1))
+                Text(LoadoutText.f("relicRowLabel", row + 1))
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.tertiaryText)
                     .frame(width: 44, alignment: .leading)
                 Button {
                     picker = .affix(card: cardIndex, row: row)
                 } label: {
-                    Text(affix?.name ?? (affixID.map { "#\($0)" } ?? LoadoutText.relicPickAffix))
+                    Text(affix?.name ?? (affixID.map { "#\($0)" } ?? LoadoutText.t("relicPickAffix")))
                         .font(.system(size: 12, weight: affix == nil ? .regular : .semibold))
                         .foregroundStyle(affix == nil ? AppTheme.purpleSoft : .white)
                         .lineLimit(1)
@@ -208,17 +208,18 @@ struct RelicCardView: View {
                 .buttonStyle(.plain)
                 .disabled(!(model.loadoutIndex?.hasCatalog ?? false))
                 if affix?.requiresCurse == true {
-                    Pill(text: LoadoutText.badgeRequiresCurse, color: LoadoutPalette.badge(LoadoutText.badgeRequiresCurse))
+                    Pill(text: LoadoutText.t("badges.requiresCurse"), color: LoadoutPalette.badge(LoadoutText.t("badges.requiresCurse")))
                 }
                 Spacer(minLength: 0)
-                if affixID != nil {
+                if affixID != nil || card.rows[row].curseID != nil {
                     Button {
-                        model.setRelicAffix(cardIndex, row: row, affixID: nil)
+                        model.removeSource("relic:\(cardIndex):\(row)")
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(AppTheme.tertiaryText)
                     }
                     .buttonStyle(.plain)
+                    .help(LoadoutText.t("relicRemove"))
                 }
             }
             if card.isDeepSlot && (affix?.requiresCurse == true || card.rows[row].curseID != nil) {
@@ -231,7 +232,7 @@ struct RelicCardView: View {
         let curseID = card.rows[row].curseID
         let curse = curseID.flatMap { model.loadoutIndex?.catalogAffixes[$0] }
         return HStack(spacing: 6) {
-            Text(LoadoutText.relicCurseLabel)
+            Text(LoadoutText.t("relicCurseLabel"))
                 .font(.system(size: 11))
                 .foregroundStyle(AppTheme.red.opacity(0.8))
                 .frame(width: 44, alignment: .leading)
@@ -239,13 +240,13 @@ struct RelicCardView: View {
             Button {
                 picker = .curse(card: cardIndex, row: row)
             } label: {
-                Text(curse?.name ?? LoadoutText.relicPickCurse)
+                Text(curse?.name ?? LoadoutText.t("relicCursePlaceholder"))
                     .font(.system(size: 11))
                     .foregroundStyle(curse == nil ? AppTheme.amber : AppTheme.secondaryText)
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
-            Text(LoadoutText.relicCurseNote)
+            Text(LoadoutText.t("relicCurseNote"))
                 .font(.system(size: 10))
                 .foregroundStyle(AppTheme.tertiaryText)
             Spacer(minLength: 0)
@@ -266,11 +267,11 @@ struct RelicCardView: View {
         if check.status != .empty {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Image(systemName: check.status == .valid ? "checkmark.seal.fill" : "xmark.octagon.fill")
-                        .foregroundStyle(check.status == .valid ? AppTheme.green : AppTheme.red)
-                    Text(check.status == .valid ? LoadoutText.relicValidLabel : LoadoutText.relicInvalidLabel)
+                    Image(systemName: check.status == .invalid ? "xmark.octagon.fill" : "checkmark.seal.fill")
+                        .foregroundStyle(check.status == .invalid ? AppTheme.red : (check.status == .partial ? AppTheme.amber : AppTheme.green))
+                    Text(check.status.title)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(check.status == .valid ? AppTheme.green : AppTheme.red)
+                        .foregroundStyle(check.status == .invalid ? AppTheme.red : (check.status == .partial ? AppTheme.amber : AppTheme.green))
                     Text(check.message)
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
@@ -294,7 +295,7 @@ struct RelicCardView: View {
 
     @ViewBuilder
     private var linesBody: some View {
-        let lines = model.lines(forRelicCard: cardIndex)
+        let lines = model.lines(forRelicCard: cardIndex).filter { $0.status != .variantOff }
         if !lines.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(lines) { line in
@@ -310,7 +311,7 @@ struct RelicCardView: View {
                                 .foregroundStyle(line.status.isCounted ? AppTheme.green : AppTheme.amber)
                                 .lineLimit(1)
                         }
-                        LoadoutLineControls(model: model, line: line, allowConfirm: true, siblings: lines)
+                        LoadoutLineControls(model: model, line: line, siblings: lines)
                     }
                 }
             }
@@ -340,7 +341,7 @@ struct RelicPickerSheet: View {
                         .foregroundStyle(AppTheme.secondaryText)
                 }
                 Spacer()
-                Button(LoadoutText.pickerDone) { dismiss() }
+                Button(LoadoutText.t("pickerDone")) { dismiss() }
                     .keyboardShortcut(.cancelAction)
             }
             .padding(18)
@@ -363,30 +364,33 @@ struct RelicPickerSheet: View {
         .background(AppTheme.background)
     }
 
+    private func cardTitle(_ card: Int) -> String {
+        LoadoutText.relicCardTitle(card, normalCount: model.slotRules.relicNormal, deep: isDeep(card))
+    }
+
     private var title: String {
         switch target {
-        case .fixed(let card): return LoadoutText.relicCardTitle(card + 1, deep: isDeep(card)) + " · " + LoadoutText.relicChoiceFixed
+        case .fixed(let card): return cardTitle(card) + " · " + LoadoutText.t("relicType.fixed")
         case .affix(let card, let row):
-            return LoadoutText.relicCardTitle(card + 1, deep: isDeep(card)) + " · " + LoadoutText.relicRowLabel(row + 1)
+            return cardTitle(card) + " · " + LoadoutText.f("relicRowLabel", row + 1)
         case .curse(let card, let row):
-            return LoadoutText.relicCardTitle(card + 1, deep: isDeep(card)) + " · " + LoadoutText.relicRowLabel(row + 1)
-                + " · " + LoadoutText.relicCurseLabel
+            return cardTitle(card) + " · " + LoadoutText.f("relicRowLabel", row + 1) + " · " + LoadoutText.t("relicCurseLabel")
         }
     }
 
     private var subtitle: String {
         switch target {
-        case .fixed: return LoadoutText.relicSubtitle
-        case .affix: return LoadoutText.relicAffixPickerSubtitle
-        case .curse: return LoadoutText.relicCurseNote
+        case .fixed: return LoadoutText.t("relicFixedPlaceholder")
+        case .affix: return LoadoutText.t("relicAffixPickerHint")
+        case .curse: return LoadoutText.t("relicCurseNote")
         }
     }
 
     private var placeholder: String {
         switch target {
-        case .fixed: return LoadoutText.relicFixedSearch
-        case .affix: return LoadoutText.relicSearch
-        case .curse: return LoadoutText.relicCurseSearch
+        case .fixed: return LoadoutText.t("relicFixedSearch")
+        case .affix: return LoadoutText.t("relicSearch")
+        case .curse: return LoadoutText.t("relicCurseSearch")
         }
     }
 
@@ -434,7 +438,7 @@ struct RelicPickerSheet: View {
                 multiplier: candidate.multiplier,
                 potential: candidate.potential,
                 potentialOneStack: candidate.potentialAssumesOneStack,
-                warning: used ? LoadoutText.relicFixedUsedElsewhere : nil,
+                warning: used ? LoadoutText.t("relicFixedUsedElsewhere") : nil,
                 dimmed: used
             )
         }
@@ -452,8 +456,8 @@ struct RelicPickerSheet: View {
         } label: {
             pickRow(
                 title: choice.candidate.item.title,
-                subtitle: [choice.candidate.item.subtitle, affix?.requiresCurse == true ? LoadoutText.badgeRequiresCurse : nil,
-                           choice.candidate.isApplicable ? nil : (choice.candidate.blockedReason ?? LoadoutText.appliesNo)]
+                subtitle: [choice.candidate.item.subtitle, affix?.requiresCurse == true ? LoadoutText.t("badges.requiresCurse") : nil,
+                           choice.candidate.isApplicable ? nil : (choice.candidate.blockedReason ?? LoadoutText.t("verdict.no"))]
                     .compactMap { $0 }.joined(separator: " · "),
                 multiplier: choice.candidate.multiplier,
                 potential: choice.candidate.potential,
@@ -472,7 +476,7 @@ struct RelicPickerSheet: View {
         } label: {
             pickRow(
                 title: choice.affix.name,
-                subtitle: LoadoutText.relicCurseNote + " · #\(choice.affix.effectID)",
+                subtitle: LoadoutText.t("relicCurseNote") + " · #\(choice.affix.effectID)",
                 multiplier: nil,
                 potential: nil,
                 warning: choice.blockingIssue.map { "\($0.title)：\($0.detail)" },
@@ -510,7 +514,7 @@ struct RelicPickerSheet: View {
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(multiplier > 1.0000001 ? AppTheme.green : AppTheme.secondaryText)
                     if let potential, abs(potential - multiplier) > 0.0000001 {
-                        Text(potentialOneStack ? LoadoutText.potentialTextOneStack(potential) : LoadoutText.potentialText(potential))
+                        Text(LoadoutText.f(potentialOneStack ? "potentialOneStack" : "potentialText", BuffFormat.multiplier(potential)))
                             .font(.system(size: 10))
                             .foregroundStyle(AppTheme.amber)
                     }

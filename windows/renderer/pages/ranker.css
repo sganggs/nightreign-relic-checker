@@ -765,6 +765,49 @@
 
 .ranker-stack select {
   width: auto;
+  min-width: 0;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+/* 选档 / 选层的下拉可能很长：在窄处（遗物卡）收进卡片宽度内 */
+.ranker-stack {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.ranker-stack > span {
+  flex: none;
+}
+
+/* 层数的 −／＋ 步进（与 macOS 的 Stepper 同一组控件） */
+.ranker-stack .ranker-step {
+  width: 24px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--field-soft);
+  font-size: 13px;
+}
+
+.ranker-stack input[type='number'] {
+  width: 52px;
+  text-align: center;
+}
+
+/* 已放进配置的一项的「移除」按钮 */
+.ranker-remove.button {
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.ranker-remove.button:hover {
+  color: var(--red);
+  border-color: var(--red);
 }
 
 .ranker-tick {
@@ -870,6 +913,12 @@
   gap: 5px;
   font-size: 10.5px;
   line-height: 1.4;
+}
+
+.ranker-mini-list .ranker-row-controls {
+  min-width: 0;
+  max-width: 100%;
+  justify-content: flex-start;
 }
 
 .ranker-mini-list .pill {
@@ -1004,6 +1053,12 @@
   color: var(--text-secondary);
 }
 
+/* 配置本身不合法（槽位 / 遗物 / 互斥）：比提醒更醒目 */
+.ranker-warn-list li.is-violation {
+  color: var(--red);
+  font-weight: 650;
+}
+
 .ranker-sum-list {
   display: flex;
   flex-direction: column;
@@ -1030,6 +1085,8 @@
 .ranker-sum-row.is-duplicate,
 .ranker-sum-row.is-no,
 .ranker-sum-row.is-zeroStacks,
+.ranker-sum-row.is-tierOff,
+.ranker-sum-row.is-neutral,
 .ranker-sum-row.is-relicInvalid {
   opacity: .62;
 }
@@ -1166,4 +1223,10 @@
   color: var(--amber);
   font-size: 9.5px;
   font-weight: 650;
+}
+
+/* 条件成立 / 按 1 层算时的倍率：只作参考，不进合计 */
+.ranker-score small.is-potential {
+  color: var(--text-secondary);
+  font-weight: 600;
 }

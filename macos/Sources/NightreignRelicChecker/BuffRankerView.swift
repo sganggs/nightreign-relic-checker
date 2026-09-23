@@ -31,9 +31,9 @@ struct BuffRankerView: View {
             HStack(alignment: .center, spacing: 14) {
                 LogoMark(size: 40)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("增伤排名")
+                    Text(LoadoutText.t("pageTitle"))
                         .font(.system(size: 26, weight: .bold, design: .rounded))
-                    Text(LoadoutText.pageSubtitle)
+                    Text(LoadoutText.t("pageSubtitle"))
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
@@ -100,7 +100,7 @@ struct BuffRankerView: View {
                         BuffRankerOtherSection(model: model)
                         BuffRankerOverviewSection(model: model)
                     } else {
-                        EmptyStateView(title: "数据未内置", symbol: "square.stack.3d.up.slash", detail: LoadoutText.loadoutMissing)
+                        EmptyStateView(title: LoadoutText.t("noData"), symbol: "square.stack.3d.up.slash", detail: LoadoutText.t("loadoutMissing"))
                             .frame(maxWidth: .infinity)
                             .appCard()
                     }
@@ -134,7 +134,7 @@ struct BuffRankerView: View {
         guard case .ready = model.phase else { return "完全离线，数值取自游戏参数表" }
         guard model.selectedOutput != nil else { return "请选择一个战技或法术" }
         return "\(model.outputTitle) · 勾选 \(model.selectedSegmentIDs.count)/\(model.segments.count) 段 · "
-            + "\(model.loadout.mode.title) · \(LoadoutText.totalLabel) \(BuffFormat.multiplier(model.evaluation.total))"
+            + "\(model.loadout.mode.title) · \(LoadoutText.t("summaryTotal")) \(BuffFormat.multiplier(model.evaluation.total))"
     }
 
     private var footerTrailing: String {
@@ -251,7 +251,7 @@ struct BuffRankerOutputSection: View {
                     }
                     Text("法术段只用固定伤害（flat）做配比：参数表里的 motion 是「照抄武器攻击力 100%」的占位写法，"
                          + "乘到辉石魔杖 / 圣印记的物理攻击力上会凭空造出物理伤害。"
-                         + LoadoutText.spellHandNote)
+                         + LoadoutText.t("spellHandNote"))
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -268,14 +268,14 @@ struct BuffRankerOutputSection: View {
 
     /// 武器槽（左右手）：战技与法术都要，appliesToDetail.requires.hand 按它判定。
     private var handPicker: some View {
-        Picker("武器槽", selection: $model.weaponSlot) {
-            Text("右手").tag(1)
-            Text("左手").tag(2)
+        Picker(LoadoutText.t("handLabel"), selection: $model.weaponSlot) {
+            Text(LoadoutText.handName(1)).tag(1)
+            Text(LoadoutText.handName(2)).tag(2)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
         .frame(width: 124)
-        .help(LoadoutText.handPickerHelp)
+        .help(LoadoutText.t("handHelp"))
     }
 
     private var weaponPicker: some View {
