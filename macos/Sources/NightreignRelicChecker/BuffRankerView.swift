@@ -1,8 +1,9 @@
 import RelicCore
 import SwiftUI
 
-/// 增伤排名页：选一个输出手段（战技 / 法术）→ 勾选它实际打出的段 →
-/// 看这套段的伤害构成 → 按构成加权给「增伤手段」排名 → 给出理论叠加组合。
+/// 增伤排名页（配置版）：选一个输出手段（战技 / 法术）→ 勾选它实际打出的段 → 看伤害构成 →
+/// 自己组一套配置（常规／深夜、局内武器词条、遗物、护符、其它增益）→ 汇总成一个总倍率。
+/// 纯计算在 RelicCore 的 BuffLoadout.swift，文案集中在 `LoadoutText`。
 ///
 /// 由「增伤排名」功能开发者独占：只改本文件与 BuffRanker*.swift、RelicCore 的
 /// SkillData.swift / BuffRanker.swift、RelicCoreChecks 的 BuffRankerChecks.swift；
@@ -32,7 +33,7 @@ struct BuffRankerView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("增伤排名")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
-                    Text("按战技 / 法术的实际分段算出伤害构成，再给增伤手段排名")
+                    Text(LoadoutText.pageSubtitle)
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
@@ -88,15 +89,21 @@ struct BuffRankerView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
                 BuffRankerOutputSection(model: model)
-                if model.selectedOutput != nil, let buffs = model.buffs {
+                if model.selectedOutput != nil {
                     BuffRankerSegmentSection(model: model)
                     BuffRankerCompositionSection(model: model)
-                    BuffRankerRankingSection(
-                        model: model,
-                        dataset: buffs.dataset,
-                        sourceKinds: buffs.availableSourceKinds
-                    )
-                    BuffRankerStackSection(model: model, dataset: buffs.dataset)
+                    if model.supportsLoadout {
+                        BuffRankerSummarySection(model: model)
+                        BuffRankerWeaponAffixSection(model: model)
+                        BuffRankerRelicSection(model: model)
+                        BuffRankerAccessorySection(model: model)
+                        BuffRankerOtherSection(model: model)
+                        BuffRankerOverviewSection(model: model)
+                    } else {
+                        EmptyStateView(title: "数据未内置", symbol: "square.stack.3d.up.slash", detail: LoadoutText.loadoutMissing)
+                            .frame(maxWidth: .infinity)
+                            .appCard()
+                    }
                 }
                 BuffRankerNotesSection(model: model)
             }
@@ -127,7 +134,7 @@ struct BuffRankerView: View {
         guard case .ready = model.phase else { return "完全离线，数值取自游戏参数表" }
         guard model.selectedOutput != nil else { return "请选择一个战技或法术" }
         return "\(model.outputTitle) · 勾选 \(model.selectedSegmentIDs.count)/\(model.segments.count) 段 · "
-            + "增伤条目 \(model.ranking.rows.count)"
+            + "\(model.loadout.mode.title) · \(LoadoutText.totalLabel) \(BuffFormat.multiplier(model.evaluation.total))"
     }
 
     private var footerTrailing: String {
@@ -239,12 +246,12 @@ struct BuffRankerOutputSection: View {
                             color: AppTheme.green
                         )
                         Spacer(minLength: 0)
-                        // 施法器同样占左右手之一，scope.weaponSlot 要对上（与 Windows 端一致）。
+                        // 施法器同样占左右手之一，按 appliesToDetail.requires.hand 判定（与 Windows 端一致）。
                         handPicker
                     }
                     Text("法术段只用固定伤害（flat）做配比：参数表里的 motion 是「照抄武器攻击力 100%」的占位写法，"
                          + "乘到辉石魔杖 / 圣印记的物理攻击力上会凭空造出物理伤害。"
-                         + "武器槽用于匹配 scope.weaponSlot —— 只作用于另一只手的增益不计入。")
+                         + LoadoutText.spellHandNote)
                         .font(.system(size: 11))
                         .foregroundStyle(AppTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -259,7 +266,7 @@ struct BuffRankerOutputSection: View {
         )
     }
 
-    /// 武器槽（左右手）：战技与法术都要，scope.weaponSlot 按它匹配。
+    /// 武器槽（左右手）：战技与法术都要，appliesToDetail.requires.hand 按它判定。
     private var handPicker: some View {
         Picker("武器槽", selection: $model.weaponSlot) {
             Text("右手").tag(1)
@@ -268,7 +275,7 @@ struct BuffRankerOutputSection: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .frame(width: 124)
-        .help("增伤 buff 的 scope.weaponSlot 会区分左右手（缺失与「自身」视为不限），默认按右手计算")
+        .help(LoadoutText.handPickerHelp)
     }
 
     private var weaponPicker: some View {
@@ -423,7 +430,7 @@ struct BuffRankerCompositionSection: View {
             )
 
             if model.composition.isEmpty {
-                Text("当前没有勾选任何带伤害的段，无法计算构成——排名与推荐组合都要先有一个真实的伤害构成。")
+                Text("当前没有勾选任何带伤害的段，无法计算构成——配置的总倍率要先有一个真实的伤害构成。")
                     .font(.caption)
                     .foregroundStyle(AppTheme.amber)
             } else {

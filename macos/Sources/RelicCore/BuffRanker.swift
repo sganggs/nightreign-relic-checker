@@ -1,7 +1,16 @@
 import Foundation
 
-// 「增伤排名」页下半部分：增伤手段（buffs.json，schemaVersion ≥ 3（当前 5）；v4 / v5 只增字段，
-// 本页向前兼容）的解码与排名引擎。与 Windows 端 renderer/pages/ranker.js 同一套口径。
+// 「增伤排名」页的增伤手段数据（buffs.json，schemaVersion ≥ 3（当前 6）；各版只增字段，
+// 向前兼容）的解码，以及旧版「按倍率排全表 + 推荐组合」的排名引擎。
+//
+// **页面已改为「自己组一套配置」**（BuffLoadout.swift：常规／深夜、局内武器词条、遗物、护符、其它增益，
+// 生效判定一律取 v6 的 appliesTo / appliesToDetail）。下面的 BuffRankerIndex.rankResult / stackPlan /
+// BuffRankerPageNotes 不再直接出现在页面上，保留是因为：① 每条 buff 的通道乘数（profiles）、
+// 有效倍率加权与攻击力加算的算法由配置页直接复用；② 自检与 Windows 端的旧口径对照仍然钉在它们上面。
+// v6 新增字段（sourceSlot / appliesTo / weaponAffix* / relicAffixes / stackInput / accumulatorLadder /
+// exclusiveKey / slotRules / weaponAffixes / fixedRelics / attackIndex / userQuestions）的模型在本文件末尾。
+//
+// 旧引擎的口径（与 Windows 端 renderer/pages/ranker.js 旧版同一套）：
 //
 // 算法严格按数据集自带的 notes.ranking / notes.attackContext / notes.howToUseRates / stackingRules：
 //   ① 先按 target 过滤：只保留 self（「包含队友给的增益」打开时再加 ally），
@@ -237,6 +246,9 @@ public struct BuffSourceRef: Sendable, Hashable, Decodable, Identifiable {
     public let trigger: String?
     public let inferred: Bool
     public let paramRowCategory: String?
+    /// v6：AoW 推断来源上写出的战技名（ArtsName）与战技 id。
+    public let artsNameZh: String?
+    public let artsId: Int?
 
     public var id: String { "\(kind)-\(sourceID.map(String.init) ?? (nameEn ?? nameZh ?? "?"))" }
 
@@ -258,10 +270,13 @@ public struct BuffSourceRef: Sendable, Hashable, Decodable, Identifiable {
         trigger = container.buffOptionalString(.trigger)
         inferred = container.buffBool(.inferred)
         paramRowCategory = container.buffOptionalString(.paramRowCategory)
+        artsNameZh = container.buffOptionalString(.artsNameZh)
+        artsId = container.buffOptionalInt(.artsId)
     }
 
     private enum CodingKeys: String, CodingKey {
         case kind, id, nameZh, nameEn, effectNameZh, via, trigger, inferred, paramRowCategory
+        case artsNameZh, artsId
     }
 }
 
@@ -284,6 +299,10 @@ public struct BuffScope: Sendable, Hashable, Decodable {
     /// （notes.attackContext：它和 activation 是正交的两条轴，第③步拦不住它们）。
     /// 取值见 `enums.attackContext`，是 subCategories 与 stacking.stateInfo 两条来路的归一化视图。
     public let attackContexts: [String]
+    /// v6：局内武器词条能出现在哪些武器类别（wepType）上（常规∪深夜）。
+    public let rollableWeaponTypes: [Int]
+    /// v6：「装备 N 把 X 类武器」／「用 X 类武器发动」的武器类别条件。
+    public let weaponTypes: BuffWeaponTypesScope?
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -296,11 +315,14 @@ public struct BuffScope: Sendable, Hashable, Decodable {
         spAttribute = container.buffOptionalInt(.spAttribute)
         subCategories = container.buffIntArray(.subCategories)
         attackContexts = container.buffStringArray(.attackContexts)
+        rollableWeaponTypes = container.buffIntArray(.rollableWeaponTypes)
+        weaponTypes = (try? container.decodeIfPresent(BuffWeaponTypesScope.self, forKey: .weaponTypes)).flatMap { $0 }
     }
 
     private enum CodingKeys: String, CodingKey {
         case affectsSorcery, affectsIncantation, affectsShaman, affectsThrow
         case weaponSlot, atkAttribute, spAttribute, subCategories, attackContexts
+        case rollableWeaponTypes, weaponTypes
     }
 
     public init(
@@ -308,7 +330,9 @@ public struct BuffScope: Sendable, Hashable, Decodable {
         affectsShaman: Bool = false, affectsThrow: Bool = false,
         weaponSlot: Int? = nil, atkAttribute: Int? = nil,
         spAttribute: Int? = nil, subCategories: [Int] = [],
-        attackContexts: [String] = []
+        attackContexts: [String] = [],
+        rollableWeaponTypes: [Int] = [],
+        weaponTypes: BuffWeaponTypesScope? = nil
     ) {
         self.affectsSorcery = affectsSorcery
         self.affectsIncantation = affectsIncantation
@@ -319,6 +343,8 @@ public struct BuffScope: Sendable, Hashable, Decodable {
         self.spAttribute = spAttribute
         self.subCategories = subCategories
         self.attackContexts = attackContexts
+        self.rollableWeaponTypes = rollableWeaponTypes
+        self.weaponTypes = weaponTypes
     }
 
     /// 只在某种攻击情境下才吃得到（默认不计入通用排名）。
@@ -393,6 +419,10 @@ public struct BuffStacking: Sendable, Hashable, Decodable {
     public let saveCategory: Int
     /// 分组键：stackSelf / none 时是 "sp<category>#<spEffectId>"，其余是 "sp<category>"。
     public let group: String
+    /// v6：互斥键（同键只留一份，不同键相乘）。缺失时退回 `group`（旧口径）。
+    public let exclusiveKey: String
+    /// v6：perSpEffect / category / categoryPriority / accumulatorLadder。
+    public let exclusiveScope: String
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -402,15 +432,19 @@ public struct BuffStacking: Sendable, Hashable, Decodable {
         categoryPriority = container.buffInt(.categoryPriority, default: 0)
         saveCategory = container.buffInt(.saveCategory, default: -1)
         group = container.buffString(.group)
+        exclusiveKey = container.buffString(.exclusiveKey, default: group)
+        exclusiveScope = container.buffString(.exclusiveScope)
     }
 
     private enum CodingKeys: String, CodingKey {
         case stateInfo, spCategory, spCategoryBehavior, categoryPriority, saveCategory, group
+        case exclusiveKey, exclusiveScope
     }
 
     public init(
         stateInfo: Int = 0, spCategory: Int = 0, spCategoryBehavior: String = "none",
-        categoryPriority: Int = 0, saveCategory: Int = -1, group: String
+        categoryPriority: Int = 0, saveCategory: Int = -1, group: String,
+        exclusiveKey: String? = nil, exclusiveScope: String = ""
     ) {
         self.stateInfo = stateInfo
         self.spCategory = spCategory
@@ -418,6 +452,8 @@ public struct BuffStacking: Sendable, Hashable, Decodable {
         self.categoryPriority = categoryPriority
         self.saveCategory = saveCategory
         self.group = group
+        self.exclusiveKey = exclusiveKey ?? group
+        self.exclusiveScope = exclusiveScope
     }
 }
 
@@ -456,6 +492,30 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
     public let selfInflictedStatus: Bool
     public let statusLabelsZh: [String]
     public let sourcesTruncated: Int?
+
+    // MARK: v6（配置页用；缺失一律退默认值，不抛错）
+
+    /// 这条 buff 该放进配置页的哪一栏（enums.sourceSlot）。缺失时为 "other"。
+    public let sourceSlot: String
+    /// 全部槽位（按 enums.sourceSlot 顺序，[0] 就是 sourceSlot）。
+    public let sourceSlots: [String]
+    public let sourceSlotReason: String?
+    /// skill / sorcery / incantation / melee / ranged / throw → yes / no / conditional。
+    public let appliesTo: [String: String]
+    /// 非 yes 的类别的 {reason, requires?, matchShare?}。
+    public let appliesToDetail: [String: BuffAppliesDetail]
+    /// 局内武器词条：AttachEffect id、角色（affix / curse / blessing / fixed）、是否只在深夜池出现。
+    public let weaponAffixIds: [Int]
+    public let weaponAffixRoles: [String]
+    public let weaponAffixDeepOnly: Bool
+    /// 正面的深夜专属词条（深夜每把武器最多 1 条、合计最多 6 条的计数口径）。
+    public let weaponAffixDeepOnlyPositive: Bool
+    public let relicAffixes: [BuffRelicAffixRef]
+    public let weaponInnate: BuffWeaponInnate?
+    public let stackInput: BuffStackInput?
+    public let accumulatorLadder: BuffAccumulatorLadder?
+    /// 只在使用这些道具（GoodsName id）时才成立。
+    public let requiresGoodsIds: [Int]
 
     public var id: Int { spEffectId }
 
@@ -507,6 +567,30 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         selfInflictedStatus = container.buffBool(.selfInflictedStatus)
         statusLabelsZh = container.buffStringArray(.statusLabelsZh)
         sourcesTruncated = container.buffOptionalInt(.sourcesTruncated)
+
+        let slots = container.buffStringArray(.sourceSlots)
+        sourceSlot = container.buffOptionalString(.sourceSlot) ?? slots.first ?? "other"
+        sourceSlots = slots.isEmpty ? [sourceSlot] : slots
+        sourceSlotReason = container.buffOptionalString(.sourceSlotReason)
+        appliesTo = container.buffStringDictionary(.appliesTo)
+        if let wrapped = try? container.decodeIfPresent(
+            [String: BuffFailable<BuffAppliesDetail>].self, forKey: .appliesToDetail
+        ) {
+            appliesToDetail = wrapped.compactMapValues(\.value)
+        } else {
+            appliesToDetail = [:]
+        }
+        weaponAffixIds = container.buffIntArray(.weaponAffixIds)
+        weaponAffixRoles = container.buffStringArray(.weaponAffixRoles)
+        weaponAffixDeepOnly = container.buffBool(.weaponAffixDeepOnly)
+        weaponAffixDeepOnlyPositive = container.buffBool(.weaponAffixDeepOnlyPositive)
+        relicAffixes = container.buffArray(.relicAffixes)
+        weaponInnate = (try? container.decodeIfPresent(BuffWeaponInnate.self, forKey: .weaponInnate)).flatMap { $0 }
+        stackInput = (try? container.decodeIfPresent(BuffStackInput.self, forKey: .stackInput)).flatMap { $0 }
+        accumulatorLadder = (try? container.decodeIfPresent(
+            BuffAccumulatorLadder.self, forKey: .accumulatorLadder
+        )).flatMap { $0 }
+        requiresGoodsIds = container.buffIntArray(.requiresGoodsIds)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -515,6 +599,9 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         case duration, permanent, target, targetSource, activation, activationSource
         case descZh, conditions, triggered, inferredName, selfInflictedStatus
         case statusLabelsZh, sourcesTruncated
+        case sourceSlot, sourceSlots, sourceSlotReason, appliesTo, appliesToDetail
+        case weaponAffixIds, weaponAffixRoles, weaponAffixDeepOnly, weaponAffixDeepOnlyPositive
+        case relicAffixes, weaponInnate, stackInput, accumulatorLadder, requiresGoodsIds
     }
 
     /// 同族＝Paramdex 行名去掉档位后缀后相同（`[Item - Level 3] X` → `[Item] X`、
@@ -630,6 +717,26 @@ public struct BuffDataset: Sendable {
     public let counts: [String: Double]
     public let buffs: [BuffEntry]
 
+    // MARK: v6（配置页用）
+
+    /// slotRules：常规／深夜的武器词条、遗物、护符槽位。缺失时为 nil（页面显示「数据未内置」）。
+    public let slotRules: BuffSlotRules?
+    /// 有增伤 buff 的局内武器词条清单（按 AttachEffect id）。
+    public let weaponAffixes: [BuffWeaponAffixInfo]
+    /// 官方固定词条遗物。
+    public let fixedRelics: [BuffFixedRelic]
+    /// 每个战技／法术实际命中段的子类别集合（appliesTo=conditional 且带 subCategoriesAny 时用）。
+    public let attackIndex: BuffAttackIndex
+    /// enums.sourceSlot：键 → 中文名 / 说明。
+    public let sourceSlotLabels: [String: String]
+    public let sourceSlotNotes: [String: String]
+    /// enums.wepType：wepType → 中文名（短剑、刀…）。
+    public let wepTypeLabels: [Int: String]
+    /// enums.exclusiveScope：键 → 中文说明。
+    public let exclusiveScopeLabels: [String: String]
+    /// notes.userQuestions（Q1…Q5）。
+    public let userQuestions: [BuffUserQuestion]
+
     public func rateField(_ key: String) -> BuffRateField? {
         rateFields.first { $0.key == key }
     }
@@ -704,14 +811,27 @@ extension BuffDataset: Decodable {
         stackBehaviorLabels = enums.spCategoryBehavior
         attackContextLabels = enums.attackContext
         stateInfoLabels = enums.stateInfo
+        sourceSlotLabels = enums.sourceSlot
+        sourceSlotNotes = enums.sourceSlotNote
+        wepTypeLabels = enums.wepType
+        exclusiveScopeLabels = enums.exclusiveScope
 
         counts = container.buffNumberDictionary(.counts)
         buffs = container.buffArray(.buffs)
+
+        slotRules = (try? container.decodeIfPresent(BuffSlotRules.self, forKey: .slotRules)).flatMap { $0 }
+        weaponAffixes = container.buffArray(.weaponAffixes)
+        fixedRelics = container.buffArray(.fixedRelics)
+        attackIndex = (try? container.decodeIfPresent(BuffAttackIndex.self, forKey: .attackIndex)).flatMap { $0 }
+            ?? BuffAttackIndex()
+        userQuestions = (try? container.decodeIfPresent(BuffNotesQuestions.self, forKey: .notes))
+            .flatMap { $0?.questions } ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, gameVersion, dataVersion, generatedAt, notes
         case stackingRules, rateFields, rateFieldGroups, conditionFields, enums, counts, buffs
+        case slotRules, weaponAffixes, fixedRelics, attackIndex
     }
 }
 
@@ -743,6 +863,13 @@ struct BuffEnums: Decodable {
     var attackContext: [String: String] = [:]
     /// v4：SP_EFFECT_TYPE → 中文名。
     var stateInfo: [Int: String] = [:]
+    /// v6：sourceSlot → 中文名 / 说明。
+    var sourceSlot: [String: String] = [:]
+    var sourceSlotNote: [String: String] = [:]
+    /// v6：wepType → 中文名。
+    var wepType: [Int: String] = [:]
+    /// v6：exclusiveScope → 中文说明（值直接是字符串）。
+    var exclusiveScope: [String: String] = [:]
 
     init() {}
 
@@ -755,6 +882,14 @@ struct BuffEnums: Decodable {
         activation = container.localized(.activation)
         attackContext = container.localized(.attackContext)
         stateInfo = Self.intLabels(container.localized(.stateInfo))
+        sourceSlot = container.localized(.sourceSlot)
+        if let wrapped = try? container.decodeIfPresent(
+            [String: BuffFailable<BuffSlotLabel>].self, forKey: .sourceSlot
+        ) {
+            sourceSlotNote = wrapped.compactMapValues { $0.value?.note }
+        }
+        wepType = Self.intLabels(container.localized(.wepType))
+        exclusiveScope = container.buffStringDictionary(.exclusiveScope)
         var behaviors: [String: String] = [:]
         for item in container.buffArray(.spCategoryBehavior) as [BuffBehaviorRange] {
             behaviors[item.code] = item.zh
@@ -772,7 +907,7 @@ struct BuffEnums: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case sourceKind, wepParamChange, spAttribute, atkSubCategory, activation, spCategoryBehavior
-        case attackContext, stateInfo
+        case attackContext, stateInfo, sourceSlot, wepType, exclusiveScope
     }
 }
 
@@ -1971,4 +2106,761 @@ public enum BuffRankerPageNotes {
                     + "数据集补上 attackContexts 后本页会自动按情境分区。"
         ]
     }
+}
+
+// MARK: - v6 数据结构（配置页用）
+//
+// 增伤数据集 schemaVersion 6 新增的结构（「增伤排名」配置页用）。
+//
+// 全部宽容解码：未知字段忽略、缺字段退默认值、坏元素跳过，**不抛错**。
+// 字段含义见数据集 notes.sourceSlot / notes.appliesTo / notes.weaponAffix / notes.relicAffix /
+// notes.stackInput 与 slotRules.*.zh；页面口径见 BuffLoadout.swift 顶部说明。
+
+/// 动态键：用来找出 requires 里本页认不出的键。
+struct BuffAnyKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init(_ string: String) {
+        stringValue = string
+        intValue = nil
+    }
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+// MARK: - appliesTo
+
+/// appliesToDetail.<类别>.requires：conditional 的机读条件。
+public struct BuffAppliesRequirement: Sendable, Hashable, Decodable {
+    /// 1 右手 / 2 左手。
+    public let hand: Int?
+    /// 出手武器的 wepType。
+    public let attackWeaponTypes: [Int]
+    /// 只对带这条词条的那把武器生效。
+    public let attachedWeaponOnly: Bool
+    /// 只对被附加属性（附魔／油脂／属性变化）的那把武器生效。
+    public let imbuedWeaponOnly: Bool
+    /// 只作用于某个物理攻击类型（0 斩 / 1 打 / 2 突 / 3 标准）。
+    public let physicalType: Int?
+    /// 只在这些攻击情境下成立（enums.attackContext 的键）。
+    public let attackContexts: [String]
+    /// 命中段的子类别与它有交集才吃得到（attackIndex 判定）。
+    public let subCategoriesAny: [Int]
+    /// 本页认不出的键（数据集以后新增的条件）：一律交给用户确认。
+    public let unknownKeys: [String]
+
+    static let knownKeys: Set<String> = [
+        "hand", "attackWeaponTypes", "attachedWeaponOnly", "imbuedWeaponOnly",
+        "physicalType", "attackContexts", "subCategoriesAny"
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: BuffAnyKey.self)
+        hand = container.buffOptionalInt(BuffAnyKey("hand"))
+        attackWeaponTypes = container.buffIntArray(BuffAnyKey("attackWeaponTypes"))
+        attachedWeaponOnly = container.buffBool(BuffAnyKey("attachedWeaponOnly"))
+        imbuedWeaponOnly = container.buffBool(BuffAnyKey("imbuedWeaponOnly"))
+        physicalType = container.buffOptionalInt(BuffAnyKey("physicalType"))
+        attackContexts = container.buffStringArray(BuffAnyKey("attackContexts"))
+        subCategoriesAny = container.buffIntArray(BuffAnyKey("subCategoriesAny"))
+        unknownKeys = container.allKeys.map(\.stringValue).filter { !Self.knownKeys.contains($0) }.sorted()
+    }
+
+    public init(
+        hand: Int? = nil, attackWeaponTypes: [Int] = [], attachedWeaponOnly: Bool = false,
+        imbuedWeaponOnly: Bool = false, physicalType: Int? = nil, attackContexts: [String] = [],
+        subCategoriesAny: [Int] = [], unknownKeys: [String] = []
+    ) {
+        self.hand = hand
+        self.attackWeaponTypes = attackWeaponTypes
+        self.attachedWeaponOnly = attachedWeaponOnly
+        self.imbuedWeaponOnly = imbuedWeaponOnly
+        self.physicalType = physicalType
+        self.attackContexts = attackContexts
+        self.subCategoriesAny = subCategoriesAny
+        self.unknownKeys = unknownKeys
+    }
+}
+
+/// appliesToDetail.<类别>：非 yes 的类别的理由与条件。
+public struct BuffAppliesDetail: Sendable, Hashable, Decodable {
+    public let reason: String
+    public let requires: BuffAppliesRequirement?
+    public let matchShare: Double?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reason = container.buffString(.reason)
+        requires = (try? container.decodeIfPresent(BuffAppliesRequirement.self, forKey: .requires)).flatMap { $0 }
+        if let wrapped = try? container.decodeIfPresent(BuffNumber.self, forKey: .matchShare), wrapped.value.isFinite {
+            matchShare = wrapped.value
+        } else {
+            matchShare = nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case reason, requires, matchShare
+    }
+}
+
+// MARK: - 词条 / 叠层 / 武器固有
+
+/// buffs[].relicAffixes[]：这条 buff 来自哪条遗物词条（对齐词条库）。
+public struct BuffRelicAffixRef: Sendable, Hashable, Decodable {
+    public let attachEffectId: Int
+    /// 词条库 effectId；只出现在固定遗物上的特殊词条为 nil（在 relics.json 的 extraAffixes 里）。
+    public let catalogEffectId: Int?
+    public let catalog: String
+    public let isDeepRelicAffix: Bool
+    public let requiresCurse: Bool
+    public let isCurse: Bool
+    public let compatibilityId: Int
+    public let inNormalRelicPools: Bool
+    public let fixedRelicOnly: Bool
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachEffectId = container.buffInt(.attachEffectId, default: -1)
+        catalogEffectId = container.buffOptionalInt(.catalogEffectId)
+        catalog = container.buffString(.catalog, default: "affixes")
+        isDeepRelicAffix = container.buffBool(.isDeepRelicAffix)
+        requiresCurse = container.buffBool(.requiresCurse)
+        isCurse = container.buffBool(.isCurse)
+        compatibilityId = container.buffInt(.compatibilityId, default: -1)
+        inNormalRelicPools = container.buffBool(.inNormalRelicPools)
+        fixedRelicOnly = container.buffBool(.fixedRelicOnly)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case attachEffectId, catalogEffectId, catalog, isDeepRelicAffix, requiresCurse, isCurse
+        case compatibilityId, inNormalRelicPools, fixedRelicOnly
+    }
+}
+
+/// buffs[].weaponInnate：武器自带、不随机的效果。
+public struct BuffWeaponInnate: Sendable, Hashable, Decodable {
+    public let attachEffectIds: [Int]
+    public let weaponIds: [Int]
+    public let wepTypes: [Int]
+    /// weaponIds 为空、只能靠行名前缀归类（页面只能让用户手动勾选）。
+    public let inferredFromRowName: Bool
+    public let rowCategory: String?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachEffectIds = container.buffIntArray(.attachEffectIds)
+        weaponIds = container.buffIntArray(.weaponIds)
+        wepTypes = container.buffIntArray(.wepTypes)
+        inferredFromRowName = container.buffBool(.inferredFromRowName)
+        rowCategory = container.buffOptionalString(.rowCategory)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case attachEffectIds, weaponIds, wepTypes, inferredFromRowName, rowCategory
+    }
+}
+
+/// buffs[].stackInput：需要用户填层数的叠层增益。
+public struct BuffStackInput: Sendable, Hashable, Decodable {
+    /// ladder（叠层阶梯，第 n 层取 tierMultipliers[n-1]）/ copies（同一效果 N 份，perStackMultiplier^N）。
+    public let mode: String
+    public let paramMaxStacks: Int?
+    public let practicalMaxStacks: Int?
+    public let practicalMaxSource: String?
+    public let multiplierKey: String
+    /// 层数换算出来的倍率要替换进 rates 的哪些字段。
+    public let appliesToRateKeys: [String]
+    public let tierMultipliers: [Double]
+    public let perStackRatio: Double?
+    public let perStackMultiplier: Double?
+    public let uiLabelMax: Int?
+
+    public var isLadder: Bool { mode == "ladder" }
+
+    /// 输入框允许的最大层数：阶梯＝参数表层数；份数型参数表无上限，给一个足够大的数。
+    public var maxAllowedStacks: Int {
+        if isLadder {
+            let tiers = tierMultipliers.count
+            if let paramMaxStacks, paramMaxStacks > 0 { return tiers > 0 ? min(paramMaxStacks, tiers) : paramMaxStacks }
+            return max(tiers, 1)
+        }
+        return Self.copiesInputCeiling
+    }
+
+    /// 「实际能叠到」的上限：practicalMaxStacks，没有就退游戏文本备好的『＋N』标签数。
+    public var softMaxStacks: Int? { practicalMaxStacks ?? uiLabelMax }
+
+    /// 份数型输入框的硬上限（参数表无上限，页面只拦住明显的误输入）。
+    public static let copiesInputCeiling = 99
+
+    /// n 层对应的倍率；n ≤ 0 或越界时为 nil。
+    public func multiplier(forStacks stacks: Int) -> Double? {
+        guard stacks > 0 else { return nil }
+        if isLadder {
+            guard !tierMultipliers.isEmpty else {
+                guard let perStackRatio, perStackRatio > 0 else { return nil }
+                return pow(perStackRatio, Double(stacks))
+            }
+            let tier = min(stacks, tierMultipliers.count)
+            return tierMultipliers[tier - 1]
+        }
+        guard let perStackMultiplier, perStackMultiplier > 0 else { return nil }
+        return pow(perStackMultiplier, Double(stacks))
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = container.buffString(.mode, default: "copies")
+        paramMaxStacks = container.buffOptionalInt(.paramMaxStacks)
+        practicalMaxStacks = container.buffOptionalInt(.practicalMaxStacks)
+        practicalMaxSource = container.buffOptionalString(.practicalMaxSource)
+        multiplierKey = container.buffString(.multiplierKey)
+        appliesToRateKeys = container.buffStringArray(.appliesToRateKeys)
+        tierMultipliers = (try? container.decodeIfPresent([BuffFailable<BuffNumber>].self, forKey: .tierMultipliers))
+            .flatMap { $0 }?
+            .compactMap { $0.value.flatMap { $0.value.isFinite ? $0.value : nil } } ?? []
+        perStackRatio = Self.optionalDouble(container, .perStackRatio)
+        perStackMultiplier = Self.optionalDouble(container, .perStackMultiplier)
+        uiLabelMax = container.buffOptionalInt(.uiLabelMax)
+    }
+
+    private static func optionalDouble(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Double? {
+        guard let wrapped = try? container.decodeIfPresent(BuffNumber.self, forKey: key), wrapped.value.isFinite else {
+            return nil
+        }
+        return wrapped.value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, paramMaxStacks, practicalMaxStacks, practicalMaxSource, multiplierKey
+        case appliesToRateKeys, tierMultipliers, perStackRatio, perStackMultiplier, uiLabelMax
+    }
+}
+
+/// buffs[].accumulatorLadder：连续攻击类累积阶梯（各档共用一个互斥键，用户选一档）。
+public struct BuffAccumulatorLadder: Sendable, Hashable, Decodable {
+    public let key: String
+    public let tier: Int
+    public let tiers: Int
+    public let tierSpEffectIds: [Int]
+    public let accumulatorSpEffectIds: [Int]
+    public let thresholds: [Double]
+
+    /// 阶梯身份（第 1 档的 spEffectId）：同一阶梯的各档共用它，选档状态按它存。
+    public var ladderID: Int { tierSpEffectIds.first ?? -1 }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = container.buffString(.key)
+        tier = container.buffInt(.tier, default: 1)
+        tiers = container.buffInt(.tiers, default: 1)
+        tierSpEffectIds = container.buffIntArray(.tierSpEffectIds)
+        accumulatorSpEffectIds = container.buffIntArray(.accumulatorSpEffectIds)
+        thresholds = (try? container.decodeIfPresent([BuffFailable<BuffNumber>].self, forKey: .thresholds))
+            .flatMap { $0 }?
+            .compactMap { $0.value?.value } ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key, tier, tiers, tierSpEffectIds, accumulatorSpEffectIds, thresholds
+    }
+}
+
+/// scope.weaponTypes：「装备 N 把 X 类武器」（equippedCount）或「用 X 类武器发动」（attackWith）。
+public struct BuffWeaponTypesScope: Sendable, Hashable, Decodable {
+    public let mode: String
+    public let wepTypes: [Int]
+    public let namesZh: [String]
+    public let field: String
+    public let count: Int?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = container.buffString(.mode)
+        wepTypes = container.buffIntArray(.wepTypes)
+        namesZh = container.buffStringArray(.namesZh)
+        field = container.buffString(.field)
+        count = container.buffOptionalInt(.count)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, wepTypes, namesZh, field, count
+    }
+}
+
+// MARK: - slotRules
+
+public struct BuffSlotRules: Sendable, Hashable, Decodable {
+    public struct ModeRule: Sendable, Hashable, Decodable {
+        public let zh: String
+        public let weaponAffixesPerWeapon: Int
+        public let relicSlots: Int
+        public let weaponCursesPerWeapon: Int
+        public let deepOnlyAffixesPerWeapon: Int
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            zh = container.buffString(.zh)
+            weaponAffixesPerWeapon = container.buffInt(.weaponAffixesPerWeapon, default: 1)
+            relicSlots = container.buffInt(.relicSlots, default: 3)
+            weaponCursesPerWeapon = container.buffInt(.weaponCursesPerWeapon, default: 0)
+            deepOnlyAffixesPerWeapon = container.buffInt(.deepOnlyAffixesPerWeapon, default: 0)
+        }
+
+        public init(zh: String, perWeapon: Int, relicSlots: Int, cursesPerWeapon: Int, deepOnlyPerWeapon: Int) {
+            self.zh = zh
+            weaponAffixesPerWeapon = perWeapon
+            self.relicSlots = relicSlots
+            weaponCursesPerWeapon = cursesPerWeapon
+            deepOnlyAffixesPerWeapon = deepOnlyPerWeapon
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case zh, weaponAffixesPerWeapon, relicSlots, weaponCursesPerWeapon, deepOnlyAffixesPerWeapon
+        }
+    }
+
+    public let normal: ModeRule
+    public let deep: ModeRule
+    public let modesZh: String
+    public let maxWeapons: Int
+    public let maxAffixesNormal: Int
+    public let maxAffixesDeep: Int
+    public let maxDeepOnlyAffixes: Int
+    public let deepOnlyPerWeaponMax: Int
+    public let deepCursePerWeapon: Int
+    public let deepOnlyCapField: String
+    public let deepOnlyCapCountsCurses: Bool
+    /// 同一把深夜诅咒武器的两条正面词条能否相同：数据集写 unknown。
+    public let duplicateWithinWeaponStatus: String
+    public let duplicateWithinWeaponZh: String
+    public let weaponAffixZh: String
+    public let relicNormal: Int
+    public let relicDeepExtra: Int
+    public let affixesPerRelic: Int
+    public let relicZh: String
+    public let accessorySlots: Int
+    public let accessoryMeasured: Bool
+    public let accessoryZh: String
+    /// consumable / spellBuff / … 这些不限数量的栏目的说明。
+    public let slotlessZh: [String: String]
+
+    public func weaponAffixCap(_ mode: LoadoutMode) -> Int {
+        mode == .deep ? maxAffixesDeep : maxAffixesNormal
+    }
+
+    /// 正面的深夜专属词条上限：常规 0（deepOnlyAffixesPerWeapon=0），深夜 maxDeepOnlyAffixes。
+    public func deepOnlyCap(_ mode: LoadoutMode) -> Int {
+        mode == .deep ? min(maxDeepOnlyAffixes, deep.deepOnlyAffixesPerWeapon * maxWeapons) : normal.deepOnlyAffixesPerWeapon * maxWeapons
+    }
+
+    /// 武器诅咒上限：常规 0，深夜每把 1 条。
+    public func curseCap(_ mode: LoadoutMode) -> Int {
+        (mode == .deep ? deep.weaponCursesPerWeapon : normal.weaponCursesPerWeapon) * maxWeapons
+    }
+
+    public func relicSlots(_ mode: LoadoutMode) -> Int {
+        mode == .deep ? deep.relicSlots : normal.relicSlots
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = BuffSlotRules.fallback
+        let modes = (try? container.decodeIfPresent(RawModes.self, forKey: .modes)).flatMap { $0 }
+        normal = modes?.normal ?? fallback.normal
+        deep = modes?.deep ?? fallback.deep
+        modesZh = modes?.zh ?? ""
+        let weapon = (try? container.decodeIfPresent(RawWeaponAffix.self, forKey: .weaponAffix)).flatMap { $0 }
+        maxWeapons = weapon?.maxWeapons ?? fallback.maxWeapons
+        maxAffixesNormal = weapon?.maxAffixesNormal ?? fallback.maxAffixesNormal
+        maxAffixesDeep = weapon?.maxAffixesDeep ?? fallback.maxAffixesDeep
+        maxDeepOnlyAffixes = weapon?.maxDeepOnlyAffixes ?? fallback.maxDeepOnlyAffixes
+        deepOnlyPerWeaponMax = weapon?.deepOnlyPerWeaponMax ?? fallback.deepOnlyPerWeaponMax
+        deepCursePerWeapon = weapon?.deepCursePerWeapon ?? fallback.deepCursePerWeapon
+        deepOnlyCapField = weapon?.deepOnlyCapField ?? fallback.deepOnlyCapField
+        deepOnlyCapCountsCurses = weapon?.deepOnlyCapCountsCurses ?? false
+        duplicateWithinWeaponStatus = weapon?.duplicateStatus ?? "unknown"
+        duplicateWithinWeaponZh = weapon?.duplicateZh ?? ""
+        weaponAffixZh = weapon?.zh ?? ""
+        let relic = (try? container.decodeIfPresent(RawRelic.self, forKey: .relic)).flatMap { $0 }
+        relicNormal = relic?.normal ?? fallback.relicNormal
+        relicDeepExtra = relic?.deepExtra ?? fallback.relicDeepExtra
+        affixesPerRelic = relic?.affixesPerRelic ?? fallback.affixesPerRelic
+        relicZh = relic?.zh ?? ""
+        let accessory = (try? container.decodeIfPresent(RawAccessory.self, forKey: .accessory)).flatMap { $0 }
+        accessorySlots = accessory?.slots ?? fallback.accessorySlots
+        accessoryMeasured = accessory?.measured ?? false
+        accessoryZh = accessory?.zh ?? ""
+        var slotless: [String: String] = [:]
+        let dynamic = try decoder.container(keyedBy: BuffAnyKey.self)
+        for key in ["consumable", "spellBuff", "weaponSkill", "weaponInnate", "character", "permanent", "runStack"] {
+            if let raw = (try? dynamic.decodeIfPresent(RawZh.self, forKey: BuffAnyKey(key))).flatMap({ $0 }),
+               !raw.zh.isEmpty {
+                slotless[key] = raw.zh
+            }
+        }
+        slotlessZh = slotless
+    }
+
+    /// slotRules 缺失时的兜底（仅供计算不崩；页面在缺失时显示「数据未内置」）。
+    public static let fallback = BuffSlotRules()
+
+    private init() {
+        normal = ModeRule(zh: "", perWeapon: 1, relicSlots: 3, cursesPerWeapon: 0, deepOnlyPerWeapon: 0)
+        deep = ModeRule(zh: "", perWeapon: 2, relicSlots: 6, cursesPerWeapon: 1, deepOnlyPerWeapon: 1)
+        modesZh = ""
+        maxWeapons = 6
+        maxAffixesNormal = 6
+        maxAffixesDeep = 12
+        maxDeepOnlyAffixes = 6
+        deepOnlyPerWeaponMax = 1
+        deepCursePerWeapon = 1
+        deepOnlyCapField = "weaponAffixDeepOnlyPositive"
+        deepOnlyCapCountsCurses = false
+        duplicateWithinWeaponStatus = "unknown"
+        duplicateWithinWeaponZh = ""
+        weaponAffixZh = ""
+        relicNormal = 3
+        relicDeepExtra = 3
+        affixesPerRelic = 3
+        relicZh = ""
+        accessorySlots = 2
+        accessoryMeasured = false
+        accessoryZh = ""
+        slotlessZh = [:]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modes, weaponAffix, relic, accessory
+    }
+
+    private struct RawModes: Decodable {
+        let normal: ModeRule?
+        let deep: ModeRule?
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            normal = (try? container.decodeIfPresent(ModeRule.self, forKey: .normal)).flatMap { $0 }
+            deep = (try? container.decodeIfPresent(ModeRule.self, forKey: .deep)).flatMap { $0 }
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey { case normal, deep, zh }
+    }
+
+    private struct RawWeaponAffix: Decodable {
+        let maxWeapons: Int?
+        let maxAffixesNormal: Int?
+        let maxAffixesDeep: Int?
+        let maxDeepOnlyAffixes: Int?
+        let deepOnlyPerWeaponMax: Int?
+        let deepCursePerWeapon: Int?
+        let deepOnlyCapField: String?
+        let deepOnlyCapCountsCurses: Bool?
+        let duplicateStatus: String?
+        let duplicateZh: String?
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            maxWeapons = container.buffOptionalInt(.maxWeapons)
+            maxAffixesNormal = container.buffOptionalInt(.maxAffixesNormal)
+            maxAffixesDeep = container.buffOptionalInt(.maxAffixesDeep)
+            maxDeepOnlyAffixes = container.buffOptionalInt(.maxDeepOnlyAffixes)
+            deepOnlyPerWeaponMax = container.buffOptionalInt(.deepOnlyPerWeaponMax)
+            deepCursePerWeapon = container.buffOptionalInt(.deepCursePerWeapon)
+            deepOnlyCapField = container.buffOptionalString(.deepOnlyCapField)
+            deepOnlyCapCountsCurses = (try? container.decodeIfPresent(Bool.self, forKey: .deepOnlyCapCountsCurses))
+                .flatMap { $0 }
+            let duplicate = (try? container.decodeIfPresent(RawDuplicate.self, forKey: .duplicateWithinWeapon))
+                .flatMap { $0 }
+            duplicateStatus = duplicate?.status
+            duplicateZh = duplicate?.zh
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case maxWeapons, maxAffixesNormal, maxAffixesDeep, maxDeepOnlyAffixes, deepOnlyPerWeaponMax
+            case deepCursePerWeapon, deepOnlyCapField, deepOnlyCapCountsCurses, duplicateWithinWeapon, zh
+        }
+    }
+
+    private struct RawDuplicate: Decodable {
+        let status: String
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = container.buffString(.status, default: "unknown")
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey { case status, zh }
+    }
+
+    private struct RawRelic: Decodable {
+        let normal: Int?
+        let deepExtra: Int?
+        let affixesPerRelic: Int?
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            normal = container.buffOptionalInt(.normal)
+            deepExtra = container.buffOptionalInt(.deepExtra)
+            affixesPerRelic = container.buffOptionalInt(.affixesPerRelic)
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey { case normal, deepExtra, affixesPerRelic, zh }
+    }
+
+    private struct RawAccessory: Decodable {
+        let slots: Int?
+        let measured: Bool
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            slots = container.buffOptionalInt(.slots)
+            measured = container.buffBool(.measured)
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey { case slots, measured, zh }
+    }
+
+    private struct RawZh: Decodable {
+        let zh: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            zh = container.buffString(.zh)
+        }
+
+        private enum CodingKeys: String, CodingKey { case zh }
+    }
+}
+
+// MARK: - 顶层清单
+
+/// weaponAffixes[]：有增伤 buff 的局内武器词条（按 AttachEffect id）。
+public struct BuffWeaponAffixInfo: Sendable, Hashable, Decodable, Identifiable {
+    public let attachEffectId: Int
+    public let nameZh: String
+    public let nameEn: String
+    public let paramName: String?
+    /// 档位 1 / 2 / 3（没有档位的为 nil）。
+    public let potency: Int?
+    public let roles: [String]
+    public let isDebuff: Bool
+    public let compatibilityId: Int
+    public let normalWepTypes: [Int]
+    public let deepWepTypes: [Int]
+    public let deepOnly: Bool
+    public let deepOnlyPositive: Bool
+    public let tableIds: [Int]
+    public let spEffectIds: [Int]
+
+    public var id: Int { attachEffectId }
+    public var isCurse: Bool { roles.contains("curse") }
+    public var isBlessing: Bool { roles.contains("blessing") }
+    public var isFixed: Bool { roles.contains("fixed") && !roles.contains("affix") }
+
+    /// 这个模式下能不能出现：常规不出深夜专属（含诅咒），深夜全都能出。
+    public func isAvailable(in mode: LoadoutMode) -> Bool {
+        mode == .deep || (!deepOnly && !isCurse)
+    }
+
+    /// 这个模式下能出现在哪些武器类别上。
+    public func weaponTypes(in mode: LoadoutMode) -> [Int] {
+        mode == .deep ? (deepWepTypes.isEmpty ? normalWepTypes : deepWepTypes) : normalWepTypes
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachEffectId = container.buffInt(.attachEffectId, default: -1)
+        nameZh = container.buffString(.nameZh)
+        nameEn = container.buffString(.nameEn)
+        paramName = container.buffOptionalString(.paramName)
+        potency = container.buffOptionalInt(.potency)
+        roles = container.buffStringArray(.roles)
+        isDebuff = container.buffBool(.isDebuff)
+        compatibilityId = container.buffInt(.compatibilityId, default: -1)
+        normalWepTypes = container.buffIntArray(.normalWepTypes)
+        deepWepTypes = container.buffIntArray(.deepWepTypes)
+        deepOnly = container.buffBool(.deepOnly)
+        deepOnlyPositive = container.buffBool(.deepOnlyPositive)
+        tableIds = container.buffIntArray(.tableIds)
+        spEffectIds = container.buffIntArray(.spEffectIds)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case attachEffectId, nameZh, nameEn, paramName, potency, roles, isDebuff, compatibilityId
+        case normalWepTypes, deepWepTypes, deepOnly, deepOnlyPositive, tableIds, spEffectIds
+    }
+}
+
+/// fixedRelics[]：官方固定词条遗物（整件占一个遗物格）。
+public struct BuffFixedRelic: Sendable, Hashable, Decodable {
+    public let relicIds: [Int]
+    public let nameZh: String
+    public let nameEn: String
+    public let color: Int
+    public let isDeepRelic: Bool
+    public let attachEffectIds: [Int]
+    public let curseAttachEffectIds: [Int]
+    /// 与 attachEffectIds 一一对应；没有中文名的位置为 nil。
+    public let attachEffectNamesZh: [String?]
+    public let spEffectIds: [Int]
+
+    public var relicID: Int { relicIds.first ?? -1 }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        relicIds = container.buffIntArray(.relicIds)
+        nameZh = container.buffString(.nameZh)
+        nameEn = container.buffString(.nameEn)
+        color = container.buffInt(.color, default: -1)
+        isDeepRelic = container.buffBool(.isDeepRelic)
+        attachEffectIds = container.buffIntArray(.attachEffectIds)
+        curseAttachEffectIds = container.buffIntArray(.curseAttachEffectIds)
+        attachEffectNamesZh = ((try? container.decodeIfPresent([BuffFailable<String>].self, forKey: .attachEffectNamesZh))
+            .flatMap { $0 } ?? []).map(\.value)
+        spEffectIds = container.buffIntArray(.spEffectIds)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case relicIds, nameZh, nameEn, color, isDeepRelic, attachEffectIds, curseAttachEffectIds
+        case attachEffectNamesZh, spEffectIds
+    }
+}
+
+/// attackIndex 里一组命中段的子类别集合与段数。
+public struct BuffSubCategorySet: Sendable, Hashable, Decodable {
+    public let subs: [Int]
+    public let hits: Int
+
+    public init(subs: [Int], hits: Int) {
+        self.subs = subs
+        self.hits = hits
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        subs = container.buffIntArray(.subs)
+        hits = max(0, container.buffInt(.hits, default: 0))
+    }
+
+    private enum CodingKeys: String, CodingKey { case subs, hits }
+}
+
+/// attackIndex：每个战技／法术实际命中段的子类别集合。
+public struct BuffAttackIndex: Sendable, Hashable, Decodable {
+    public let skills: [Int: [BuffSubCategorySet]]
+    public let spells: [Int: [BuffSubCategorySet]]
+
+    public init(skills: [Int: [BuffSubCategorySet]] = [:], spells: [Int: [BuffSubCategorySet]] = [:]) {
+        self.skills = skills
+        self.spells = spells
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        skills = Self.table(container, .skills)
+        spells = Self.table(container, .spells)
+    }
+
+    private static func table(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [Int: [BuffSubCategorySet]] {
+        guard let raw = try? container.decodeIfPresent([String: BuffFailable<Entry>].self, forKey: key) else { return [:] }
+        var result: [Int: [BuffSubCategorySet]] = [:]
+        for (id, entry) in raw {
+            guard let number = Int(id), let sets = entry.value?.sets else { continue }
+            result[number] = sets
+        }
+        return result
+    }
+
+    private struct Entry: Decodable {
+        let sets: [BuffSubCategorySet]
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            sets = container.buffArray(.subCategorySets)
+        }
+
+        private enum CodingKeys: String, CodingKey { case subCategorySets }
+    }
+
+    private enum CodingKeys: String, CodingKey { case skills, spells }
+}
+
+/// notes.userQuestions 的一问一答。
+public struct BuffUserQuestion: Sendable, Hashable, Identifiable {
+    public let key: String
+    public let question: String
+    public let answer: String
+
+    public var id: String { key }
+}
+
+/// 只为取出 notes.userQuestions（notes 其余键都是字符串，由 buffStringDictionary 读）。
+struct BuffNotesQuestions: Decodable {
+    let questions: [BuffUserQuestion]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let raw = try? container.decodeIfPresent([String: BuffFailable<RawQuestion>].self, forKey: .userQuestions) else {
+            questions = []
+            return
+        }
+        questions = raw
+            .compactMap { key, value in
+                value.value.map { BuffUserQuestion(key: key, question: $0.question, answer: $0.answer) }
+            }
+            .filter { !$0.question.isEmpty || !$0.answer.isEmpty }
+            .sorted { lhs, rhs in
+                lhs.key.count == rhs.key.count ? lhs.key < rhs.key : lhs.key.count < rhs.key.count
+            }
+    }
+
+    private struct RawQuestion: Decodable {
+        let question: String
+        let answer: String
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            question = container.buffString(.question)
+            answer = container.buffString(.answer)
+        }
+
+        private enum CodingKeys: String, CodingKey { case question, answer }
+    }
+
+    private enum CodingKeys: String, CodingKey { case userQuestions }
+}
+
+/// enums.sourceSlot 的一项：{zh, en, note}。
+struct BuffSlotLabel: Decodable {
+    let zh: String
+    let note: String
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        zh = container.buffString(.zh)
+        note = container.buffString(.note)
+    }
+
+    private enum CodingKeys: String, CodingKey { case zh, note }
 }
