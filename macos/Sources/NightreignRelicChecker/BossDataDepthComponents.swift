@@ -205,7 +205,7 @@ struct BossMutationSection: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(pool) { mutation in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("#\(mutation.id)")
+                        Text(verbatim: "#\(mutation.id)")
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(selectedId == mutation.id ? AppTheme.red : AppTheme.tertiaryText)
                             .frame(width: 58, alignment: .leading)

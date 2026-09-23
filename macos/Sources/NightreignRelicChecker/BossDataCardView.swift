@@ -5,21 +5,27 @@ import RelicCore
 
 struct BossCardView: View {
     let card: BossCard
-    /// 当前所在的分组区块。同一张卡片可能同时出现在「守夜」与「野外」两个区块里，
-    /// 折叠态的代表行必须跟着分组走（野外区块就看野外那几行），不能恒取 rows[0]。
+    /// 当前所在的分组区块。同一组首领按出场场合可能同时出现在「守夜首领」「场景头目」
+    /// 「据点首领」……好几个区块里，折叠态的代表行必须跟着分组走（场景头目区块就看
+    /// 场景头目那几行），不能恒取 rows[0]。
     let group: BossCard.Group
     let index: BossDataIndex
     let players: BossPartySize
     /// 常规 / 深夜 · 深度 1…5。
     let mode: BossNightMode
+    /// 「显示隐藏实体」：同时决定展开区列不列「未放置」「随从/召唤物」的行。
+    let showHidden: Bool
     let isExpanded: Bool
     let onToggle: () -> Void
 
     private var primary: BossFight? { card.representativeRow(in: group) }
 
-    /// 该分组下参与评选的候选行（守夜 / 野外先按 threat 过滤，夜王收敛到 isMain，
-    /// 再排掉无奖励行与登场演出 / 血条实体这类演出行）。规则正文见 BossCard.rows(in:)。
+    /// 该分组下参与评选的候选行（先按当前分组过滤 roles，再收敛到 isMain，
+    /// 排掉登场演出 / 血条实体这类演出行与无奖励行）。规则正文见 BossCard.rows(in:)。
     private var candidates: [BossFight] { card.rows(in: group) }
+
+    /// 展开区列出的行（默认藏掉只出现在「未放置」「随从/召唤物」的行）。
+    private var shownRows: [BossFight] { card.displayRows(includeHidden: showHidden) }
 
     private var depthWord: String { index.dataset.deepOfNightText.depthTitle }
 
@@ -86,9 +92,10 @@ struct BossCardView: View {
         }
     }
 
+    /// 卡头徽标会自动换行：一组首领最多有 7 个出场场合，再加名字 / 深夜徽标，一行放不下。
     private var badges: some View {
-        HStack(spacing: 6) {
-            switch card.group {
+        BossWrap(spacing: 6, lineSpacing: 5) {
+            switch card.kind {
             case .nightlord:
                 if !card.expeditionZh.isEmpty {
                     Pill(text: "远征 · " + card.expeditionZh, color: AppTheme.purpleSoft)
@@ -97,15 +104,12 @@ struct BossCardView: View {
                     Pill(text: card.variantNameZh, color: card.isEverdark ? AppTheme.amber : AppTheme.purpleSoft)
                 }
                 weaknessBadge
-            case .night, .field:
-                // tiers 可能同时含守夜与野外：两个徽标都挂上，别让用户以为只有一种档位。
-                ForEach(card.groups) { group in
-                    Pill(
-                        text: group.title,
-                        color: group == .night ? AppTheme.purpleSoft : AppTheme.secondaryText,
-                        symbol: group.symbol
-                    )
-                }
+                // 夜王卡片只进「夜王」分组，突袭 / 地图事件 / 未放置这些场合只挂徽标。
+                BossRoleBadges(roles: card.roles, dataset: index.dataset, group: group)
+            case .boss:
+                // 卡头列出全部出场场合（可多重归属）；属于当前分组的场合着色，
+                // 其余用中性色——一眼看出这张卡为什么出现在这个分组里。
+                BossRoleBadges(roles: card.roles, dataset: index.dataset, group: group)
                 // 近似匹配与「参考译名」已并进 card.nameBadges（与 Windows 端同序）。
                 nameSourceBadge
                 if card.hidden {
@@ -123,8 +127,12 @@ struct BossCardView: View {
                     Pill(text: text, color: AppTheme.amber, symbol: "moon.stars.fill")
                 }
             }
-            // 「N 条数值行」：卡头计数与 Windows 端 rowCountText() 逐字一致。
-            Text(BossRowText.rowCount(card.rows.count))
+            // 「N 条数值行」：卡头计数与 Windows 端 rowCountText() 逐字一致；
+            // 默认藏掉的「未放置」「随从/召唤物」行另补一句。
+            Text(BossRoleText.rowCount(
+                visible: shownRows.count,
+                hidden: card.hiddenRowCount(includeHidden: showHidden)
+            ))
                 .font(.system(size: 10))
                 .foregroundStyle(AppTheme.tertiaryText)
         }
@@ -132,27 +140,27 @@ struct BossCardView: View {
 
     /// 折叠态头条数值取自哪一行。两种情况都必须写清楚，否则同一张卡里差几倍的数值
     /// 会被当成算错：夜王的 `isMain` 不唯一（多阶段 / 多体有 2～5 条），
-    /// 守夜 / 野外的候选行则随分组切换（同一组首领可能两种档位都有）。
+    /// 守夜 / 野外首领的候选行则随分组切换（同一组首领可能有好几个出场场合）。
     @ViewBuilder
     private var primaryRowNote: some View {
         if let primary {
             let pool = candidates
             // 只有「代表行本身有歧义」的卡片才铺开列全部候选行：夜王有多条 isMain，
-            // 或同时属于守夜与野外的组（同一张卡在两个分组下给的是不同的行）。
-            let ambiguous = card.group == .nightlord ? card.hasMultipleMainRows : card.groups.count > 1
+            // 或同时属于多个分组的组（同一张卡在不同分组下给的是不同的行）。
+            let ambiguous = card.isNightlord ? card.hasMultipleMainRows : card.hasMultipleGroups
             if ambiguous, pool.count > 1 {
                 let list = pool
                     .map { "\($0.displayLabel) \(BossFormat.integer($0.hp(for: players, mode: mode)))" }
                     .joined(separator: " · ")
-                let lead = card.group == .nightlord
+                let lead = card.isNightlord
                     ? "\(pool.count) 条主战行，上方取血量最高的一条："
                     : "该分组 \(pool.count) 条数值行，上方取血量最高的一条："
                 Text(lead + list)
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.amber)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if card.rows.count > 1 {
-                Text("代表行：\(primary.displayLabel)（共 \(card.rows.count) 组，展开看全部）")
+            } else if shownRows.count > 1 {
+                Text("代表行：\(primary.displayLabel)（共 \(shownRows.count) 组，展开看全部）")
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -165,7 +173,7 @@ struct BossCardView: View {
     /// 说成「官方说没有」。它们改为给出代表行里承伤偏高的属性（页面自己按 damageRates 算的）。
     @ViewBuilder
     private var weaknessNote: some View {
-        if card.group != .nightlord {
+        if !card.isNightlord {
             let hot = primary.map { BossCardView.topDamageKinds($0) } ?? []
             if hot.isEmpty {
                 Text("本作只给夜王官方弱点标注；展开看承伤倍率")
@@ -224,7 +232,7 @@ struct BossCardView: View {
 
     /// 主战行不止一条时标明头条取的是最高那条，别让用户以为「这只 Boss 就这点血」。
     private var hpMetricTitle: String {
-        guard card.group == .nightlord else { return "血量" }
+        guard card.isNightlord else { return "血量" }
         return card.hasMultipleMainRows ? "主战血量 · 最高" : "主战血量"
     }
 
@@ -287,23 +295,34 @@ struct BossCardView: View {
     // MARK: 展开态
 
     /// 守夜 / 野外首领的 chrId 与 NpcName ID：对着 Paramdex / 存档工具查行时要用。
+    /// 下面再补一行「威胁档位」小字：tier / tiers 不再决定分组，但仍是参数里的事实。
     @ViewBuilder
     private var identifierNote: some View {
-        if card.group != .nightlord, !card.chrIds.isEmpty || card.npcNameId != nil {
-            HStack(spacing: 12) {
-                if !card.chrIds.isEmpty {
-                    Text("chrId " + card.chrIds.map(String.init).joined(separator: " / "))
+        if !card.isNightlord {
+            VStack(alignment: .leading, spacing: 3) {
+                if !card.chrIds.isEmpty || card.npcNameId != nil {
+                    HStack(spacing: 12) {
+                        if !card.chrIds.isEmpty {
+                            Text("chrId " + card.chrIds.map(String.init).joined(separator: " / "))
+                        }
+                        if let npcNameId = card.npcNameId {
+                            Text(verbatim: "NpcName #\(npcNameId)")
+                        }
+                        if !card.nameSource.isEmpty {
+                            Text("名称来源 " + card.nameSource)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(AppTheme.tertiaryText)
                 }
-                if let npcNameId = card.npcNameId {
-                    Text("NpcName #\(npcNameId)")
+                if !card.tiers.isEmpty {
+                    Text(BossRoleText.threatTierCaption(card.tiers) + "：" + BossRoleText.threatTierNote)
+                        .font(.system(size: 10))
+                        .foregroundStyle(AppTheme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if !card.nameSource.isEmpty {
-                    Text("名称来源 " + card.nameSource)
-                }
-                Spacer(minLength: 0)
             }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(AppTheme.tertiaryText)
         }
     }
 
@@ -379,18 +398,26 @@ struct BossCardView: View {
             }
 
             // 夜王才有按深度的出现权重（守夜 / 野外 Boss 参数里根本没有这张表）。
-            if card.group == .nightlord, let weights = depthChanceWeights {
+            if card.isNightlord, let weights = depthChanceWeights {
                 BossDepthChanceRow(weights: weights, depthWord: depthWord)
             }
 
-            ForEach(card.rows) { row in
+            ForEach(shownRows) { row in
                 BossFightRowView(
                     row: row,
                     index: index,
                     players: players,
                     mode: mode,
-                    isNightlord: card.group == .nightlord
+                    isNightlord: card.isNightlord
                 )
+            }
+
+            let hiddenRows = card.hiddenRowCount(includeHidden: showHidden)
+            if hiddenRows > 0 {
+                Text(BossRoleText.hiddenRows(hiddenRows))
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -436,6 +463,7 @@ struct BossFightRowView: View {
         VStack(alignment: .leading, spacing: 10) {
             titleLine
             metrics
+            BossRoleEvidenceSection(row: row, dataset: index.dataset)
             damageSection
             resistSection
             depthSection
@@ -460,14 +488,10 @@ struct BossFightRowView: View {
                 Text(row.displayLabel)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
-                // 同一组首领可能同时有守夜与野外变体，两者威胁档位与血量差别很大。
-                if let threat = row.threatTitle {
-                    Pill(
-                        text: threat,
-                        color: row.threat == "night" ? AppTheme.purpleSoft : AppTheme.secondaryText,
-                        symbol: row.threat == "night" ? "moon.stars" : "map"
-                    )
-                }
+                // 这一行自己的出场场合（合并行是各原始行的并集，逐行的写在「出场场合」小节里）。
+                // schemaVersion 3 以前这里挂的是 threat「守夜 / 野外」——那只是缩放档位，
+                // 铃珠猎人野外版照样是「守夜」，正是用户反馈的误导，已降为下面的小字。
+                BossRoleBadges(roles: row.roles, dataset: index.dataset)
                 if row.isMain {
                     Pill(text: "主战", color: AppTheme.green, symbol: "flag")
                 }
@@ -484,7 +508,7 @@ struct BossFightRowView: View {
                     Pill(text: index.dataset.mutationTitle, color: AppTheme.red, symbol: "flame")
                 }
                 Spacer(minLength: 6)
-                Text(row.npcIds.count > 1 ? "npcId \(row.npcId) 等 \(row.npcIds.count) 行" : "npcId \(row.npcId)")
+                Text(verbatim: row.npcIds.count > 1 ? "npcId \(row.npcId) 等 \(row.npcIds.count) 行" : "npcId \(row.npcId)")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(AppTheme.tertiaryText)
             }
@@ -493,6 +517,11 @@ struct BossFightRowView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if let caption = row.threatTierCaption {
+                Text(caption)
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.tertiaryText)
             }
             if row.noReward {
                 Text(BossRowText.noRewardRowNote)
@@ -671,7 +700,7 @@ struct BossFightRowView: View {
                         BossPermanentEffectRow(effect: effect)
                     }
                     ForEach(index.missingPermanentEffectIDs(current.permScalingIds), id: \.self) { id in
-                        Text("#\(id)（缺少明细）")
+                        Text(verbatim: "#\(id)（缺少明细）")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(AppTheme.tertiaryText)
                     }

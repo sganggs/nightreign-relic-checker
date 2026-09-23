@@ -227,7 +227,7 @@ struct BossPermanentEffectRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text("#\(effect.id)")
+            Text(verbatim: "#\(effect.id)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(AppTheme.tertiaryText)
                 .frame(width: 52, alignment: .leading)

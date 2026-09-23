@@ -2,8 +2,15 @@ import Foundation
 
 // 「首领数据」页的数据模型与换算函数。
 //
-// 数据来源：Resources/bosses.json（bossesSchemaVersion = 3），经
+// 数据来源：Resources/bosses.json（bossesSchemaVersion = 4），经
 // `GameDataLoader.dataIfAvailable(for: .bosses)` 读取原始 Data 后在这里解码。
+//
+// v4 相对 v3 只增字段：每条数值行 / 每组首领多了 roles（出场场合，可多重归属）、
+// roleEvidence（逐表逐行的出处）、rowRoles（合并行各自的场合），顶层多了
+// roleNames / roleSummary / roleSummaryDetail。页面分组从此按 roles 走——
+// v3 的 tier / tiers 只是多人缩放档位名（Field / Night Boss Threat），
+// 不代表出场位置（铃珠猎人野外版挂的就是 Night Boss Threat），所以只留在
+// 展开区当「威胁档位」小字。分组规则见 `BossCard.Group`。
 //
 // v3 相对 v2 是纯增量，这里跟进的四件事：
 //   * 名字：nameZh / nameZhFallback / nameApprox / nameNote / hidden / noReward，
@@ -1274,6 +1281,15 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
     /// 该行不掉任何奖励（getSoul / chaosMatchingRewardLotId / itemLotId_enemy 全是 0 或 -1）。
     public let noReward: Bool
 
+    /// 出场场合（schemaVersion 4），按 `BossRoleCatalog.order` 排好、无重复。
+    /// 合并行时是各原始行场合的并集，逐行的场合看 `rowRoles`。
+    /// 数据缺失（旧版数据集）时为空数组，页面写「数据未内置」。
+    public let roles: [String]
+    /// 每个场合的出处（逐表逐行），键集合与 `roles` 相同。
+    public let roleEvidence: [String: [BossRoleEvidence]]
+    /// 合并进本行的各原始 NpcParam 行各自的场合，键是 npcId。
+    public let rowRoles: [Int: [String]]
+
     public var id: Int { npcId }
 
     private enum CodingKeys: String, CodingKey {
@@ -1283,6 +1299,7 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
         case deepOfNight, scalingId, scaling
         case attackRateBase, attackRatesBase, staminaAttackRateBase
         case chaosCorrectId, depthStats, mutationSetId, mutationPool, noReward
+        case roles, roleEvidence, rowRoles
     }
 
     public init(from decoder: Decoder) throws {
@@ -1319,7 +1336,55 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
         mutationSetId = container.bossOptionalInt(.mutationSetId)
         mutationPool = container.bossIntArray(.mutationPool)
         noReward = container.bossBool(.noReward)
+        roles = BossRoleCatalog.normalized(container.bossArray(.roles))
+        // 出处逐条宽容解码：一条坏证据只丢它自己，不连累同一场合的其它出处。
+        let rawEvidence: [String: [BossFailable<BossRoleEvidence>]] = container.bossDictionary(.roleEvidence)
+        roleEvidence = rawEvidence.mapValues { $0.compactMap(\.value) }
+        let rawRowRoles: [String: [String]] = container.bossDictionary(.rowRoles)
+        rowRoles = rawRowRoles.reduce(into: [:]) { result, entry in
+            guard let id = Int(entry.key) else { return }
+            result[id] = BossRoleCatalog.normalized(entry.value)
+        }
     }
+
+    // MARK: 出场场合
+
+    /// 这一行有没有场合数据（旧版数据集没有）。
+    public var hasRoles: Bool { !roles.isEmpty }
+
+    /// 这一行是否只出现在默认隐藏的场合（「未放置」「随从/召唤物」）。
+    /// 没有场合数据的行不算——缺数据不能被当成「未放置」藏起来。
+    public var isHiddenByDefault: Bool {
+        hasRoles && roles.allSatisfy { BossRoleCatalog.hiddenRoles.contains($0) }
+    }
+
+    /// 这一行属不属于某个分组（看 `roles` 与分组场合有无交集）。
+    public func belongs(to group: BossCard.Group) -> Bool {
+        roles.contains { group.contains(role: $0) }
+    }
+
+    /// 某个场合的出处；没有时为空数组（页面写「数据未内置」）。
+    public func evidence(for role: String) -> [BossRoleEvidence] {
+        roleEvidence[role] ?? []
+    }
+
+    /// 合并进本行的原始行按场合归拢：同一组场合的 npcId 放在一起，
+    /// 顺序按场合组在本行里第一次出现的 npcId 顺序（npcIds 的顺序）。
+    /// 只有一种场合组合时返回一个元素；没有 rowRoles 时返回空数组。
+    public var rowRoleGroups: [(roles: [String], npcIds: [Int])] {
+        var order: [[String]] = []
+        var members: [[String]: [Int]] = [:]
+        let ids = npcIds.filter { rowRoles[$0] != nil } + rowRoles.keys.sorted().filter { !npcIds.contains($0) }
+        for id in ids {
+            guard let roles = rowRoles[id] else { continue }
+            if members[roles] == nil { order.append(roles) }
+            members[roles, default: []].append(id)
+        }
+        return order.map { ($0, members[$0] ?? []) }
+    }
+
+    /// 合并行的各原始行场合不同（此时展开区要逐行写出来，否则并集会让人以为每行都这样）。
+    public var hasMixedRowRoles: Bool { rowRoleGroups.count > 1 }
 
     /// 显示用标签：labelZh 为空时依次回退 labelEn / paramdexName / npcId。
     public var displayLabel: String {
@@ -1355,7 +1420,10 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
     public var availableDepths: [Int] { depthStats.keys.sorted() }
 
     /// 该行威胁档位的短标签（守夜 / 野外）；夜王的 fight 没有 threat，返回 nil。
-    /// 同一组首领可能同时有守夜与野外变体，逐行标出来才分得清。
+    ///
+    /// schemaVersion 4 起它**不再决定分组**：threat 只是 multiPlayCorrectionParamId
+    /// 的档位名（Field / Night Boss Threat），铃珠猎人野外版 31000010 挂的就是
+    /// Night Boss Threat。页面只在展开区用 `threatTierCaption` 写一行小字。
     public var threatTitle: String? {
         guard let threat, !threat.isEmpty else { return nil }
         switch threat {
@@ -1363,6 +1431,12 @@ public struct BossFight: Codable, Sendable, Hashable, Identifiable {
         case "field": return "野外"
         default: return threat
         }
+    }
+
+    /// 展开区「威胁档位」小字；夜王的 fight 没有 threat，返回 nil。
+    public var threatTierCaption: String? {
+        guard let threat, !threat.isEmpty else { return nil }
+        return BossRoleText.threatTierCaption([threat])
     }
 
     public func immuneKinds() -> [BossAilmentKind] {
@@ -1577,6 +1651,11 @@ public struct BossNightlord: Codable, Sendable, Hashable, Identifiable {
     /// 各深度的出现权重（NightBossMenuParam.depth1..5ChanceWeight）。
     /// 权重 0 = 该深度不会出现（永夜之王 / 救世旗手在深度 1 就是 0）。
     public let depthChanceWeights: [Int: Int]
+    /// 出场场合（fights 的 roles 并集，schemaVersion 4）。夜王卡片只进「夜王」分组，
+    /// 突袭 / 事件 / 未放置这些场合只作卡头徽标（见 `BossCard.Group`）。
+    public let roles: [String]
+    /// 场合 → 含该场合的战斗行代表 npcId。
+    public let roleVariants: [String: [Int]]
 
     public var id: Int { menuId }
 
@@ -1606,6 +1685,8 @@ public struct BossNightlord: Codable, Sendable, Hashable, Identifiable {
         descriptionEn = container.bossString(.descriptionEn)
         fights = container.bossArray(.fights)
         depthChanceWeights = container.bossNumberKeyedIntDictionary(.depthChanceWeights)
+        roles = BossRoleCatalog.groupRoles(declared: container.bossArray(.roles), rows: fights)
+        roleVariants = container.bossDictionary(.roleVariants)
     }
 
     /// 永夜之王形态。
@@ -1622,10 +1703,14 @@ public struct BossNightBoss: Codable, Sendable, Hashable, Identifiable {
     public let nameInferred: Bool
     public let npcNameId: Int?
     public let chrIds: [Int]
-    /// "night" | "field"。
+    /// "night" | "field"。schemaVersion 4 起只是「威胁档位」，不再决定分组。
     public let tier: String
     public let tiers: [String]
     public let variants: [BossFight]
+    /// 出场场合（variants 的 roles 并集，schemaVersion 4），决定这组首领出现在哪些分组。
+    public let roles: [String]
+    /// 场合 → 含该场合的变体代表 npcId。
+    public let roleVariants: [String: [Int]]
 
     /// 名字不是逐字命中游戏文本，而是靠中心词 / 唯一词条匹配上的。
     public let nameApprox: Bool
@@ -1668,6 +1753,8 @@ public struct BossNightBoss: Codable, Sendable, Hashable, Identifiable {
         tier = container.bossString(.tier, default: "field")
         tiers = container.bossArray(.tiers)
         variants = container.bossArray(.variants)
+        roles = BossRoleCatalog.groupRoles(declared: container.bossArray(.roles), rows: variants)
+        roleVariants = container.bossDictionary(.roleVariants)
         nameApprox = container.bossBool(.nameApprox)
         nameEvidence = try? container.decodeIfPresent(BossNameEvidence.self, forKey: .nameEvidence)
         nameNote = container.bossString(.nameNote)
@@ -1716,12 +1803,36 @@ public struct BossNotes: Codable, Sendable {
     public let multiplayerScalingAudit: [String]
     /// 深夜 / 深度 / 变异个体的核实结论（11 条中文）。
     public let deepOfNightAudit: [String]
+    /// tier 与实际出场场合的对照结论（schemaVersion 4，notes.roleAudit.summary，4 条中文）。
+    public let roleAuditSummary: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case unmatchedNames, multiplayerScalingAudit, deepOfNightAudit, roleAudit
+    }
+
+    private enum RoleAuditKeys: String, CodingKey {
+        case summary
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         unmatchedNames = container.bossArray(.unmatchedNames)
         multiplayerScalingAudit = container.bossArray(.multiplayerScalingAudit)
         deepOfNightAudit = container.bossArray(.deepOfNightAudit)
+        if let audit = try? container.nestedContainer(keyedBy: RoleAuditKeys.self, forKey: .roleAudit) {
+            roleAuditSummary = audit.bossArray(.summary)
+        } else {
+            roleAuditSummary = []
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(unmatchedNames, forKey: .unmatchedNames)
+        try container.encode(multiplayerScalingAudit, forKey: .multiplayerScalingAudit)
+        try container.encode(deepOfNightAudit, forKey: .deepOfNightAudit)
+        var audit = container.nestedContainer(keyedBy: RoleAuditKeys.self, forKey: .roleAudit)
+        try audit.encode(roleAuditSummary, forKey: .summary)
     }
 }
 
@@ -1733,6 +1844,244 @@ public struct BossUnmatchedName: Codable, Sendable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         nameEn = container.bossString(.nameEn)
         chrId = container.bossInt(.chrId, default: 0)
+    }
+}
+
+// MARK: - 出场场合（schemaVersion 4）
+
+/// roleNames 的一项：场合的中文名 / 英文名 / 判定说明。
+public struct BossRoleName: Codable, Sendable, Hashable {
+    public let zh: String
+    public let en: String
+    public let description: String
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        zh = container.bossString(.zh)
+        en = container.bossString(.en)
+        description = container.bossString(.description)
+    }
+}
+
+/// roleSummaryDetail 的一项。
+public struct BossRoleSummaryDetail: Codable, Sendable, Hashable {
+    /// nightBosses 中含该场合的组数（= roleSummary）。
+    public let groups: Int
+    public let variants: Int
+    public let rows: Int
+    /// 含该场合的夜王条数。
+    public let nightlords: Int
+    public let fights: Int
+    public let fightRows: Int
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        groups = container.bossInt(.groups, default: 0)
+        variants = container.bossInt(.variants, default: 0)
+        rows = container.bossInt(.rows, default: 0)
+        nightlords = container.bossInt(.nightlords, default: 0)
+        fights = container.bossInt(.fights, default: 0)
+        fightRows = container.bossInt(.fightRows, default: 0)
+    }
+}
+
+/// 一条场合出处：哪一个原始行、在哪张地图 MSB、由哪张参数表的哪一行判定。
+public struct BossRoleEvidence: Codable, Sendable, Hashable {
+    /// 原始 NpcParam 行（合并行时可能不是代表行）。
+    public let npcId: Int?
+    /// 地图 MSB 名（入侵者 / 未放置为 nil）。
+    public let msb: String?
+    /// MSB part 名与 entityId，可为空串。
+    public let part: String
+    public let table: String
+    public let row: String
+    public let note: String
+
+    public init(npcId: Int?, msb: String?, part: String = "", table: String, row: String, note: String) {
+        self.npcId = npcId
+        self.msb = msb
+        self.part = part
+        self.table = table
+        self.row = row
+        self.note = note
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        npcId = container.bossOptionalInt(.npcId)
+        msb = container.bossOptionalString(.msb)
+        part = container.bossString(.part)
+        table = container.bossString(.table)
+        row = container.bossString(.row)
+        note = container.bossString(.note)
+    }
+
+    /// 出处摘要：「表名 行 · 地图」。两端同一口径（Windows 端 `evidenceSummary()`）：
+    ///   * row 为空或「—」（未放置那种占位）时只写表名；
+    ///   * msb 为空、或与 row 相同（「其他地图」那种 row 就是地图名）时不重复写地图。
+    /// note 不进摘要（最长 500 多字），页面放在摘要下面的小字里。
+    public var summary: String {
+        var head = table
+        if !row.isEmpty, row != "—" {
+            head = head.isEmpty ? row : head + " " + row
+        }
+        var parts: [String] = head.isEmpty ? [] : [head]
+        if let msb, !msb.isEmpty, msb != row { parts.append(msb) }
+        return parts.isEmpty ? BossRoleText.evidenceMissing : parts.joined(separator: " · ")
+    }
+}
+
+/// 出场场合的全局口径：排列顺序、默认隐藏的场合、每个场合落在哪个分组。
+///
+/// 数据集的 roles 是开放取值（生成器以后可能再加场合），这里只列已知的 14 个；
+/// 未知场合一律排在已知场合后面、归入「其它场合」分组，不丢、不报错。
+public enum BossRoleCatalog {
+    /// roleNames 的键序，也是 roles 数组的规范顺序。
+    public static let order: [String] = [
+        "night", "prelude", "field", "stronghold", "mine", "evergaol", "tower",
+        "raid", "invader", "event", "nightlord", "summon", "other", "unplaced",
+    ]
+
+    /// 默认隐藏的场合（沿用「显示隐藏实体」开关）：只出现在这两个场合的组 / 行默认不显示。
+    public static let hiddenRoles: Set<String> = ["summon", "unplaced"]
+
+    /// 合并进「其它场合」分组的已知场合（按规范顺序）。
+    /// 高塔 / 突袭 / 入侵 / 事件是任务书点名的四个；守夜前哨、坑道精英、其他地图
+    /// 三个同样不属于任何独立分组，一并放进来（否则这些组在默认视图里无处可去）。
+    public static let otherGroupRoles: [String] = [
+        "prelude", "mine", "tower", "raid", "invader", "event", "other",
+    ]
+
+    /// 在规范顺序里的位置；未知场合排在最后。
+    public static func rank(_ role: String) -> Int {
+        order.firstIndex(of: role) ?? order.count
+    }
+
+    /// 去重 + 按规范顺序排（未知场合按键名排在已知场合之后），去掉空串。
+    public static func normalized(_ roles: [String]) -> [String] {
+        Array(Set(roles.filter { !$0.isEmpty })).sorted { lhs, rhs in
+            let left = rank(lhs), right = rank(rhs)
+            return left == right ? lhs < rhs : left < right
+        }
+    }
+
+    /// 组级 roles：数据集给了就用（再规范化一次），没给就取各行 roles 的并集。
+    static func groupRoles(declared: [String], rows: [BossFight]) -> [String] {
+        let normalizedDeclared = normalized(declared)
+        if !normalizedDeclared.isEmpty { return normalizedDeclared }
+        return normalized(rows.flatMap(\.roles))
+    }
+}
+
+/// 「首领数据」页按出场场合分组的文案（两端逐字一致，对应 Windows 端
+/// `pages/bosses.js` 的 `ROLE_TEXT` 表）。集中在一张表里，RelicCoreChecks 逐条断言。
+public enum BossRoleText {
+    /// 分组标题。前五个与数据集 roleNames 的中文名一致（夜王分组不叫「夜王战」），
+    /// 「其它场合」是合并分组的名字，不是某个场合。
+    public static let groupNightlord = "夜王"
+    public static let groupNight = "守夜首领"
+    public static let groupStronghold = "据点首领"
+    public static let groupField = "场景头目"
+    public static let groupEvergaol = "封印监牢"
+    public static let groupOther = "其它场合"
+    public static let groupSummon = "随从/召唤物"
+    public static let groupUnplaced = "未放置"
+
+    /// roleNames 缺失时的内置中文名（与 v4 数据集 roleNames.*.zh 逐字相同）。
+    public static let builtinRoleNames: [String: String] = [
+        "night": "守夜首领",
+        "prelude": "守夜前哨",
+        "field": "场景头目",
+        "stronghold": "据点首领",
+        "mine": "坑道精英",
+        "evergaol": "封印监牢",
+        "tower": "大空洞高塔首领",
+        "raid": "突袭事件",
+        "invader": "黑夜入侵者",
+        "event": "地图事件",
+        "nightlord": "夜王战",
+        "summon": "随从/召唤物",
+        "other": "其他地图",
+        "unplaced": "未放置",
+    ]
+
+    /// 展开区小字的前缀：tier / threat 只是多人缩放档位。
+    public static let threatTierLabel = "威胁档位"
+    /// 展开区一次性的说明：为什么「威胁档位」和分组对不上。
+    public static let threatTierNote =
+        "威胁档位只是多人缩放档位（Field / Night Boss Threat），不代表出场场合；分组按地图放置判定的出场场合"
+    /// 行 / 组没有 roles（旧版数据集）时的徽标。
+    public static let rolesMissing = "出场场合：数据未内置"
+    /// 某个场合没有出处明细时的占位。
+    public static let evidenceMissing = "出处：数据未内置"
+    /// 展开区每行「出场场合」小节的标题与说明。
+    public static let roleSectionTitle = "出场场合"
+    public static let roleSectionDetail = "按地图放置与抽选参数判定；分组看这里，不看威胁档位"
+    /// 出处多于一条时的展开 / 收起按钮。
+    public static let evidenceExpand = "展开全部出处"
+    public static let evidenceCollapse = "只看每个场合的第一条出处"
+    /// 底部说明里标在默认隐藏分组后面的注记。
+    public static let hiddenGroupMark = "（默认隐藏）"
+    /// 底部「出场场合说明」折叠块的标题。
+    public static func overviewTitle(_ count: Int) -> String { "出场场合说明（\(count) 种）" }
+    /// 底部 notes.roleAudit.summary 的小标题。
+    public static func auditTitle(_ count: Int) -> String {
+        "与威胁档位的对照（数据集 notes.roleAudit，\(count) 条）"
+    }
+    /// 底部场合说明表里的计数：「40 组」「1 组 · 夜王 6」「夜王 18」。
+    /// 夜王战只有夜王有（守夜 / 野外首领 0 组），不写成「0 组 · 夜王 18」。
+    public static func roleCountText(groups: Int, nightlords: Int) -> String {
+        var parts: [String] = []
+        if groups > 0 || nightlords == 0 { parts.append("\(groups) 组") }
+        if nightlords > 0 { parts.append("夜王 \(nightlords)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 卡头计数：显示的行数，另有默认隐藏的行时补一句。
+    public static func rowCount(visible: Int, hidden: Int) -> String {
+        let base = BossRowText.rowCount(visible)
+        return hidden > 0 ? base + "（另 \(hidden) 条已隐藏）" : base
+    }
+    /// 合并行各原始行场合不同时的小标题。
+    public static let rowRolesTitle = "逐行场合"
+    /// 分组筛选器的提示。
+    public static let groupPickerHelp = "按出场场合分组；一组首领可以同时出现在多个分组里"
+    /// 显示隐藏实体开关的补充说明（开关原有的 help 文案保持不变）。
+    public static let hiddenToggleRoleHelp = "也控制「未放置」「随从/召唤物」两个场合（分组与展开区的行）"
+
+    /// 「另有 N 条出处」。
+    public static func evidenceMore(_ count: Int) -> String { "另有 \(count) 条出处" }
+
+    /// 展开区底部：默认隐藏掉的行数。
+    public static func hiddenRows(_ count: Int) -> String {
+        "另有 \(count) 条「\(groupUnplaced)」/「\(groupSummon)」行已隐藏，打开「\(BossRowText.hiddenToggleTitle)」查看"
+    }
+
+    /// 「威胁档位 · 守夜首领威胁档 / 野外首领威胁档」。取值 night / field 翻成档位组名
+    /// （与 `BossScalingGroup.title(for:)` 同一套：Night Boss Threat → 守夜首领威胁档），
+    /// 未知取值原样写；去重保序；一个都没有时返回「威胁档位 · 无」。
+    public static func threatTierCaption(_ threats: [String]) -> String {
+        var seen: Set<String> = []
+        let titles = threats.filter { !$0.isEmpty && seen.insert($0).inserted }.map { threat -> String in
+            switch threat {
+            case "night": return BossScalingGroup.title(for: "Night Boss Threat")
+            case "field": return BossScalingGroup.title(for: "Field Boss Threat")
+            default: return threat
+            }
+        }
+        return threatTierLabel + " · " + (titles.isEmpty ? "无" : titles.joined(separator: " / "))
+    }
+
+    /// 底部说明：同时出现在多个分组的组数。名字最多列 `multiGroupNameLimit` 个，
+    /// 其余写「等」（当前数据 49 组，全列出来是一整屏）。
+    public static let multiGroupNameLimit = 12
+
+    public static func multiGroupNote(count: Int, names: [String]) -> String {
+        var list = names.prefix(multiGroupNameLimit).joined(separator: "、")
+        if names.count > multiGroupNameLimit { list += " 等" }
+        return "有 \(count) 组首领按出场场合同时属于多个分组（\(list)），"
+            + "它们在各个分组下都会出现：卡头列出全部场合，折叠态代表行跟着当前分组走，"
+            + "展开后每行标了自己的场合与出处。"
     }
 }
 
@@ -1762,12 +2111,20 @@ public struct BossDataset: Codable, Sendable {
     public let mutations: [Int: BossMutation]
     /// 各地图 × 各类敌人 × 各深度的变异只数（46 行）。
     public let mutationCategories: [BossMutationCategory]
+    /// 出场场合的中文名 / 英文名 / 判定说明（schemaVersion 4，14 个键）。
+    /// 缺失时页面退回 `BossRoleText.builtinRoleNames`。
+    public let roleNames: [String: BossRoleName]
+    /// nightBosses 中含该场合的组数。
+    public let roleSummary: [String: Int]
+    /// 每个场合的组 / 变体 / 行 / 夜王 / 战斗行计数。
+    public let roleSummaryDetail: [String: BossRoleSummaryDetail]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion = "bossesSchemaVersion"
         case gameVersion, dataVersion, generatedAt, sources, affinityNames
         case scalingTiers, permanentScaling, caveats, nightlords, nightBosses, notes
         case deepOfNightText, deepOfNightDepths, deepOfNightTiers, mutations, mutationCategories
+        case roleNames, roleSummary, roleSummaryDetail
     }
 
     public init(from decoder: Decoder) throws {
@@ -1802,6 +2159,42 @@ public struct BossDataset: Codable, Sendable {
             result[id] = entry.value.withID(id)
         }
         mutationCategories = container.bossArray(.mutationCategories)
+        roleNames = container.bossDictionary(.roleNames)
+        let rawSummary: [String: Double] = container.bossDictionary(.roleSummary)
+        roleSummary = rawSummary.mapValues { Int($0.rounded()) }
+        roleSummaryDetail = container.bossDictionary(.roleSummaryDetail)
+    }
+
+    /// 场合的中文名：优先取数据集 roleNames（游戏文本 / 生成器口径），缺失时退回
+    /// 内置表，再不行原样显示键名——未知的新场合也不能渲染成空白徽标。
+    public func roleTitle(_ role: String) -> String {
+        if let name = roleNames[role], !name.zh.isEmpty { return name.zh }
+        if let builtin = BossRoleText.builtinRoleNames[role] { return builtin }
+        if let name = roleNames[role], !name.en.isEmpty { return name.en }
+        return role
+    }
+
+    /// 场合的判定说明（roleNames.*.description）；缺失时为空串。
+    public func roleDescription(_ role: String) -> String {
+        roleNames[role]?.description ?? ""
+    }
+
+    /// 合并行的「逐行场合」：「逐行场合：夜王战 75000020 / 75002020；未放置 75001020」。
+    /// 同一组场合用「 + 」连接（「守夜首领 + 大空洞高塔首领 31000020」）。
+    /// 各原始行场合都一样（或没有 rowRoles）时返回 nil——页面不写这一行。
+    public func rowRolesSummary(_ row: BossFight) -> String? {
+        guard row.hasMixedRowRoles else { return nil }
+        let text = row.rowRoleGroups.map { group in
+            group.roles.map { roleTitle($0) }.joined(separator: " + ")
+                + " " + group.npcIds.map(String.init).joined(separator: " / ")
+        }.joined(separator: "；")
+        return BossRoleText.rowRolesTitle + "：" + text
+    }
+
+    /// 页面要列出的全部场合：内置顺序在前，数据集里多出来的未知场合按键名排在后面。
+    public var orderedRoles: [String] {
+        let extra = Set(roleNames.keys).union(roleSummary.keys).subtracting(BossRoleCatalog.order)
+        return BossRoleCatalog.order + extra.sorted()
     }
 
     /// 从原始 JSON 解码；顶层不是对象时抛 `BossDataError.notAnObject`，
@@ -1967,18 +2360,43 @@ public enum BossDeepCoverage: String, Sendable, Hashable {
 }
 
 public struct BossCard: Identifiable, Sendable, Hashable {
+    /// 页面的分组筛选（schemaVersion 4 起按出场场合 roles，不再按 tier）。
+    ///
+    /// # 分组规则（两端唯一正式版本，Windows 端 `GROUPS` / `itemGroups()` 必须照抄）
+    ///
+    ///   * 夜王：夜王卡片（nightlords）固定只进这一组；它们的突袭 / 地图事件 / 未放置
+    ///     场合只作卡头徽标。roleSummary 本来就只数 nightBosses，这样守夜 / 野外那些
+    ///     分组的计数才能与 roleSummary 逐项相等。
+    ///   * 守夜首领 / 据点首领 / 场景头目 / 封印监牢：各对应一个场合（night / stronghold /
+    ///     field / evergaol）。
+    ///   * 其它场合：守夜前哨 / 坑道精英 / 大空洞高塔首领 / 突袭事件 / 黑夜入侵者 /
+    ///     地图事件 / 其他地图，以及数据集以后新增的未知场合。没有 roles 的组
+    ///     （旧版数据集）也放这里，卡头写「出场场合：数据未内置」。
+    ///   * 随从/召唤物、未放置：默认隐藏，打开「显示隐藏实体」才出现在筛选里。
+    ///
+    /// 守夜 / 野外首领卡片的 roles 与哪个分组有交集就出现在哪个分组，可以同时出现在多个。
     public enum Group: String, CaseIterable, Identifiable, Sendable {
         case nightlord
         case night
+        case stronghold
         case field
+        case evergaol
+        case other
+        case summon
+        case unplaced
 
         public var id: String { rawValue }
 
         public var title: String {
             switch self {
-            case .nightlord: return "夜王"
-            case .night: return "守夜首领"
-            case .field: return "野外首领"
+            case .nightlord: return BossRoleText.groupNightlord
+            case .night: return BossRoleText.groupNight
+            case .stronghold: return BossRoleText.groupStronghold
+            case .field: return BossRoleText.groupField
+            case .evergaol: return BossRoleText.groupEvergaol
+            case .other: return BossRoleText.groupOther
+            case .summon: return BossRoleText.groupSummon
+            case .unplaced: return BossRoleText.groupUnplaced
             }
         }
 
@@ -1986,26 +2404,75 @@ public struct BossCard: Identifiable, Sendable, Hashable {
             switch self {
             case .nightlord: return "crown"
             case .night: return "moon.stars"
+            case .stronghold: return "building.columns"
             case .field: return "map"
+            case .evergaol: return "lock.shield"
+            case .other: return "square.grid.2x2"
+            case .summon: return "person.2"
+            case .unplaced: return "questionmark.square.dashed"
             }
         }
 
-        /// 变体行 `threat` 字段对应的档位（夜王没有 threat）。
-        public var threat: String? {
+        /// 这个分组直接对应的场合；「其它场合」是补集，返回 nil。
+        public var role: String? {
             switch self {
-            case .nightlord: return nil
+            case .nightlord: return "nightlord"
             case .night: return "night"
+            case .stronghold: return "stronghold"
             case .field: return "field"
+            case .evergaol: return "evergaol"
+            case .summon: return "summon"
+            case .unplaced: return "unplaced"
+            case .other: return nil
             }
         }
+
+        /// 「随从/召唤物」「未放置」默认隐藏，打开「显示隐藏实体」才出现在筛选里。
+        public var isHiddenByDefault: Bool {
+            self == .summon || self == .unplaced
+        }
+
+        /// 某个场合落在这个分组里吗。
+        public func contains(role: String) -> Bool {
+            if let own = self.role { return own == role }
+            return Self.forRole(role) == .other
+        }
+
+        /// 场合 → 分组。有独立分组的场合各归各组，其余一律「其它场合」。
+        public static func forRole(_ role: String) -> Group {
+            for group in allCases where group != .other && group.role == role {
+                return group
+            }
+            return .other
+        }
+
+        /// 筛选器里可选的分组：默认隐藏的两个只在打开开关时出现。
+        public static func visibleCases(includeHidden: Bool) -> [Group] {
+            allCases.filter { includeHidden || !$0.isHiddenByDefault }
+        }
+
+        /// 「其它场合」分组里合并的场合（已知部分），按规范顺序。
+        public static var otherRoles: [String] { BossRoleCatalog.otherGroupRoles }
+    }
+
+    /// 夜王卡片 / 守夜·野外首领卡片。显示逻辑（远征名、官方弱点、名字徽标、深度权重）
+    /// 按它分支，不按「当前在哪个分组」分支——一张首领卡片可以出现在五六个分组里。
+    public enum Kind: String, Sendable, Hashable {
+        case nightlord
+        case boss
     }
 
     public let id: String
-    /// 主分组：夜王，或该组首领的 `tier`。决定折叠态徽标顺序。
+    public let kind: Kind
+    /// 主分组：卡片所属分组里排在最前的那个。决定这张卡的 `primaryRow`。
     public let group: Group
-    /// 该卡片应出现在哪些分组筛选里。守夜 / 野外档位都有变体的组会同时属于两个分组，
-    /// 来源是 `nightBosses.tiers`（而不是单值的 `tier`）。
+    /// 该卡片应出现在哪些分组筛选里（按 `Group.allCases` 顺序）：夜王固定 [.nightlord]；
+    /// 守夜 / 野外首领按 roles 算，可以同时属于多个分组（见 `Group` 的规则）。
     public let groups: [Group]
+    /// 出场场合（规范顺序），卡头逐个挂徽标。
+    public let roles: [String]
+    /// 威胁档位（守夜 / 野外首领的 tiers；缺失时退回 tier），只作展开区小字。
+    public let tiers: [String]
     public let nameZh: String
     public let nameEn: String
     /// 夜王远征名（守夜 / 野外为空）。
@@ -2108,7 +2575,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// `nameZhFallback` → 参考译名。四层的顺序就是渲染顺序，Windows 端
     /// `nameBadges()` 逐项同序同文案。
     public var nameBadges: [BossNameBadge] {
-        guard group != .nightlord else { return [] }
+        guard kind == .boss else { return [] }
         var badges: [BossNameBadge] = []
         if nameSource == "chrid-fallback" {
             badges.append(.noGameName)
@@ -2131,7 +2598,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     public var nameBadge: BossNameBadge? { nameBadges.first }
 
     /// 近似匹配徽标；夜王不挂。已并入 `nameBadges`，留着给旧调用点。
-    public var showsApproxBadge: Bool { group != .nightlord && nameApprox }
+    public var showsApproxBadge: Bool { kind == .boss && nameApprox }
 
     /// 展开区那块「名字来历 + 组级不掉奖励」小字整体显不显示。
     ///
@@ -2139,7 +2606,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// 只数五个名字字段，于是 Giant Skeleton Torso（chrIds [4960]，noReward = true、
     /// 五个名字字段全空）展开后永远看不到「该组不掉任何奖励」。条件写在视图里就没法断言。
     public var showsNameNotes: Bool {
-        guard group != .nightlord else { return false }
+        guard kind == .boss else { return false }
         return !nameNote.isEmpty || !nameZhFallbackNote.isEmpty || nameEvidence != nil
             || nameZhRejected != nil || !nameSourceUrl.isEmpty || noReward
     }
@@ -2177,8 +2644,12 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     ///
     /// 四步依次过滤，**任何一步会把候选池清空，就跳过那一步**（跳过是规则的一部分，
     /// 不是容错）：
-    ///   1. `threat`：守夜 / 野外分组先按档位过滤——同一组首领可能两种档位都有，
-    ///      在「野外首领」下就该看野外那几行，而不是血量更高的守夜行；
+    ///   1. `roles`：先留下场合落在当前分组里的行（`BossFight.belongs(to:)`）——同一组
+    ///      首领可能守夜 / 场景头目 / 据点各有一行，在「场景头目」下就该看场景头目那几行，
+    ///      而不是血量更高的守夜行。夜王分组同样过滤（场合 nightlord），救世旗手的
+    ///      「哈尔莫妮亚 · 蠕虫」46410000 虽是 isMain，却是未放置行，代表位让给实战的
+    ///      「救世旗手 · 二阶段」76200210。schemaVersion 3 以前这一步按 `threat` 过滤，
+    ///      但 threat 只是缩放档位（铃珠猎人野外版挂的就是 Night Boss Threat），已废弃；
     ///   2. `isMain`：收敛到主战行（夜王有；守夜 / 野外的 variants 没有这个字段）；
     ///   3. `isStagingRow`：排掉登场演出 / 血条实体 / 教程这类演出行；
     ///   4. `noReward`：排掉不掉奖励的行，免得 Paramdex 模板行抢走代表位。
@@ -2208,10 +2679,8 @@ public struct BossCard: Identifiable, Sendable, Hashable {
     /// `candidateEntries()` 同序。
     public func rows(in group: Group) -> [BossFight] {
         var pool = rows
-        if let threat = group.threat {
-            let byThreat = pool.filter { $0.threat == threat }
-            if !byThreat.isEmpty { pool = byThreat }
-        }
+        let byRole = pool.filter { $0.belongs(to: group) }
+        if !byRole.isEmpty { pool = byRole }
         let mains = pool.filter(\.isMain)
         if !mains.isEmpty { pool = mains }
         let playable = pool.filter { !$0.isStagingRow }
@@ -2237,8 +2706,41 @@ public struct BossCard: Identifiable, Sendable, Hashable {
 
     public func belongs(to group: Group) -> Bool { groups.contains(group) }
 
+    /// 夜王卡片。
+    public var isNightlord: Bool { kind == .nightlord }
+
+    /// 有没有出场场合数据（旧版数据集没有；页面此时写「出场场合：数据未内置」）。
+    public var hasRoles: Bool { !roles.isEmpty }
+
+    /// 默认不显示的卡片：`hidden`（召唤物 / 投射物等非首领实体），或者全部场合都是
+    /// 默认隐藏的「未放置」「随从/召唤物」。打开「显示隐藏实体」后才出现。
+    public var isHiddenByDefault: Bool {
+        if hidden { return true }
+        return hasRoles && roles.allSatisfy { BossRoleCatalog.hiddenRoles.contains($0) }
+    }
+
+    /// 同时属于多个**默认可见**分组（一组首领多个出场场合）。
+    public var hasMultipleGroups: Bool {
+        groups.filter { !$0.isHiddenByDefault }.count > 1
+    }
+
+    /// 展开区要逐行列出的行：默认藏掉只出现在「未放置」「随从/召唤物」的行。
+    /// 整卡都是这种行（只有打开开关才看得到的卡）时全部列出，免得展开后是空的。
+    public func displayRows(includeHidden: Bool) -> [BossFight] {
+        guard !includeHidden else { return rows }
+        let shown = rows.filter { !$0.isHiddenByDefault }
+        return shown.isEmpty ? rows : shown
+    }
+
+    /// 默认藏掉的行数（展开区底部写「另有 N 条……已隐藏」）。
+    public func hiddenRowCount(includeHidden: Bool) -> Int {
+        rows.count - displayRows(includeHidden: includeHidden).count
+    }
+
     public init(
-        id: String, group: Group, groups: [Group]? = nil, nameZh: String, nameEn: String,
+        id: String, kind: Kind? = nil, group: Group, groups: [Group]? = nil,
+        roles: [String] = [], roleSearchTerms: [String] = [], tiers: [String] = [],
+        nameZh: String, nameEn: String,
         expeditionZh: String, expeditionEn: String = "", variantNameZh: String,
         variantNameEn: String = "", isEverdark: Bool, weakness: [BossWeakness],
         descriptionZh: String, nameSource: String, nameInferred: Bool,
@@ -2250,8 +2752,11 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         chrIds: [Int] = [], npcNameId: Int? = nil, rows: [BossFight]
     ) {
         self.id = id
+        self.kind = kind ?? (group == .nightlord ? .nightlord : .boss)
         self.group = group
         self.groups = groups ?? [group]
+        self.roles = BossRoleCatalog.normalized(roles)
+        self.tiers = tiers
         self.nameZh = nameZh
         self.nameEn = nameEn
         self.expeditionZh = expeditionZh
@@ -2278,12 +2783,13 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         self.npcNameId = npcNameId
         self.rows = rows
         // 搜索串的组成两端必须一致：中英文名 + 参考译名 + 占位名 + 远征名 + 变体名
-        // + 官方弱点 + 每行标签。
+        // + 官方弱点 + 每行标签 + 出场场合名（roleNames 的中英文）。
         // nameZhFallback 也算进来：用户就是照着「河马」「山妖」这些旧译名找的，
         // 搜不到等于名字改动把人挡在门外。displayFallbackZh 同理——它现在就写在卡头上，
         // 页面上看得见的名字必须搜得到。
-        // 分组名不进搜索串（分组已有独立筛选器，混进来会让「野外」命中全部野外卡），
-        // nameSource / threat / variantKey 这类内部枚举值同样不进。
+        // schemaVersion 4：场合名写在卡头徽标上，「高塔」「突袭」「入侵者」都得搜得到
+        // （它们合并在「其它场合」分组里，没有自己的筛选项）。合并分组的名字「其它场合」
+        // 本身不是场合，不进；nameSource / threat / variantKey 这类内部枚举值同样不进。
         var parts = [
             nameZh, nameEn, nameZhFallback, displayFallbackZh,
             expeditionZh, expeditionEn, variantNameZh, variantNameEn,
@@ -2291,6 +2797,7 @@ public struct BossCard: Identifiable, Sendable, Hashable {
         parts.append(contentsOf: weakness.map(\.display))
         parts.append(contentsOf: rows.map(\.displayLabel))
         parts.append(contentsOf: rows.map(\.labelEn))
+        parts.append(contentsOf: roleSearchTerms)
         searchKey = bossFoldForSearch(parts.joined(separator: " "))
 
         // 行号单独收，且收录被合并掉的 npcIds（搜索框承诺的「或 npcId」）。
@@ -2329,7 +2836,11 @@ public struct BossDataIndex: Sendable {
             cards.append(
                 BossCard(
                     id: "nightlord-\(lord.menuId)",
+                    kind: .nightlord,
                     group: .nightlord,
+                    groups: [.nightlord],
+                    roles: lord.roles,
+                    roleSearchTerms: Self.roleSearchTerms(lord.roles, dataset: dataset),
                     nameZh: lord.nameZh,
                     nameEn: lord.nameEn,
                     expeditionZh: lord.expeditionZh,
@@ -2348,12 +2859,16 @@ public struct BossDataIndex: Sendable {
         }
 
         for boss in dataset.nightBosses {
-            let primary: BossCard.Group = boss.tier == "night" ? .night : .field
+            let groups = Self.groups(forRoles: boss.roles)
             cards.append(
                 BossCard(
                     id: "boss-\(boss.id)",
-                    group: primary,
-                    groups: Self.groups(for: boss, primary: primary),
+                    kind: .boss,
+                    group: groups.first ?? .other,
+                    groups: groups,
+                    roles: boss.roles,
+                    roleSearchTerms: Self.roleSearchTerms(boss.roles, dataset: dataset),
+                    tiers: boss.tiers.isEmpty ? (boss.tier.isEmpty ? [] : [boss.tier]) : boss.tiers,
                     nameZh: boss.nameZh,
                     nameEn: boss.nameEn,
                     expeditionZh: "",
@@ -2388,25 +2903,38 @@ public struct BossDataIndex: Sendable {
         try self.init(dataset: BossDataset.decode(from: data))
     }
 
-    /// 一组守夜 / 野外首领应归入哪些分组：按 `tiers`（可能同时含 field 与 night），
-    /// 缺失时退回单值的 `tier`。主分组排在最前。
-    static func groups(for boss: BossNightBoss, primary: BossCard.Group) -> [BossCard.Group] {
-        let declared = Set(boss.tiers)
-        var result: [BossCard.Group] = []
-        if declared.contains("night") { result.append(.night) }
-        if declared.contains("field") { result.append(.field) }
-        if result.isEmpty { return [primary] }
-        if let index = result.firstIndex(of: primary), index != 0 {
-            result.remove(at: index)
-            result.insert(primary, at: 0)
-        }
-        return result
+    /// 一组守夜 / 野外首领按 roles 归入哪些分组（按 `Group.allCases` 顺序、去重）。
+    ///
+    /// * 场合与分组的对应见 `BossCard.Group.forRole`；
+    /// * 「夜王」分组只收夜王卡片：守夜 / 野外首领万一带了 nightlord 场合（当前数据没有），
+    ///   归入「其它场合」，免得夜王分组混进非夜王；
+    /// * 没有 roles（旧版数据集）时归「其它场合」，卡头写「出场场合：数据未内置」——
+    ///   **不**退回 tier：tier 只是缩放档位，用它分组正是用户反馈的那个错。
+    static func groups(forRoles roles: [String]) -> [BossCard.Group] {
+        guard !roles.isEmpty else { return [.other] }
+        let hit = Set(roles.map { role -> BossCard.Group in
+            let group = BossCard.Group.forRole(role)
+            return group == .nightlord ? .other : group
+        })
+        return BossCard.Group.allCases.filter { hit.contains($0) }
     }
 
-    /// 按分组返回卡片。`includeHidden = false`（默认）会滤掉 hidden 的组：
-    /// 召唤物 / 投射物这些不是首领的实体，默认不该混在首领列表里。
+    /// 搜索索引里的场合名：每个场合的中文名 + roleNames 的英文名。
+    static func roleSearchTerms(_ roles: [String], dataset: BossDataset) -> [String] {
+        roles.flatMap { role -> [String] in
+            var terms = [dataset.roleTitle(role)]
+            if let en = dataset.roleNames[role]?.en, !en.isEmpty { terms.append(en) }
+            return terms
+        }
+    }
+
+    /// 按分组返回卡片。`includeHidden = false`（默认）时：
+    ///   * 「随从/召唤物」「未放置」两个分组整组不显示；
+    ///   * 其余分组滤掉 `isHiddenByDefault` 的卡片（hidden 的非首领实体，
+    ///     或全部场合都是那两个默认隐藏场合的组）。
     public func cards(in group: BossCard.Group, includeHidden: Bool = false) -> [BossCard] {
-        cards.filter { $0.belongs(to: group) && (includeHidden || !$0.hidden) }
+        if group.isHiddenByDefault && !includeHidden { return [] }
+        return cards.filter { $0.belongs(to: group) && (includeHidden || !$0.isHiddenByDefault) }
     }
 
     /// 按分组返回过滤后的卡片；`query` 会自动折叠。
@@ -2414,17 +2942,22 @@ public struct BossDataIndex: Sendable {
         in group: BossCard.Group, query: String, includeHidden: Bool = false
     ) -> [BossCard] {
         let needle = bossFoldForSearch(query)
-        return cards.filter {
-            $0.belongs(to: group) && (includeHidden || !$0.hidden) && $0.matches(foldedQuery: needle)
-        }
+        return cards(in: group, includeHidden: includeHidden).filter { $0.matches(foldedQuery: needle) }
     }
 
-    /// 默认不显示的组（召唤物 / 投射物等）。
+    /// `hidden = true` 的组（召唤物 / 投射物等非首领实体）。
     public var hiddenCards: [BossCard] { cards.filter(\.hidden) }
 
-    /// 同时有守夜与野外变体的组：在两个分组筛选下都能找到。
-    public var dualTierCards: [BossCard] {
-        cards.filter { $0.belongs(to: .night) && $0.belongs(to: .field) }
+    /// 默认不显示的全部卡片：hidden 的组 + 只出现在「未放置」「随从/召唤物」的组。
+    public var hiddenByDefaultCards: [BossCard] { cards.filter(\.isHiddenByDefault) }
+
+    /// 同时属于多个默认可见分组的组（一组首领多个出场场合）。
+    public var multiGroupCards: [BossCard] { cards.filter(\.hasMultipleGroups) }
+
+    /// 某个场合在分组视图里的卡片数（含隐藏）：守夜 / 野外首领里 roles 含它的组。
+    /// 与数据集的 roleSummary 同口径（roleSummary 只数 nightBosses）。
+    public func bossCardCount(role: String) -> Int {
+        cards.filter { !$0.isNightlord && $0.roles.contains(role) }.count
     }
 
     public func permanentEffects(_ ids: [Int]) -> [BossPermanentEffect] {
@@ -2444,34 +2977,47 @@ public struct BossDataIndex: Sendable {
     /// 顶部胶囊与底部「收录」统计说的都是**数据集收录了多少**，因此一律含隐藏实体，
     /// 不跟着「显示隐藏实体」开关变；当前列表里有多少条由页脚的「当前显示 …」负责。
     public var summary: String {
-        let lords = cards(in: .nightlord, includeHidden: true).count
-        let night = cards(in: .night, includeHidden: true).count
-        let field = cards(in: .field, includeHidden: true).count
-        let dual = dualTierCards.count
-        var text = "\(lords) 位夜王 · \(night) 个守夜首领 · \(field) 个野外首领"
-        if dual > 0 { text += "（其中 \(dual) 组两种档位都有）" }
+        let lords = cards.filter(\.isNightlord).count
+        let bosses = cards.count - lords
+        let multi = multiGroupCards.count
+        var text = "\(lords) 位夜王 · \(bosses) 组首领按出场场合分组"
+        if multi > 0 { text += "（\(multi) 组属于多个场合）" }
         return text
     }
 
-    /// 「数据版本与来源」区块里的收录统计。措辞与 Windows 端 versionBlock 的「收录」一行一致。
+    /// 「数据版本与来源」区块里的收录统计：每个分组（含默认隐藏的两个）的卡片数，
+    /// 措辞与 Windows 端 versionBlock 的「收录」一行一致。
     public var inventorySummary: String {
-        let lords = cards(in: .nightlord, includeHidden: true).count
-        let night = cards(in: .night, includeHidden: true).count
-        let field = cards(in: .field, includeHidden: true).count
-        let dual = dualTierCards.count
+        let counts = BossCard.Group.allCases.map { "\($0.title) \(cards(in: $0, includeHidden: true).count)" }
+        let multi = multiGroupCards.count
         let rows = cards.reduce(0) { $0 + $1.rows.count }
-        var text = "夜王 \(lords) · 守夜 \(night) · 野外 \(field)"
-        if dual > 0 { text += "（含 \(dual) 组两边都出现）" }
+        var text = counts.joined(separator: " · ")
+        if multi > 0 { text += "（含 \(multi) 组同时属于多个分组）" }
         text += " · 数值行 \(rows)"
         return text
     }
 
-    /// 隐藏实体的说明（底部「数据说明」用）。没有隐藏组时为 nil。
+    /// 隐藏实体的说明（底部「数据说明」用）。没有默认隐藏的组时为 nil。
     public var hiddenSummary: String? {
-        let hidden = hiddenCards
-        guard !hidden.isEmpty else { return nil }
-        return "另有 \(hidden.count) 组被判定为非首领实体（\(hidden.map(\.displayName).joined(separator: "、"))），"
-            + "默认不在列表里；判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵。"
-            + "需要时打开工具条的「\(BossRowText.hiddenToggleTitle)」。"
+        let flagged = hiddenCards
+        let roleOnly = hiddenByDefaultCards.filter { !$0.hidden }
+        guard !flagged.isEmpty || !roleOnly.isEmpty else { return nil }
+        var parts: [String] = []
+        if !flagged.isEmpty {
+            parts.append(
+                "\(flagged.count) 组被判定为非首领实体（\(flagged.map(\.displayName).joined(separator: "、"))），"
+                    + "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵"
+            )
+        }
+        if !roleOnly.isEmpty {
+            parts.append(
+                "\(roleOnly.count) 组只出现在「\(BossRoleText.groupUnplaced)」「\(BossRoleText.groupSummon)」"
+                    + "两个场合（\(roleOnly.map(\.displayName).joined(separator: "、"))）"
+            )
+        }
+        return "另有 " + parts.joined(separator: "；另有 ") + "。它们默认不在列表里，"
+            + "展开区里只出现在这两个场合的数值行也默认隐藏；"
+            + "需要时打开工具条的「\(BossRowText.hiddenToggleTitle)」，"
+            + "分组筛选里会多出「\(BossRoleText.groupSummon)」「\(BossRoleText.groupUnplaced)」两项。"
     }
 }

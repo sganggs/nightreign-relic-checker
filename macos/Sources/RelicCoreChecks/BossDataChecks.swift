@@ -50,7 +50,9 @@ func checkBossData() throws -> Int {
 
     let index = try BossDataIndex(data: data)
     let dataset = index.dataset
-    try bossExpect(dataset.schemaVersion >= 2, "bossesSchemaVersion 应 ≥ 2，实际 \(dataset.schemaVersion)", counter: &count)
+    // schemaVersion 4：分组改按 roles（出场场合）。版本号钉死，数据集再升级时这里先红，
+    // 提醒核对分组规则与 roleSummary 口径有没有变。
+    try bossExpect(dataset.schemaVersion == 4, "bossesSchemaVersion 应为 4，实际 \(dataset.schemaVersion)", counter: &count)
     try bossExpect(!dataset.gameVersion.isEmpty && !dataset.dataVersion.isEmpty, "缺少 gameVersion / dataVersion", counter: &count)
     try bossExpect(!dataset.caveats.isEmpty, "caveats 不应为空（页面底部要展示）", counter: &count)
     try bossExpect(!dataset.sources.isEmpty, "sources 不应为空", counter: &count)
@@ -146,18 +148,18 @@ func checkBossData() throws -> Int {
 
     // 9. 分组与搜索折叠
     // schemaVersion 3：cards(in:) 默认滤掉 hidden 的组，统计「收录了多少」时要显式带上。
+    // schemaVersion 4：分组按 roles（出场场合），细节断言在 checkBossRoleGrouping() 里。
     let lords = index.cards(in: .nightlord, includeHidden: true)
     let night = index.cards(in: .night, includeHidden: true)
     let field = index.cards(in: .field, includeHidden: true)
     try bossExpect(lords.count == dataset.nightlords.count, "夜王卡片数应等于 nightlords 条数", counter: &count)
-    // tiers 同时含 field 与 night 的组会同时出现在两个分组里，因此是「之和 - 重复数」
-    let dual = index.dualTierCards
     try bossExpect(
-        night.count + field.count - dual.count == dataset.nightBosses.count,
-        "守夜 + 野外卡片数（去掉两种档位都有的重复）应等于 nightBosses 条数",
+        night.count == (dataset.roleSummary["night"] ?? -1) && field.count == (dataset.roleSummary["field"] ?? -1),
+        "守夜首领 / 场景头目分组的卡片数应等于 roleSummary 的 night / field，实际 \(night.count) / \(field.count)",
         counter: &count
     )
-    try bossExpect(!night.isEmpty && !field.isEmpty, "守夜与野外分组都不应为空", counter: &count)
+    try bossExpect(!night.isEmpty && !field.isEmpty, "守夜首领与场景头目分组都不应为空", counter: &count)
+    count += try checkBossRoleGrouping(index)
     try bossExpect(
         index.cards(in: .nightlord, query: "格拉").contains { $0.nameZh == "格拉狄乌斯" },
         "搜索「格拉」应命中格拉狄乌斯",
@@ -178,12 +180,15 @@ func checkBossData() throws -> Int {
         "当前数据里应有 5 张夜王卡片带多条 isMain 行，实际 \(multiMain.count)",
         counter: &count
     )
+    // schemaVersion 4：先按场合过滤，只在「夜王战」场合的主战行里比血量。救世旗手的
+    // 「哈尔莫妮亚 · 蠕虫」46410000 虽标 isMain、血量最高（6797），却是未放置行。
     try bossExpect(
         lords.allSatisfy { card in
-            guard let primary = card.primaryRow, !card.mainRows.isEmpty else { return true }
-            return primary.hp == card.mainRows.map(\.hp).max()
+            let mains = card.mainRows.filter { $0.roles.contains("nightlord") }
+            guard let primary = card.primaryRow, !mains.isEmpty else { return true }
+            return primary.hp == mains.map(\.hp).max()
         },
-        "夜王头条行应是主战行里血量最高的一条",
+        "夜王头条行应是「夜王战」场合的主战行里血量最高的一条",
         counter: &count
     )
     guard let maris = lords.first(where: { $0.nameZh == "玛利斯" && $0.variantNameZh == "永夜之王" }) else {
@@ -210,51 +215,71 @@ func checkBossData() throws -> Int {
         counter: &count
     )
 
-    // 9c. tiers 多值：同时有守夜与野外变体的组，在两个分组筛选下都应能被检索到
-    try bossExpect(dual.count == 6, "当前数据里应有 6 组同时含守夜与野外变体，实际 \(dual.count)", counter: &count)
-    try bossExpect(
-        dual.allSatisfy { card in
-            card.rows.contains { $0.threat == "night" } && card.rows.contains { $0.threat == "field" }
-        },
-        "这些组的变体里应同时存在 threat = night 与 field 的行",
-        counter: &count
-    )
-    try bossExpect(
-        dual.allSatisfy { $0.rows.allSatisfy { $0.threatTitle != nil } },
-        "守夜 / 野外的每一行都应能渲染威胁档位标记",
-        counter: &count
-    )
-    guard let apostle = dual.first(where: { $0.nameZh == "神皮使徒" }) else {
-        throw CheckFailure(description: "首领数据：神皮使徒应是同时含守夜与野外变体的组")
+    // 9c. 多重归属：一组首领有几个出场场合就出现在几个分组里；tier / threat 不再参与分组
+    guard let apostle = index.cards.first(where: { $0.id == "boss-Godskin Apostle@3560" }) else {
+        throw CheckFailure(description: "首领数据：找不到神皮使徒（Godskin Apostle@3560）")
     }
     try bossExpect(
-        index.cards(in: .field, query: "神皮使徒").contains { $0.id == apostle.id },
-        "「野外首领」筛选下应能搜到神皮使徒（它的 tier 是 night，但有 4 条野外变体）",
+        apostle.roles == ["night", "stronghold", "evergaol", "tower", "event", "unplaced"],
+        "神皮使徒的 roles 应为 守夜首领 / 据点首领 / 封印监牢 / 高塔 / 地图事件 / 未放置，实际 \(apostle.roles)",
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .night, query: "神皮使徒").contains { $0.id == apostle.id },
-        "「守夜首领」筛选下同样应能搜到神皮使徒",
+        apostle.groups == [.night, .stronghold, .evergaol, .other, .unplaced],
+        "神皮使徒应出现在 守夜首领 / 据点首领 / 封印监牢 / 其它场合 / 未放置 五个分组，实际 \(apostle.groups)",
+        counter: &count
+    )
+    for group in [BossCard.Group.night, .stronghold, .evergaol, .other] {
+        try bossExpect(
+            index.cards(in: group, query: "神皮使徒").contains { $0.id == apostle.id },
+            "「\(group.title)」筛选下应能搜到神皮使徒",
+            counter: &count
+        )
+    }
+    // 4 条变体 threat = field（旧版因此把它放进「野外首领」），但没有一行的场合是场景头目
+    try bossExpect(
+        apostle.rows.filter { $0.threat == "field" }.count == 4
+            && !index.cards(in: .field, query: "神皮使徒").contains { $0.id == apostle.id },
+        "神皮使徒有 4 条 threat = field 的变体，却不应出现在「场景头目」（威胁档位不再参与分组）",
         counter: &count
     )
     try bossExpect(
-        apostle.rows.filter { $0.threat == "field" }.count == 4,
-        "神皮使徒应有 4 条野外变体",
+        index.cards.filter { !$0.isNightlord }.allSatisfy { $0.rows.allSatisfy { $0.threatTierCaption != nil } },
+        "守夜 / 野外首领的每一行都应能渲染「威胁档位」小字",
         counter: &count
     )
 
-    // 9d. 搜索串：不混分组名、收录被合并掉的 npcId、纯数字走前缀匹配
+    // 9d. 搜索串：收录场合名（roleNames）、不混合并分组名、收录被合并掉的 npcId、纯数字走前缀匹配
+    let visibleField = index.cards(in: .field)
     try bossExpect(
-        index.cards(in: .field, query: "野外").count < field.count,
-        "搜索「野外」不应命中全部野外卡片（分组名不进搜索串）",
+        index.cards(in: .field, query: "场景头目").count == visibleField.count,
+        "搜索「场景头目」应命中全部场景头目卡片（场合名进搜索串）",
+        counter: &count
+    )
+    let towerCards = index.cards(in: .other).filter { $0.roles.contains("tower") }
+    try bossExpect(
+        !towerCards.isEmpty
+            && towerCards.allSatisfy { card in index.cards(in: .other, query: "高塔").contains { $0.id == card.id } },
+        "「其它场合」里合并的场合要搜得到：搜「高塔」应命中全部带大空洞高塔首领的卡片",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards(in: .other, query: "Great Hollow Tower").count == towerCards.count,
+        "roleNames 的英文名也进搜索串（Great Hollow Tower Boss）",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards.allSatisfy { !$0.searchKey.contains(bossFoldForSearch(BossRoleText.groupOther)) },
+        "合并分组的名字「其它场合」不是场合，不进搜索串",
         counter: &count
     )
     guard let gladiusCard = lords.first(where: { $0.nameZh == "格拉狄乌斯" && $0.variantNameZh.isEmpty }) else {
         throw CheckFailure(description: "首领数据：找不到夜王卡片「格拉狄乌斯」")
     }
     try bossExpect(
-        !gladiusCard.searchKey.contains(bossFoldForSearch("夜王")),
-        "分组名「夜王」不应出现在搜索串里",
+        gladiusCard.searchKey.contains(bossFoldForSearch("夜王战"))
+            && gladiusCard.searchKey.contains(bossFoldForSearch("突袭事件")),
+        "夜王卡片的场合名（夜王战 / 突袭事件）也进搜索串",
         counter: &count
     )
     try bossExpect(
@@ -278,7 +303,7 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .field, query: String(apostle.chrIds[0])).contains { $0.id == apostle.id },
+        index.cards(in: .night, query: String(apostle.chrIds[0])).contains { $0.id == apostle.id },
         "按 chrId 也应能搜到首领",
         counter: &count
     )
@@ -303,37 +328,39 @@ func checkBossData() throws -> Int {
         counter: &count
     )
 
-    // 9g. 守夜 / 野外的代表行必须跟着分组走（Windows 侧遗留问题：恒取 variants[0]）
-    //     同一组首领可能两种档位都有，野外分组下就该看野外那几行。
-    guard let apostleNight = apostle.representativeRow(in: .night),
-          let apostleField = apostle.representativeRow(in: .field)
-    else {
-        throw CheckFailure(description: "首领数据：神皮使徒在两个分组下都应有代表行")
+    // 9g. 代表行必须跟着分组走（Windows 侧遗留问题：恒取 variants[0]）
+    //     schemaVersion 4：按 roles 过滤。神皮使徒在四个可见分组下各给一条不同的代表行。
+    let apostleReps = [BossCard.Group.night, .stronghold, .evergaol, .unplaced].map {
+        apostle.representativeRow(in: $0)?.npcId ?? 0
     }
-    // schemaVersion 3：35600900「基准（行 35600900）」是 noReward = true 的 Paramdex 模板行，
-    // 血量最高却不掉任何奖励，代表位让给真正能打到的「最古老的牢狱」35600110。
+    // 守夜：35600010「守夜双人组」（旧版按 threat 取的是 35600110，它的场合其实是封印监牢）；
+    // 未放置：35600900 是 noReward 的 Paramdex 模板行，血量最高也让位给 35600000。
     try bossExpect(
-        apostleNight.npcId == 35600110 && apostleNight.threat == "night",
-        "神皮使徒在守夜分组下的代表行应是 npcId 35600110，实际 \(apostleNight.npcId)",
+        apostleReps == [35600010, 35600050, 35600110, 35600000],
+        "神皮使徒在 守夜首领 / 据点首领 / 封印监牢 / 未放置 下的代表行应为 "
+            + "35600010 / 35600050 / 35600110 / 35600000，实际 \(apostleReps)",
         counter: &count
     )
     try bossExpect(
-        apostleField.npcId == 35600020 && apostleField.threat == "field",
-        "神皮使徒在野外分组下的代表行应是「封印监牢」npcId 35600020（不是血量更高的守夜行），实际 \(apostleField.npcId)",
+        apostle.representativeRow(in: .night)?.threat == "night"
+            && apostle.representativeRow(in: .evergaol)?.threat == "night"
+            && apostle.representativeRow(in: .stronghold)?.threat == "field",
+        "代表行的 threat 与分组无关：封印监牢的 35600110 是守夜档，据点首领的 35600050 是野外档",
         counter: &count
     )
     try bossExpect(
         apostle.rows.first?.npcId == 35600900,
-        "变体已按守夜优先 + 血量降序排好，rows[0] 是守夜行——正因如此不能拿它当野外分组的代表行",
+        "变体按守夜优先 + 血量降序排好，rows[0] 是未放置的模板行——正因如此不能拿它当代表行",
         counter: &count
     )
     try bossExpect(
-        dual.allSatisfy { card in
-            guard let night = card.representativeRow(in: .night),
-                  let field = card.representativeRow(in: .field) else { return false }
-            return night.threat == "night" && field.threat == "field"
+        index.cards.allSatisfy { card in
+            card.groups.allSatisfy { group in
+                guard let primary = card.representativeRow(in: group) else { return false }
+                return primary.belongs(to: group) || !card.rows.contains { $0.belongs(to: group) }
+            }
         },
-        "6 组双档位首领在各自分组下的代表行都应来自该档位",
+        "每张卡片在每个所属分组下的代表行，场合都应落在该分组里",
         counter: &count
     )
     try bossExpect(
@@ -488,16 +515,26 @@ func checkBossData() throws -> Int {
         "同一张卡的「深夜数值」仍是整卡命中——深夜专属修正只有部分行，不代表其余行数值不变",
         counter: &count
     )
-    // 只看代表行会判错的卡：代表行没有 deepOfNight，卡里其余行却有。
+    // 只看代表行会判错的卡：某个默认可见分组下的代表行没有 deepOfNight，卡里其余行却有。
+    // schemaVersion 4 按 roles 选代表行后，各卡主分组的代表行都带深夜专属修正了，
+    // 但「据点首领」分组下的神兽战士 / 咒剑士 / 死骑士仍然是代表行没有、守夜行有——
+    // 卡头徽标必须扫描整卡，不能看当前分组的代表行。
     let misjudged = index.cards.filter { card in
-        card.deepOfNightCoverage != .none && card.representativeRow(in: card.group)?.hasDeepOfNight != true
+        card.deepOfNightCoverage != .none && card.groups.contains { group in
+            !group.isHiddenByDefault && card.representativeRow(in: group)?.hasDeepOfNight != true
+        }
     }
     try bossExpect(
         Set(misjudged.map(\.id)) == [
-            "nightlord-18", "boss-Dreg Wormface@7660", "boss-Curseblade@5040", "boss-Death Knight@5070",
+            "boss-Divine Beast Warrior@5250", "boss-Curseblade@5040", "boss-Death Knight@5070",
         ],
-        "靠扫描整卡才判得对的应是这 4 张（代表行换成有奖励的行之后多了咒剑与死亡骑士），"
+        "靠扫描整卡才判得对的应是这 3 张（据点首领分组的代表行没有深夜专属修正），"
             + "实际 \(misjudged.map(\.id).sorted())",
+        counter: &count
+    )
+    try bossExpect(
+        misjudged.allSatisfy { $0.representativeRow(in: .stronghold)?.hasDeepOfNight == false },
+        "这 3 张都是在「据点首领」分组下判错",
         counter: &count
     )
     let deepCards = index.cards.filter { $0.deepOfNightCoverage != .none }
@@ -508,7 +545,7 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(
-        deepCards.contains { $0.group != .nightlord },
+        deepCards.contains { !$0.isNightlord },
         "深夜专属修正不是夜王独有，守夜 / 野外也有",
         counter: &count
     )
@@ -533,12 +570,19 @@ func checkBossData() throws -> Int {
         "每个档位都应有可显示的分组名",
         counter: &count
     )
-    // schemaVersion 3：守夜 51 → 50（c7711 与 c7712 被社区资料认出是同一只 Centipede Grub，
-    // 两组合并），数值行 384 → 394（merge_key 加入 chaosCorrectId / mutationSetId 后拆分，
-    // 再扣掉 10 条 Paramdex 模板行）。与 Windows 端 bosses.test.mjs 的同名断言保持一致。
+    // schemaVersion 4：收录统计按分组列（含默认隐藏的两个分组），数值行仍是 394。
+    // 守夜首领 40 / 场景头目 35 / 据点首领 51 / 封印监牢 10 / 随从 11 / 未放置 93 与
+    // roleSummary 逐项相同；其它场合 45 是七个合并场合的并集。
+    let expectedInventory = "夜王 18 · 守夜首领 40 · 据点首领 51 · 场景头目 35 · 封印监牢 10 · 其它场合 45 · "
+        + "随从/召唤物 11 · 未放置 93（含 49 组同时属于多个分组） · 数值行 394"
     try bossExpect(
-        index.inventorySummary == "夜王 18 · 守夜 50 · 野外 72（含 6 组两边都出现） · 数值行 394",
-        "收录统计文案应为「夜王 18 · 守夜 50 · 野外 72（含 6 组两边都出现） · 数值行 394」，实际「\(index.inventorySummary)」",
+        index.inventorySummary == expectedInventory,
+        "收录统计文案应为「\(expectedInventory)」，实际「\(index.inventorySummary)」",
+        counter: &count
+    )
+    try bossExpect(
+        index.summary == "18 位夜王 · 116 组首领按出场场合分组（49 组属于多个场合）",
+        "顶部胶囊文案，实际「\(index.summary)」",
         counter: &count
     )
 
@@ -795,13 +839,13 @@ func checkBossData() throws -> Int {
         .init(title: "神皮使徒 · 模板行 35600900（守夜档位）/ 2 人", npcId: 35600900, players: .duo, mode: .normal,
               hp: 9551, effectivePoise: 145.454545, poiseKind: .value,
               poiseRecover: 0.1595, ailmentDamageRate: 0.46, buildupRate: 0.955),
-        .init(title: "神皮使徒 · 野外代表行 35600020 / 2 人", npcId: 35600020, players: .duo, mode: .normal,
+        .init(title: "神皮使徒 · 封印监牢 35600020（野外威胁档）/ 2 人", npcId: 35600020, players: .duo, mode: .normal,
               hp: 6535, effectivePoise: 106.666667, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.82, buildupRate: 0.889),
-        .init(title: "大型黄金河马 · 守夜代表行 50100010 / 3 人", npcId: 50100010, players: .trio, mode: .normal,
+        .init(title: "大型黄金河马 · 据点首领代表行 50100010 / 3 人", npcId: 50100010, players: .trio, mode: .normal,
               hp: 17747, effectivePoise: 266.666667, poiseKind: .value,
               poiseRecover: 0.087, ailmentDamageRate: 0.315, buildupRate: 0.778),
-        .init(title: "大型黄金河马 · 野外代表行 50100000 / 3 人", npcId: 50100000, players: .trio, mode: .normal,
+        .init(title: "大型黄金河马 · 未放置代表行 50100000 / 3 人", npcId: 50100000, players: .trio, mode: .normal,
               hp: 5606, effectivePoise: 160, poiseKind: .value,
               poiseRecover: 0.145, ailmentDamageRate: 0.95, buildupRate: 0.97),
         .init(title: "未知敌人 c7931（poise = 0）/ 2 人", npcId: 79310000, players: .duo, mode: .normal,
@@ -816,21 +860,21 @@ func checkBossData() throws -> Int {
               hp: 73404, effectivePoise: 476.190476, poiseKind: .value,
               poiseRecover: 0.0174, ailmentDamageRate: 0.25, buildupRate: 0.7,
               attackRate: 11.1216, runeRate: 1),
-        .init(title: "神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3", npcId: 35600020, players: .duo, mode: .depth3,
+        .init(title: "神皮使徒 · 封印监牢 35600020（野外威胁档）/ 2 人 · 深度 3", npcId: 35600020, players: .duo, mode: .depth3,
               hp: 9723, effectivePoise: 124.031008, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.82, buildupRate: 0.889,
               attackRate: 5.46777, runeRate: 1),
-        .init(title: "神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3 · 变异 #113140",
+        .init(title: "神皮使徒 · 封印监牢 35600020（野外威胁档）/ 2 人 · 深度 3 · 变异 #113140",
               npcId: 35600020, players: .duo, mode: .depth3,
               hp: 11182, effectivePoise: 124.031008, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.82, buildupRate: 0.889,
               mutationId: 113140, attackRate: 6.2879355, runeRate: 1.35),
         // 野外常见档 7740（只加 10% 血）下的同一组输入，与上面的最终 Boss 档互为对照。
-        .init(title: "死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3", npcId: 49800030, players: .duo, mode: .depth3,
+        .init(title: "死亡仪式鸟 · 49800030（据点首领）/ 2 人 · 深度 3", npcId: 49800030, players: .duo, mode: .depth3,
               hp: 5017, effectivePoise: 186.046512, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.98, buildupRate: 0.985,
               attackRate: 2.7615, runeRate: 1),
-        .init(title: "死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3 · 变异 #113340",
+        .init(title: "死亡仪式鸟 · 49800030（据点首领）/ 2 人 · 深度 3 · 变异 #113340",
               npcId: 49800030, players: .duo, mode: .depth3,
               hp: 5770, effectivePoise: 186.046512, poiseKind: .value,
               poiseRecover: 0.2175, ailmentDamageRate: 0.98, buildupRate: 0.985,
@@ -904,10 +948,13 @@ func checkBossData() throws -> Int {
         "对照表里的夜王代表行应与折叠态一致",
         counter: &count
     )
+    // schemaVersion 4：大型黄金河马的 roles 是 [据点首领, 未放置]——旧版的「守夜代表行」
+    // 50100010 其实放在地下堡垒（据点首领），「野外代表行」50100000 根本没放进任何地图。
     try bossExpect(
-        hippo.representativeRow(in: .night)?.npcId == 50100010
-            && hippo.representativeRow(in: .field)?.npcId == 50100000,
-        "对照表里的大型黄金河马代表行应与折叠态一致",
+        hippo.groups == [.stronghold, .unplaced]
+            && hippo.representativeRow(in: .stronghold)?.npcId == 50100010
+            && hippo.representativeRow(in: .unplaced)?.npcId == 50100000,
+        "对照表里的大型黄金河马代表行应与折叠态一致（据点首领 50100010 / 未放置 50100000）",
         counter: &count
     )
 
@@ -933,7 +980,7 @@ func checkBossData() throws -> Int {
     )
     try bossExpect(troll.nameBadge == .englishOnly, "Troll 的首枚徽标仍是「仅英文名」", counter: &count)
     try bossExpect(
-        index.cards(in: .field, query: "山妖").contains { $0.id == troll.id },
+        index.cards(in: .stronghold, query: "山妖").contains { $0.id == troll.id },
         "按旧译名「山妖」仍应能搜到 Troll（nameZhFallback 要进搜索索引）",
         counter: &count
     )
@@ -944,7 +991,7 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .night, query: "河马").contains { $0.id == hippoGroup.id },
+        index.cards(in: .stronghold, query: "河马").contains { $0.id == hippoGroup.id },
         "用户搜「河马」仍要能搜到它",
         counter: &count
     )
@@ -994,13 +1041,13 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .night, query: "未知敌人", includeHidden: true).count == 2,
+        index.cards(in: .summon, query: "未知敌人", includeHidden: true).count == 2,
         "占位名也要进搜索索引（页面上看得见的名字必须搜得到）",
         counter: &count
     )
     // 第 4 级：三级都空才显示英文名。
     let englishTitled = index.cards.filter {
-        $0.group != .nightlord && $0.nameZh.isEmpty && $0.nameZhFallback.isEmpty
+        !$0.isNightlord && $0.nameZh.isEmpty && $0.nameZhFallback.isEmpty
             && $0.displayFallbackZh.isEmpty
     }
     try bossExpect(
@@ -1099,55 +1146,108 @@ func checkBossData() throws -> Int {
         "隐藏的应是百足幼虫 / 蒙格的长枪 / 两组无法确认的实体，实际 \(hidden.map(\.id).sorted())",
         counter: &count
     )
+    // schemaVersion 4：「未放置」「随从/召唤物」默认隐藏（沿用同一个开关）。4 组 hidden 的
+    // 非首领实体的场合也只有这两个，另有 8 组同样只出现在这两个场合——一共 12 组默认不显示。
+    let hiddenByDefault = index.hiddenByDefaultCards
     try bossExpect(
-        index.cards(in: .night).count == 46 && index.cards(in: .night, includeHidden: true).count == 50,
-        "守夜分组默认 46 张、打开开关 50 张，实际 \(index.cards(in: .night).count) / \(index.cards(in: .night, includeHidden: true).count)",
+        Set(hiddenByDefault.map(\.id)) == Set(hidden.map(\.id)).union([
+            "boss-Borealis the Freezing Fog@4503", "boss-Decaying Ekzykes@4501",
+            "boss-Elder Dragon Greyoll@4504", "boss-Lake Glintstone Dragon@4502",
+            "boss-Storm King@7910", "boss-Dreg Wormface@7660", "boss-Funeral Steed@3160",
+            "boss-Giant Skeleton Torso@4960",
+        ]),
+        "默认隐藏的应是 4 组非首领实体 + 8 组只有未放置 / 随从场合的组，实际 \(hiddenByDefault.map(\.id).sorted())",
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .field).count == 72 && index.cards(in: .field, includeHidden: true).count == 72,
-        "4 组隐藏实体都在守夜档，野外分组不受开关影响",
+        hiddenByDefault.allSatisfy { card in card.roles.allSatisfy { BossRoleCatalog.hiddenRoles.contains($0) } },
+        "默认隐藏的组，场合都只有「未放置」「随从/召唤物」",
         counter: &count
     )
-    // 双端对照输入 ⑤：隐藏开关前后三个分组的条数（windows/tests/bosses.test.mjs 同一组数）
+    // 双端对照输入 ⑤：隐藏开关前后八个分组的条数（windows/tests/bosses.test.mjs 同一组数）
+    let toggleCounts = BossCard.Group.allCases.map {
+        [index.cards(in: $0).count, index.cards(in: $0, includeHidden: true).count]
+    }
     try bossExpect(
-        [BossCard.Group.nightlord, .night, .field].map {
-            [index.cards(in: $0).count, index.cards(in: $0, includeHidden: true).count]
-        } == [[18, 18], [46, 50], [72, 72]],
-        "隐藏开关前后应是 夜王 18/18、守夜 46/50、野外 72/72",
+        toggleCounts == [[18, 18], [40, 40], [51, 51], [35, 35], [10, 10], [45, 45], [0, 11], [0, 93]],
+        "隐藏开关前后应是 夜王 18/18、守夜首领 40/40、据点首领 51/51、场景头目 35/35、封印监牢 10/10、"
+            + "其它场合 45/45、随从/召唤物 0/11、未放置 0/93，实际 \(toggleCounts)",
         counter: &count
     )
     try bossExpect(
-        index.cards(in: .night, query: "").count == 46
-            && index.cards(in: .night, query: "", includeHidden: true).count == 50,
+        BossCard.Group.visibleCases(includeHidden: false) == [.nightlord, .night, .stronghold, .field, .evergaol, .other]
+            && BossCard.Group.visibleCases(includeHidden: true) == BossCard.Group.allCases,
+        "分组筛选默认 6 项；打开开关后多出「随从/召唤物」「未放置」",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards(in: .summon, query: "").isEmpty
+            && index.cards(in: .summon, query: "", includeHidden: true).count == 11,
         "带搜索的那条路径也要认隐藏开关",
         counter: &count
     )
     // 「Centipede」会命中可见的百足恶魔，所以这里用只属于幼虫那一组的词。
     try bossExpect(
-        index.cards(in: .night, query: "Centipede Grub").isEmpty
-            && index.cards(in: .night, query: "Centipede Grub", includeHidden: true).count == 1,
-        "隐藏的组默认连搜都搜不出来，打开开关才出现",
+        BossCard.Group.allCases.allSatisfy { index.cards(in: $0, query: "Centipede Grub").isEmpty }
+            && index.cards(in: .summon, query: "Centipede Grub", includeHidden: true).count == 1,
+        "隐藏的组默认在哪个分组都搜不出来，打开开关才在「随从/召唤物」里出现",
         counter: &count
     )
     try bossExpect(
-        (index.hiddenSummary ?? "").contains(BossRowText.hiddenToggleTitle),
-        "底部说明要告诉用户去哪打开隐藏实体",
+        (index.hiddenSummary ?? "").contains(BossRowText.hiddenToggleTitle)
+            && (index.hiddenSummary ?? "").contains(BossRoleText.groupUnplaced)
+            && (index.hiddenSummary ?? "").contains(BossRoleText.groupSummon),
+        "底部说明要告诉用户去哪打开隐藏实体，并点名两个默认隐藏的场合",
+        counter: &count
+    )
+    // 行级：展开区默认藏掉只出现在「未放置」「随从/召唤物」的行
+    let hiddenRowTotal = index.cards.reduce(0) { $0 + $1.hiddenRowCount(includeHidden: false) }
+    let shownRowTotal = index.cards.reduce(0) { $0 + $1.displayRows(includeHidden: false).count }
+    try bossExpect(
+        hiddenRowTotal == 148 && shownRowTotal == 246 && hiddenRowTotal + shownRowTotal == 394,
+        "展开区默认藏掉 148 条只出现在未放置 / 随从场合的行、列出 246 条，实际 \(hiddenRowTotal) / \(shownRowTotal)",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards.allSatisfy { $0.hiddenRowCount(includeHidden: true) == 0 && !$0.displayRows(includeHidden: false).isEmpty },
+        "打开开关后一行不藏；关着时每张卡也至少列出一行",
+        counter: &count
+    )
+    try bossExpect(
+        index.cards.allSatisfy { card in
+            card.displayRows(includeHidden: false).allSatisfy { !$0.isHiddenByDefault } || card.isHiddenByDefault
+        },
+        "默认可见的卡片，展开区列出的行都不是只有未放置 / 随从场合的行",
+        counter: &count
+    )
+    try bossExpect(
+        gladiusCard.displayRows(includeHidden: false).map(\.npcId) == [75000020, 75001110]
+            && gladiusCard.hiddenRowCount(includeHidden: false) == 2,
+        "格拉狄乌斯默认只列远征首领 75000020 与联机突袭 75001110，两条「常驻缩放」参数行未放置、默认隐藏",
         counter: &count
     )
     // 收录统计说的是「数据集收录了多少」，不跟着开关变
     try bossExpect(
-        index.inventorySummary == "夜王 18 · 守夜 50 · 野外 72（含 6 组两边都出现） · 数值行 394",
+        index.inventorySummary == expectedInventory,
         "收录统计应含隐藏实体，实际「\(index.inventorySummary)」",
         counter: &count
     )
-    // noReward 只作小字，不影响显示：Storm King / 蚯蚓脸 / 巨大骸骨躯干不掉奖励但仍在列表里
+    // noReward 只作小字，不决定显示：Storm King / 蚯蚓脸 / 巨大骸骨躯干不掉奖励、也没被判成
+    // 非首领实体（hidden = false）。schemaVersion 4 起它们默认不显示，原因是场合只有
+    // 未放置 / 随从——判据是 roles，不是 noReward。
     let visibleNoReward = index.cards.filter { $0.noReward && !$0.hidden }
     try bossExpect(
         Set(visibleNoReward.map(\.id)) == [
             "boss-Storm King@7910", "boss-Dreg Wormface@7660", "boss-Giant Skeleton Torso@4960",
         ],
-        "不掉奖励但仍应显示的是这 3 组，实际 \(visibleNoReward.map(\.id).sorted())",
+        "不掉奖励但没被判成非首领实体的是这 3 组，实际 \(visibleNoReward.map(\.id).sorted())",
+        counter: &count
+    )
+    try bossExpect(
+        visibleNoReward.allSatisfy { card in
+            card.isHiddenByDefault && card.roles.allSatisfy { BossRoleCatalog.hiddenRoles.contains($0) }
+        },
+        "这 3 组默认隐藏是因为场合只有未放置 / 随从，不是因为 noReward",
         counter: &count
     )
     // 组级「该组不掉任何奖励」小字与名字来历共用展开区的同一块，noReward 必须进那块的
@@ -1167,7 +1267,7 @@ func checkBossData() throws -> Int {
     )
     try bossExpect(
         index.cards.allSatisfy { card in
-            card.group == .nightlord || !card.noReward || card.showsNameNotes
+            card.isNightlord || !card.noReward || card.showsNameNotes
         },
         "每一组 noReward 的守夜 / 野外卡片都应显示展开区的小字块",
         counter: &count
@@ -1196,25 +1296,49 @@ func checkBossData() throws -> Int {
         let group: BossCard.Group
         let npcId: Int
     }
+    // schemaVersion 4：第一步由 threat 换成 roles，整张表按新分组重排。每条后面的注释写明
+    // 是哪一层定的代表位；「旧」是 v3 按 threat 分组时的结果，用来说明改动。
     let representativeCases: [RepresentativeCase] = [
         // 夜王：整池都 noReward，先排 noReward 会退化成 75000000 参数标签行
         .init(title: "格拉狄乌斯 · 夜王", cardId: "nightlord-0", group: .nightlord, npcId: 75000020),
         .init(title: "玛利斯 · 夜王", cardId: "nightlord-3", group: .nightlord, npcId: 75400020),
         .init(title: "卡莉果 · 夜王", cardId: "nightlord-6", group: .nightlord, npcId: 49000010),
-        // 同一张卡的两个分组给两条不同的代表行；河马的野外行整池都 noReward，不排
-        .init(title: "大型黄金河马 · 守夜", cardId: "boss-Large Golden Hippopotamus@5010", group: .night, npcId: 50100010),
-        .init(title: "大型黄金河马 · 野外", cardId: "boss-Large Golden Hippopotamus@5010", group: .field, npcId: 50100000),
-        // noReward 那一层：血量最高的 35600900 是 Paramdex 模板行，让位给打得到的 35600110
-        .init(title: "神皮使徒 · 守夜", cardId: "boss-Godskin Apostle@3560", group: .night, npcId: 35600110),
-        .init(title: "神皮使徒 · 野外", cardId: "boss-Godskin Apostle@3560", group: .field, npcId: 35600020),
-        // isStagingRow 那一层：这两行都 noReward = false，只能靠标签认出来
-        .init(title: "鲜血贵族 · 野外", cardId: "boss-Sanguine Noble@3550", group: .field, npcId: 35500030),
-        .init(title: "巨鸦群 · 野外", cardId: "boss-Giant Crow@4560", group: .field, npcId: 45600000),
-        // 教程 / 血条实体那两行：既是演出行又 noReward，两层都会排掉
-        .init(title: "恶兆妖鬼 · 守夜", cardId: "boss-Morgott@2130", group: .night, npcId: 21300030),
-        .init(title: "火焰战车 · 野外", cardId: "boss-Flame Chariot@4460", group: .field, npcId: 44600010),
-        // 死亡仪式鸟：野外档位只有一行，分组过滤那一层就定了
-        .init(title: "死亡仪式鸟 · 野外", cardId: "boss-Death Rite Bird@4980", group: .field, npcId: 49800030),
+        // isMain 那一层：75802000 与 75802010 同血量同场合，只有后者是主战行
+        .init(title: "布德奇冥 · 夜王", cardId: "nightlord-7", group: .nightlord, npcId: 75802010),
+        // roles 那一层（夜王分组同样过滤）：isMain 的「哈尔莫妮亚 · 蠕虫」46410000 是未放置行
+        .init(title: "救世旗手 · 夜王", cardId: "nightlord-18", group: .nightlord, npcId: 76200210),
+        // 铃珠猎人：野外版与守夜版是不同行，四个可见分组 + 未放置各给各的
+        .init(title: "铃珠猎人 · 守夜首领", cardId: "boss-Bell Bearing Hunter@3100", group: .night, npcId: 31000020),
+        .init(title: "铃珠猎人 · 场景头目", cardId: "boss-Bell Bearing Hunter@3100", group: .field, npcId: 31000010),
+        .init(title: "铃珠猎人 · 据点首领", cardId: "boss-Bell Bearing Hunter@3100", group: .stronghold, npcId: 31000040),
+        .init(title: "铃珠猎人 · 其它场合（高塔）", cardId: "boss-Bell Bearing Hunter@3100", group: .other, npcId: 31000020),
+        .init(title: "铃珠猎人 · 未放置", cardId: "boss-Bell Bearing Hunter@3100", group: .unplaced, npcId: 31000000),
+        // 大型黄金河马：旧「守夜代表行」其实在地下堡垒；旧「野外代表行」未放置、整池 noReward 不排
+        .init(title: "大型黄金河马 · 据点首领", cardId: "boss-Large Golden Hippopotamus@5010", group: .stronghold, npcId: 50100010),
+        .init(title: "大型黄金河马 · 未放置", cardId: "boss-Large Golden Hippopotamus@5010", group: .unplaced, npcId: 50100000),
+        // 神皮使徒：守夜首领是「守夜双人组」（旧版按 threat 取了封印监牢的 35600110）；
+        // 未放置分组里 noReward 那一层把 Paramdex 模板行 35600900 让给 35600000
+        .init(title: "神皮使徒 · 守夜首领", cardId: "boss-Godskin Apostle@3560", group: .night, npcId: 35600010),
+        .init(title: "神皮使徒 · 据点首领", cardId: "boss-Godskin Apostle@3560", group: .stronghold, npcId: 35600050),
+        .init(title: "神皮使徒 · 封印监牢", cardId: "boss-Godskin Apostle@3560", group: .evergaol, npcId: 35600110),
+        .init(title: "神皮使徒 · 未放置", cardId: "boss-Godskin Apostle@3560", group: .unplaced, npcId: 35600000),
+        // isStagingRow 那一层：「血条实体」45601020 血量更高（2117）且 noReward = false，只能靠标签认出来
+        .init(title: "巨鸦群 · 场景头目", cardId: "boss-Giant Crow@4560", group: .field, npcId: 45601010),
+        // 演出行 + noReward 两层：「教程」21300520（其他地图，9920 血）两层都会排掉
+        .init(title: "恶兆妖鬼 · 其它场合", cardId: "boss-Morgott@2130", group: .other, npcId: 21300510),
+        .init(title: "恶兆妖鬼 · 守夜首领", cardId: "boss-Morgott@2130", group: .night, npcId: 21300510),
+        // 整池都是演出行时不排：鲜血贵族在「其它场合」下只有守夜前哨那一行「登场演出」
+        .init(title: "鲜血贵族 · 其它场合（守夜前哨）", cardId: "boss-Sanguine Noble@3550", group: .other, npcId: 35500020),
+        .init(title: "鲜血贵族 · 据点首领", cardId: "boss-Sanguine Noble@3550", group: .stronghold, npcId: 35500040),
+        // 火焰战车：旧版的「营地 · 血条实体」44600015 未放置；未放置分组里靠演出行那层排掉它
+        .init(title: "火焰战车 · 据点首领", cardId: "boss-Flame Chariot@4460", group: .stronghold, npcId: 44600010),
+        .init(title: "火焰战车 · 场景头目", cardId: "boss-Flame Chariot@4460", group: .field, npcId: 44600000),
+        .init(title: "火焰战车 · 未放置", cardId: "boss-Flame Chariot@4460", group: .unplaced, npcId: 44600000),
+        // 死亡仪式鸟：7 个场合；场景头目 / 据点首领共用一条多场合行
+        .init(title: "死亡仪式鸟 · 场景头目", cardId: "boss-Death Rite Bird@4980", group: .field, npcId: 49801040),
+        .init(title: "死亡仪式鸟 · 据点首领", cardId: "boss-Death Rite Bird@4980", group: .stronghold, npcId: 49801040),
+        .init(title: "死亡仪式鸟 · 封印监牢", cardId: "boss-Death Rite Bird@4980", group: .evergaol, npcId: 49801030),
+        .init(title: "死亡仪式鸟 · 守夜首领", cardId: "boss-Death Rite Bird@4980", group: .night, npcId: 49801010),
     ]
     for item in representativeCases {
         guard let card = index.cards.first(where: { $0.id == item.cardId }) else {
@@ -1246,15 +1370,18 @@ func checkBossData() throws -> Int {
         "每张夜王卡片的代表行都应是 isMain 行",
         counter: &count
     )
-    // 顺序本身也钉住：两层互换在 v3 数据上结果一样，但规则文本只有一份。
+    // 顺序本身也钉住：两层互换在 v3 / v4 数据上结果一样，但规则文本只有一份。
+    // 第一步按 roles 过滤在这里独立重写一遍（场合 → 分组的对应不借用 BossFight.belongs）。
+    let roleToGroup: [String: BossCard.Group] = [
+        "nightlord": .nightlord, "night": .night, "stronghold": .stronghold, "field": .field,
+        "evergaol": .evergaol, "summon": .summon, "unplaced": .unplaced,
+    ]
     try bossExpect(
         index.cards.allSatisfy { card in
             card.groups.allSatisfy { group in
                 var pool = card.rows
-                if let threat = group.threat {
-                    let byThreat = pool.filter { $0.threat == threat }
-                    if !byThreat.isEmpty { pool = byThreat }
-                }
+                let byRole = pool.filter { row in row.roles.contains { (roleToGroup[$0] ?? .other) == group } }
+                if !byRole.isEmpty { pool = byRole }
                 let mains = pool.filter(\.isMain)
                 if !mains.isEmpty { pool = mains }
                 let playable = pool.filter { !$0.isStagingRow }
@@ -1264,7 +1391,7 @@ func checkBossData() throws -> Int {
                 return pool.map(\.npcId).sorted() == card.rows(in: group).map(\.npcId).sorted()
             }
         },
-        "rows(in:) 必须是「分组 → isMain → isStagingRow → noReward」这个顺序",
+        "rows(in:) 必须是「分组场合 roles → isMain → isStagingRow → noReward」这个顺序",
         counter: &count
     )
     // 守夜 / 野外没有 isMain，这一层就由 noReward 兜底：模板行 / 登场演出 / 血条实体不再抢代表位
@@ -1280,30 +1407,43 @@ func checkBossData() throws -> Int {
         counter: &count
     )
     try bossExpect(
-        apostle.representativeRow(in: .field)?.npcId == 35600020,
-        "神皮使徒野外分组的代表行不受影响，仍是封印监牢 35600020",
+        apostle.representativeRow(in: .evergaol)?.npcId == 35600110
+            && apostle.rows(in: .evergaol).map(\.npcId).sorted() == [35600020, 35600110],
+        "神皮使徒封印监牢分组的两条候选是 35600110 / 35600020（旧版野外分组给的 35600020 也在这里），取血量高的 35600110",
         counter: &count
     )
     let sanguine = try cardForBoss("Sanguine Noble@3550")
     try bossExpect(
-        sanguine.representativeRow(in: .field)?.npcId == 35500030,
-        "鲜血贵族排掉无奖励的 35500015 之后，35500020 / 35500030 / 35500040 三行同为 920 血，"
-            + "代表位应给「基准」35500030，而不是「鲜血君王 · 登场演出」35500020，实际 "
-            + (sanguine.representativeRow(in: .field).map { String($0.npcId) } ?? "nil"),
+        sanguine.representativeRow(in: .unplaced)?.npcId == 35500030,
+        "鲜血贵族未放置分组里排掉无奖励的 35500015 之后，35500030 / 35500040 同为 920 血，"
+            + "代表位按 npcId 给 35500030，实际 "
+            + (sanguine.representativeRow(in: .unplaced).map { String($0.npcId) } ?? "nil"),
+        counter: &count
+    )
+    try bossExpect(
+        sanguine.representativeRow(in: .other)?.isStagingRow == true
+            && sanguine.rows(in: .other).allSatisfy(\.isStagingRow),
+        "鲜血贵族在「其它场合」下只有守夜前哨那条「登场演出」行：整池都是演出行时不排",
         counter: &count
     )
     let chariot = try cardForBoss("Flame Chariot@4460")
     try bossExpect(
-        chariot.representativeRow(in: .field)?.npcId == 44600010,
-        "火焰战车的代表行应从「营地 · 血条实体」换成真正的「营地」行",
+        chariot.representativeRow(in: .stronghold)?.npcId == 44600010
+            && chariot.representativeRow(in: .unplaced)?.npcId == 44600000,
+        "火焰战车的「营地 · 血条实体」44600015 是未放置行，未放置分组里也被演出行那层排掉",
         counter: &count
     )
     // isStagingRow 这一层：演出行不一定 noReward，noReward 那层拦不住
     let crow = try cardForBoss("Giant Crow@4560")
     try bossExpect(
-        crow.representativeRow(in: .field)?.npcId == 45600000,
-        "巨鸦群的代表行应是「基准」45600000，而不是血量更高（2117）但只是挂血条的「血条实体」45601020，实际 "
+        crow.representativeRow(in: .field)?.npcId == 45601010,
+        "巨鸦群场景头目分组的代表行应是「基准」45601010，而不是血量更高（2117）但只是挂血条的「血条实体」45601020，实际 "
             + (crow.representativeRow(in: .field).map { String($0.npcId) } ?? "nil"),
+        counter: &count
+    )
+    try bossExpect(
+        crow.rows.first { $0.npcId == 45601020 }.map { !$0.noReward && $0.isStagingRow && $0.roles == ["field"] } == true,
+        "45601020「血条实体」是场景头目行、noReward = false —— 只能靠演出行那一层排掉",
         counter: &count
     )
     try bossExpect(
@@ -1649,8 +1789,14 @@ func checkBossData() throws -> Int {
          "variants": [{"npcId": 9, "labelZh": "乙"}]},
         {"nameEn": "Dual Boss", "chrIds": [4600], "tier": "night", "tiers": ["field", "night"],
          "npcNameId": 12345,
-         "variants": [{"npcId": 10, "labelZh": "丙", "threat": "night"},
-                      {"npcId": 11, "labelZh": "丁", "threat": "field"}]}
+         "variants": [{"npcId": 10, "labelZh": "丙", "threat": "night", "roles": ["tower", "night", "night"],
+                       "roleEvidence": {"night": [{"npcId": 10, "msb": "m49_24_00_00", "table": "LotResultPlayAreaParam",
+                                                   "row": "bossId1 = 4924", "note": "测试"}, 42]},
+                       "rowRoles": {"10": ["night", "tower"], "x": ["field"]}},
+                      {"npcId": 11, "npcIds": [11, 12], "labelZh": "丁", "threat": "night",
+                       "roles": ["unplaced", "field"], "rowRoles": {"11": ["field"], "12": ["unplaced"]}},
+                      {"npcId": 13, "labelZh": "戊", "threat": "field", "roles": ["unplaced"]},
+                      {"npcId": 14, "labelZh": "己", "roles": ["futureRole"]}]}
       ]
     }
     """
@@ -1672,15 +1818,89 @@ func checkBossData() throws -> Int {
     try bossExpect(lenient.dataset.scalingGroup(7760)?.duo?.hp == 2, "scalingTiers 应能按 ID 反查", counter: &count)
     try bossExpect(lenient.dataset.permanentEffect(7767)?.deepOfNight == true, "permanentScaling 应能按 ID 反查", counter: &count)
     try bossExpect(lenient.dataset.nightBosses.first?.id == "Test Boss@4500", "缺 id 时应按 nameEn@chrId 回填", counter: &count)
-    try bossExpect(lenient.cards(in: .field).count == 2, "宽容样本应产出 2 张野外卡片（含 tiers 多值的那组）", counter: &count)
-    try bossExpect(lenient.cards(in: .night).count == 1, "宽容样本应产出 1 张守夜卡片", counter: &count)
-    try bossExpect(lenient.dualTierCards.count == 1, "tiers 同时含 field 与 night 的组应被识别出来", counter: &count)
-    guard let dualCard = lenient.dualTierCards.first else {
-        throw CheckFailure(description: "首领数据：宽容样本里应有一张两种档位都有的卡片")
+    // schemaVersion 4 的宽容解码：roles 缺失 / 乱序 / 重复 / 未知取值，rowRoles 的坏键，
+    // roleEvidence 的坏元素，组级 roles 缺失时取各行并集。
+    guard let testCard = lenient.cards.first(where: { $0.id == "boss-Test Boss@4500" }),
+          let dualCard = lenient.cards.first(where: { $0.id == "boss-Dual Boss@4600" })
+    else {
+        throw CheckFailure(description: "首领数据：宽容样本里应有 Test Boss 与 Dual Boss 两张卡片")
     }
-    try bossExpect(dualCard.group == .night, "主分组应仍按 tier 取 night", counter: &count)
-    try bossExpect(dualCard.groups.first == .night, "主分组应排在 groups 最前", counter: &count)
-    try bossExpect(dualCard.rows.compactMap(\.threatTitle) == ["守夜", "野外"], "每行都应能取到威胁档位标记", counter: &count)
+    try bossExpect(
+        !testCard.hasRoles && testCard.groups == [.other] && !testCard.isHiddenByDefault,
+        "没有 roles 的组（旧版数据集）归「其它场合」、不隐藏——不退回按 tier 分组",
+        counter: &count
+    )
+    try bossExpect(
+        lenient.cards(in: .field).map(\.id) == [dualCard.id] && lenient.cards(in: .night).map(\.id) == [dualCard.id],
+        "tier = field 却没有 roles 的 Test Boss 不应出现在「场景头目」；Dual Boss 按 roles 同时进守夜首领与场景头目",
+        counter: &count
+    )
+    try bossExpect(
+        dualCard.roles == ["night", "field", "tower", "unplaced", "futureRole"],
+        "组级 roles 缺失时取各行并集，按规范顺序排、未知场合排最后，实际 \(dualCard.roles)",
+        counter: &count
+    )
+    try bossExpect(
+        dualCard.groups == [.night, .field, .other, .unplaced] && dualCard.group == .night,
+        "Dual Boss 的分组应为 守夜首领 / 场景头目 / 其它场合（高塔 + 未知场合） / 未放置，主分组取第一个，实际 \(dualCard.groups)",
+        counter: &count
+    )
+    try bossExpect(
+        lenient.cards(in: .other).map(\.id).sorted() == [testCard.id, dualCard.id].sorted(),
+        "「其它场合」应收下没有 roles 的组与带未知场合的组",
+        counter: &count
+    )
+    try bossExpect(
+        dualCard.representativeRow(in: .field)?.npcId == 11 && dualCard.representativeRow(in: .night)?.npcId == 10,
+        "代表行按 roles 选：场景头目取 11（它的 threat 是 night 也不影响），守夜首领取 10",
+        counter: &count
+    )
+    guard let row10 = dualCard.rows.first(where: { $0.npcId == 10 }),
+          let row11 = dualCard.rows.first(where: { $0.npcId == 11 })
+    else {
+        throw CheckFailure(description: "首领数据：宽容样本里应有 npcId 10 / 11 两行")
+    }
+    try bossExpect(row10.roles == ["night", "tower"], "行级 roles 去重 + 规范顺序，实际 \(row10.roles)", counter: &count)
+    try bossExpect(
+        row10.evidence(for: "night").count == 1 && row10.evidence(for: "tower").isEmpty,
+        "roleEvidence 的坏元素跳过；缺出处的场合返回空数组",
+        counter: &count
+    )
+    try bossExpect(
+        row10.evidence(for: "night").first?.summary == "LotResultPlayAreaParam bossId1 = 4924 · m49_24_00_00",
+        "出处摘要「表名 行 · 地图」",
+        counter: &count
+    )
+    try bossExpect(row10.rowRoles == [10: ["night", "tower"]], "rowRoles 里转不成 npcId 的键丢掉", counter: &count)
+    try bossExpect(!row10.hasMixedRowRoles && lenient.dataset.rowRolesSummary(row10) == nil, "各原始行场合相同时不写逐行场合", counter: &count)
+    try bossExpect(
+        row11.hasMixedRowRoles && lenient.dataset.rowRolesSummary(row11) == "逐行场合：场景头目 11；未放置 12",
+        "合并行各原始行场合不同时逐行写出（roleNames 缺失时用内置中文名），实际 \(lenient.dataset.rowRolesSummary(row11) ?? "nil")",
+        counter: &count
+    )
+    try bossExpect(
+        lenient.dataset.roleTitle("futureRole") == "futureRole" && lenient.dataset.roleTitle("field") == "场景头目",
+        "未知场合原样显示键名；roleNames 缺失时已知场合用内置中文名",
+        counter: &count
+    )
+    try bossExpect(
+        dualCard.displayRows(includeHidden: false).map(\.npcId) == [10, 11, 14]
+            && dualCard.hiddenRowCount(includeHidden: false) == 1
+            && dualCard.displayRows(includeHidden: true).count == 4,
+        "只有「未放置」的 13 默认藏起来；11 虽含未放置但也是场景头目，照常列出",
+        counter: &count
+    )
+    try bossExpect(
+        dualCard.rows.compactMap(\.threatTitle) == ["守夜", "守夜", "野外"]
+            && dualCard.rows.compactMap(\.threatTierCaption).first == "威胁档位 · 守夜首领威胁档",
+        "每行仍能取到威胁档位（只作小字）",
+        counter: &count
+    )
+    try bossExpect(
+        lenient.cards(in: .nightlord).first.map { !$0.hasRoles && $0.groups == [.nightlord] } == true,
+        "没有 roles 的夜王仍只进「夜王」分组",
+        counter: &count
+    )
     try bossExpect(
         lenient.cards(in: .field, query: "12345").contains { $0.id == dualCard.id },
         "npcNameId 也应能搜到",
@@ -1723,6 +1943,307 @@ func checkBossData() throws -> Int {
     } catch BossDataError.undecodable {
         count += 1
     }
+
+    return count
+}
+
+// MARK: - 按出场场合分组（schemaVersion 4）
+
+/// 分组计数与 roleSummary 一致、多重归属、铃珠猎人逐行场合、出处摘要、tier 不参与分组。
+/// 期望值都从数据集原始字段（nightBosses[].roles / roleSummary）独立算，不拿实现和它自己比。
+private func checkBossRoleGrouping(_ index: BossDataIndex) throws -> Int {
+    var count = 0
+    let dataset = index.dataset
+    let bossCards = index.cards.filter { !$0.isNightlord }
+    let lordCards = index.cards.filter(\.isNightlord)
+
+    // ① 数据集自洽：roleNames 14 个键，roleSummary = 按 nightBosses[].roles 重数的结果
+    try bossExpect(
+        Set(dataset.roleNames.keys) == Set(BossRoleCatalog.order) && BossRoleCatalog.order.count == 14,
+        "roleNames 应正好是 14 个已知场合，实际 \(dataset.roleNames.keys.sorted())",
+        counter: &count
+    )
+    for role in BossRoleCatalog.order {
+        let recount = dataset.nightBosses.filter { $0.roles.contains(role) }.count
+        try bossExpect(
+            dataset.roleSummary[role] == recount && dataset.roleSummaryDetail[role]?.groups == recount,
+            "roleSummary / roleSummaryDetail.groups 的 \(role) 应等于按 nightBosses 重数的 \(recount)",
+            counter: &count
+        )
+        // 内置中文名与数据集 roleNames 逐字一致（数据集改了名，这里先红）
+        try bossExpect(
+            dataset.roleTitle(role) == BossRoleText.builtinRoleNames[role],
+            "场合 \(role) 的中文名：数据集「\(dataset.roleTitle(role))」与内置表「\(BossRoleText.builtinRoleNames[role] ?? "")」不一致",
+            counter: &count
+        )
+    }
+    try bossExpect(
+        dataset.roleNames["field"]?.zh == "场景头目",
+        "field 的中文名用游戏文本「场景头目」（TutorialBody 403200），不再叫野外首领",
+        counter: &count
+    )
+
+    // ② 分组计数与 roleSummary 一致（含隐藏，roleSummary 本来就含）
+    let singleRoleGroups: [BossCard.Group] = [.night, .stronghold, .field, .evergaol, .summon, .unplaced]
+    for group in singleRoleGroups {
+        guard let role = group.role else { continue }
+        let cards = index.cards(in: group, includeHidden: true)
+        try bossExpect(
+            cards.count == dataset.roleSummary[role],
+            "「\(group.title)」分组 \(cards.count) 张，应等于 roleSummary.\(role) = \(dataset.roleSummary[role] ?? -1)",
+            counter: &count
+        )
+        try bossExpect(
+            cards.allSatisfy { !$0.isNightlord && $0.roles.contains(role) },
+            "「\(group.title)」分组里只应有 roles 含 \(role) 的守夜 / 野外首领卡片",
+            counter: &count
+        )
+        // 分组标题就是该场合的中文名（夜王分组叫「夜王」，不叫「夜王战」）
+        try bossExpect(
+            group.title == dataset.roleTitle(role),
+            "分组标题「\(group.title)」应与场合 \(role) 的中文名「\(dataset.roleTitle(role))」一致",
+            counter: &count
+        )
+    }
+    // 其它场合：7 个合并场合各自的组数也等于 roleSummary；总数是并集
+    let otherCards = index.cards(in: .other, includeHidden: true)
+    for role in BossRoleCatalog.otherGroupRoles {
+        let hit = otherCards.filter { $0.roles.contains(role) }.count
+        try bossExpect(
+            hit == dataset.roleSummary[role],
+            "「其它场合」里带 \(role) 的卡片 \(hit) 张，应等于 roleSummary.\(role) = \(dataset.roleSummary[role] ?? -1)",
+            counter: &count
+        )
+    }
+    let otherUnion = dataset.nightBosses.filter { boss in
+        boss.roles.contains { BossRoleCatalog.otherGroupRoles.contains($0) }
+    }.count
+    try bossExpect(
+        otherCards.count == otherUnion && otherCards.count == 45,
+        "「其它场合」应是 7 个合并场合的并集 45 组，实际 \(otherCards.count)（独立重算 \(otherUnion)）",
+        counter: &count
+    )
+    try bossExpect(
+        BossCard.Group.otherRoles == ["prelude", "mine", "tower", "raid", "invader", "event", "other"]
+            && ["tower", "raid", "invader", "event"].allSatisfy { BossCard.Group.forRole($0) == .other },
+        "高塔 / 突袭 / 入侵 / 事件（连同守夜前哨、坑道精英、其他地图）合并进「其它场合」",
+        counter: &count
+    )
+    // 夜王：只进「夜王」分组；roleSummaryDetail.nightlord.nightlords = 18
+    try bossExpect(
+        index.cards(in: .nightlord, includeHidden: true).count == dataset.roleSummaryDetail["nightlord"]?.nightlords
+            && lordCards.allSatisfy { $0.groups == [.nightlord] && $0.roles.contains("nightlord") },
+        "夜王卡片 18 张都只进「夜王」分组，且 roles 都含 nightlord",
+        counter: &count
+    )
+    try bossExpect(
+        BossCard.Group.allCases.filter { $0 != .nightlord }.allSatisfy { group in
+            index.cards(in: group, includeHidden: true).allSatisfy { !$0.isNightlord }
+        },
+        "夜王卡片的突袭 / 地图事件 / 未放置只挂徽标，不进其它分组",
+        counter: &count
+    )
+    // 每组首领至少在一个分组里（含隐藏），分组集合与 roles 一一对应
+    try bossExpect(
+        bossCards.allSatisfy { card in
+            !card.groups.isEmpty && Set(card.groups) == Set(card.roles.map { BossCard.Group.forRole($0) })
+        },
+        "每组守夜 / 野外首领的分组都应由 roles 推出（一个场合对应一个分组），一组都不丢",
+        counter: &count
+    )
+    try bossExpect(
+        Set(BossCard.Group.allCases.flatMap { index.cards(in: $0, includeHidden: true).map(\.id) }) == Set(index.cards.map(\.id)),
+        "打开隐藏开关后，每张卡片都至少能在一个分组里找到",
+        counter: &count
+    )
+
+    // ③ tier / tiers 不再用于分组：roleAudit 点名的两个方向各验一个
+    guard let carian = index.cards.first(where: { $0.id == "boss-Royal Carian Knight@3252" }),
+          let crucible = index.cards.first(where: { $0.id == "boss-Crucible Knight@2500" })
+    else {
+        throw CheckFailure(description: "首领数据：找不到卡利亚禁卫骑士 / 熔炉骑士")
+    }
+    try bossExpect(
+        carian.tiers == ["night"] && carian.groups == [.field, .unplaced]
+            && !index.cards(in: .night, includeHidden: true).contains { $0.id == carian.id },
+        "卡利亚禁卫骑士 tier = night 却从不当守夜首领：只在「场景头目」（与未放置）里",
+        counter: &count
+    )
+    try bossExpect(
+        crucible.tiers == ["field"] && crucible.groups.contains(.night) && !crucible.groups.contains(.field),
+        "熔炉骑士 tier = field 却会当守夜首领：进「守夜首领」、不进「场景头目」",
+        counter: &count
+    )
+    try bossExpect(
+        BossRoleText.threatTierCaption(carian.tiers) == "威胁档位 · 守夜首领威胁档"
+            && BossRoleText.threatTierCaption(["night", "field", "night"]) == "威胁档位 · 守夜首领威胁档 / 野外首领威胁档"
+            && BossRoleText.threatTierCaption([]) == "威胁档位 · 无"
+            && BossRoleText.threatTierCaption(["brandNew"]) == "威胁档位 · brandNew",
+        "「威胁档位」小字：档位组名去重保序，空时写「无」，未知取值原样",
+        counter: &count
+    )
+
+    // ④ 铃珠猎人：野外版与守夜版是不同行，逐行场合各不相同，每行都能在对应分组搜到
+    guard let hunter = index.cards.first(where: { $0.id == "boss-Bell Bearing Hunter@3100" }) else {
+        throw CheckFailure(description: "首领数据：找不到铃珠猎人（Bell Bearing Hunter@3100）")
+    }
+    let hunterRoles = Dictionary(uniqueKeysWithValues: hunter.rows.map { ($0.npcId, $0.roles) })
+    try bossExpect(
+        hunterRoles == [
+            31000020: ["night", "tower"], 31000010: ["field"], 31000030: ["field"],
+            31000040: ["stronghold"], 31000000: ["unplaced"],
+        ],
+        "铃珠猎人五行的场合应为 守夜+高塔 / 场景头目 ×2 / 据点首领 / 未放置，实际 \(hunterRoles)",
+        counter: &count
+    )
+    let distinctRows = [31000020, 31000010, 31000040, 31000000].compactMap { hunterRoles[$0] }
+    try bossExpect(
+        distinctRows.count == 4 && Set(distinctRows).count == 4,
+        "铃珠猎人 31000020 / 31000010 / 31000040 / 31000000 四行的 roles 各不相同",
+        counter: &count
+    )
+    try bossExpect(
+        hunter.tiers == ["night"] && hunter.rows.allSatisfy { $0.threat == "night" },
+        "铃珠猎人五行的 threat 全是 night（Night Boss Threat）——按 tier 分组时野外版也被归进了守夜",
+        counter: &count
+    )
+    for row in hunter.rows {
+        for role in row.roles {
+            let group = BossCard.Group.forRole(role)
+            let found = index.cards(
+                in: group, query: String(row.npcId), includeHidden: group.isHiddenByDefault
+            ).contains { $0.id == hunter.id }
+            try bossExpect(
+                found,
+                "铃珠猎人 \(row.npcId) 的场合 \(role) 对应「\(group.title)」分组，按 npcId 应能搜到",
+                counter: &count
+            )
+            try bossExpect(
+                hunter.rows(in: group).contains { $0.npcId == row.npcId },
+                "铃珠猎人 \(row.npcId) 应在「\(group.title)」分组的代表行候选里",
+                counter: &count
+            )
+        }
+    }
+    try bossExpect(
+        [BossCard.Group.night, .stronghold, .field, .other].allSatisfy { group in
+            index.cards(in: group, query: "铃珠猎人").contains { $0.id == hunter.id }
+        } && !index.cards(in: .evergaol, query: "铃珠猎人").contains { $0.id == hunter.id },
+        "铃珠猎人按名字能在 守夜首领 / 据点首领 / 场景头目 / 其它场合 四个分组搜到，封印监牢里没有",
+        counter: &count
+    )
+    try bossExpect(
+        hunter.displayRows(includeHidden: false).map(\.npcId).sorted() == [31000010, 31000020, 31000030, 31000040]
+            && hunter.hiddenRowCount(includeHidden: false) == 1,
+        "铃珠猎人展开区默认列四行，未放置的 31000000 默认隐藏",
+        counter: &count
+    )
+
+    // ⑤ 多重归属：一个组在两个（及以上）默认可见分组里都出现
+    let multi = index.multiGroupCards
+    try bossExpect(multi.count == 49, "应有 49 组同时属于多个默认可见分组，实际 \(multi.count)", counter: &count)
+    try bossExpect(
+        multi.contains { $0.id == hunter.id } && hunter.hasMultipleGroups,
+        "铃珠猎人是多重归属的组",
+        counter: &count
+    )
+    try bossExpect(
+        multi.allSatisfy { card in
+            card.groups.filter { !$0.isHiddenByDefault }.allSatisfy { group in
+                index.cards(in: group).contains { $0.id == card.id }
+            }
+        },
+        "多重归属的组在它每个默认可见分组里都出现（不只是主分组）",
+        counter: &count
+    )
+    let visibleAppearances = BossCard.Group.visibleCases(includeHidden: false).reduce(0) { $0 + index.cards(in: $1).count }
+    let visibleUnique = Set(BossCard.Group.visibleCases(includeHidden: false).flatMap { index.cards(in: $0).map(\.id) }).count
+    try bossExpect(
+        visibleUnique == 122 && visibleAppearances == 199,
+        "默认视图 122 张不同的卡片、在 6 个分组里共出现 199 次，实际 \(visibleUnique) / \(visibleAppearances)",
+        counter: &count
+    )
+
+    // ⑥ 出处：每个场合都有出处，摘要口径与 Windows 端一致
+    let allRows = index.cards.flatMap(\.rows)
+    try bossExpect(
+        allRows.allSatisfy { row in row.hasRoles && row.roles.allSatisfy { !row.evidence(for: $0).isEmpty } },
+        "每条数值行都有 roles，每个场合至少一条出处",
+        counter: &count
+    )
+    try bossExpect(
+        allRows.allSatisfy { row in Set(row.roleEvidence.keys) == Set(row.roles) },
+        "roleEvidence 的键集合与 roles 相同",
+        counter: &count
+    )
+    try bossExpect(
+        allRows.allSatisfy { row in
+            row.rowRoles.isEmpty || Set(row.rowRoles.values.flatMap { $0 }) == Set(row.roles)
+        },
+        "rowRoles 的并集等于该行 roles",
+        counter: &count
+    )
+    func evidenceSummary(_ npcId: Int, _ role: String) -> String? {
+        allRows.first { $0.npcId == npcId }?.evidence(for: role).first?.summary
+    }
+    let evidenceCases: [(Int, String, String)] = [
+        (31000020, "night", "LotResultPlayAreaParam bossId1 = 4924 · m49_24_00_00"),
+        (31000020, "tower", "LotResultSmallBaseAndSpot smallBaseMapId = 4924 · m49_24_00_00"),
+        (31000010, "field", "ChaosMatchingMutationEnemyTableParam 46560000 · m46_56_00_00"),
+        (31000040, "stronghold", "SmallBaseMapVariationParam 5380 · m53_80_00_00"),
+        // 未放置：row 是「—」占位，只写表名
+        (31000000, "unplaced", "MSB"),
+        // 其他地图：row 就是地图名，不重复
+        (21300520, "other", "MSB m35_90_00_00"),
+        // 入侵者：不经过 MSB，msb 为 null
+        (600030010, "invader", "SmallbaseInvationNpcParam 100"),
+    ]
+    for (npcId, role, expected) in evidenceCases {
+        let actual = evidenceSummary(npcId, role)
+        try bossExpect(
+            actual == expected,
+            "出处摘要 \(npcId) · \(role)：应为「\(expected)」，实际「\(actual ?? "nil")」",
+            counter: &count
+        )
+    }
+    try bossExpect(
+        BossRoleEvidence(npcId: 1, msb: nil, table: "", row: "—", note: "").summary == BossRoleText.evidenceMissing,
+        "表名与行都没有时写「出处：数据未内置」",
+        counter: &count
+    )
+    // 合并行逐行场合：格拉狄乌斯远征首领 75000020 合并了 4 行，其中 75001020 未放置
+    guard let gladiusMain = allRows.first(where: { $0.npcId == 75000020 }) else {
+        throw CheckFailure(description: "首领数据：找不到 75000020")
+    }
+    try bossExpect(
+        dataset.rowRolesSummary(gladiusMain) == "逐行场合：夜王战 75000020 / 75002020 / 75003020；未放置 75001020",
+        "合并行的逐行场合，实际 \(dataset.rowRolesSummary(gladiusMain) ?? "nil")",
+        counter: &count
+    )
+    let mixedRows = allRows.filter(\.hasMixedRowRoles)
+    try bossExpect(
+        mixedRows.count == dataset.nightBosses.flatMap(\.variants).filter { Set($0.rowRoles.values).count > 1 }.count
+            + dataset.nightlords.flatMap(\.fights).filter { Set($0.rowRoles.values).count > 1 }.count
+            && mixedRows.allSatisfy { dataset.rowRolesSummary($0) != nil },
+        "各原始行场合不同的合并行都要写出逐行场合",
+        counter: &count
+    )
+
+    // ⑦ 卡头 / 行内徽标的场合顺序是规范顺序（roleNames 的键序）
+    try bossExpect(
+        index.cards.allSatisfy { card in
+            card.roles == card.roles.sorted { BossRoleCatalog.rank($0) < BossRoleCatalog.rank($1) }
+        } && allRows.allSatisfy { row in
+            row.roles == row.roles.sorted { BossRoleCatalog.rank($0) < BossRoleCatalog.rank($1) }
+        },
+        "场合按 night → prelude → field → … → unplaced 的规范顺序排列",
+        counter: &count
+    )
+    try bossExpect(
+        BossRoleCatalog.normalized(["unplaced", "night", "", "night", "zzz", "aaa"]) == ["night", "unplaced", "aaa", "zzz"],
+        "规范化：去重、去空串、已知场合按规范顺序，未知场合按键名排在最后",
+        counter: &count
+    )
 
     return count
 }
@@ -1869,6 +2390,69 @@ func checkBossDataParityText() throws -> Int {
         BossRowText.multiplayerAttackBadge(1.1) == "多人攻击 ×1.1"
             && BossRowText.depthWeightText(1600) == "权重 1600",
         "靠函数拼出来的两串也必须两端一致",
+        counter: &count
+    )
+
+    // ②c schemaVersion 4 按出场场合分组的文案表（Windows 端 `ROLE_TEXT` 同一张，
+    //     windows/tests/bosses.test.mjs 用 deepEqual 钉住）。
+    let roleParityStrings: [(String, String, String)] = [
+        ("groupNightlord", BossCard.Group.nightlord.title, "夜王"),
+        ("groupNight", BossCard.Group.night.title, "守夜首领"),
+        ("groupStronghold", BossCard.Group.stronghold.title, "据点首领"),
+        ("groupField", BossCard.Group.field.title, "场景头目"),
+        ("groupEvergaol", BossCard.Group.evergaol.title, "封印监牢"),
+        ("groupOther", BossCard.Group.other.title, "其它场合"),
+        ("groupSummon", BossCard.Group.summon.title, "随从/召唤物"),
+        ("groupUnplaced", BossCard.Group.unplaced.title, "未放置"),
+        ("threatTierLabel", BossRoleText.threatTierLabel, "威胁档位"),
+        (
+            "threatTierNote", BossRoleText.threatTierNote,
+            "威胁档位只是多人缩放档位（Field / Night Boss Threat），不代表出场场合；分组按地图放置判定的出场场合"
+        ),
+        ("rolesMissing", BossRoleText.rolesMissing, "出场场合：数据未内置"),
+        ("evidenceMissing", BossRoleText.evidenceMissing, "出处：数据未内置"),
+        ("roleSectionTitle", BossRoleText.roleSectionTitle, "出场场合"),
+        ("roleSectionDetail", BossRoleText.roleSectionDetail, "按地图放置与抽选参数判定；分组看这里，不看威胁档位"),
+        ("rowRolesTitle", BossRoleText.rowRolesTitle, "逐行场合"),
+        ("evidenceExpand", BossRoleText.evidenceExpand, "展开全部出处"),
+        ("evidenceCollapse", BossRoleText.evidenceCollapse, "只看每个场合的第一条出处"),
+        ("hiddenGroupMark", BossRoleText.hiddenGroupMark, "（默认隐藏）"),
+        ("groupPickerHelp", BossRoleText.groupPickerHelp, "按出场场合分组；一组首领可以同时出现在多个分组里"),
+        ("hiddenToggleRoleHelp", BossRoleText.hiddenToggleRoleHelp, "也控制「未放置」「随从/召唤物」两个场合（分组与展开区的行）"),
+        ("evidenceMore", BossRoleText.evidenceMore(3), "另有 3 条出处"),
+        ("hiddenRows", BossRoleText.hiddenRows(2), "另有 2 条「未放置」/「随从/召唤物」行已隐藏，打开「显示隐藏实体」查看"),
+        ("rowCountVisible", BossRoleText.rowCount(visible: 4, hidden: 0), "4 条数值行"),
+        ("rowCountHidden", BossRoleText.rowCount(visible: 4, hidden: 1), "4 条数值行（另 1 条已隐藏）"),
+        ("overviewTitle", BossRoleText.overviewTitle(14), "出场场合说明（14 种）"),
+        ("roleCountBosses", BossRoleText.roleCountText(groups: 40, nightlords: 0), "40 组"),
+        ("roleCountBoth", BossRoleText.roleCountText(groups: 1, nightlords: 6), "1 组 · 夜王 6"),
+        ("roleCountLords", BossRoleText.roleCountText(groups: 0, nightlords: 18), "夜王 18"),
+        ("roleCountNone", BossRoleText.roleCountText(groups: 0, nightlords: 0), "0 组"),
+        ("auditTitle", BossRoleText.auditTitle(4), "与威胁档位的对照（数据集 notes.roleAudit，4 条）"),
+        (
+            "multiGroupNote", BossRoleText.multiGroupNote(count: 2, names: ["甲", "乙"]),
+            "有 2 组首领按出场场合同时属于多个分组（甲、乙），它们在各个分组下都会出现："
+                + "卡头列出全部场合，折叠态代表行跟着当前分组走，展开后每行标了自己的场合与出处。"
+        ),
+    ]
+    for (key, actual, expected) in roleParityStrings {
+        try bossExpect(actual == expected, "双端文案 \(key)：应为「\(expected)」，实际「\(actual)」", counter: &count)
+    }
+    let manyNames = (1...13).map { "名\($0)" }
+    try bossExpect(
+        BossRoleText.multiGroupNote(count: 13, names: manyNames).contains("名12 等）")
+            && !BossRoleText.multiGroupNote(count: 13, names: manyNames).contains("名13"),
+        "多重归属说明最多列 12 个名字，其余写「等」",
+        counter: &count
+    )
+    try bossExpect(
+        BossRoleText.builtinRoleNames == [
+            "night": "守夜首领", "prelude": "守夜前哨", "field": "场景头目", "stronghold": "据点首领",
+            "mine": "坑道精英", "evergaol": "封印监牢", "tower": "大空洞高塔首领", "raid": "突袭事件",
+            "invader": "黑夜入侵者", "event": "地图事件", "nightlord": "夜王战", "summon": "随从/召唤物",
+            "other": "其他地图", "unplaced": "未放置",
+        ],
+        "场合内置中文名（roleNames 缺失时的兜底）两端一致",
         counter: &count
     )
 

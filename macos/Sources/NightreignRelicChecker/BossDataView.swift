@@ -3,6 +3,10 @@ import RelicCore
 
 /// 首领数据页：夜王 / 守夜 / 野外首领的血量、韧性、承伤倍率与人数缩放。
 ///
+/// 分组（schemaVersion 4）按出场场合 roles：夜王 / 守夜首领 / 据点首领 / 场景头目 /
+/// 封印监牢 / 其它场合，打开「显示隐藏实体」后再多「随从/召唤物」「未放置」两项。
+/// 一组首领可以同时出现在多个分组里；规则见 RelicCore 的 `BossCard.Group`。
+///
 /// 由「首领数据」功能开发者独占：只改本文件与 BossData*.swift、RelicCore 的
 /// BossData.swift、RelicCoreChecks 的 BossDataChecks.swift；**不改 AppModel /
 /// RootView**，页面状态全部放在本视图内。
@@ -18,30 +22,35 @@ enum BossLoadState: Sendable {
 }
 
 struct BossDataView: View {
-    private enum GroupFilter: String, CaseIterable, Identifiable {
+    /// 分组筛选：「全部」或某一个分组。可选项随「显示隐藏实体」变化
+    /// （`BossCard.Group.visibleCases(includeHidden:)`）。
+    private enum GroupFilter: Hashable, Identifiable {
         case all
-        case nightlord
-        case night
-        case field
+        case group(BossCard.Group)
 
-        var id: String { rawValue }
+        var id: String {
+            switch self {
+            case .all: return "all"
+            case .group(let group): return group.rawValue
+            }
+        }
 
         var title: String {
             switch self {
             case .all: return "全部"
-            case .nightlord: return BossCard.Group.nightlord.title
-            case .night: return BossCard.Group.night.title
-            case .field: return BossCard.Group.field.title
+            case .group(let group): return group.title
             }
         }
 
         var group: BossCard.Group? {
             switch self {
             case .all: return nil
-            case .nightlord: return .nightlord
-            case .night: return .night
-            case .field: return .field
+            case .group(let group): return group
             }
+        }
+
+        static func options(includeHidden: Bool) -> [GroupFilter] {
+            [.all] + BossCard.Group.visibleCases(includeHidden: includeHidden).map { .group($0) }
         }
     }
 
@@ -52,10 +61,12 @@ struct BossDataView: View {
     /// 常规 / 深夜 · 深度 1…5。v2 的布尔「深夜」开关在这里被换掉：
     /// 深夜有 5 个深度，血量与攻击力倍率逐级不同，一个开关表达不了。
     @State private var mode: BossNightMode = .normal
-    /// hidden = true 的组（召唤物 / 投射物等非首领实体）默认不显示。
+    /// hidden = true 的组（召唤物 / 投射物等非首领实体）默认不显示；
+    /// schemaVersion 4 起同一个开关也管「未放置」「随从/召唤物」两个场合（分组与展开区的行）。
     @State private var showHidden = false
     @State private var expandedIDs: Set<String> = []
     @State private var showCaveats = false
+    @State private var showRoleOverview = false
     @State private var showScalingTiers = false
     @State private var showMutationCounts = false
     @State private var showDepthOverview = false
@@ -100,7 +111,7 @@ struct BossDataView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(AppTheme.secondaryText)
-                    TextField("搜索首领名、参考译名、远征名、变体标签，或输入 npcId / chrId 前缀", text: $query)
+                    TextField("搜索首领名、参考译名、远征名、变体标签、出场场合，或输入 npcId / chrId 前缀", text: $query)
                         .textFieldStyle(.plain)
                     if !query.isEmpty {
                         Button {
@@ -127,13 +138,14 @@ struct BossDataView: View {
                 .frame(width: 168)
 
                 Picker("分组", selection: $groupFilter) {
-                    ForEach(GroupFilter.allCases) { filter in
+                    ForEach(GroupFilter.options(includeHidden: showHidden)) { filter in
                         Text(filter.title).tag(filter)
                     }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 124)
+                .frame(width: 136)
+                .help(BossRoleText.groupPickerHelp)
 
                 Picker("模式", selection: $mode) {
                     ForEach(BossNightMode.allCases) { item in
@@ -148,7 +160,14 @@ struct BossDataView: View {
                 Toggle(BossRowText.hiddenToggleTitle, isOn: $showHidden)
                     .toggleStyle(.switch)
                     .font(.caption)
-                    .help(BossRowText.hiddenToggleHelp)
+                    .help(BossRowText.hiddenToggleHelp + "；" + BossRoleText.hiddenToggleRoleHelp)
+                    .onChange(of: showHidden) { isOn in
+                        // 关掉开关时，正停在「随从/召唤物」「未放置」分组上就退回「全部」，
+                        // 否则筛选器里选中的是一个已经不存在的选项。
+                        if !isOn, let group = groupFilter.group, group.isHiddenByDefault {
+                            groupFilter = .all
+                        }
+                    }
 
                 if !expandedIDs.isEmpty {
                     Button("收起全部") {
@@ -256,14 +275,18 @@ struct BossDataView: View {
                         if !section.cards.isEmpty {
                             sectionHeader(section.group, count: section.cards.count)
                             ForEach(section.cards) { card in
+                                // 同一张卡可能出现在好几个分组里：展开状态按「分组 + 卡片」记，
+                                // 在「守夜首领」里展开不会顺带把「场景头目」里的同一张也撑开。
+                                let key = section.group.rawValue + "|" + card.id
                                 BossCardView(
                                     card: card,
                                     group: section.group,
                                     index: index,
                                     players: players,
                                     mode: mode,
-                                    isExpanded: expandedIDs.contains(card.id),
-                                    onToggle: { toggle(card.id) }
+                                    showHidden: showHidden,
+                                    isExpanded: expandedIDs.contains(key),
+                                    onToggle: { toggle(key) }
                                 )
                             }
                         }
@@ -327,6 +350,15 @@ struct BossDataView: View {
                 }
             }
 
+            // 分组依据：14 种出场场合各归哪个分组、多少组、怎么判定的，以及它和威胁档位
+            // （tier）对不上的原因——用户反馈「野外首领被归到守夜首领」的答案写在这里。
+            disclosure(
+                title: BossRoleText.overviewTitle(index.dataset.orderedRoles.count),
+                isOn: $showRoleOverview
+            ) {
+                BossRoleOverview(index: index)
+            }
+
             disclosure(
                 title: "人数缩放档位说明（\(index.scalingGroups.count) 档）",
                 isOn: $showScalingTiers
@@ -374,7 +406,7 @@ struct BossDataView: View {
                     ForEach(index.scalingGroups) { tier in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
-                                Text("#\(tier.id)")
+                                Text(verbatim: "#\(tier.id)")
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                                     .foregroundStyle(AppTheme.purpleSoft)
                                 Text(tier.title)
@@ -476,10 +508,9 @@ struct BossDataView: View {
                 )
             }
 
-            let dual = index.dualTierCards
-            if !dual.isEmpty {
-                Text("有 \(dual.count) 组首领同时有守夜与野外变体（\(dual.map(\.displayName).joined(separator: "、"))），"
-                     + "它们在「守夜首领」与「野外首领」两个筛选下都会出现，展开后每行都标了所属档位。")
+            let multi = index.multiGroupCards
+            if !multi.isEmpty {
+                Text(BossRoleText.multiGroupNote(count: multi.count, names: multi.map(\.displayName)))
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -559,12 +590,13 @@ struct BossDataView: View {
 
     private var footerLeading: String {
         guard case .ready(let index) = state else { return "完全离线，数值取自游戏参数表" }
-        // 守夜 + 野外两种档位都有的组会在两个分组里各出现一次，这里按 id 去重再计数。
+        // 一组首领按出场场合可能出现在好几个分组里，这里按 id 去重再计数；
+        // 行数只数展开区真正列出来的行（默认不含「未放置」「随从/召唤物」行）。
         var seen: Set<String> = []
         var rows = 0
         for section in visibleGroups(index) {
             for card in section.cards where seen.insert(card.id).inserted {
-                rows += card.rows.count
+                rows += card.displayRows(includeHidden: showHidden).count
             }
         }
         return "当前显示 \(seen.count) 个首领 · \(rows) 条数值行"
@@ -584,7 +616,8 @@ struct BossDataView: View {
     }
 
     private func visibleGroups(_ index: BossDataIndex) -> [GroupSection] {
-        let groups: [BossCard.Group] = groupFilter.group.map { [$0] } ?? BossCard.Group.allCases
+        let groups: [BossCard.Group] = groupFilter.group.map { [$0] }
+            ?? BossCard.Group.visibleCases(includeHidden: showHidden)
         return groups.map {
             GroupSection(
                 group: $0,
