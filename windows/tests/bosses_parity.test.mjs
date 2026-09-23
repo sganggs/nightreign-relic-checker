@@ -3,16 +3,16 @@
 // 上一版的双端文案测试只是把 Windows 自己的字面量再抄一遍（TEXT 里新增的 8 条场合文案，
 // macOS 根本没有同名常量），挡不住两端跑偏。这里改成**直接读 macOS 的 Swift 源码**：
 //   · macos/Sources/RelicCore/BossData.swift 的 BossRowText / BossRoleText / BossRoleCatalog /
-//     BossCard.Group —— 常量逐项与本页 TEXT / ROLE_TEXT / ROLE_ORDER / GROUP_ORDER 比对；
+//     BossCard.Group —— 常量逐项与本页 TEXT / ROLE_TEXT / ROLE_ORDER / GROUP_ORDER / ROLE_GROUP 比对，
+//     BossRoleText 与 ROLE_TEXT 的键集合双向相等（字符串、整数、字典、函数一个不多一个不少）；
 //   · macos/Sources/RelicCoreChecks/BossDataChecks.swift 里 macOS 自检钉住的对照表
 //     （roleParityStrings、代表行 representativeCases、开关前后八个分组的条数、出处摘要、
-//     收录统计、逐行场合、默认收起的行数、多重归属组数）—— 逐条拿来跑本页的实现。
+//     收录统计、底部隐藏说明、逐行场合、默认收起的行数、多重归属组数）—— 逐条拿来跑本页的实现。
 // macOS 自检断言的是同一批字面量，于是改任何一端而没改另一端，两边都会红。
 //
-// macOS 端的出场场合分组（BossRoleText 等）与本分支并行开发，尚未合入时 BossData.swift 里
-// 没有 BossRoleText，读源码的那几项跳过并在输出里写明原因；合入后自动生效。
-// 合入前想先对一遍，可把环境变量 BOSSES_MACOS_ROOT 指向含该改动的 macos/ 目录：
-//   BOSSES_MACOS_ROOT=<另一 worktree>/macos node --test tests/bosses_parity.test.mjs
+// 两端合并在同一个仓库里之后，macOS 源码就在 <仓库根>/macos：**这里不再跳过任何一项**
+//（上一版在 BossRoleText 尚未合入时跳过、可用环境变量 BOSSES_MACOS_ROOT 指向别的 worktree，
+// 现已删除）。源码缺失或解析不出来都算失败，第一条测试会说明缺的是哪个文件。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
@@ -36,17 +36,13 @@ const allEntries = [
 ];
 const entryById = new Map(allEntries.map((entry) => [entry.npcId, entry]));
 
-const macRoot = process.env.BOSSES_MACOS_ROOT
-  ? path.resolve(process.env.BOSSES_MACOS_ROOT)
-  : path.join(repoRoot, "macos");
-const readIfExists = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
-const coreSwift = readIfExists(path.join(macRoot, "Sources", "RelicCore", "BossData.swift"));
-const checksSwift = readIfExists(path.join(macRoot, "Sources", "RelicCoreChecks", "BossDataChecks.swift"));
-const hasRoleText = /enum\s+BossRoleText\s*\{/.test(coreSwift);
-const roleSkip = hasRoleText
-  ? false
-  : "macOS 源码里还没有 BossRoleText（该端的出场场合分组尚未合入本分支）；" +
-    "可设 BOSSES_MACOS_ROOT 指向含该改动的 macos/ 目录手动跑";
+// 仓库内的 macOS 源码（不再接受仓库外的路径）。读不到时给空串，由第一条测试报出缺哪个文件，
+// 其余各项照常跑、在各自的断言上失败——不跳过。
+const CORE_SWIFT = path.join(repoRoot, "macos", "Sources", "RelicCore", "BossData.swift");
+const CHECKS_SWIFT = path.join(repoRoot, "macos", "Sources", "RelicCoreChecks", "BossDataChecks.swift");
+const readSource = (file) => (existsSync(file) ? readFileSync(file, "utf8") : "");
+const coreSwift = readSource(CORE_SWIFT);
+const checksSwift = readSource(CHECKS_SWIFT);
 
 // Swift 里 macOS 分组 / 卡片 id 与本页的对应
 const GROUP_FROM_SWIFT = { nightlord: "nightlords" };
@@ -133,7 +129,23 @@ function swiftArgs(text) {
 
 // ------------------------------------------------------------------ 测试
 
-test("TEXT 与 macOS 的 BossRowText 逐字相同（直接读 Swift 源码）", { skip: coreSwift ? false : "找不到 macOS 源码" }, () => {
+test("macOS 源码就在仓库内（合并后同仓库，下面各项一律不跳过）", () => {
+  assert.ok(existsSync(CORE_SWIFT), `找不到 ${path.relative(repoRoot, CORE_SWIFT)}`);
+  assert.ok(existsSync(CHECKS_SWIFT), `找不到 ${path.relative(repoRoot, CHECKS_SWIFT)}`);
+  for (const header of [
+    /public\s+enum\s+BossRowText\s*\{/,
+    /public\s+enum\s+BossRoleText\s*\{/,
+    /public\s+enum\s+BossRoleCatalog\s*\{/,
+    /public\s+enum\s+Group\s*:\s*String/,
+  ]) {
+    assert.ok(header.test(coreSwift), `BossData.swift 里找不到 ${header}`);
+  }
+  for (const name of ["roleParityStrings", "representativeCases", "evidenceCases"]) {
+    assert.ok(swiftArrayBody(checksSwift, name), `BossDataChecks.swift 里找不到 ${name}`);
+  }
+});
+
+test("TEXT 与 macOS 的 BossRowText 逐字相同（直接读 Swift 源码）", () => {
   const rowText = swiftStringConstants(swiftBlock(coreSwift, /public\s+enum\s+BossRowText\s*\{/));
   const keys = Object.keys(rowText);
   assert.ok(keys.length >= 15, `BossRowText 的字符串常量解析出 ${keys.length} 条，解析规则大概跟不上源码格式了`);
@@ -190,7 +202,7 @@ test("ROLE_TEXT 钉死与 macOS roleParityStrings 同一批字面量", () => {
   assert.equal(B.ROLE_TEXT.threatTierCaption(["night"]), "威胁档位 · 守夜首领威胁档");
 });
 
-test("ROLE_TEXT 与 macOS 的 BossRoleText 逐项相同（直接读 Swift 源码）", { skip: roleSkip }, () => {
+test("ROLE_TEXT 与 macOS 的 BossRoleText 逐项相同（直接读 Swift 源码）", () => {
   const block = swiftBlock(coreSwift, /public\s+enum\s+BossRoleText\s*\{/);
   const swiftStrings = swiftStringConstants(block);
   const windowsStrings = Object.fromEntries(Object.entries(B.ROLE_TEXT).filter(([, value]) => typeof value === "string"));
@@ -202,9 +214,17 @@ test("ROLE_TEXT 与 macOS 的 BossRoleText 逐项相同（直接读 Swift 源码
     if (typeof value !== "function") continue;
     assert.ok(new RegExp("static\\s+func\\s+" + key + "\\s*\\(").test(block), `macOS 的 BossRoleText 缺少函数 ${key}`);
   }
+  // 反方向也要成立：两张表的键集合完全相同（常量与函数分别对上类别），一个不多一个不少。
+  const swiftLets = [...block.matchAll(/static\s+let\s+(\w+)/g)].map((match) => match[1]);
+  const swiftFuncs = [...block.matchAll(/static\s+func\s+(\w+)\s*\(/g)].map((match) => match[1]);
+  const windowsFuncs = Object.keys(B.ROLE_TEXT).filter((key) => typeof B.ROLE_TEXT[key] === "function");
+  const windowsLets = Object.keys(B.ROLE_TEXT).filter((key) => typeof B.ROLE_TEXT[key] !== "function");
+  assert.deepEqual([...swiftFuncs].sort(), [...windowsFuncs].sort(), "BossRoleText 的静态函数与 ROLE_TEXT 的函数应同名同数");
+  assert.deepEqual([...swiftLets].sort(), [...windowsLets].sort(), "BossRoleText 的静态常量与 ROLE_TEXT 的常量应同名同数");
+  assert.ok(swiftFuncs.length >= 9 && swiftLets.length >= 22, `BossRoleText 解析出 ${swiftLets.length} 个常量 / ${swiftFuncs.length} 个函数`);
 });
 
-test("分组顺序 / 场合顺序 / 默认隐藏 / 其它场合合并表与 macOS 相同（直接读 Swift 源码）", { skip: roleSkip }, () => {
+test("分组顺序 / 场合顺序 / 默认隐藏 / 其它场合合并表与 macOS 相同（直接读 Swift 源码）", () => {
   const catalog = swiftBlock(coreSwift, /public\s+enum\s+BossRoleCatalog\s*\{/);
   assert.deepEqual(swiftStringArray(catalog, "order"), B.ROLE_ORDER);
   assert.deepEqual(swiftStringArray(catalog, "hiddenRoles"), B.HIDDEN_ROLES);
@@ -215,9 +235,30 @@ test("分组顺序 / 场合顺序 / 默认隐藏 / 其它场合合并表与 macO
   const hiddenByDefault = groupBlock.match(/isHiddenByDefault:\s*Bool\s*\{([^}]*)\}/);
   assert.ok(hiddenByDefault, "找不到 Group.isHiddenByDefault");
   assert.deepEqual([...hiddenByDefault[1].matchAll(/\.(\w+)/g)].map((match) => groupFromSwift(match[1])).sort(), [...B.HIDDEN_GROUPS].sort());
+
+  // 场合 → 分组：Group.role 那张 switch（各分组直接对应的场合）+ otherGroupRoles（其余一律「其它场合」）
+  // 拼出来的对应表，必须与本页 ROLE_GROUP 完全相同。
+  const roleSwitch = swiftBlock(groupBlock, /public\s+var\s+role\s*:\s*String\?/);
+  const direct = [...roleSwitch.matchAll(/case\s+\.(\w+)\s*:\s*return\s+"(\w+)"/g)];
+  assert.equal(direct.length, 7, "Group.role 应有 7 个分组直接对应一个场合（「其它场合」返回 nil）");
+  assert.ok(/case\s+\.other\s*:\s*return\s+nil/.test(roleSwitch), "「其它场合」是补集，Group.role 返回 nil");
+  const expected = Object.fromEntries(direct.map(([, group, role]) => [role, groupFromSwift(group)]));
+  for (const role of swiftStringArray(catalog, "otherGroupRoles")) expected[role] = "other";
+  assert.deepEqual(B.ROLE_GROUP, expected, "ROLE_GROUP 与 macOS 的 Group.role + otherGroupRoles 相同");
+
+  // 首领组的两条特例（BossDataIndex.groups(forRoles:)）：没有 roles 归「其它场合」；
+  // 首领组万一带了 nightlord 场合也归「其它场合」，夜王分组只收夜王卡。
+  const groupsForRoles = swiftBlock(coreSwift, /static\s+func\s+groups\s*\(\s*forRoles/);
+  assert.ok(/guard\s+!roles\.isEmpty\s+else\s*\{\s*return\s*\[\.other\]\s*\}/.test(groupsForRoles), "macOS：roles 为空时归 [.other]");
+  assert.ok(/==\s*\.nightlord\s*\?\s*\.other\s*:/.test(groupsForRoles), "macOS：首领组的 nightlord 场合归 .other");
+  assert.deepEqual(B.roleGroups([], false).groups, ["other"]);
+  assert.deepEqual(B.roleGroups(["nightlord", "field"], false).groups, ["field", "other"]);
+  // 夜王卡固定只进「夜王」（BossDataIndex.init 里 groups: [.nightlord]）
+  assert.ok(/id:\s*"nightlord-\\\(lord\.menuId\)"[\s\S]{0,200}groups:\s*\[\.nightlord\]/.test(coreSwift), "macOS：夜王卡 groups = [.nightlord]");
+  assert.deepEqual(B.roleGroups(["raid", "event", "nightlord", "unplaced"], true).groups, ["nightlords"]);
 });
 
-test("macOS 自检的 roleParityStrings 逐条跑 Windows 实现（直接读 RelicCoreChecks）", { skip: roleSkip }, () => {
+test("macOS 自检的 roleParityStrings 逐条跑 Windows 实现（直接读 RelicCoreChecks）", () => {
   const body = swiftArrayBody(checksSwift, "roleParityStrings");
   assert.ok(body, "macOS 自检里找不到 roleParityStrings");
   const tuples = [...body.matchAll(/\(\s*"(\w+)",\s*([\s\S]*?),\s*((?:"(?:[^"\\]|\\.)*"\s*(?:\+\s*)?)+)\)/g)];
@@ -246,7 +287,7 @@ test("macOS 自检的 roleParityStrings 逐条跑 Windows 实现（直接读 Rel
   }
 });
 
-test("macOS 自检的对照表逐条跑 Windows 实现：代表行 / 开关计数 / 出处 / 收录 / 逐行场合", { skip: roleSkip }, () => {
+test("macOS 自检的对照表逐条跑 Windows 实现：代表行 / 开关计数 / 出处 / 收录 / 逐行场合", () => {
   // 代表行对照表（macOS 12e 的 representativeCases）
   const reps = [...swiftArrayBody(checksSwift, "representativeCases")
     .matchAll(/\.init\(title:\s*"([^"]+)",\s*cardId:\s*"([^"]+)",\s*group:\s*\.(\w+),\s*npcId:\s*(\d+)\)/g)];
@@ -282,6 +323,11 @@ test("macOS 自检的对照表逐条跑 Windows 实现：代表行 / 开关计�
   const inventory = checksSwift.match(/let\s+expectedInventory\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*(?:\+\s*)?)+)/);
   assert.ok(inventory, "macOS 自检里找不到 expectedInventory");
   assert.equal(B.inventoryText(B.inventoryCounts(items)), joinLiterals(inventory[1]));
+
+  // 底部「默认隐藏了哪些组」整句（macOS 的 expectedHiddenSummary）
+  const hiddenSummary = checksSwift.match(/let\s+expectedHiddenSummary\s*=\s*((?:"(?:[^"\\]|\\.)*"\s*(?:\+\s*)?)+)/);
+  assert.ok(hiddenSummary, "macOS 自检里找不到 expectedHiddenSummary");
+  assert.equal(B.hiddenSummaryText(items), joinLiterals(hiddenSummary[1]));
 
   // 合并行的逐行场合（格拉狄乌斯 75000020）
   const rowRoles = checksSwift.match(/rowRolesSummary\(gladiusMain\)\s*==\s*"([^"]*)"/);

@@ -2083,6 +2083,32 @@ public enum BossRoleText {
             + "它们在各个分组下都会出现：卡头列出全部场合，折叠态代表行跟着当前分组走，"
             + "展开后每行标了自己的场合与出处。"
     }
+
+    /// 底部说明：默认不显示的组（「显示隐藏实体」开关管的两类）。
+    ///   * `flagged`：`hidden = true` 的非首领实体（召唤物 / 投射物等）的显示名；
+    ///   * `roleOnly`：没被判成非首领实体、但全部场合都是「未放置」「随从/召唤物」的组的显示名。
+    /// 两类共用同一个开关，所以写在同一句里；两类都没有时返回空串（页面不写这一段）。
+    /// 名字全部列出（当前 4 + 8 组），不像 `multiGroupNote` 那样截断。
+    public static func hiddenSummary(flagged: [String], roleOnly: [String]) -> String {
+        var parts: [String] = []
+        if !flagged.isEmpty {
+            parts.append(
+                "\(flagged.count) 组被判定为非首领实体（\(flagged.joined(separator: "、"))），"
+                    + "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵"
+            )
+        }
+        if !roleOnly.isEmpty {
+            parts.append(
+                "\(roleOnly.count) 组只出现在「\(groupUnplaced)」「\(groupSummon)」"
+                    + "两个场合（\(roleOnly.joined(separator: "、"))）"
+            )
+        }
+        guard !parts.isEmpty else { return "" }
+        return "另有 " + parts.joined(separator: "；另有 ") + "。它们默认不在列表里，"
+            + "展开区里只出现在这两个场合的数值行也默认隐藏；"
+            + "需要时打开工具条的「\(BossRowText.hiddenToggleTitle)」，"
+            + "分组筛选里会多出「\(groupSummon)」「\(groupUnplaced)」两项。"
+    }
 }
 
 // MARK: - 数据集
@@ -2998,26 +3024,14 @@ public struct BossDataIndex: Sendable {
     }
 
     /// 隐藏实体的说明（底部「数据说明」用）。没有默认隐藏的组时为 nil。
+    /// 文案在 `BossRoleText.hiddenSummary(flagged:roleOnly:)`（Windows 端 `ROLE_TEXT.hiddenSummary`
+    /// 同一个函数、同一串字）；这里只负责挑出两类卡片：`hidden` 的非首领实体，
+    /// 与全部场合都是「未放置」「随从/召唤物」、但没被判成非首领实体的组。
     public var hiddenSummary: String? {
-        let flagged = hiddenCards
-        let roleOnly = hiddenByDefaultCards.filter { !$0.hidden }
-        guard !flagged.isEmpty || !roleOnly.isEmpty else { return nil }
-        var parts: [String] = []
-        if !flagged.isEmpty {
-            parts.append(
-                "\(flagged.count) 组被判定为非首领实体（\(flagged.map(\.displayName).joined(separator: "、"))），"
-                    + "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵"
-            )
-        }
-        if !roleOnly.isEmpty {
-            parts.append(
-                "\(roleOnly.count) 组只出现在「\(BossRoleText.groupUnplaced)」「\(BossRoleText.groupSummon)」"
-                    + "两个场合（\(roleOnly.map(\.displayName).joined(separator: "、"))）"
-            )
-        }
-        return "另有 " + parts.joined(separator: "；另有 ") + "。它们默认不在列表里，"
-            + "展开区里只出现在这两个场合的数值行也默认隐藏；"
-            + "需要时打开工具条的「\(BossRowText.hiddenToggleTitle)」，"
-            + "分组筛选里会多出「\(BossRoleText.groupSummon)」「\(BossRoleText.groupUnplaced)」两项。"
+        let text = BossRoleText.hiddenSummary(
+            flagged: hiddenCards.map(\.displayName),
+            roleOnly: hiddenByDefaultCards.filter { !$0.hidden }.map(\.displayName)
+        )
+        return text.isEmpty ? nil : text
     }
 }

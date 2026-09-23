@@ -1164,7 +1164,8 @@ func checkBossData() throws -> Int {
         "默认隐藏的组，场合都只有「未放置」「随从/召唤物」",
         counter: &count
     )
-    // 双端对照输入 ⑤：隐藏开关前后八个分组的条数（windows/tests/bosses.test.mjs 同一组数）
+    // 双端对照输入 ⑤：隐藏开关前后八个分组的条数（windows/tests/bosses_roles.test.mjs 的 groupCounts 同一组数，
+    // bosses_parity.test.mjs 直接读下面这个字面量跑 Windows 实现）
     let toggleCounts = BossCard.Group.allCases.map {
         [index.cards(in: $0).count, index.cards(in: $0, includeHidden: true).count]
     }
@@ -1198,6 +1199,19 @@ func checkBossData() throws -> Int {
             && (index.hiddenSummary ?? "").contains(BossRoleText.groupUnplaced)
             && (index.hiddenSummary ?? "").contains(BossRoleText.groupSummon),
         "底部说明要告诉用户去哪打开隐藏实体，并点名两个默认隐藏的场合",
+        counter: &count
+    )
+    // 双端对照输入 ⑥：底部「默认隐藏了哪些组」整句逐字钉住（名字按数据集顺序、全部列出）。
+    // Windows 端 hiddenSummaryText() 渲染同一句，bosses_parity.test.mjs 直接读这里的字面量比对。
+    let expectedHiddenSummary = "另有 4 组被判定为非首领实体（Centipede Grub、鲜血君王的长枪、未知敌人 c7931、未知敌人 c7932），"
+        + "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵；"
+        + "另有 8 组只出现在「未放置」「随从/召唤物」两个场合（“冻结冰雾”玻列琉斯、步入腐败仇恨龙、"
+        + "Elder Dragon Greyoll、湖之辉石龙、Storm King、废弃物蚯蚓脸、葬送战马、Giant Skeleton Torso）。"
+        + "它们默认不在列表里，展开区里只出现在这两个场合的数值行也默认隐藏；"
+        + "需要时打开工具条的「显示隐藏实体」，分组筛选里会多出「随从/召唤物」「未放置」两项。"
+    try bossExpect(
+        index.hiddenSummary == expectedHiddenSummary,
+        "底部隐藏说明应为「\(expectedHiddenSummary)」，实际「\(index.hiddenSummary ?? "nil")」",
         counter: &count
     )
     // 行级：展开区默认藏掉只出现在「未放置」「随从/召唤物」的行
@@ -1339,6 +1353,8 @@ func checkBossData() throws -> Int {
         .init(title: "死亡仪式鸟 · 据点首领", cardId: "boss-Death Rite Bird@4980", group: .stronghold, npcId: 49801040),
         .init(title: "死亡仪式鸟 · 封印监牢", cardId: "boss-Death Rite Bird@4980", group: .evergaol, npcId: 49801030),
         .init(title: "死亡仪式鸟 · 守夜首领", cardId: "boss-Death Rite Bird@4980", group: .night, npcId: 49801010),
+        // noReward + 同血量两层：排掉无奖励的 35500015 后 35500030 / 35500040 同为 920 血，按 npcId 取小
+        .init(title: "鲜血贵族 · 未放置", cardId: "boss-Sanguine Noble@3550", group: .unplaced, npcId: 35500030),
     ]
     for item in representativeCases {
         guard let card = index.cards.first(where: { $0.id == item.cardId }) else {
@@ -1351,6 +1367,28 @@ func checkBossData() throws -> Int {
             counter: &count
         )
     }
+    // 救世旗手（nightlord-18）是第一步从 threat 换成 roles 后代表行真正变了的那张夜王卡：
+    // 旧口径（夜王没有 threat → 不过滤，直接收敛 isMain）取血量最高的「哈尔莫妮亚 · 蠕虫」
+    // 46410000（6797，未放置）；新口径先按「夜王战」场合过滤，候选池剩 76200210 / 76200310
+    // 两条阶段行（整池 noReward 不排），代表位给「救世旗手 · 二阶段（每人）」76200210。
+    // Windows 端 bosses_roles.test.mjs 断言同一组 npcId。
+    guard let bearers = index.cards.first(where: { $0.id == "nightlord-18" }) else {
+        throw CheckFailure(description: "首领数据：找不到救世旗手（nightlord-18）")
+    }
+    let bearerLegacy = bearers.mainRows.sorted { lhs, rhs in
+        lhs.hp == rhs.hp ? lhs.npcId < rhs.npcId : lhs.hp > rhs.hp
+    }.first
+    try bossExpect(
+        bearers.variantNameZh == "救世旗手"
+            && bearerLegacy?.npcId == 46410000 && bearerLegacy?.roles == ["unplaced"]
+            && bearers.rows(in: .nightlord).map(\.npcId) == [76200210, 76200310]
+            && bearers.representativeRow(in: .nightlord)?.npcId == 76200210
+            && bearers.primaryRow?.npcId == 76200210
+            && bearers.hasMultipleMainRows,
+        "救世旗手：旧口径代表行 46410000（未放置），按场合过滤后候选 [76200210, 76200310]、代表行 76200210，实际候选 "
+            + bearers.rows(in: .nightlord).map { String($0.npcId) }.joined(separator: ", "),
+        counter: &count
+    )
     try bossExpect(
         index.cards(in: .nightlord).allSatisfy { card in
             card.rows(in: .nightlord).allSatisfy(\.noReward)
@@ -2434,6 +2472,20 @@ func checkBossDataParityText() throws -> Int {
             "有 2 组首领按出场场合同时属于多个分组（甲、乙），它们在各个分组下都会出现："
                 + "卡头列出全部场合，折叠态代表行跟着当前分组走，展开后每行标了自己的场合与出处。"
         ),
+        (
+            "hiddenSummaryBoth", BossRoleText.hiddenSummary(flagged: ["甲", "乙"], roleOnly: ["丙"]),
+            "另有 2 组被判定为非首领实体（甲、乙），判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵；"
+                + "另有 1 组只出现在「未放置」「随从/召唤物」两个场合（丙）。它们默认不在列表里，"
+                + "展开区里只出现在这两个场合的数值行也默认隐藏；"
+                + "需要时打开工具条的「显示隐藏实体」，分组筛选里会多出「随从/召唤物」「未放置」两项。"
+        ),
+        (
+            "hiddenSummaryRoleOnly", BossRoleText.hiddenSummary(flagged: [], roleOnly: ["丙"]),
+            "另有 1 组只出现在「未放置」「随从/召唤物」两个场合（丙）。它们默认不在列表里，"
+                + "展开区里只出现在这两个场合的数值行也默认隐藏；"
+                + "需要时打开工具条的「显示隐藏实体」，分组筛选里会多出「随从/召唤物」「未放置」两项。"
+        ),
+        ("hiddenSummaryNone", BossRoleText.hiddenSummary(flagged: [], roleOnly: []), ""),
     ]
     for (key, actual, expected) in roleParityStrings {
         try bossExpect(actual == expected, "双端文案 \(key)：应为「\(expected)」，实际「\(actual)」", counter: &count)

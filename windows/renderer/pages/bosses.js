@@ -32,10 +32,12 @@
 //     夜王卡只进「夜王」；守夜 / 野外首领按 roles 多重归属；「随从/召唤物」「未放置」是两个
 //     默认隐藏的分组；展开区默认收起只有这两种场合的行（macOS 的 displayRows(includeHidden:)）。
 //     见 GROUP_ORDER / ROLE_GROUP / HIDDEN_ROLES / roleGroups() / displayEntries()。
-//   · 文案：TEXT 对应 macOS 的 BossRowText，ROLE_TEXT 对应 BossRoleText（键名同名、逐字相同）。
-//     windows/tests/bosses_parity.test.mjs 直接读 macOS 的 Swift 源码逐项比对这两张表，并把
-//     RelicCoreChecks 里的对照表（代表行、各分组开关前后的条数、出处摘要、收录统计）拿来跑
-//     本页的实现；macOS 源码里还没有 BossRoleText 时那一半跳过，测试输出里写明原因。
+//   · 默认隐藏：hidden 的非首领实体与「全部场合都是未放置 / 随从」的组共用「显示隐藏实体」开关；
+//     底部那句交代（hiddenSummaryText / ROLE_TEXT.hiddenSummary）与 macOS 的 hiddenSummary 逐字相同。
+//   · 文案：TEXT 对应 macOS 的 BossRowText，ROLE_TEXT 对应 BossRoleText（键集合双向相同、逐字相同）。
+//     windows/tests/bosses_parity.test.mjs 直接读仓库内 macos/ 的 Swift 源码逐项比对这两张表，并把
+//     RelicCoreChecks 里的对照表（代表行、各分组开关前后的条数、出处摘要、收录统计、底部隐藏说明）
+//     拿来跑本页的实现；两端同仓库，这些对照一律不跳过。
 (function (root) {
   "use strict";
 
@@ -246,6 +248,28 @@
       return "有 " + count + " 组首领按出场场合同时属于多个分组（" + text + "），" +
         "它们在各个分组下都会出现：卡头列出全部场合，折叠态代表行跟着当前分组走，" +
         "展开后每行标了自己的场合与出处。";
+    },
+    // 底部说明：默认不显示的组（「显示隐藏实体」开关管的两类，macOS 的 BossRoleText.hiddenSummary）。
+    //   · flagged：hidden = true 的非首领实体（召唤物 / 投射物等）的显示名；
+    //   · roleOnly：没被判成非首领实体、但全部场合都是「未放置」「随从/召唤物」的组的显示名。
+    // 两类共用一个开关，写在同一句里；两类都没有时返回空串（页面不写这一段）。名字全部列出，不截断。
+    hiddenSummary: function (flagged, roleOnly) {
+      var hidden = Array.isArray(flagged) ? flagged : [];
+      var only = Array.isArray(roleOnly) ? roleOnly : [];
+      var parts = [];
+      if (hidden.length) {
+        parts.push(hidden.length + " 组被判定为非首领实体（" + hidden.join("、") + "），" +
+          "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵");
+      }
+      if (only.length) {
+        parts.push(only.length + " 组只出现在「" + ROLE_TEXT.groupUnplaced + "」「" + ROLE_TEXT.groupSummon + "」" +
+          "两个场合（" + only.join("、") + "）");
+      }
+      if (!parts.length) return "";
+      return "另有 " + parts.join("；另有 ") + "。它们默认不在列表里，" +
+        "展开区里只出现在这两个场合的数值行也默认隐藏；" +
+        "需要时打开工具条的「" + TEXT.hiddenToggleTitle + "」，" +
+        "分组筛选里会多出「" + ROLE_TEXT.groupSummon + "」「" + ROLE_TEXT.groupUnplaced + "」两项。";
     }
   };
 
@@ -1190,6 +1214,18 @@
   // 同时属于多个默认可见分组的卡片（macOS 的 BossDataIndex.multiGroupCards）。
   function multiGroupItems(items) {
     return (Array.isArray(items) ? items : []).filter(hasMultipleGroups);
+  }
+
+  // 底部「默认隐藏了哪些组」的说明（macOS 的 BossDataIndex.hiddenSummary）：hidden 的非首领实体，
+  // 与全部场合都是「未放置」「随从/召唤物」、但没被判成非首领实体的组，名字按数据集顺序。
+  // 两类都没有时为空串。
+  function hiddenSummaryText(items) {
+    var list = (Array.isArray(items) ? items : []).filter(Boolean);
+    var names = function (item) { return item.name; };
+    return ROLE_TEXT.hiddenSummary(
+      list.filter(function (item) { return item.hidden; }).map(names),
+      list.filter(function (item) { return !item.hidden && isItemHiddenByDefault(item); }).map(names)
+    );
   }
 
   // 底部「出场场合说明」要列的全部场合（macOS 的 BossDataset.orderedRoles）：内置顺序在前，
@@ -2492,9 +2528,18 @@
       "</div></details>";
   }
 
+  // 默认隐藏了哪些组：不折叠，放在各个说明块之后、「数据版本与来源」之前（与 macOS 底部同一位置）。
+  // 开关关着时列表里没有任何地方提到这 12 组，这一段就是唯一的交代。
+  function hiddenSummaryBlock(data) {
+    var text = hiddenSummaryText(itemsFor(data));
+    if (!text) return "";
+    return "<section class='card bosses-hidden-summary' data-testid='bosses-hidden-summary'>" +
+      "<p class='bosses-note'>" + esc(text) + "</p></section>";
+  }
+
   function footerHtml(data) {
     return caveatsBlock(data) + roleOverviewBlock(data) + scalingTiersBlock(data) + depthOverviewBlock(data) +
-      mutationCategoryBlock(data) + versionBlock(data);
+      mutationCategoryBlock(data) + hiddenSummaryBlock(data) + versionBlock(data);
   }
 
   // ------------------------------------------------------------ 渲染与事件
@@ -2771,6 +2816,8 @@
       threatRoleMismatch: threatRoleMismatch,
       groupCounts: groupCounts,
       multiGroupItems: multiGroupItems,
+      hiddenSummaryText: hiddenSummaryText,
+      hiddenSummaryBlock: hiddenSummaryBlock,
       orderedRoles: orderedRoles,
       roleOverviewRows: roleOverviewRows,
       hiddenCountText: hiddenCountText,

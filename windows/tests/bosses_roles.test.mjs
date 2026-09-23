@@ -251,6 +251,61 @@ test("「未放置」「随从/召唤物」默认隐藏：分组、卡片、搜�
   assert.equal(B.hiddenCountText(12, true), "含隐藏 12 组");
 });
 
+test("底部隐藏说明：非首领实体 + 只有未放置/随从场合的组，与 macOS 的 hiddenSummary 同一句", () => {
+  // 与 macOS 自检的 expectedHiddenSummary 同一串（bosses_parity.test.mjs 另从 Swift 源码读来比对）。
+  const expected =
+    "另有 4 组被判定为非首领实体（Centipede Grub、鲜血君王的长枪、未知敌人 c7931、未知敌人 c7932），" +
+    "判据是整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出 / 社区标为杂兵；" +
+    "另有 8 组只出现在「未放置」「随从/召唤物」两个场合（“冻结冰雾”玻列琉斯、步入腐败仇恨龙、" +
+    "Elder Dragon Greyoll、湖之辉石龙、Storm King、废弃物蚯蚓脸、葬送战马、Giant Skeleton Torso）。" +
+    "它们默认不在列表里，展开区里只出现在这两个场合的数值行也默认隐藏；" +
+    "需要时打开工具条的「显示隐藏实体」，分组筛选里会多出「随从/召唤物」「未放置」两项。";
+  assert.equal(B.hiddenSummaryText(items), expected);
+  // 两类的名单正好是默认隐藏的 12 组（4 + 8），名字 = 卡头主标题，按数据集顺序
+  const flagged = items.filter((item) => item.hidden);
+  const roleOnly = items.filter((item) => !item.hidden && B.isItemHiddenByDefault(item));
+  assert.equal(flagged.length + roleOnly.length, items.filter(B.isItemHiddenByDefault).length);
+  assert.equal(B.hiddenSummaryText(items), B.ROLE_TEXT.hiddenSummary(flagged.map((item) => item.name), roleOnly.map((item) => item.name)));
+  // 只有一类时只写那一类；两类都没有时是空串，页面不出这一段
+  assert.equal(
+    B.ROLE_TEXT.hiddenSummary([], ["丙"]),
+    "另有 1 组只出现在「未放置」「随从/召唤物」两个场合（丙）。它们默认不在列表里，" +
+      "展开区里只出现在这两个场合的数值行也默认隐藏；" +
+      "需要时打开工具条的「显示隐藏实体」，分组筛选里会多出「随从/召唤物」「未放置」两项。"
+  );
+  assert.equal(B.ROLE_TEXT.hiddenSummary([], []), "");
+  assert.equal(B.hiddenSummaryText([]), "");
+  assert.equal(B.hiddenSummaryText(items.filter((item) => !B.isItemHiddenByDefault(item))), "");
+  // 渲染：不折叠的一段，带测试钩子；没有隐藏的组时整块不出
+  const block = B.hiddenSummaryBlock(data);
+  assert.ok(block.includes("data-testid='bosses-hidden-summary'"));
+  assert.ok(block.includes("另有 4 组被判定为非首领实体") && !block.includes("<details"));
+  assert.equal(B.hiddenSummaryBlock({ nightlords: [], nightBosses: [] }), "");
+});
+
+test("救世旗手（nl:18）：按场合过滤后代表行由未放置的蠕虫行换成二阶段行（与 macOS 同一组 npcId）", () => {
+  const bearers = byUid.get("nl:18");
+  assert.equal(bearers.variantName, "救世旗手");
+  assert.deepEqual(bearers.groups, ["nightlords"]);
+  assert.deepEqual(bearers.roles, ["nightlord", "unplaced"]);
+  // 三条 isMain：蠕虫 46410000（6797，未放置）与两条阶段行；另一条联机突袭蠕虫 46410010 不是主战行
+  assert.deepEqual(B.mainRows(bearers.entries).map((entry) => entry.npcId), [46410000, 76200210, 76200310]);
+  assert.deepEqual(entryById.get(46410000).roles, ["unplaced"]);
+  // 旧口径（夜王没有 threat → 不过滤场合，直接收敛 isMain）取的是蠕虫行
+  assert.equal(B.representativeEntry(bearers.entries, null).npcId, 46410000);
+  // 新口径：第一步按「夜王战」过滤，候选只剩两条阶段行（整池 noReward 不排），取血量高的二阶段
+  assert.deepEqual(B.candidateEntries(bearers.entries, "nightlords").map((entry) => entry.npcId), [76200210, 76200310]);
+  assert.ok(B.candidateEntries(bearers.entries, "nightlords").every((entry) => entry.noReward));
+  assert.equal(B.representativeEntry(bearers.entries, "nightlords").npcId, 76200210);
+  assert.equal(bearers.main.npcId, 76200210, "卡片自身主分组下的代表行同样是 76200210");
+  // 展开区默认收起那条未放置的蠕虫行，卡头写「3 条数值行（另 1 条已隐藏）」
+  assert.equal(B.hiddenEntryCount(bearers.entries, false), 1);
+  assert.equal(
+    B.ROLE_TEXT.rowCount(B.displayEntries(bearers.entries, false).length, B.hiddenEntryCount(bearers.entries, false)),
+    "3 条数值行（另 1 条已隐藏）"
+  );
+});
+
 test("展开区默认收起只有「未放置」「随从/召唤物」场合的行（macOS 的 displayRows）", () => {
   let hiddenTotal = 0;
   let shownTotal = 0;

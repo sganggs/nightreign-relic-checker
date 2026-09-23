@@ -902,6 +902,8 @@ test("代表行对照表：卡片 + 分组 → npcId，与 macOS 的 representat
     ["死亡仪式鸟 · 据点首领", "nb:Death Rite Bird@4980", "stronghold", 49801040],
     ["死亡仪式鸟 · 封印监牢", "nb:Death Rite Bird@4980", "evergaol", 49801030],
     ["死亡仪式鸟 · 守夜首领", "nb:Death Rite Bird@4980", "night", 49801010],
+    // noReward + 同血量两层：排掉无奖励的 35500015 后 35500030 / 35500040 同为 920 血，按 npcId 取小
+    ["鲜血贵族 · 未放置", "nb:Sanguine Noble@3550", "unplaced", 35500030],
   ];
   for (const [title, uid, group, npcId] of cases) {
     const item = byUid.get(uid);
@@ -909,8 +911,7 @@ test("代表行对照表：卡片 + 分组 → npcId，与 macOS 的 representat
     assert.ok(item.groups.includes(group), `${title}：卡片确实出现在这个分组里`);
     assert.equal(B.representativeEntry(item.entries, group).npcId, npcId, title);
   }
-  // 鲜血贵族未放置分组里排掉无奖励的 35500015 之后，35500030 / 35500040 同为 920 血，按 npcId 给 35500030
-  assert.equal(B.representativeEntry(byUid.get("nb:Sanguine Noble@3550").entries, "unplaced").npcId, 35500030);
+  assert.equal(cases.length, 29, "与 macOS 的 representativeCases 同样 29 条");
 });
 
 test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一顺序）", () => {

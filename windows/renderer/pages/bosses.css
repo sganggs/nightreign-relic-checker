@@ -915,3 +915,13 @@
   .bosses-entry { padding: 10px; }
   .bosses-mini-table th, .bosses-mini-table td { padding: 5px 2px; }
 }
+
+/* 底部「默认隐藏了哪些组」的说明（macOS 底部同一段）：不折叠，开关关着时这是唯一的交代。 */
+.bosses-hidden-summary {
+  padding: 12px 16px;
+}
+
+.bosses-hidden-summary .bosses-note {
+  font-size: 10.5px;
+  word-break: break-word;
+}

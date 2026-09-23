@@ -85,7 +85,7 @@ ctx.getGameData("bosses").then(function (data) {
 - 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」）——四个 JSON
   由另一条数据流水线生成，换版本或重新生成期间随时可能缺位。
 - bosses / heroes / skills / buffs 四份数据现已全部就位（regulation 1.03.5 导出，当前
-  `bossesSchemaVersion` 3 / heroes `schemaVersion` 1 / skills `schemaVersion` 2 /
+  `bossesSchemaVersion` 4 / heroes `schemaVersion` 1 / skills `schemaVersion` 2 /
   buffs `schemaVersion` 5——这四个数字在页面与测试里是写死的，重新生成数据集时要连同
   `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
   [`macos/DataSources/PROVENANCE.md`](../../../macos/DataSources/PROVENANCE.md)
@@ -112,6 +112,25 @@ ctx.getGameData("bosses").then(function (data) {
 > `fetch("../resources/<name>.json")` 只是浏览器预览模式（用 HTTP 伺服
 > `renderer/` 时）的回退路径。**页面代码一律只调用 `ctx.getGameData`**，
 > 不要自己 `fetch`。
+
+### bosses 数据在页面上的分组口径
+
+- 分组按数据集的出场场合 `roles`（`bossesSchemaVersion` 4），**不看** `tier` / `tiers` / `threat`
+  （那只是多人缩放档位名，只在展开区留一行「威胁档位」小字）。默认六组：夜王 / 守夜首领 /
+  据点首领 / 场景头目 / 封印监牢 / 其它场合；守夜前哨、坑道精英、大空洞高塔首领、突袭事件、
+  黑夜入侵者、地图事件、其他地图并进「其它场合」。夜王卡只进「夜王」（突袭 / 事件 / 未放置只作
+  卡头徽标）；其余首领一组有几个场合就同时出现在几个分组里。
+- 「随从/召唤物」「未放置」是两个默认隐藏的分组，与 `hidden` 的非首领实体共用「显示隐藏实体」
+  开关：全部场合都是这两种的组默认不显示，展开区里只属于这两种场合的行默认收起，页面底部列出
+  默认隐藏了哪些组。
+- 折叠态代表行：按当前分组过滤 `roles` → `isMain` → 排掉登场演出 / 血条实体 → 排掉 `noReward`
+  → 血量最高（同血量取 npcId 小者），任一步会清空候选池就跳过那一步。
+- 规则正文只有一份，在 macOS 的 `macos/Sources/RelicCore/BossData.swift`（`BossCard.Group`、
+  `BossCard.rows(in:)` 的文档注释），`pages/bosses.js` 照抄；文案表 `ROLE_TEXT` ↔ `BossRoleText`、
+  `TEXT` ↔ `BossRowText` 键名同名、逐字相同。`tests/bosses_parity.test.mjs` 直接读仓库内的 Swift
+  源码与 `RelicCoreChecks` 的对照表（代表行、开关前后八个分组的条数、出处摘要、收录统计、
+  底部隐藏说明）来跑本页实现，一项都不跳过；分组专项在 `tests/bosses_roles.test.mjs`。
+  改分组规则或文案必须两端一起改。
 
 ## 4. 样式约定
 
