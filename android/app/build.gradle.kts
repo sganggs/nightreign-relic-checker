@@ -12,8 +12,8 @@ android {
         applicationId = "com.nightreign.relicchecker"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.2.1"
+        versionCode = 2
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -25,9 +25,10 @@ android {
     }
 
     androidResources {
-        // data/ 是唯一权威数据源，但 Android 端只消费词条库；遗物物品表
-        // （存档检查用，未移植）与杂项文件不打进 APK
-        ignoreAssetsPattern = "!nightreign-relics-v1.03.4.json:!.ds_store:!*~"
+        // data/ 是唯一权威数据源，六个数据集（词条库、遗物物品表与四个 v1.03.5 参数表数据集）
+        // 全部打进 APK：词条反查 / 存档检查要用遗物物品表，数据页各读自己的数据集。
+        // 只排除系统杂项文件。
+        ignoreAssetsPattern = "!.ds_store:!*~"
     }
 
     buildFeatures {
@@ -53,6 +54,7 @@ kotlin {
 dependencies {
     implementation(project(":rules"))
     implementation(project(":catalog"))
+    implementation(project(":gamedata"))
 
     // Newer AndroidX releases require API 37 / AGP 9.1; keep the API 36-compatible line.
     implementation(platform("androidx.compose:compose-bom:2025.08.01"))

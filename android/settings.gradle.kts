@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "NightreignRelicCheckerAndroid"
-include(":app", ":catalog", ":rules")
+include(":app", ":catalog", ":gamedata", ":rules")

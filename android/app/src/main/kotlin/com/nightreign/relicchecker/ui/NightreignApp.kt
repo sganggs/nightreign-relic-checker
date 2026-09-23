@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.nightreign.relicchecker.catalog.AffixCatalog
 import com.nightreign.relicchecker.catalog.CatalogLoader
 import com.nightreign.relicchecker.rules.CheckMode
+import com.nightreign.relicchecker.ui.lookup.LookupScreen
 import com.nightreign.relicchecker.ui.theme.NightColors
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Dispatchers
@@ -88,7 +89,10 @@ private fun AppScaffold(
     settingsRepository: SettingsRepository,
 ) {
     var destinationName by rememberSaveable { mutableStateOf(AppDestination.CHECKER.name) }
-    val destination = AppDestination.valueOf(destinationName)
+    val destination = AppDestination.entries.firstOrNull { it.name == destinationName } ?: AppDestination.CHECKER
+    // 「数据」目的地当前打开的子页（null = 枢纽页）；提到这里是为了让再点一次底栏「数据」能回到枢纽页
+    var dataPageName by rememberSaveable { mutableStateOf<String?>(null) }
+    val dataPage = dataPageName?.let { name -> DataPage.entries.firstOrNull { it.name == name } }
     val stateHolder = rememberSaveableStateHolder()
     val scope = rememberCoroutineScope()
 
@@ -96,7 +100,12 @@ private fun AppScaffold(
         containerColor = Color.Transparent,
         contentColor = NightColors.TextPrimary,
         bottomBar = {
-            NightNavBar(current = destination) { destinationName = it.name }
+            NightNavBar(current = destination) { selected ->
+                if (selected == AppDestination.DATA && destination == AppDestination.DATA) {
+                    dataPageName = null
+                }
+                destinationName = selected.name
+            }
         },
     ) { padding ->
         Crossfade(
@@ -111,9 +120,22 @@ private fun AppScaffold(
                         settings = settings,
                         modifier = Modifier.padding(padding),
                     )
+                    AppDestination.LOOKUP -> LookupScreen(
+                        catalog = catalog,
+                        settings = settings,
+                        onBack = null,
+                        modifier = Modifier.padding(padding),
+                    )
                     AppDestination.CATALOG -> CatalogScreen(
                         catalog = catalog,
                         compact = settings.libraryCompact,
+                        modifier = Modifier.padding(padding),
+                    )
+                    AppDestination.DATA -> DataDestination(
+                        catalog = catalog,
+                        settings = settings,
+                        page = dataPage,
+                        onPageChange = { dataPageName = it?.name },
                         modifier = Modifier.padding(padding),
                     )
                     AppDestination.SETTINGS -> SettingsScreen(

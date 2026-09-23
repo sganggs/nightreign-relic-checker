@@ -8,6 +8,6 @@ plugins {
 
 tasks.register("testDebugUnitTest") {
     group = "verification"
-    description = "Runs JVM rule/catalog tests and Android debug unit tests."
-    dependsOn(":rules:test", ":catalog:test", ":app:testDebugUnitTest")
+    description = "Runs JVM rule/catalog/gamedata tests and Android debug unit tests."
+    dependsOn(":rules:test", ":catalog:test", ":gamedata:test", ":app:testDebugUnitTest")
 }

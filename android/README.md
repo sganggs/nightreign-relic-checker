@@ -23,16 +23,19 @@ Android 首版是一个完全离线、手机优先的三词条手动验物工具
 
 ## 工程结构
 
-工程采用三个模块，避免 Android UI 与规则、数据解析相互耦合：
+工程采用四个模块，避免 Android UI 与规则、数据解析相互耦合：
 
 - `:rules`：纯 Kotlin。包含领域模型、四种模式、合法性检查、搜索归一化和随机组合。
 - `:catalog`：纯 Kotlin + kotlinx.serialization。负责校验并解析权威词条 JSON，依赖 `:rules`。
-- `:app`：Android/Compose UI 与 DataStore 设置，依赖前两个模块。
+- `:gamedata`：纯 Kotlin + kotlinx.serialization。数据页（首领 / 角色 / 增伤 / 反查 / 存档）用的数据集文件名、
+  版本键与共用 JSON 配置，各页的 DTO 与解析也放在这里，依赖 `:rules` 与 `:catalog`。
+- `:app`：Android/Compose UI 与 DataStore 设置，依赖前三个模块。数据页的导航、加载骨架与移植约定见
+  [`PAGES.md`](PAGES.md)。
 
 根目录 `data/` 是唯一权威数据源。没有在 Android 工程中复制 JSON：
 
 - `:app` 的 `main` assets source set 指向 `../../data`；
-- `:catalog` 的 `test` resources source set 指向 `../../data`。
+- `:catalog` 与 `:gamedata` 的 `test` resources source set 指向 `../../data`。
 
 因此更新根数据后，重新构建 APK 和运行测试即可使用同一份数据。
 
@@ -63,7 +66,7 @@ Android 首版是一个完全离线、手机优先的三词条手动验物工具
 ./gradlew assembleDebug
 ```
 
-根 `testDebugUnitTest` 任务会同时执行 `:rules:test`、`:catalog:test` 与
+根 `testDebugUnitTest` 任务会同时执行 `:rules:test`、`:catalog:test`、`:gamedata:test` 与
 `:app:testDebugUnitTest`。当前 JVM 测试覆盖：
 
 - 合法、重复 effectId、互斥冲突与 `-1` 豁免；

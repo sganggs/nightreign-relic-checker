@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -30,9 +31,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -65,9 +69,12 @@ import com.nightreign.relicchecker.R
 import com.nightreign.relicchecker.rules.Affix
 import com.nightreign.relicchecker.ui.theme.NightColors
 
+// 底栏顺序即枚举顺序；「反查」紧跟「检查」（两者都是从词条出发的功能）
 internal enum class AppDestination(val label: String) {
     CHECKER("检查"),
+    LOOKUP("反查"),
     CATALOG("词条库"),
+    DATA("数据"),
     SETTINGS("设置"),
 }
 
@@ -92,6 +99,10 @@ internal fun NightBackground(content: @Composable BoxScope.() -> Unit) {
     )
 }
 
+/**
+ * 页面顶栏。[onBack] 非空时左侧的应用图标换成返回按钮（数据枢纽进入的子页用），
+ * 系统返回键由外层导航的 BackHandler 处理，这里只负责可点的按钮。
+ */
 @Composable
 @SuppressLint("ModifierParameter")
 internal fun NightTopBar(
@@ -99,6 +110,7 @@ internal fun NightTopBar(
     eyebrow: String? = null,
     trailing: String? = null,
     modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -106,19 +118,23 @@ internal fun NightTopBar(
             .height(52.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(NightColors.Purple.copy(alpha = 0.13f))
-                .border(1.dp, NightColors.PurpleSoft.copy(alpha = 0.22f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            androidx.compose.foundation.Image(
-                painter = painterResource(R.drawable.nightreign_icon),
-                contentDescription = null,
-                modifier = Modifier.size(34.dp),
-            )
+        if (onBack != null) {
+            NightBackButton(onClick = onBack)
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(NightColors.Purple.copy(alpha = 0.13f))
+                    .border(1.dp, NightColors.PurpleSoft.copy(alpha = 0.22f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(R.drawable.nightreign_icon),
+                    contentDescription = null,
+                    modifier = Modifier.size(34.dp),
+                )
+            }
         }
         Spacer(Modifier.width(11.dp))
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -142,6 +158,57 @@ internal fun NightTopBar(
             NightPill(text = it, color = NightColors.Green, dot = true)
         }
     }
+}
+
+@Composable
+internal fun NightBackButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "返回",
+) {
+    Box(
+        modifier = modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(NightColors.FieldSoft)
+            .border(1.dp, NightColors.BorderStrong, CircleShape)
+            .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(15.dp)) {
+            val width = 2.dp.toPx()
+            val tip = Offset(size.width * .3f, size.height * .5f)
+            drawLine(NightColors.TextPrimary, Offset(size.width * .68f, size.height * .1f), tip, width, StrokeCap.Round)
+            drawLine(NightColors.TextPrimary, tip, Offset(size.width * .68f, size.height * .9f), width, StrokeCap.Round)
+        }
+    }
+}
+
+/**
+ * 与词条库详情、检查页选择器同款的底部抽屉：深色底、粗拖拽条、全展开。
+ * 选择器与详情都用它，保持手机上的交互一致。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun NightBottomSheet(
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismissRequest,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = NightColors.Elevated,
+        contentColor = NightColors.TextPrimary,
+        scrimColor = NightColors.BackgroundDeep.copy(alpha = .82f),
+        dragHandle = {
+            Box(
+                Modifier.padding(vertical = 10.dp).size(36.dp, 4.dp)
+                    .background(NightColors.BorderStrong, RoundedCornerShape(99.dp)),
+            )
+        },
+        content = content,
+    )
 }
 
 @Composable
@@ -441,6 +508,29 @@ private fun NightNavGlyph(destination: AppDestination, color: Color, modifier: M
                 drawPath(path, color, style = stroke)
                 drawLine(color, Offset(size.width * .32f, size.height * .52f), Offset(size.width * .46f, size.height * .66f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(size.width * .46f, size.height * .66f), Offset(size.width * .7f, size.height * .35f), stroke.width, StrokeCap.Round)
+            }
+            AppDestination.LOOKUP -> {
+                // 放大镜里嵌一枚检查页同款的菱形：从词条反查遗物
+                val lens = Offset(size.width * .42f, size.height * .42f)
+                val radius = size.minDimension * .3f
+                drawCircle(color, radius, lens, style = stroke)
+                drawLine(color, Offset(size.width * .64f, size.height * .64f), Offset(size.width * .9f, size.height * .9f), stroke.width, StrokeCap.Round)
+                val gem = Path().apply {
+                    moveTo(lens.x, lens.y - radius * .5f)
+                    lineTo(lens.x + radius * .42f, lens.y)
+                    lineTo(lens.x, lens.y + radius * .5f)
+                    lineTo(lens.x - radius * .42f, lens.y)
+                    close()
+                }
+                drawPath(gem, color, style = Stroke(width = 1.4.dp.toPx(), cap = StrokeCap.Round))
+            }
+            AppDestination.DATA -> {
+                // 三根高低不一的柱子 + 基线：参数表数据
+                val base = size.height * .86f
+                drawLine(color, Offset(size.width * .1f, base), Offset(size.width * .9f, base), stroke.width, StrokeCap.Round)
+                listOf(.27f to .52f, .5f to .18f, .73f to .38f).forEach { (x, top) ->
+                    drawLine(color, Offset(size.width * x, base - 3.dp.toPx()), Offset(size.width * x, size.height * top), 3.2.dp.toPx(), StrokeCap.Round)
+                }
             }
             AppDestination.CATALOG -> {
                 drawRoundRect(color, Offset(size.width * .14f, size.height * .12f), Size(size.width * .72f, size.height * .76f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()), style = stroke)
