@@ -116,10 +116,11 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 | `data/nightreign-bosses-v1.03.5.json` | `generate_bosses.py` | `bossesSchemaVersion` 4 | 首领数据 |
 | `data/nightreign-skills-v1.03.5.json` | `generate_skills.py` | 2 | 增伤排名（选段与伤害构成） |
 | `data/nightreign-buffs-v1.03.5.json` | `generate_buffs.py` | 6 | 增伤排名（倍率、叠加与配置槽位） |
+| `data/nightreign-heroes-v1.03.5.json` | `generate_heroes.py` | 1 | 角色属性 |
 
 > 表里的 schemaVersion 是写死的：重新生成任何一套数据集时，请同步更新本表与
 > [`windows/renderer/pages/README.md`](../../windows/renderer/pages/README.md) 的
-> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 2 / buffs 6）。
+> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 2 / buffs 6 / heroes 1）。
 
 「词条反查」页不使用新数据集，只用既有的 `affixes.json` 与 `relics.json`。原计划里的
 「削韧」没有单独成集：削韧数值（`atkSuperArmor` / `atkSuperArmorCorrection` /
