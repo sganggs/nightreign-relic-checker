@@ -3,11 +3,11 @@
  "datasetId": "nightreign-buffs",
  "gameVersion": "v1.03.5 + DLC1",
  "dataVersion": "regulation 10350000",
- "generatedAt": "2026-09-23T09:33:20Z",
+ "generatedAt": "2026-09-23T10:20:14Z",
  "schemaChangelog": [
   {
    "version": 6,
-   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。"
+   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）：(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)：上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)：算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。"
   },
   {
    "version": 5,
@@ -65,12 +65,12 @@
  "notes": {
   "zh": "收录「能改变输出数值」且能从玩家可获得的物品／法术／永久强化／遗物词条追溯到的 SpEffect。**注意：能追溯到玩家物品 ≠ 挂在玩家身上**——投掷道具与法术的 Bullet 命中槽（spEffectId0..4）把效果挂在被命中的对象上，复仇者的家人（海伦／弗雷德里克／塞巴斯蒂安）另有自己的数值缩放行。因此每条 buff 都带 `target`（self／ally／summon／enemy），排名前必须先按它过滤。本作没有独立的『战技伤害 +x%』类字段，针对战技／跳跃攻击／防御反击／绝招等的强化都是普通的 AttackRate 字段 + magicSubCategoryChange 子类过滤，见每条 buff 的 scope。",
   "target": "`target` 说明这条 SpEffect 实际挂在谁身上：self＝只作用于玩家自己；ally＝自己与／或附近队友（友方 AoE 弹道，如黄金树立誓、振奋香，或行名明示 Allies 的团队增益）；summon＝复仇者家人等召唤物**自己**的数值缩放（296220『塞巴斯蒂安』的 0.15 是召唤物的伤害系数，不是让玩家伤害变成 15%）；enemy＝挂在被命中的敌人身上（酸蚀喷雾、桂奥尔的咆哮这类减益，或『魅惑树枝』让被魅惑的敌人攻击力 ×2）。**增伤排名只能对 target 为 self／ally 的条目做乘算**；enemy 条目的 `direction` 描述的是敌人数值的增减（decrease＝把敌人削弱，对玩家有利），语义与 self 条目相反，summon 条目请单独成表。判定依据见每条的 `targetSource`，中文解释在 enums.targetSource。**v4 注意**：油脂、附加属性武器、毒雾这类『打中谁就给谁上异常累积』的行，target 一律是 enemy（v3 里由 atkOccurrenceSpEffectId 投递的 33 条被错标成 self，与结构完全相同、由弹道投递的同类自相矛盾）。但它们**确实是玩家的异常累积手段**——要做『异常状态累积』榜时不要只留 target=self，应按 sources[].kind 取玩家可获得的来源（goods／spell／weaponPassive…），target 在那条轴上表示的是『累积加在谁身上』，本来就该是 enemy。**v5 修正（命中槽补全）**：v4 只把 Bullet.spEffectId0..4 与 atkOccurrenceSpEffectId 当成命中槽，漏了同一机制的另外两条投递路径——EquipParamWeapon.spEffectBehaviorId0..2（武器自带的出血／中毒／冻伤／腐败／发狂累积）与 AttachEffectParam.onHitSpEffect（『攻击附带异常状态』遗物词条）。结果 43 条与油脂行逐列同构的累积行仍是 self：106010『Lvl 1-2 Poison +45』（毒匕首）与已判 enemy 的 3176『[Item] Poison Grease (Right) - Poison』除阵营位与投递槽外完全相同。v5 已按同一套规则改判这 43 条为 enemy，新增 targetSource weaponHitOpposeOnly／weaponHitSelfOnly／weaponHitStatusPayload。**做『异常状态累积』榜的页面请重取**：现在武器／词条带来的累积全部在 target=enemy 侧。**v5 新增 selfInflictedStatus**：反过来，有 20 条 target=self 的行，其 status 加算点数是累在玩家自己身上的自伤（切腹、癫火自伤、『血量没有全满时累积中毒量表』），带 `selfInflictedStatus: true`，异常累积榜必须排除，详见 diagnostics.selfInflictedStatus。",
-  "stackLadder": "`stackLadder`（可缺，只出现在叠层阶梯的第 1 层上）各键的口径：`tiers`＝**阶梯总层数，含第 1 层**（本条自己）；`tierSpEffectIds`＝**第 2 层起、不含第 1 层**的 spEffectId 列表，长度恒等于 tiers-1，按层数升序，这些 id 不会作为独立 buff 出现在 buffs[] 里；`topRates`＝最后一层（tierSpEffectIds 的最后一个）的数值，键集合与本条 rates 完全相同，本条自身的 rates 就是第 1 层数值；`saved`＝true 表示该行 saveCategory≠-1，层数会存进存档槽（这也是把它和『可分别装备的词条档位』区分开的依据，见 diagnostics.stackLaddersNote）。同层互斥：任何时刻只有一层生效，**各层数值绝不能相乘**，页面要么显示第 1 层并注明满层值，要么让用户选层数。",
+  "stackLadder": "`stackLadder`（可缺，只出现在叠层阶梯的第 1 层上）各键的口径：`tiers`＝**阶梯总层数，含第 1 层**（本条自己）；`tierSpEffectIds`＝**第 2 层起、不含第 1 层**的 spEffectId 列表，长度恒等于 tiers-1，按层数升序，这些 id 不会作为独立 buff 出现在 buffs[] 里；`topRates`＝最后一层（tierSpEffectIds 的最后一个）的数值，键集合与本条 rates 完全相同，本条自身的 rates 就是第 1 层数值；`saved`＝true 表示该行 saveCategory≠-1，层数会存进存档槽（这也是把它和『可分别装备的词条档位』区分开的依据，见 diagnostics.stackLaddersNote）。同层互斥：任何时刻只有一层生效，**各层数值绝不能相乘**，页面要么显示第 1 层并注明满层值，要么让用户选层数。（v6 复核三轮：注意 accumulatorLadder 的同名字段 tierSpEffectIds **含第 1 档**、各档本身就是 buff，口径与这里相反，见 notes.accumulatorLadder。）",
   "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，所以 v2 里 704301『残血 25% 以下 ×1.5』、8300000-2『双手持 +12/15/18%』、8310000-2『双持 +12/15/18%』、707201-215『处刑人绝招兽化 ×1.62–3.55』的 conditions 与 triggered 全是 null。**只有 activation=\"passive\" 的条目才允许默认乘进通用排名**；conditional 与 activated 必须由用户显式勾选（默认不计入）。另外请注意互斥：8300000-2（双手共持）与 8310000-2（双手各持）不可能同时成立，同理 707201-215 是绝招兽化的 15 个等级，同一时刻只有一层。判定依据逐条写在 `activationSource`，中文解释见 enums.activationSource；passive 的含义是『没有额外的发动条件』，不等于『不用付出代价』——消耗品仍要先喝、遗物词条仍要先装备，那是 sources 的事；也**不等于『对所有攻击都生效』**——那是 scope.attackContexts 管的，见 notes.attackContext。**v4 修正**：v3 把 conditions 整个拿来判定，而 conditions 里混着 motionInterval（效果重新 tick 的间隔［秒］）与 isPeriodicEffect（周期性重新施加）两个计时字段，结果 210 条无条件 buff 被误判成 conditional——其中就有狂热香药 ×1.45／×1.35、夏玻利利的嘶吼 ×1.25、火焰啊赐予我力量 ×1.20、黄金树立誓 ×1.15，也就是整张表里最常用的几条消耗品与团队增益。现在只有 conditionFields[].isActivationCondition=true 的列才参与判定。",
   "attackContext": "`scope.attackContexts` 是**作用情境的机读标记**：非空表示这条倍率只在列出的攻击情境下才吃得到，**默认不得乘进通用排名**，只有用户勾选了该情境才参与乘算。它和 activation 是正交的两条轴——activation 回答『这份 buff 现在挂在身上吗』，attackContexts 回答『挂着的时候哪些攻击吃得到』。『强化致命一击 ×1.24』『强化突刺反击 ×1.20』装上就一直在（activation=passive），但只有打出致命一击／突刺反击时才生效，所以必须靠这一条拦住。取值与中文说明见 enums.attackContext，其中还写明每个键是从哪个原始值推出来的：fromSubCategories 对应 magicSubCategoryChange1..3（ATK_SUB_CATEGORY），fromStateInfo 对应 SpEffectParam.stateInfo（SP_EFFECT_TYPE，中文标签见 enums.stateInfo）。**v3 只有前一条来路是机读的**，所以 stateInfo=367（强化致命一击，6 条 ×1.12–1.24）与 stateInfo=197（强化突刺反击，4 条 ×1.10–1.20）在页面看来是『对所有攻击生效的常驻增伤』；突刺反击那 4 条的 scope 甚至是 affectsSorcery／affectsIncantation／affectsShaman 全 true。注意 attackContexts 只收『玩家进入的攻击情境』，武器／法术门类过滤（近战武器攻击、远程武器攻击、战技攻击、各流派魔法祷告）仍然只出现在 scope.subCategories 里，按伤害构成加权即可，不属于情境勾选。",
   "conditions": "带 `conditions` / `triggered` 的 buff 有发动条件（武器种类、血量、自身状态、概率、命中触发等），例如 7037001 是送葬者遗物词条，只有装备该词条并且身上有祷告辅助效果时才给 +19%——它挂在 30 个辅助祷告的 Magic.refId10 上，并不代表任何人施放这些祷告都能拿到。排名时必须让用户勾选是否满足条件，**默认不计入乘积**。本版本 conditions 字段的中文含义见 conditionFields。⚠️ conditions 里有两个字段**不是发动条件**：motionInterval（效果每几秒重新施加一次，ER paramdef『発動間隔[s]』）与 isPeriodicEffect（是否按该间隔周期性重新施加）。它们是光环／持续类效果的计时机制，几乎每条有持续时间的 buff 都带，**判断一条 buff 是否有发动条件时必须跳过它们**——conditionFields[].isActivationCondition 就是为此而设。",
   "damageTypeNaming": "参数里的 dark 槽位在本作即『圣』属性；physics 为物理总量，slash/blow/thrust/neutral 是物理攻击类型细分。",
-  "ranking": "增伤排名的推荐步骤（顺序不能省）：① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；② 按 `direction` 过滤（只要 increase／mixed）；③ **先看 `activation`，再看 `conditions`／`triggered`**：只有 activation=\"passive\" 才允许默认计入乘积；conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）一律由用户勾选，默认不计入。顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，那一步在最需要它的条目上是空转的。拿到具体条件字段仍然看 `conditions`（含义见 conditionFields，**只有 isActivationCondition=true 的列才是发动条件**，motionInterval／isPeriodicEffect 是计时机制）与 `triggered`；④ **再看 `scope.attackContexts`**：非空表示这条倍率只在某种攻击情境下生效（致命一击、突刺反击、防御反击、连段最后一击、蓄力、跳跃／冲刺／翻滚攻击、双手持…），**默认不得计入通用排名**，只有当用户勾选了对应情境时才参与乘算——这类条目本身是 passive（装上就一直在），限制的是作用范围而不是发动时机，所以第③步拦不住它们，必须单独走这一步。其余 scope 字段（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／weaponSlot／spAttribute／subCategories）仍按伤害构成加权；attackContexts 是 subCategories 与 stateInfo 两条来路的归一化视图，原始值都还在原处，中文解释见 enums.attackContext；⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` 决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，stance／status 另开一条轴——**status（异常累积）那条轴的过滤口径与伤害轴不同**：武器／油脂／附加属性带来的累积 target 是 enemy（累积加在被命中者身上，要按 sources[].kind 取玩家可获得的来源而不是按 target=self 取），而 target=self 且带 `selfInflictedStatus: true` 的是自伤（切腹、癫火自伤），必须排除；special／flag／economy 只展示不乘；⑥ 用 `stacking.exclusiveKey` 分组去重（同键只留一份，按 `spCategoryBehavior` 选哪份）后跨组相乘（v6 起：stacking.group 是只按类别的旧口径，200 系列不看优先度、累积阶梯不合并，留作兼容；resetOnApply 的 group 也已改为按 ID，见 stackingRules 第 2 条）；⑦ 列表一律显示 `displayNameZh`（已保证唯一）。**v6**：第④步里『其余 scope 字段按伤害构成加权』之前，先用 buffs[].appliesTo 判断这条 buff 对所选输出（战技／魔法／祷告…）是否生效——no 直接虚化并显示 appliesToDetail.reason，conditional 按 requires 与 attackIndex 对所选条目判定；页面分栏改用 sourceSlot（见 notes.appliesTo／notes.sourceSlot）。武器词条栏按 slotRules 组装：常规 6 条、深夜 12 条正面词条（另有每把 1 条诅咒，最多 6 条），**其中 weaponAffixDeepOnlyPositive=true 的最多 6 条**（slotRules.weaponAffix.maxDeepOnlyAffixes，每把 1 条；诅咒也是 weaponAffixDeepOnly=true，但不计入这个上限，见 slotRules.weaponAffix.deepOnlyCapField）；叠层类按 stackInput 让用户填层数。",
+  "ranking": "增伤排名的推荐步骤（顺序不能省）：① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；② 按 `direction` 过滤（只要 increase／mixed）；③ **先看 `activation`，再看 `conditions`／`triggered`**：只有 activation=\"passive\" 才允许默认计入乘积；conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）一律由用户勾选，默认不计入。顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，那一步在最需要它的条目上是空转的。拿到具体条件字段仍然看 `conditions`（含义见 conditionFields，**只有 isActivationCondition=true 的列才是发动条件**，motionInterval／isPeriodicEffect 是计时机制）与 `triggered`；④ **再看 `scope.attackContexts`**：非空表示这条倍率只在某种攻击情境下生效（致命一击、突刺反击、防御反击、连段最后一击、蓄力、跳跃／冲刺／翻滚攻击、双手持…），**默认不得计入通用排名**，只有当用户勾选了对应情境时才参与乘算——这类条目本身是 passive（装上就一直在），限制的是作用范围而不是发动时机，所以第③步拦不住它们，必须单独走这一步。其余 scope 字段（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／weaponSlot／spAttribute／subCategories）仍按伤害构成加权；attackContexts 是 subCategories 与 stateInfo 两条来路的归一化视图，原始值都还在原处，中文解释见 enums.attackContext；⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` 决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，stance／status 另开一条轴——**status（异常累积）那条轴的过滤口径与伤害轴不同**：武器／油脂／附加属性带来的累积 target 是 enemy（累积加在被命中者身上，要按 sources[].kind 取玩家可获得的来源而不是按 target=self 取），而 target=self 且带 `selfInflictedStatus: true` 的是自伤（切腹、癫火自伤），必须排除；special／flag／economy 只展示不乘；⑥ 用 `stacking.exclusiveKey` 分组去重（同键只留一份，按 `spCategoryBehavior` 选哪份）后跨组相乘（v6 起：stacking.group 是只按类别的旧口径，200 系列不看优先度、累积阶梯不合并，留作兼容；resetOnApply 的 group 也已改为按 ID，见 stackingRules 第 2 条）；⑦ 列表一律显示 `displayNameZh`（已保证唯一）。**v6**：第④步里『其余 scope 字段按伤害构成加权』之前，先用 buffs[].appliesTo 判断这条 buff 对所选输出（战技／魔法／祷告…）是否生效——no 直接虚化并显示 appliesToDetail.reason，conditional 按 requires 与 attackIndex 对所选条目判定；页面分栏改用 sourceSlot（见 notes.appliesTo／notes.sourceSlot）。武器词条栏按 slotRules 组装：常规 6 条、深夜 12 条正面词条（另有每把 1 条诅咒，最多 6 条），**其中 weaponAffixDeepOnlyPositive=true 的最多 6 条**（slotRules.weaponAffix.maxDeepOnlyAffixes，每把 1 条；诅咒也是 weaponAffixDeepOnly=true，但不计入这个上限，见 slotRules.weaponAffix.deepOnlyCapField）；叠层类按 stackInput 让用户填层数。**v6 复核三轮**：第①步保留 self 与 ally 时，带 `selfAllyPair` 的成对行（同一战技的 Self／Allies 两行）算施放者自己只计 role=self 那一行，role=ally 那一行只在队友施放时计入（notes.selfAllyPair）；第⑥步的 exclusiveKey 新增取值 \"affix#<attachEffectId>\"（exclusiveScope=affixVariant）：同一词条互为替代的 4 档共用一键、只取一档（notes.affixVariant）；relicAffixes[].exclusivityId 相同的不同词条（出击武器附加类 7 条）同时选中时给出提示；accumulatorStages 的各阶段各自一键、逐段相乘（notes.accumulatorStages）；累积阶梯的 \"sp120\" 同时让不同物品互斥（notes.accumulatorLadder）。",
   "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind：multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；flag 只是开关，不参与计算；special 的每个字段语义各不相同、**一律不得相乘**（restageAttackRate=0.6 指女爵『再演』复制那一份占 60%，不是 -40% 伤害）。再用两个布尔做粗筛：`countsAsDamage=true` 的组（damage／attackPower／attackPowerFlat）是**无条件**的血量伤害，可以进通用乘积；`conditionalDamage=true` 的组与字段（weakness 特攻、critical 致命一击、以及 economy 里的 bowDistRate 远程衰减）确实改血量伤害，但要先满足条件才成立，**不得无条件乘进通用排名**——『纠死圣律』weakDmgRateB=10 只对不死类敌人生效，无条件相乘会让它以 ×10 稳居榜首；页面应在『指定敌人类型』或『远程／致命一击』分区里另算。两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）不进伤害乘积，只单独展示或另开轴。",
   "displayName": "nameZh 取自状态栏文本，重名极多（『提升攻击力』92 条、『异常状态：冻伤』53 条），**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%）、③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。因此『提升火属性攻击力（火油脂・档位2・右手）』这种长名字是刻意的：六个油脂档位×左右手原本完全同名。v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，避免同一组遗物一条带 #id、一条不带。实际退到 `#spEffectId` 的条数见 counts.displayNameZhFallingBackToSpEffectId，完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId（v2 为 52 条）。",
   "userQuestions": {
@@ -98,9 +98,13 @@
   "sourceSlot": "**v6 新增** `sourceSlot`（主槽位）／`sourceSlots`（全部槽位，按 enums.sourceSlot 顺序）：这条 buff 该放进页面的哪一栏。取值与中文说明见 enums.sourceSlot；除任务清单的九种外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果、传说武器的庇佑）。判定用的是**全部**来源（不止导出的 40 条）：AttachEffectParam 行按它真正所在的池判——在 EquipParamAntique 的池里＝relicAffix，在可掉落的 EquipParamCustomWeapon 行引用的池里＝weaponAffix，被 EquipParamWeapon.attachEffectId 引用＝weaponInnate；只能靠 Paramdex 行名找到的脚本挂载行，先按『同族 AttachEffectParam』（同 ID 十位／百位、同词干）归，找不到再按 [...] 前缀归。sourceSlot=\"other\" 的条目一定带 sourceSlotReason。**sources[].kind 保持 v5 口径不变**（局内武器词条仍是 kind=\"relicAffix\"），页面分栏请改用 sourceSlot。",
   "appliesTo": "**v6 新增** `appliesTo`：{skill, sorcery, incantation, melee, ranged, throw} → \"yes\"／\"no\"／\"conditional\"，`appliesToDetail`：非 yes 的类别的 {reason, requires?, matchShare?}。判定只看 SpEffectParam 自己的列，按顺序叠加：① target 为 enemy／summon → 全 no；② 只有消耗／射程类字段 → 按字段归属（战技消耗→skill、魔法消耗→sorcery、祷告消耗→incantation、射程衰减→ranged）；③ stateInfo=367（强化致命一击）只对 throw；④ 投递方式：武器类（skill／melee／ranged）看 wepParamChange（0 不限、1／2 限右／左手→conditional、3 自身→no、4 踢击→no）且 throwAttackParamChange=1 的行只作用于致命一击；sorcery 看 magParamChange、incantation 看 miracleParamChange；⑤ triggerOnWepType（出手武器类别）、triggerAttachedWeapon（只对带词条的那把武器）、spAttribute（附加属性负载，只对被附加的武器）、atkAttribute、stateInfo=197（突刺反击）；⑥ magicSubCategoryChange1..3（命中任一即可）对照 attackIndex 里各类输出的实测子类别：全部命中→yes、全不命中→no、部分→conditional（matchShare＝战技／法术按条目、其余按 AtkParam 行的命中比例，requires.subCategoriesAny 给出需要的子类别，页面用 attackIndex.skills／spells 对所选条目逐段判定）。取最严的一关。**requires 的键**：hand（1 右手／2 左手）、attackWeaponTypes（出手武器 wepType）、attachedWeaponOnly、imbuedWeaponOnly、physicalType、attackContexts、subCategoriesAny。**推断与未实测**：throw（致命一击）对 throwAttackParamChange=0 的武器增益判 yes 是推断，**而且与 Paramdex 的字面说明相反**：Paramdex 对 throwAttackParamChange 的说明是『Set whether or not it is effective against throwing attacks』（与 magParamChange 同一写法），按字面 0＝不作用于致命一击；magParamChange=0 本数据集确实判 no，throw 却反着读成『1＝只作用于致命一击、0＝通用』。依据：带无条件伤害倍率且 throw=1 的 buff 只有 10 条（1694、1704、1711、1713、320900、7040200、7040201、8130000、8130001、8130002），全是『强化致命一击』类或专门修正致命一击的行（stateInfo=367 或行名 Critical／Throw），没有一条是通用增益——若 0 才是『不作用于致命一击』，所有通用增益都会漏掉致命一击、而只作用于致命一击的行反而写成 1，与这批行的用途对不上；反证是战技『决心』1691（右手 ×1.6，throw=0）另配 1694（throw=1，×0.75『Throw Damage Adjust』）专门压低致命一击，说明 throw=0 的增益本来就作用于致命一击、throw=1 的行只作用于致命一击；wepParamChange=3 判『不作用于武器攻击』的依据是它只出现在『强化魔法／祷告』类（magParamChange 或 miracleParamChange=1）与命中负载上。appliesTo 与 activation 正交：activation 回答『这份 buff 在不在身上』，appliesTo 回答『在身上时哪类输出吃得到』。",
   "weaponAffix": "**v6 新增**：局内武器词条（sourceSlot=weaponAffix）带 `weaponAffixIds`（AttachEffectParam id）、`weaponAffixRoles`（affix 普通词条／curse 负面诅咒／blessing 武器赐福／fixed 某类武器固定带的词条）、`weaponAffixDeepOnly`（只在深夜池出现）与 `scope.rollableWeaponTypes`（能出现在哪些 wepType 上，常规∪深夜）。按词条（而不是按 SpEffect）列出的**有增伤 buff 的词条清单**在顶层 `weaponAffixes`（normalWepTypes／deepWepTypes 分开给）：只收能对应到 buffs[] 里某条 buff 的 AttachEffect id（本版本 146 个）；可掉落武器的池里一共有 310 个带权重的 AttachEffect id（slotRules.weaponAffix.evidence.distinctAttachEffectIdsInReachablePools，含诅咒、恢复、减伤、攻击时释放X等不改输出的词条），不在本数据集范围内的请查词条库。池的概览在 `weaponAffixPools`。武器类别中文名见 enums.wepType（取自 CL_MenuText 60010–60175）。组装规则见 slotRules.weaponAffix／slotRules.modes；深夜诅咒武器每把最多 1 条**正面的**深夜专属词条（`weaponAffixDeepOnlyPositive`=true，slotRules.weaponAffix.deepOnlyPerWeaponMax／deepOnlyCapField）。`weaponAffixDeepOnly` 的口径是『只在深夜池出现』，诅咒（weaponAffixRoles 含 curse）也只出现在深夜，所以同样为 true——**上限只数 weaponAffixDeepOnlyPositive**，诅咒另按每把 1 条（slotRules.weaponAffix.deepCursePerWeapon）算，6 条诅咒＋6 条深夜专属正面词条是合法组合。evidence：深夜专属 AttachEffect id 共 96 个，正面 52 个（deepOnlyPositiveAttachEffectIds）、诅咒 44 个（deepOnlyCurseAttachEffectIds）。同一把武器的两条正面词条能否相同：见 slotRules.weaponAffix.duplicateWithinWeapon（参数表里查不到，按未知处理）。",
-  "relicAffix": "**v6 新增**：遗物词条（sourceSlot=relicAffix）带 `relicAffixes[]`：attachEffectId；catalogEffectId（=attachEffectId，且保证在 data/nightreign-affixes-v1.03.4.json 的 affixes 里，否则为 null）；catalog（\"affixes\"／\"extraAffixes\"——后者是只出现在固定词条遗物上的特殊词条，在 data/nightreign-relics-v1.03.4.json 的 extraAffixes 里）；isDeepRelicAffix、requiresCurse、isCurse（按 EquipParamAntique 的池实测：深夜池、与负面槽配对的深夜池、负面池 3000000）；compatibilityId（AttachEffectParam 原值，-1 不互斥）；inNormalRelicPools；fixedRelicOnly。self_check 保证与词条库的 requiresCurse／isCurse／compatibilityId 完全一致。官方固定词条遗物（名字相同、词条不同的算不同条目）在顶层 `fixedRelics`，页面可整件选入占一个遗物格。`requiresGoodsIds`（可缺）：这条遗物效果只在使用这些道具时才出现——7050301 是遗物词条 7050100『道具效用能扩及我方人物』把『勇者肉块』（GoodsName 1210）的效果分给队友的那一行，target=ally，sourceSlots=[relicAffix, consumable]，要同时选了遗物词条与道具才成立。",
+  "relicAffix": "**v6 新增**：遗物词条（sourceSlot=relicAffix）带 `relicAffixes[]`：attachEffectId；catalogEffectId（=attachEffectId，且保证在 data/nightreign-affixes-v1.03.4.json 的 affixes 里，否则为 null）；catalog（\"affixes\"／\"extraAffixes\"——后者是只出现在固定词条遗物上的特殊词条，在 data/nightreign-relics-v1.03.4.json 的 extraAffixes 里）；isDeepRelicAffix、requiresCurse、isCurse（按 EquipParamAntique 的池实测：深夜池、与负面槽配对的深夜池、负面池 3000000）；compatibilityId（AttachEffectParam 原值，-1 不互斥）；inNormalRelicPools；fixedRelicOnly。self_check 保证与词条库的 requiresCurse／isCurse／compatibilityId 完全一致。官方固定词条遗物（名字相同、词条不同的算不同条目）在顶层 `fixedRelics`，页面可整件选入占一个遗物格。`requiresGoodsIds`（可缺）：这条遗物效果只在使用这些道具时才出现——7050301 是遗物词条 7050100『道具效用能扩及我方人物』把『勇者肉块』（GoodsName 1210）的效果分给队友的那一行，target=ally，sourceSlots=[relicAffix, consumable]，要同时选了遗物词条与道具才成立。**v6 复核三轮**：relicAffixes[] 新增 `exclusivityId`（AttachEffectParam 原值，-1＝无）。compatibilityId 管『同一件遗物上能否并存』，exclusivityId 管『已装备的几件遗物之间亮不亮红色感叹号』（Smithbox 注释）。本版本带 buff 的词条里只有 100 一组：『出击时的武器，附加…』7 条（魔力／火／雷／圣／冻伤／中毒／出血），compatibilityId 同为 200，同一件遗物上只能有一条；分装在两件遗物上会亮感叹号，按参数推断只有一条生效（未实测）。它们各自的 4 档由词条自己的派发行按出击武器选一档，4 档共用一个 exclusiveKey（\"affix#<attachEffectId>\"，见 notes.affixVariant）；不同词条之间没有并键，页面同时选中两条同 exclusivityId 的词条时应提示，分组见 diagnostics.relicAffixExclusivityGroups。",
   "stackInput": "**v6 新增** `stackInput`（可缺）：需要用户填层数的叠层增益。mode=\"ladder\"＝叠层阶梯（与 stackLadder 同一批，第 n 层用 tierMultipliers[n-1]，各层互斥不可相乘）；mode=\"copies\"＝同一效果可多份共存（spCategory=10），N 层＝perStackMultiplier^N。paramMaxStacks＝参数表的层数上限（copies 为 null）；practicalMaxStacks＝一局实际能叠到的上限及其来源（practicalMaxSource 写明是实测还是用户反馈）；uiLabelMax＝游戏文本备好的『＋N』标签数。层数数的是什么，以游戏文本为准：8970000『赐福王的余威』的 descZh（descZhSource=PermanentBuffInfo#8970000）是『根据新发现的赐福数量，提升攻击力』——页面的输入框应提示『本局新发现的赐福数』，不是打倒的首领数。**阶梯之间**：7069001 封印监牢、7069201 黑夜入侵者、8988200 玛雷家的庇佑、8998000 复仇的庇佑同为 spCategory 204，但各自的 categoryPriority 不同（stacking.exclusiveKey 分别为 \"sp204@p11\"、\"sp204@p13\"、\"sp204@p5\"、\"sp204@p4\"），按 200 系列『同优先度才顶替』的规则彼此独立，可以同时填层数、结果相乘；同一阶梯内各层才互斥。旧 stacking.group 把四条都给成 \"sp204\"，页面若仍按 group 去重，用户同时填监牢与入侵者时只会算其中一条。这是按参数结构推断（204 的 12 条阶梯各占一个优先度），未实测，页面可在这四条同时启用时给个提示。",
-  "suggestedName": "**v6 新增** `suggestedNameZh`（可缺，只在 nameZh 为 null 时出现）＋`suggestedNameZhSource`（用到的游戏文本 ID 列表）＋`suggestedNameZhInferred`=true：没有任何自身游戏文本的脚本挂载行，用游戏文本拼出的建议显示名；displayNameZh 已改用它。它**不是**该 SpEffect 自己的文本，nameZh 仍保持 null。displayNameZh 的消歧限定词（倒数第二级）同样只用中文：行名的中文拼写，拼不全就落到『#spEffectId』（v6 复核：之前还有两级——累积阶梯的各档写『第N层』，行名没有档位时取所属词条的档位，[Weapon] 行只由永久强化授予时写『永久强化』；落到 #spEffectId 的条目与原因见 diagnostics.displayNameZhIdFallback／Note），self_check 保证 displayNameZh 里除 NPC／HP／FP 外没有拉丁字母（diagnostics.displayNameZhLatinResidue）。`descZhSource`（可缺）：descZh 不是来自 SpEffectInfo 时写明出处，本版本只有 PermanentBuffInfo#<PermanentBuffParam 行>。"
+  "suggestedName": "**v6 新增** `suggestedNameZh`（可缺，只在 nameZh 为 null 时出现）＋`suggestedNameZhSource`（用到的游戏文本 ID 列表）＋`suggestedNameZhInferred`=true：没有任何自身游戏文本的脚本挂载行，用游戏文本拼出的建议显示名；displayNameZh 已改用它。它**不是**该 SpEffect 自己的文本，nameZh 仍保持 null。displayNameZh 的消歧限定词（倒数第二级）同样只用中文：行名的中文拼写，拼不全就落到『#spEffectId』（v6 复核：之前还有两级——累积阶梯的各档写『第N层』，行名没有档位时取所属词条的档位，[Weapon] 行只由永久强化授予时写『永久强化』；落到 #spEffectId 的条目与原因见 diagnostics.displayNameZhIdFallback／Note），self_check 保证 displayNameZh 里除 NPC／HP／FP 外没有拉丁字母（diagnostics.displayNameZhLatinResidue）。`descZhSource`（可缺）：descZh 不是来自 SpEffectInfo 时写明出处，本版本只有 PermanentBuffInfo#<PermanentBuffParam 行>。（v6 复核三轮：行名是『Stack N』的叠层行写『第N层』而不是『档位N』，并带上所属词条名，如 7039900『出现异常状态量表时，能缓慢提升攻击力（第1层）』；accumulatorStages 的各阶段写『第N阶段』。）",
+  "accumulatorLadder": "**v6 复核新增** `accumulatorLadder`（可缺，出现在累积阶梯的**每一档**上，本版本 15 条）各键的口径：`key`＝这条阶梯共用的 exclusiveKey（与 stacking.exclusiveKey 相同）；`tier`＝本条是第几档（从 1 起）；`tiers`＝阶梯总档数，**含第 1 档**；`tierSpEffectIds`＝**全部各档**的 spEffectId（含第 1 档、含本条自己），按阈值升序，长度恒等于 tiers；`accumulatorSpEffectIds`＝与各档一一对应的累积器行（带 accumuOverFireId 的那一行）；`thresholds`＝各档的触发阈值（累积器的 accumuOverVal，单位是累积器自己的计数，连续攻击类随命中累积），升序；`shippedTierSpEffectIds`（复核三轮新增）＝tierSpEffectIds 里真正作为 buff 出现在 buffs[] 里的那些档。**与 stackLadder 的同名字段含义相反**：stackLadder.tierSpEffectIds 是『第 2 层起、不含第 1 层』，而且那些 id 不会出现在 buffs[] 里；accumulatorLadder.tierSpEffectIds 含第 1 档，各档本身就是 buff。例外是没有任何倍率的档不会成为 buff：遗物『连续攻击时，提升攻击力』7037604 的 tiers=4，但第 4 档 7037607 是 spCategory 120、持续 0 秒、没有倍率的行，不在 buffs[] 里，shippedTierSpEffectIds 只有 7037604–7037606 三档——页面显示层数时请用 shippedTierSpEffectIds，不要按 tiers 显示『共 4 层』。两者的区别：stackLadder 是存档叠层（saveCategory≠-1，打倒首领／监牢囚犯等一层层存起来，数据集只收第 1 层，页面让用户填层数）；accumulatorLadder 是局内累积（命中次数达到阈值依次触发下一档，各档都收录，页面让用户选能维持的档）。两者都是同一阶梯各档互斥，**各档绝不能相乘**。**互斥结论（参数推断，未实测）**：连续攻击类的各档落在 spCategory 120（Paramdex：Remove Previous），键都是 \"sp120\"，所以不止同一件物品的各档互斥，不同物品之间也互斥——道具（消耗品）『连刺破露滴』3558–3561、护符『米莉森的义手』312505–312508、护符『带翼剑徽章』320804–320807、遗物词条『连续攻击时，提升攻击力』7037604–7037606 这几件任取两件同时装备也只有一份生效（新触发的顶替旧的；它们的阈值都是 17／30／45／60，几乎同时触发），排名只算一份、默认取倍率最高的一档，页面同时选中时应提示。v6 之前的说明曾把『米莉森的义手＋带翼剑徽章』当成相乘的例子，以本条为准。",
+  "accumulatorStages": "**v6 复核三轮新增** `accumulatorStages`（可缺，本版本 3 条：武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』的 8885220／8885221／8885222）：累积器依次触发、但每一阶段经『行为→子弹』才把 buff 交给玩家的阶段链。链路：累积器 8885201–8885203（stateInfo=307，阈值 4000000／9000000／15000000）→ 8885210–8885212（behaviorId 900010020–900010022，BehaviorParam_PC refType=1＝子弹）→ Bullet 98885200–98885202 的 spEffectId0 → 8885220–8885222。各键：`stage`／`stages`（本条是第几阶段／共几阶段）、`stageSpEffectIds`（各阶段的 buff，按阈值升序，含本条）、`accumulatorSpEffectIds`、`thresholds`、`behaviorSpEffectIds`、`behaviorParamIds`、`bulletIds`、`durations`（各阶段 buff 的持续秒数）、`expiryAligned`（阈值差与持续时间差成同一比例时给出：unitsPerSecond＝推出的每秒累积量，commonEndSeconds＝各阶段一起结束的时刻；不成比例时为 null）、`coexist`=true。**与 accumulatorLadder 相反，这里的各阶段是同时存在、逐段相乘的**：三条都是 ×1.1（另各带 dexterityCancelSystemOnlyAddDexterity=30 的咏唱加速），spCategory=20 各自一个 ID；持续时间 28／25.5／22.5 秒，阈值差 5M／6M 与持续时间差 2.5／3 秒同为每秒 2000000，即三段在开始防御后第 30 秒一起结束——这是『叠上去一起到期』的设计，游戏文本 AttachEffectInfo#8885200 也写『能阶段性提升』。所以三条保持各自的 exclusiveKey：维持到第 n 阶段时 ×1.1^n（第 3 阶段 ×1.331）。页面应按阶段勾选：勾第 n 阶段时第 1..n-1 阶段必然也在（依次达到）。累积量随防御时间线性增长是推断，阶段叠乘未实测。",
+  "affixVariant": "**v6 复核三轮新增** `affixVariant`（可缺，本版本 28 条）与 exclusiveScope=\"affixVariant\"：同一条词条下互为替代的档位，共用键 \"affix#<attachEffectId>\"，**同键只取一档，绝不能相乘**。本版本只有『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条，每条 4 档：词条（AttachEffectParam 7120000 等）只有一个被动 7120000『Apply State Info』（stateInfo=2101，全表只有这 7 行），4 档 7120001–7120004 等没有任何参数列指向，只能由这个派发行按条件选一档；词条库说明『根据武器类型降低物理攻击力30/40/50/60，并增加魔力属性攻击力33/44/55/66』——按出击武器的类别取一档。所以同一词条的 4 档不可能同时生效；它们不是可以分装在不同遗物上的独立词条（能装备的只有词条本身，档位由武器决定）；同一词条装在两件遗物上时，词条库叠加性是『不可叠加』，同键也只算一份。冻伤／中毒／出血的 4 档逐列相同（×0.85），只差指向的负载行。各键：`key`；`attachEffectId`；`variant`／`variants`（第几档／共几档，按 spEffectId 升序）；`variantSpEffectIds`；`dispatcherSpEffectIds`／`dispatcherStateInfo`（词条自己的被动行及其 stateInfo）；`differingRateKeys`（各档数值不同的倍率键，逐列相同的为空）；`differingChainFields`（各档不同的指向列）。页面：让用户按出击武器选一档（不知道时显示档位 1–4 的区间），不要把 4 档都乘进去；fixedRelics[].spEffectIds 仍列出全部 4 档（如『细腻的水滴情景』[7120001,7120002,7120003,7120004]），整件选入时同样按键去重。识别条件与没合并的近似组见 diagnostics.affixVariantScan(+Note)。",
+  "selfAllyPair": "**v6 复核三轮新增** `selfAllyPair`（可缺，本版本 6 条＝3 对）：Paramdex 行名以『- Self』／『- Allies』成对的战技增益，`role`（self／ally，与 target 一致）＋`counterpartSpEffectId`（另一行）。**算施放者自己的伤害时，不计入同一战技的 role=ally 那一行**——共享圣律 1876（自身 ×1.1）与 1877（队友 ×1.075）：队友那一行由 AtkParam_Pc 300000820（friendlyTarget=1、selfTarget=0）交给命中的队友，施放者自己不会被命中；若只按 notes.ranking 第①步同时保留 self 与 ally 再相乘，施放者会被错算成 ×1.1825。role=ally 的行只在『队友施放、落到自己身上』时计入；两名队友都施放时，自己的 1876 与队友给的 1877 确实能同时存在（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。投递证据与哀悼墓碑 1835／1836 行名与投递对调的说明见 diagnostics.selfAllyPairs(+Note)。"
  },
  "rateFieldGroups": [
   {
@@ -2154,7 +2158,8 @@
    "perSpEffect": "只与自己（同一 spEffectId）互斥：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown。不同 ID 永不互相顶替；同一 ID 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。键＝\"sp<spCategory>#<spEffectId>\"（与 group 相同）",
    "category": "同 spCategory 互斥（removePrevious 100–199、applyHighest 1000–1999、applyFirst 10000 以上）：键＝\"sp<spCategory>\"。例：162＝右手武器附魔（油脂、武器附魔战技、附魔祷告只能留一个），151＝『火焰啊，赐予我力量！』与狂热香药、勇者肉块，160＝黄金树立誓与振奋香、归于麾下",
    "categoryPriority": "同 spCategory 且同 categoryPriority 才互斥（200–299 系列）：键＝\"sp<spCategory>@p<categoryPriority>\"。同一阶梯／同一道具的各档共用一个优先度（封印监牢 7069001–7069010 都是 11），不同效果各有自己的优先度（黑夜入侵者 13、玛雷家的庇佑 5、复仇的庇佑 4），因此彼此独立",
-   "accumulatorLadder": "累积阶梯（accumuOverFireId 逐档触发的连续攻击类）：各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 sp120），否则取 \"ladder#<第 1 档 spEffectId>\"。最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），按 ID 算会把两档相乘"
+   "accumulatorLadder": "累积阶梯（accumuOverFireId 逐档触发的连续攻击类）：各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 sp120），否则取 \"ladder#<第 1 档 spEffectId>\"。最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），按 ID 算会把两档相乘。**键 \"sp120\" 同时意味着不同物品之间互斥**：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606 都落在 spCategory 120（Paramdex：Remove Previous，新的顶替旧的），任取两件同时装备也只有一份生效，排名只算一份（默认取倍率最高的一档），页面同时选中时应提示。这是按参数推断的，未实测；v6 之前的说明曾把『米莉森的义手＋带翼剑徽章』当作相乘的例子，以本条为准。字段口径见 notes.accumulatorLadder",
+   "affixVariant": "同一条词条（AttachEffectParam）下互为替代的档位：键＝\"affix#<attachEffectId>\"，同键只取一档。识别条件（全部满足，见 buffs[].affixVariant 与 diagnostics.affixVariantScan）：只归属这一条词条；词条自己的 passiveSpEffectId_1..3 都不是 buff（只是派发行，如 stateInfo=2101『Apply State Info』）；整张 SpEffectParam 表没有任何指向列（replace／cycle／atkOccurrence／accumuOverFire…）指向这些行，只能由派发行按条件选一档；行名去掉『Potency N』后同干、倍率键相同，除行名、倍率数值与指向列外逐列相同；原来都是按 ID 的键（perSpEffect）。本版本 7 条『出击时的武器，附加…』词条 × 4 档＝28 条"
   },
   "stackInputMode": {
    "ladder": "叠层阶梯：每层是一条独立的 SpEffect，同层互斥，取当前层",
@@ -2316,7 +2321,7 @@
   }
  ],
  "stackingRules": {
-  "zh": "本数据集给出的叠加判定，是依据参数结构（SpEffectParam 的 spCategory / categoryPriority / saveCategory / stateInfo 四个字段）推断出来的，未经木桩全面实测，请当作「参数层面的默认规则」而不是最终结论。\n\n1. spCategory 是主判定字段，决定同类效果之间怎么处理：\n   - 0（none）：不参与互斥，想挂多少份就挂多少份；\n   - 10（stackSelf）：同一个效果可以与自己叠加（遗物词条里的「提升物理攻击力」等就属于这一类，因此带同名词条的多枚遗物是各自结算再相乘的）；\n   - 20（resetOnApply）：**同一个 SpEffect** 重复取得时只刷新持续时间、不叠第二份；不同 ID 之间不互斥。\n     Paramdex NR 的枚举就叫 Reset on Apply，说的是同一效果重复获得；遗物词条、护符的被动绝大多数是这一类\n     （SpEffectParam 里 1310 行；AttachEffectParam passiveSpEffectId_1..3 的引用里有 1202 处指向 20 类），若跨 ID 互斥，装两条遗物词条就会互相顶掉。\n     词条库的实测叠加性与此一致：『不可叠加』（同一词条装两次不叠）有 126 条是 20，\n     『不同级别可叠加』（＋1 与＋2 可以同时生效）也有 7 条是 20（词条 6005600／6005601…，对应 buff 7005601／7005602）；\n     固定遗物『辽阔的光耀情景』一件就带 7030602、7034402 两条 20 类增益。\n     v6 之前 stacking.group 把 20 按类别整组合并，77 条互不相干的增益只剩一条，已改为按 ID；\n   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；\n     200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示\n     整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个\n     （带火破露滴 511028 与档位2 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；\n     204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、\n     黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、\n     遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。\n     Paramdex 的 SP_EFFECT_SPCATEGORY 枚举只标注到 204，但本作实际还用了 205（学者绝招「共鸣」）与 206\n     （遗物词条「异常状态量表逐层提升攻击力」1～10 层、三级投掷道具的减防叠层），整个 200 系列都是\n     Remove Previous 语义，所以本表按区间归类：那十层「逐层提升攻击力」彼此互斥，同一时刻只生效当前层，\n     排名时应按玩家能稳定维持的层数取一条，不能把 10 层相乘；\n   - 1000～1999（applyHighest）：同类互斥，取 categoryPriority 更优（数值小）的那一份；枚举只标到 1006，\n     本作还用了 1007（处刑人「诅咒之剑」）与 1008（濒死），同属该区间；\n   - 10000 以上（applyFirst）：同类互斥，先生效的保留，后来的被忽略。\n   本数据集把每个 buff 的 spCategory 数值、以及它落在哪一档（stacking.spCategoryBehavior）都一并输出；\n   enums.spCategoryBehavior 末尾还有一条 min/max 为 null 的 \"unknown\" 兜底项，用于万一出现区间外的新值\n   （本版本数据中不会出现，见 diagnostics.observedSpCategoryBehaviors）。\n\n2. 排名时的建议做法：**按 stacking.exclusiveKey 分组**（v6 新增，取值规则见 enums.exclusiveScope）：\n   - exclusiveScope=perSpEffect：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown，\n     键＝\"sp<spCategory>#<spEffectId>\"，只和自己同键；\n   - exclusiveScope=category：removePrevious 100～199、applyHighest、applyFirst，键＝\"sp<spCategory>\"；\n   - exclusiveScope=categoryPriority：removePrevious 200～299，键＝\"sp<spCategory>@p<categoryPriority>\"；\n   - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），\n     各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 \"sp120\"），否则 \"ladder#<第 1 档 id>\"。\n     最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），\n     按 ID 算会把同一护符的两档相乘。\n   同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；\n   不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。\n   stacking.group 保留旧口径（\"sp<spCategory>#<spEffectId>\" 或 \"sp<spCategory>\"，只按类别、不看优先度与阶梯），\n   v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。\n   正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；\n   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010。\n   反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；\n   『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；\n   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间。\n   这些都写进了 self_check。\n\n3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。\n\n4. categoryPriority 是同一 spCategory 内的优先度（Paramdex 字段说明为「同一カテゴリ内での優先度（低い方が優先）」，即数值小的优先）；saveCategory 是存档槽位，-1 表示不写入存档，正值表示该 buff 占用某个可保存的槽（多用于永久强化）。\n\n4b. rates 不能一律相乘：先看 rateFields[key].valueKind。multiplier 才是乘数；flat 是点数加算（先加进攻击力再乘倍率）；\n   flag 只是开关；special 组（currentHealthAttackRate 随血量的加成系数、restageAttackRate 女爵「再演」复制那一份的伤害占比）\n   语义各自独立，**一律不得参与乘算或加权汇总**——把 restageAttackRate=0.6 当乘数会把「提升技艺伤害」算成 -40%，排名完全反向。\n   countsAsDamage=true 的组（damage／attackPower／attackPowerFlat）才是无条件的血量伤害；\n   conditionalDamage=true 的（weakness 特攻、critical 致命一击、economy 里的 bowDistRate）要先满足条件才成立，\n   不得无条件乘进通用排名（『纠死圣律』weakDmgRateB=10 只对不死类敌人生效）；\n   两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）都不进伤害乘积，只能单独展示。\n\n5. 不同层之间的关系：xxxAttackPowerRate（攻击力倍率，减算防御前）与 xxxAttackRate（最终伤害倍率，减算防御后）属于两个不同的计算层，两者相乘；同一层内不同属性（物理／魔力／火／雷／圣）各自只作用于对应属性的伤害分量；物理攻击类型倍率（slash/blow/thrust/neutral）与 physics 倍率同时生效、相乘。\n\n6. scope 字段（magicSubCategoryChange1..3、magParamChange、miracleParamChange、shamanParamChange、throwAttackParamChange、wepParamChange、atkAttribute、spAttribute）是这些倍率的生效范围。本作没有独立的「战技伤害 +x%」字段——所谓「强化战技／跳跃攻击／防御反击／绝招」都是普通的 AttackRate 字段加上 magicSubCategoryChange 的子类过滤（112 战技攻击、102 跳跃攻击、103 防御反击、110 蓄力法术、111 蓄力战技、122 角色技艺、123 绝招、105 远程武器攻击等）。页面按战技伤害构成加权时，必须先用 scope 判断这条 buff 是否作用于该攻击。"
+  "zh": "本数据集给出的叠加判定，是依据参数结构（SpEffectParam 的 spCategory / categoryPriority / saveCategory / stateInfo 四个字段）推断出来的，未经木桩全面实测，请当作「参数层面的默认规则」而不是最终结论。\n\n1. spCategory 是主判定字段，决定同类效果之间怎么处理：\n   - 0（none）：不参与互斥，想挂多少份就挂多少份；\n   - 10（stackSelf）：同一个效果可以与自己叠加（遗物词条里的「提升物理攻击力」等就属于这一类，因此带同名词条的多枚遗物是各自结算再相乘的）；\n   - 20（resetOnApply）：**同一个 SpEffect** 重复取得时只刷新持续时间、不叠第二份；不同 ID 之间不互斥。\n     Paramdex NR 的枚举就叫 Reset on Apply，说的是同一效果重复获得；遗物词条、护符的被动绝大多数是这一类\n     （SpEffectParam 里 1310 行；AttachEffectParam passiveSpEffectId_1..3 的引用里有 1202 处指向 20 类），若跨 ID 互斥，装两条遗物词条就会互相顶掉。\n     词条库的实测叠加性与此一致：『不可叠加』（同一词条装两次不叠）有 126 条是 20，\n     『不同级别可叠加』（＋1 与＋2 可以同时生效）也有 7 条是 20（词条 6005600／6005601…，对应 buff 7005601／7005602）；\n     固定遗物『辽阔的光耀情景』一件就带 7030602、7034402 两条 20 类增益。\n     v6 之前 stacking.group 把 20 按类别整组合并，77 条互不相干的增益只剩一条，已改为按 ID；\n   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；\n     200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示\n     整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个\n     （带火破露滴 511028 与档位2 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；\n     204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、\n     黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、\n     遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。\n     Paramdex 的 SP_EFFECT_SPCATEGORY 枚举只标注到 204，但本作实际还用了 205（学者绝招「共鸣」）与 206\n     （遗物词条「异常状态量表逐层提升攻击力」1～10 层、三级投掷道具的减防叠层），整个 200 系列都是\n     Remove Previous 语义，所以本表按区间归类：那十层「逐层提升攻击力」彼此互斥，同一时刻只生效当前层，\n     排名时应按玩家能稳定维持的层数取一条，不能把 10 层相乘；\n   - 1000～1999（applyHighest）：同类互斥，取 categoryPriority 更优（数值小）的那一份；枚举只标到 1006，\n     本作还用了 1007（处刑人「诅咒之剑」）与 1008（濒死），同属该区间；\n   - 10000 以上（applyFirst）：同类互斥，先生效的保留，后来的被忽略。\n   本数据集把每个 buff 的 spCategory 数值、以及它落在哪一档（stacking.spCategoryBehavior）都一并输出；\n   enums.spCategoryBehavior 末尾还有一条 min/max 为 null 的 \"unknown\" 兜底项，用于万一出现区间外的新值\n   （本版本数据中不会出现，见 diagnostics.observedSpCategoryBehaviors）。\n\n2. 排名时的建议做法：**按 stacking.exclusiveKey 分组**（v6 新增，取值规则见 enums.exclusiveScope）：\n   - exclusiveScope=perSpEffect：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown，\n     键＝\"sp<spCategory>#<spEffectId>\"，只和自己同键；\n   - exclusiveScope=category：removePrevious 100～199、applyHighest、applyFirst，键＝\"sp<spCategory>\"；\n   - exclusiveScope=categoryPriority：removePrevious 200～299，键＝\"sp<spCategory>@p<categoryPriority>\"；\n   - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），\n     各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 \"sp120\"），否则 \"ladder#<第 1 档 id>\"。\n     最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），\n     按 ID 算会把同一护符的两档相乘。键 \"sp120\" 同时让连刺破露滴、米莉森的义手、带翼剑徽章、遗物『连续攻击时，提升攻击力』\n     这几件彼此互斥（同时装备只有一份生效，参数推断、未实测，见 notes.accumulatorLadder）；\n   - exclusiveScope=affixVariant（v6 复核三轮）：同一条词条下互为替代的档位（buffs[].affixVariant），键＝\"affix#<attachEffectId>\"。\n     『出击时的武器，附加…』7 条遗物词条各有 4 档（7120001–7120004 等），由词条自己的派发行（stateInfo=2101）按出击武器选一档，\n     按 ID 算会把物理 −30／−40／−50／−60 与属性 +33／+44／+55／+66 全加起来、把 ×0.85 乘成 ×0.52；\n   - 反过来，accumulatorStages（8885220–8885222，武器词条『维持防御时…』的三个阶段）各自一键，逐段相乘（notes.accumulatorStages）；\n     selfAllyPair 的 Self／Allies 两行各自一键，但算施放者自己时只计 Self 行（notes.selfAllyPair）。\n   同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；\n   不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。\n   stacking.group 保留旧口径（\"sp<spCategory>#<spEffectId>\" 或 \"sp<spCategory>\"，只按类别、不看优先度与阶梯），\n   v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。\n   正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；\n   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；\n   『出击时的武器，附加魔力属性攻击力』四档 7120001–7120004、『…附加异常状态冻伤』四档 7120401–7120404。\n   反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；\n   『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；\n   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间；\n   『出击时的武器，附加…』7 条词条彼此之间（各自一键，同 exclusivityId=100 只作提示）；8885220／8885221／8885222 三个阶段；共享圣律 1876／1877。\n   这些都写进了 self_check。\n\n3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。\n\n4. categoryPriority 是同一 spCategory 内的优先度（Paramdex 字段说明为「同一カテゴリ内での優先度（低い方が優先）」，即数值小的优先）；saveCategory 是存档槽位，-1 表示不写入存档，正值表示该 buff 占用某个可保存的槽（多用于永久强化）。\n\n4b. rates 不能一律相乘：先看 rateFields[key].valueKind。multiplier 才是乘数；flat 是点数加算（先加进攻击力再乘倍率）；\n   flag 只是开关；special 组（currentHealthAttackRate 随血量的加成系数、restageAttackRate 女爵「再演」复制那一份的伤害占比）\n   语义各自独立，**一律不得参与乘算或加权汇总**——把 restageAttackRate=0.6 当乘数会把「提升技艺伤害」算成 -40%，排名完全反向。\n   countsAsDamage=true 的组（damage／attackPower／attackPowerFlat）才是无条件的血量伤害；\n   conditionalDamage=true 的（weakness 特攻、critical 致命一击、economy 里的 bowDistRate）要先满足条件才成立，\n   不得无条件乘进通用排名（『纠死圣律』weakDmgRateB=10 只对不死类敌人生效）；\n   两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）都不进伤害乘积，只能单独展示。\n\n5. 不同层之间的关系：xxxAttackPowerRate（攻击力倍率，减算防御前）与 xxxAttackRate（最终伤害倍率，减算防御后）属于两个不同的计算层，两者相乘；同一层内不同属性（物理／魔力／火／雷／圣）各自只作用于对应属性的伤害分量；物理攻击类型倍率（slash/blow/thrust/neutral）与 physics 倍率同时生效、相乘。\n\n6. scope 字段（magicSubCategoryChange1..3、magParamChange、miracleParamChange、shamanParamChange、throwAttackParamChange、wepParamChange、atkAttribute、spAttribute）是这些倍率的生效范围。本作没有独立的「战技伤害 +x%」字段——所谓「强化战技／跳跃攻击／防御反击／绝招」都是普通的 AttackRate 字段加上 magicSubCategoryChange 的子类过滤（112 战技攻击、102 跳跃攻击、103 防御反击、110 蓄力法术、111 蓄力战技、122 角色技艺、123 绝招、105 远程武器攻击等）。页面按战技伤害构成加权时，必须先用 scope 判断这条 buff 是否作用于该攻击。"
  },
  "counts": {
   "buffs": 874,
@@ -2462,15 +2467,20 @@
   "buffsWithRequiresGoodsIds": 1,
   "buffsWithDescZhSource": 9,
   "buffsByExclusiveScope": {
-   "perSpEffect": 428,
+   "perSpEffect": 400,
    "category": 378,
    "categoryPriority": 53,
-   "accumulatorLadder": 15
+   "accumulatorLadder": 15,
+   "affixVariant": 28
   },
-  "exclusiveKeys": 463,
-  "exclusiveKeysShared": 27,
+  "exclusiveKeys": 442,
+  "exclusiveKeysShared": 34,
   "buffsWithAccumulatorLadder": 15,
-  "buffsWithWeaponAffixDeepOnlyPositive": 30
+  "buffsWithWeaponAffixDeepOnlyPositive": 30,
+  "buffsWithAffixVariant": 28,
+  "affixVariantGroups": 7,
+  "buffsWithAccumulatorStages": 3,
+  "buffsWithSelfAllyPair": 6
  },
  "diagnostics": {
   "buffsWithoutChineseName": 80,
@@ -5223,6 +5233,413 @@
   },
   "exclusiveKeyEvidenceNote": "v6（复核）stacking.exclusiveKey 的依据，全部由生成器从参数表实测：spCategory20Rows＝SpEffectParam 里 spCategory=20 的行数；attachEffectPassivesBySpCategory＝AttachEffectParam passiveSpEffectId_1..3 指向的 SpEffect 按 spCategory 计数（遗物词条与护符的被动绝大多数是 20，若 20 跨 ID 互斥，两条遗物词条就会互相顶掉）；affixCatalogSuperposabilityOfSp20＝被动全是 20 的词条在词条库里的叠加性（『不可叠加』＝同一词条装两次不叠，『不同级别可叠加』＝＋1 与＋2 这两个不同 ID 能同时生效）；category200sPriorities＝200 系列每个类别的行数与不同 categoryPriority 数；sp204Ladders＝204 按 categoryPriority 分组，每组正好是一段连续 ID 的存档阶梯（sp204LaddersAreIdBlocks=true；优先度 3 的一组中间隔了 5 个别类行），即一条阶梯一个优先度。self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴两档、同一护符四档、封印监牢十层）做正例，用 77 条 spCategory=20 里明显应共存的组合（护符＋遗物＋角色被动、两条『装备三把以上X』、＋1／＋2）与四条 204 阶梯彼此之间做反例。",
   "accumulatorLadderConflicts": [],
+  "affixVariantScan": {
+   "groups": [
+    {
+     "attachEffectId": 7120000,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120001,
+      7120002,
+      7120003,
+      7120004
+     ],
+     "key": "affix#7120000",
+     "dispatcherSpEffectIds": [
+      7120000
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [
+      "magicAttackPower",
+      "physicsAttackPower"
+     ],
+     "differingChainFields": []
+    },
+    {
+     "attachEffectId": 7120100,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120101,
+      7120102,
+      7120103,
+      7120104
+     ],
+     "key": "affix#7120100",
+     "dispatcherSpEffectIds": [
+      7120100
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [
+      "fireAttackPower",
+      "physicsAttackPower"
+     ],
+     "differingChainFields": []
+    },
+    {
+     "attachEffectId": 7120200,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120201,
+      7120202,
+      7120203,
+      7120204
+     ],
+     "key": "affix#7120200",
+     "dispatcherSpEffectIds": [
+      7120200
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [
+      "physicsAttackPower",
+      "thunderAttackPower"
+     ],
+     "differingChainFields": []
+    },
+    {
+     "attachEffectId": 7120300,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120301,
+      7120302,
+      7120303,
+      7120304
+     ],
+     "key": "affix#7120300",
+     "dispatcherSpEffectIds": [
+      7120300
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [
+      "darkAttackPower",
+      "physicsAttackPower"
+     ],
+     "differingChainFields": []
+    },
+    {
+     "attachEffectId": 7120400,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120401,
+      7120402,
+      7120403,
+      7120404
+     ],
+     "key": "affix#7120400",
+     "dispatcherSpEffectIds": [
+      7120400
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [],
+     "differingChainFields": [
+      "atkOccurrenceSpEffectId"
+     ]
+    },
+    {
+     "attachEffectId": 7120500,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120501,
+      7120502,
+      7120503,
+      7120504
+     ],
+     "key": "affix#7120500",
+     "dispatcherSpEffectIds": [
+      7120500
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [],
+     "differingChainFields": [
+      "atkOccurrenceSpEffectId"
+     ]
+    },
+    {
+     "attachEffectId": 7120600,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120601,
+      7120602,
+      7120603,
+      7120604
+     ],
+     "key": "affix#7120600",
+     "dispatcherSpEffectIds": [
+      7120600
+     ],
+     "dispatcherStateInfo": [
+      2101
+     ],
+     "differingRateKeys": [],
+     "differingChainFields": [
+      "atkOccurrenceSpEffectId"
+     ]
+    }
+   ],
+   "rejected": [
+    {
+     "attachEffectId": 6500000,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7500001,
+      7500002
+     ],
+     "reason": "alreadySharedKey"
+    },
+    {
+     "attachEffectId": 6500800,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7500801,
+      7500802,
+      7500803
+     ],
+     "reason": "referencedByChain"
+    },
+    {
+     "attachEffectId": 6610700,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7610700,
+      7610701,
+      7610702
+     ],
+     "reason": "ownerPassiveIsBuff"
+    },
+    {
+     "attachEffectId": 7037600,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7037604,
+      7037605,
+      7037606
+     ],
+     "reason": "referencedByChain"
+    },
+    {
+     "attachEffectId": 7037700,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7039900,
+      7039901,
+      7039902,
+      7039903,
+      7039904,
+      7039905,
+      7039906,
+      7039907,
+      7039908,
+      7039909
+     ],
+     "reason": "alreadySharedKey"
+    },
+    {
+     "attachEffectId": 7120400,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120405,
+      7120406,
+      7120407,
+      7120408
+     ],
+     "reason": "referencedByChain"
+    },
+    {
+     "attachEffectId": 7120500,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120505,
+      7120506,
+      7120507,
+      7120508
+     ],
+     "reason": "referencedByChain"
+    },
+    {
+     "attachEffectId": 7120600,
+     "slot": "relicAffix",
+     "spEffectIds": [
+      7120605,
+      7120606,
+      7120607,
+      7120608
+     ],
+     "reason": "referencedByChain"
+    },
+    {
+     "attachEffectId": 8690000,
+     "slot": "weaponAffix",
+     "spEffectIds": [
+      8690001,
+      8690002
+     ],
+     "reason": "alreadySharedKey"
+    },
+    {
+     "attachEffectId": 8690200,
+     "slot": "weaponAffix",
+     "spEffectIds": [
+      8690201,
+      8690202
+     ],
+     "reason": "alreadySharedKey"
+    },
+    {
+     "attachEffectId": 8690300,
+     "slot": "weaponAffix",
+     "spEffectIds": [
+      8690301,
+      8690302
+     ],
+     "reason": "alreadySharedKey"
+    },
+    {
+     "attachEffectId": 8885200,
+     "slot": "weaponAffix",
+     "spEffectIds": [
+      8885220,
+      8885221,
+      8885222
+     ],
+     "differingColumns": [
+      "effectEndurance",
+      "vfxId"
+     ],
+     "reason": "columnsDiffer"
+    }
+   ]
+  },
+  "affixVariantScanNote": "v6（复核三轮）stacking.exclusiveScope=affixVariant 的识别过程：把只归属一条词条（relicAffixes／weaponAffixIds 恰好一个）的 buff 按『行名去掉 Potency／Stack／末尾编号后的词干＋倍率键集合』分组，两条以上的组逐条检查——groups 是全部满足条件、已合并成 \"affix#<attachEffectId>\" 的组（dispatcherSpEffectIds／dispatcherStateInfo 是词条自己的passiveSpEffectId 及其 stateInfo，differingRateKeys 是各档数值不同的倍率键，differingChainFields 是各档不同的指向列）；rejected 是没合并的组及原因：ownerPassiveIsBuff＝词条自己的 passiveSpEffectId 就是 buff（词条直接给这一档，其余同干行不是它派发的，如 6610700『减少专注值消耗』只引用档位1 7610700，7610701／7610702 在参数里没有任何引用）；referencedByChain＝有指向列指向这些行（替换、周期、命中、击杀、累积、解析等级…），各行由不同事件分别触发，不是同一派发行的替代档；alreadySharedKey＝原来就共用类别键（removePrevious／applyFirst…），已经互斥，不需要再合并；columnsDiffer＝除行名、倍率与指向列外还有列不同（持续时间、特效、阵营位…），不是单纯的数值档位。本版本合并的全是『出击时的武器，附加…』7 条词条（派发行 stateInfo=2101，全表只有这 7 行用它）：魔力／火／雷／圣 4 条的 4 档数值是物理 −30／−40／−50／−60、属性 +33／+44／+55／+66（词条库说明『根据武器类型降低物理攻击力30/40/50/60…』，即按出击武器的类别取一档），冻伤／中毒／出血 3 条的 4 档逐列相同（×0.85），只差 atkOccurrenceSpEffectId 指向的负载行，负载行本来就共用 applyFirst 类别键。rejected 里值得一看的：8885220–8885222（columnsDiffer：持续时间不同，是同时存在的三个阶段，见 buffs[].accumulatorStages）；7500801–7500803（referencedByChain：学者遗物由 analyzeSelfLevel1..3_effectId 分别指向，三档数值都是 ×0.85，是否能同时存在参数里看不出来，保持各自的键）；7610700–7610702（ownerPassiveIsBuff：词条 6610700 只引用档位1，7610701／7610702 在参数里没有任何引用，是按行名归到这条词条的）。",
+  "selfAllyPairs": [
+   {
+    "paramStem": "Last Rites - Anti-Undead/Damage Buff",
+    "self": {
+     "spEffectId": 1835,
+     "target": "self",
+     "exclusiveKey": "sp152",
+     "cycleCarrierSpEffectIds": [],
+     "friendlyHitAtkIds": [
+      303401800
+     ]
+    },
+    "ally": {
+     "spEffectId": 1836,
+     "target": "ally",
+     "exclusiveKey": "sp160",
+     "cycleCarrierSpEffectIds": [],
+     "friendlyHitAtkIds": []
+    },
+    "deliveryMatchesRowName": false
+   },
+   {
+    "paramStem": "Shared Order - Anti-Undead Buff",
+    "self": {
+     "spEffectId": 1870,
+     "target": "self",
+     "exclusiveKey": "sp160",
+     "cycleCarrierSpEffectIds": [],
+     "friendlyHitAtkIds": []
+    },
+    "ally": {
+     "spEffectId": 1871,
+     "target": "ally",
+     "exclusiveKey": "sp152",
+     "cycleCarrierSpEffectIds": [],
+     "friendlyHitAtkIds": [
+      300000820
+     ]
+    },
+    "deliveryMatchesRowName": true
+   },
+   {
+    "paramStem": "Shared Order - Damage Buff",
+    "self": {
+     "spEffectId": 1876,
+     "target": "self",
+     "exclusiveKey": "sp20#1876",
+     "cycleCarrierSpEffectIds": [
+      1870,
+      1875
+     ],
+     "friendlyHitAtkIds": []
+    },
+    "ally": {
+     "spEffectId": 1877,
+     "target": "ally",
+     "exclusiveKey": "sp20#1877",
+     "cycleCarrierSpEffectIds": [
+      1871
+     ],
+     "friendlyHitAtkIds": [
+      300000820
+     ]
+    },
+    "deliveryMatchesRowName": true
+   }
+  ],
+  "selfAllyPairsNote": "v6（复核三轮）Paramdex 行名以『- Self』／『- Allies』成对的战技增益（buffs[].selfAllyPair）。friendlyHitAtkIds＝把这一行（或周期性施加它的载体行 cycleCarrierSpEffectIds）交给命中对象的 AtkParam_Pc（friendlyTarget=1、selfTarget=0，攻击判定不会命中施放者自己）。共享圣律 1876（×1.1，自身）／1877（×1.075，队友）：施放者经 1870（sp160）或 1875 周期性拿到 1876；AtkParam_Pc 300000820『[AoW] Shared Order』只把 1871（sp152）交给队友，1871 再周期性施加 1877——所以施放者自己的一次施放只拿到 1876，不会同时拿到 1877，算施放者自己的伤害时不能把两行相乘。两名队友都施放时，一个人可以同时挂着自己的 1876 和队友给的 1877（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。deliveryMatchesRowName=false 的是哀悼墓碑 1835／1836：AtkParam_Pc 303401800『[AoW Golden Epitaph] Last Rites』交给队友的是行名写 Self 的 1835，行名写 Allies 的 1836 没有任何参数投递（由战技动作脚本挂给施放者）。两行数值逐列相同、只差 spCategory（152／160），target 与 selfAllyPair.role 仍按行名给出，未改，页面计算伤害不受影响，只是与其它 152／160 增益的互斥对象会对调。",
+  "relicAffixExclusivityGroups": [
+   {
+    "exclusivityId": 100,
+    "attachEffectIds": [
+     7120000,
+     7120100,
+     7120200,
+     7120300,
+     7120400,
+     7120500,
+     7120600
+    ],
+    "attachEffectIdsWithBuffs": [
+     7120000,
+     7120100,
+     7120200,
+     7120300,
+     7120400,
+     7120500,
+     7120600
+    ],
+    "compatibilityIds": [
+     200
+    ],
+    "namesZh": [
+     "出击时的武器，附加魔力属性攻击力",
+     "出击时的武器，附加火属性攻击力",
+     "出击时的武器，附加雷属性攻击力",
+     "出击时的武器，附加圣属性攻击力",
+     "出击时的武器，附加异常状态冻伤",
+     "出击时的武器，附加异常状态中毒",
+     "出击时的武器，附加异常状态出血"
+    ]
+   },
+   {
+    "exclusivityId": 400,
+    "attachEffectIds": [
+     7040201
+    ],
+    "attachEffectIdsWithBuffs": [
+     7040201
+    ],
+    "compatibilityIds": [
+     7040201
+    ],
+    "namesZh": [
+     "强化致命一击＋１"
+    ]
+   }
+  ],
+  "relicAffixExclusivityGroupsNote": "v6（复核三轮）relicAffixes[].exclusivityId≠-1 的词条按该值分组（attachEffectIds 取自整张 AttachEffectParam）。据 Smithbox 注释（见 macos/DataSources/PROVENANCE.md 第 47 行），exclusivityId 只控制『已装备遗物之间的红色感叹号提示』，compatibilityId 才决定同一件遗物上能否并存。100＝『出击时的武器，附加…』7 条（compatibilityId 同为 200，词条库叠加性都是『不可叠加』）：这 7 条同一件遗物上只能有一条；分装在两件遗物上时游戏会亮红色感叹号。它们都改写同一把出击武器的属性（spAttribute 负载），按参数推断两条同时装备时只有一条生效，但这是 UI 提示的含义推断，未实测，所以没有并进同一个 exclusiveKey（键仍是每条词条一个 \"affix#<attachEffectId>\"），页面同时选中两条时应给出提示。",
   "displayNameZhIdFallback": [
    {
     "spEffectId": 7035402,
@@ -34655,6 +35072,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "self",
+    "counterpartSpEffectId": 1836
    }
   },
   {
@@ -34745,6 +35166,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "ally",
+    "counterpartSpEffectId": 1835
    }
   },
   {
@@ -35841,6 +36266,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "self",
+    "counterpartSpEffectId": 1871
    }
   },
   {
@@ -35923,6 +36352,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "ally",
+    "counterpartSpEffectId": 1870
    }
   },
   {
@@ -36001,6 +36434,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "self",
+    "counterpartSpEffectId": 1877
    }
   },
   {
@@ -36079,6 +36516,10 @@
     "melee": "yes",
     "ranged": "yes",
     "throw": "yes"
+   },
+   "selfAllyPair": {
+    "role": "ally",
+    "counterpartSpEffectId": 1876
    }
   },
   {
@@ -39352,6 +39793,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     3558,
+     3559,
+     3560,
+     3561
     ]
    },
    "conditions": {
@@ -39446,6 +39893,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     3558,
+     3559,
+     3560,
+     3561
     ]
    },
    "conditions": {
@@ -39540,6 +39993,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     3558,
+     3559,
+     3560,
+     3561
     ]
    },
    "conditions": {
@@ -39639,6 +40098,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     3558,
+     3559,
+     3560,
+     3561
     ]
    },
    "conditions": {
@@ -51232,6 +51697,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     312505,
+     312506,
+     312507,
+     312508
     ]
    },
    "conditions": {
@@ -51327,6 +51798,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     312505,
+     312506,
+     312507,
+     312508
     ]
    },
    "conditions": {
@@ -51422,6 +51899,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     312505,
+     312506,
+     312507,
+     312508
     ]
    },
    "conditions": {
@@ -51517,6 +52000,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     312505,
+     312506,
+     312507,
+     312508
     ]
    },
    "conditions": {
@@ -52192,6 +52681,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     320804,
+     320805,
+     320806,
+     320807
     ]
    },
    "conditions": {
@@ -52287,6 +52782,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     320804,
+     320805,
+     320806,
+     320807
     ]
    },
    "conditions": {
@@ -52382,6 +52883,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     320804,
+     320805,
+     320806,
+     320807
     ]
    },
    "conditions": {
@@ -52477,6 +52984,12 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     320804,
+     320805,
+     320806,
+     320807
     ]
    },
    "conditions": {
@@ -71727,7 +72240,8 @@
      "isCurse": true,
      "compatibilityId": 6820000,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -71843,7 +72357,8 @@
      "isCurse": true,
      "compatibilityId": 6820100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -71959,7 +72474,8 @@
      "isCurse": true,
      "compatibilityId": 6820200,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72075,7 +72591,8 @@
      "isCurse": true,
      "compatibilityId": 6820300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72195,7 +72712,8 @@
      "isCurse": true,
      "compatibilityId": 6820400,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72311,7 +72829,8 @@
      "isCurse": true,
      "compatibilityId": 6820500,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72427,7 +72946,8 @@
      "isCurse": true,
      "compatibilityId": 6820600,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72535,7 +73055,8 @@
      "isCurse": true,
      "compatibilityId": 6851200,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72631,7 +73152,8 @@
      "isCurse": true,
      "compatibilityId": 6851300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -72746,7 +73268,8 @@
      "isCurse": true,
      "compatibilityId": 6851400,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73080,7 +73603,8 @@
      "isCurse": false,
      "compatibilityId": 7000800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73174,7 +73698,8 @@
      "isCurse": false,
      "compatibilityId": 7000800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73268,7 +73793,8 @@
      "isCurse": false,
      "compatibilityId": 7000800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73362,7 +73888,8 @@
      "isCurse": false,
      "compatibilityId": 7000900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73456,7 +73983,8 @@
      "isCurse": false,
      "compatibilityId": 7000900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73550,7 +74078,8 @@
      "isCurse": false,
      "compatibilityId": 7000900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73644,7 +74173,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73718,7 +74248,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73799,7 +74330,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     },
     {
      "attachEffectId": 7001409,
@@ -73810,7 +74342,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73884,7 +74417,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -73958,7 +74492,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74032,7 +74567,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74106,7 +74642,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74180,7 +74717,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74254,7 +74792,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74328,7 +74867,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74402,7 +74942,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74476,7 +75017,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74550,7 +75092,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74624,7 +75167,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74698,7 +75242,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74772,7 +75317,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74846,7 +75392,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74920,7 +75467,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -74994,7 +75542,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75068,7 +75617,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75142,7 +75692,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75216,7 +75767,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75290,7 +75842,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75364,7 +75917,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75438,7 +75992,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75512,7 +76067,8 @@
      "isCurse": false,
      "compatibilityId": 7005600,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75606,7 +76162,8 @@
      "isCurse": false,
      "compatibilityId": 7005600,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75707,7 +76264,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75818,7 +76376,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -75929,7 +76488,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76023,7 +76583,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76141,7 +76702,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76254,7 +76816,8 @@
      "isCurse": false,
      "compatibilityId": 7030600,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76355,7 +76918,8 @@
      "isCurse": false,
      "compatibilityId": 7030800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76461,7 +77025,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76555,7 +77120,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76646,7 +77212,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76736,7 +77303,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76816,7 +77384,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -76925,7 +77494,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77014,7 +77584,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77096,7 +77667,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77192,7 +77764,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77286,7 +77859,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77367,7 +77941,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     },
     {
      "attachEffectId": 7033200,
@@ -77378,7 +77953,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77497,7 +78073,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77612,7 +78189,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77721,7 +78299,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77851,7 +78430,8 @@
      "isCurse": false,
      "compatibilityId": 7035400,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -77971,7 +78551,8 @@
      "isCurse": false,
      "compatibilityId": 7035410,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78077,7 +78658,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78195,7 +78777,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78313,7 +78896,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78431,7 +79015,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78549,7 +79134,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78667,7 +79253,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78785,7 +79372,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -78903,7 +79491,8 @@
      "isCurse": false,
      "compatibilityId": 7035700,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79012,7 +79601,8 @@
      "isCurse": false,
      "compatibilityId": 7035800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79106,7 +79696,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79192,7 +79783,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79281,7 +79873,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79368,7 +79961,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79486,7 +80080,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79572,6 +80167,11 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     7037604,
+     7037605,
+     7037606
     ]
    },
    "conditions": {
@@ -79593,7 +80193,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79679,6 +80280,11 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     7037604,
+     7037605,
+     7037606
     ]
    },
    "conditions": {
@@ -79700,7 +80306,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79786,6 +80393,11 @@
      30,
      45,
      60
+    ],
+    "shippedTierSpEffectIds": [
+     7037604,
+     7037605,
+     7037606
     ]
    },
    "conditions": {
@@ -79807,7 +80419,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79824,8 +80437,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位1）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 1)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第1层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 1)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 1",
    "sources": [
     {
@@ -79896,7 +80509,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -79913,8 +80527,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位2）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 2)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第2层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 2)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 2",
    "sources": [
     {
@@ -79985,7 +80599,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80002,8 +80617,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位3）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 3)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第3层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 3)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 3",
    "sources": [
     {
@@ -80074,7 +80689,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80091,8 +80707,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位4）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 4)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第4层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 4)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 4",
    "sources": [
     {
@@ -80163,7 +80779,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80180,8 +80797,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位5）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 5)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第5层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 5)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 5",
    "sources": [
     {
@@ -80252,7 +80869,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80269,8 +80887,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位6）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 6)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第6层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 6)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 6",
    "sources": [
     {
@@ -80341,7 +80959,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80358,8 +80977,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位7）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 7)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第7层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 7)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 7",
    "sources": [
     {
@@ -80430,7 +81049,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80447,8 +81067,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位8）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 8)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第8层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 8)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 8",
    "sources": [
     {
@@ -80519,7 +81139,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80536,8 +81157,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位9）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 9)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第9层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 9)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 9",
    "sources": [
     {
@@ -80608,7 +81229,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80625,8 +81247,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（档位10）",
-   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power - Stack 10)",
+   "displayNameZh": "出现异常状态量表时，能缓慢提升攻击力（第10层）",
+   "displayNameEn": "Improved Attack Power (Status Ailment Gauges Slowly Increase Attack Power, Stack 10)",
    "paramName": "[Relic] Status Ailment Gauges Slowly Increase Attack Power - Stack 10",
    "sources": [
     {
@@ -80697,7 +81319,8 @@
      "isCurse": false,
      "compatibilityId": -1,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80781,7 +81404,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -80897,7 +81521,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81007,7 +81632,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81117,7 +81743,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81224,7 +81851,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81322,7 +81950,8 @@
      "isCurse": false,
      "compatibilityId": 7040201,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": 400
     }
    ],
    "appliesTo": {
@@ -81420,7 +82049,8 @@
      "isCurse": false,
      "compatibilityId": 7040300,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81521,7 +82151,8 @@
      "isCurse": false,
      "compatibilityId": 7040300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81622,7 +82253,8 @@
      "isCurse": false,
      "compatibilityId": 7040400,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81723,7 +82355,8 @@
      "isCurse": false,
      "compatibilityId": 7040400,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81824,7 +82457,8 @@
      "isCurse": false,
      "compatibilityId": 7040500,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -81925,7 +82559,8 @@
      "isCurse": false,
      "compatibilityId": 7040500,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82027,7 +82662,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82135,7 +82771,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82243,7 +82880,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82351,7 +82989,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82459,7 +83098,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82567,7 +83207,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82675,7 +83316,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82783,7 +83425,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82891,7 +83534,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -82999,7 +83643,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83107,7 +83752,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83215,7 +83861,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83323,7 +83970,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83431,7 +84079,8 @@
      "isCurse": false,
      "compatibilityId": 800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83540,7 +84189,8 @@
      "isCurse": false,
      "compatibilityId": 7050100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "requiresGoodsIds": [
@@ -83643,7 +84293,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83771,7 +84422,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83898,7 +84550,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -83998,7 +84651,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84098,7 +84752,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84198,7 +84853,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84298,7 +84954,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84398,7 +85055,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84498,7 +85156,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84598,7 +85257,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84698,7 +85358,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84798,7 +85459,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84898,7 +85560,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -84998,7 +85661,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85098,7 +85762,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85198,7 +85863,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85298,7 +85964,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85398,7 +86065,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85498,7 +86166,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85598,7 +86267,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85698,7 +86368,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85798,7 +86469,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85898,7 +86570,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -85998,7 +86671,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86098,7 +86772,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86205,7 +86880,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86281,7 +86957,8 @@
      "isCurse": false,
      "compatibilityId": 7090000,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86377,7 +87054,8 @@
      "isCurse": false,
      "compatibilityId": 7090000,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86473,7 +87151,8 @@
      "isCurse": false,
      "compatibilityId": 7090000,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86569,7 +87248,8 @@
      "isCurse": false,
      "compatibilityId": 7090000,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -86641,8 +87321,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120001",
-    "exclusiveKey": "sp10#7120001",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120000",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -86668,7 +87348,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -86710,6 +87391,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120000",
+    "attachEffectId": 7120000,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120001,
+     7120002,
+     7120003,
+     7120004
+    ],
+    "dispatcherSpEffectIds": [
+     7120000
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "magicAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -86752,8 +87456,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120002",
-    "exclusiveKey": "sp10#7120002",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120000",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -86779,7 +87483,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -86821,6 +87526,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120000",
+    "attachEffectId": 7120000,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120001,
+     7120002,
+     7120003,
+     7120004
+    ],
+    "dispatcherSpEffectIds": [
+     7120000
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "magicAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -86863,8 +87591,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120003",
-    "exclusiveKey": "sp10#7120003",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120000",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -86890,7 +87618,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -86932,6 +87661,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120000",
+    "attachEffectId": 7120000,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120001,
+     7120002,
+     7120003,
+     7120004
+    ],
+    "dispatcherSpEffectIds": [
+     7120000
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "magicAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -86974,8 +87726,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120004",
-    "exclusiveKey": "sp10#7120004",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120000",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87001,7 +87753,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87043,6 +87796,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120000",
+    "attachEffectId": 7120000,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120001,
+     7120002,
+     7120003,
+     7120004
+    ],
+    "dispatcherSpEffectIds": [
+     7120000
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "magicAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87085,8 +87861,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120101",
-    "exclusiveKey": "sp10#7120101",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120100",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87112,7 +87888,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87154,6 +87931,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120100",
+    "attachEffectId": 7120100,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120101,
+     7120102,
+     7120103,
+     7120104
+    ],
+    "dispatcherSpEffectIds": [
+     7120100
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "fireAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87196,8 +87996,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120102",
-    "exclusiveKey": "sp10#7120102",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120100",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87223,7 +88023,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87265,6 +88066,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120100",
+    "attachEffectId": 7120100,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120101,
+     7120102,
+     7120103,
+     7120104
+    ],
+    "dispatcherSpEffectIds": [
+     7120100
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "fireAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87307,8 +88131,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120103",
-    "exclusiveKey": "sp10#7120103",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120100",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87334,7 +88158,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87376,6 +88201,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120100",
+    "attachEffectId": 7120100,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120101,
+     7120102,
+     7120103,
+     7120104
+    ],
+    "dispatcherSpEffectIds": [
+     7120100
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "fireAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87418,8 +88266,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120104",
-    "exclusiveKey": "sp10#7120104",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120100",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87445,7 +88293,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87487,6 +88336,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120100",
+    "attachEffectId": 7120100,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120101,
+     7120102,
+     7120103,
+     7120104
+    ],
+    "dispatcherSpEffectIds": [
+     7120100
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "fireAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87529,8 +88401,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120201",
-    "exclusiveKey": "sp10#7120201",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120200",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87556,7 +88428,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87598,6 +88471,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120200",
+    "attachEffectId": 7120200,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120201,
+     7120202,
+     7120203,
+     7120204
+    ],
+    "dispatcherSpEffectIds": [
+     7120200
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "physicsAttackPower",
+     "thunderAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87640,8 +88536,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120202",
-    "exclusiveKey": "sp10#7120202",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120200",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87667,7 +88563,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87709,6 +88606,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120200",
+    "attachEffectId": 7120200,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120201,
+     7120202,
+     7120203,
+     7120204
+    ],
+    "dispatcherSpEffectIds": [
+     7120200
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "physicsAttackPower",
+     "thunderAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87751,8 +88671,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120203",
-    "exclusiveKey": "sp10#7120203",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120200",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87778,7 +88698,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87820,6 +88741,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120200",
+    "attachEffectId": 7120200,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120201,
+     7120202,
+     7120203,
+     7120204
+    ],
+    "dispatcherSpEffectIds": [
+     7120200
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "physicsAttackPower",
+     "thunderAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87862,8 +88806,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120204",
-    "exclusiveKey": "sp10#7120204",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120200",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -87889,7 +88833,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -87931,6 +88876,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120200",
+    "attachEffectId": 7120200,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120201,
+     7120202,
+     7120203,
+     7120204
+    ],
+    "dispatcherSpEffectIds": [
+     7120200
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "physicsAttackPower",
+     "thunderAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -87973,8 +88941,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120301",
-    "exclusiveKey": "sp10#7120301",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120300",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88000,7 +88968,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88042,6 +89011,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120300",
+    "attachEffectId": 7120300,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120301,
+     7120302,
+     7120303,
+     7120304
+    ],
+    "dispatcherSpEffectIds": [
+     7120300
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "darkAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -88084,8 +89076,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120302",
-    "exclusiveKey": "sp10#7120302",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120300",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88111,7 +89103,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88153,6 +89146,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120300",
+    "attachEffectId": 7120300,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120301,
+     7120302,
+     7120303,
+     7120304
+    ],
+    "dispatcherSpEffectIds": [
+     7120300
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "darkAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -88195,8 +89211,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120303",
-    "exclusiveKey": "sp10#7120303",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120300",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88222,7 +89238,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88264,6 +89281,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120300",
+    "attachEffectId": 7120300,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120301,
+     7120302,
+     7120303,
+     7120304
+    ],
+    "dispatcherSpEffectIds": [
+     7120300
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "darkAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -88306,8 +89346,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120304",
-    "exclusiveKey": "sp10#7120304",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120300",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88333,7 +89373,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88375,6 +89416,29 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120300",
+    "attachEffectId": 7120300,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120301,
+     7120302,
+     7120303,
+     7120304
+    ],
+    "dispatcherSpEffectIds": [
+     7120300
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [
+     "darkAttackPower",
+     "physicsAttackPower"
+    ],
+    "differingChainFields": []
    }
   },
   {
@@ -88420,8 +89484,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120401",
-    "exclusiveKey": "sp10#7120401",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120400",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88453,7 +89517,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88495,6 +89560,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120400",
+    "attachEffectId": 7120400,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120401,
+     7120402,
+     7120403,
+     7120404
+    ],
+    "dispatcherSpEffectIds": [
+     7120400
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -88540,8 +89627,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120402",
-    "exclusiveKey": "sp10#7120402",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120400",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88573,7 +89660,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88615,6 +89703,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120400",
+    "attachEffectId": 7120400,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120401,
+     7120402,
+     7120403,
+     7120404
+    ],
+    "dispatcherSpEffectIds": [
+     7120400
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -88660,8 +89770,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120403",
-    "exclusiveKey": "sp10#7120403",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120400",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88693,7 +89803,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88735,6 +89846,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120400",
+    "attachEffectId": 7120400,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120401,
+     7120402,
+     7120403,
+     7120404
+    ],
+    "dispatcherSpEffectIds": [
+     7120400
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -88780,8 +89913,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120404",
-    "exclusiveKey": "sp10#7120404",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120400",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -88813,7 +89946,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -88855,6 +89989,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120400",
+    "attachEffectId": 7120400,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120401,
+     7120402,
+     7120403,
+     7120404
+    ],
+    "dispatcherSpEffectIds": [
+     7120400
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -88940,7 +90096,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89055,7 +90212,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89170,7 +90328,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89285,7 +90444,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89360,8 +90520,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120501",
-    "exclusiveKey": "sp10#7120501",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120500",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -89393,7 +90553,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89435,6 +90596,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120500",
+    "attachEffectId": 7120500,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120501,
+     7120502,
+     7120503,
+     7120504
+    ],
+    "dispatcherSpEffectIds": [
+     7120500
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -89480,8 +90663,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120502",
-    "exclusiveKey": "sp10#7120502",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120500",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -89513,7 +90696,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89555,6 +90739,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120500",
+    "attachEffectId": 7120500,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120501,
+     7120502,
+     7120503,
+     7120504
+    ],
+    "dispatcherSpEffectIds": [
+     7120500
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -89600,8 +90806,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120503",
-    "exclusiveKey": "sp10#7120503",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120500",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -89633,7 +90839,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89675,6 +90882,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120500",
+    "attachEffectId": 7120500,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120501,
+     7120502,
+     7120503,
+     7120504
+    ],
+    "dispatcherSpEffectIds": [
+     7120500
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -89720,8 +90949,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120504",
-    "exclusiveKey": "sp10#7120504",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120500",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -89753,7 +90982,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89795,6 +91025,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120500",
+    "attachEffectId": 7120500,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120501,
+     7120502,
+     7120503,
+     7120504
+    ],
+    "dispatcherSpEffectIds": [
+     7120500
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -89880,7 +91132,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -89995,7 +91248,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90110,7 +91364,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90225,7 +91480,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90300,8 +91556,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120601",
-    "exclusiveKey": "sp10#7120601",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120600",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -90333,7 +91589,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90375,6 +91632,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120600",
+    "attachEffectId": 7120600,
+    "variant": 1,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120601,
+     7120602,
+     7120603,
+     7120604
+    ],
+    "dispatcherSpEffectIds": [
+     7120600
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -90420,8 +91699,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120602",
-    "exclusiveKey": "sp10#7120602",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120600",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -90453,7 +91732,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90495,6 +91775,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120600",
+    "attachEffectId": 7120600,
+    "variant": 2,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120601,
+     7120602,
+     7120603,
+     7120604
+    ],
+    "dispatcherSpEffectIds": [
+     7120600
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -90540,8 +91842,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120603",
-    "exclusiveKey": "sp10#7120603",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120600",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -90573,7 +91875,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90615,6 +91918,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120600",
+    "attachEffectId": 7120600,
+    "variant": 3,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120601,
+     7120602,
+     7120603,
+     7120604
+    ],
+    "dispatcherSpEffectIds": [
+     7120600
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -90660,8 +91985,8 @@
     "categoryPriority": 0,
     "saveCategory": -1,
     "group": "sp10#7120604",
-    "exclusiveKey": "sp10#7120604",
-    "exclusiveScope": "perSpEffect"
+    "exclusiveKey": "affix#7120600",
+    "exclusiveScope": "affixVariant"
    },
    "duration": -1,
    "permanent": true,
@@ -90693,7 +92018,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90735,6 +92061,28 @@
       "imbuedWeaponOnly": true
      }
     }
+   },
+   "affixVariant": {
+    "key": "affix#7120600",
+    "attachEffectId": 7120600,
+    "variant": 4,
+    "variants": 4,
+    "variantSpEffectIds": [
+     7120601,
+     7120602,
+     7120603,
+     7120604
+    ],
+    "dispatcherSpEffectIds": [
+     7120600
+    ],
+    "dispatcherStateInfo": [
+     2101
+    ],
+    "differingRateKeys": [],
+    "differingChainFields": [
+     "atkOccurrenceSpEffectId"
+    ]
    }
   },
   {
@@ -90820,7 +92168,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -90935,7 +92284,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -91050,7 +92400,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -91165,7 +92516,8 @@
      "isCurse": false,
      "compatibilityId": 200,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": 100
     }
    ],
    "appliesTo": {
@@ -91265,7 +92617,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91376,7 +92729,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91457,7 +92811,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91538,7 +92893,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91619,7 +92975,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91700,7 +93057,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91781,7 +93139,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91862,7 +93221,8 @@
      "isCurse": false,
      "compatibilityId": 7260300,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -91943,7 +93303,8 @@
      "isCurse": false,
      "compatibilityId": 7260400,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92024,7 +93385,8 @@
      "isCurse": false,
      "compatibilityId": 7260400,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92105,7 +93467,8 @@
      "isCurse": false,
      "compatibilityId": 7260400,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92192,7 +93555,8 @@
      "isCurse": false,
      "compatibilityId": 7260800,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92269,7 +93633,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92366,7 +93731,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92458,7 +93824,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92564,7 +93931,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92667,7 +94035,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92782,7 +94151,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -92897,7 +94267,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93002,7 +94373,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93027,8 +94399,8 @@
    "nameZh": "减少专注值消耗",
    "nameEn": "Reduced FP Consumption",
    "nameSource": "spEffectName",
-   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・档位1）",
-   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Lv1)",
+   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・第1层）",
+   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Stack 1)",
    "paramName": "[Relic - Scholar] Reduced FP consumption when using Character Skill on self - stack 1",
    "sources": [
     {
@@ -93097,7 +94469,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93125,8 +94498,8 @@
    "nameZh": "减少专注值消耗",
    "nameEn": "Reduced FP Consumption",
    "nameSource": "spEffectName",
-   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・档位2）",
-   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Lv2)",
+   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・第2层）",
+   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Stack 2)",
    "paramName": "[Relic - Scholar] Reduced FP consumption when using Character Skill on self - stack 2",
    "sources": [
     {
@@ -93195,7 +94568,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93223,8 +94597,8 @@
    "nameZh": "减少专注值消耗",
    "nameEn": "Reduced FP Consumption",
    "nameSource": "spEffectName",
-   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・档位3）",
-   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Lv3)",
+   "displayNameZh": "减少专注值消耗（【学者】对自己使用技艺时，能减少消耗的专注值・第3层）",
+   "displayNameEn": "Reduced FP Consumption ([Scholar] Reduced FP consumption when using Character Skill on self, Stack 3)",
    "paramName": "[Relic - Scholar] Reduced FP consumption when using Character Skill on self - stack 3",
    "sources": [
     {
@@ -93293,7 +94667,8 @@
      "isCurse": false,
      "compatibilityId": 900,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93391,7 +94766,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93478,7 +94854,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93565,7 +94942,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93652,7 +95030,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93730,7 +95109,8 @@
      "isCurse": false,
      "compatibilityId": 6610700,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93822,7 +95202,8 @@
      "isCurse": false,
      "compatibilityId": 6610700,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -93914,7 +95295,8 @@
      "isCurse": false,
      "compatibilityId": 6610700,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94002,7 +95384,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94079,7 +95462,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94156,7 +95540,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94235,7 +95620,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94331,7 +95717,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94427,7 +95814,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94523,7 +95911,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94619,7 +96008,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -94715,7 +96105,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101051,7 +102442,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101177,7 +102569,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101303,7 +102696,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101429,7 +102823,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101555,7 +102950,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101681,7 +103077,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101807,7 +103204,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -101933,7 +103331,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102059,7 +103458,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102185,7 +103585,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102311,7 +103712,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102437,7 +103839,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102563,7 +103966,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102689,7 +104093,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102815,7 +104220,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -102941,7 +104347,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103167,7 +104574,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103293,7 +104701,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103419,7 +104828,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103545,7 +104955,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103671,7 +105082,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103792,7 +105204,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -103918,7 +105331,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -104044,7 +105458,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -104606,7 +106021,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     },
     {
      "attachEffectId": 7006001,
@@ -104617,7 +106033,8 @@
      "isCurse": false,
      "compatibilityId": 7006001,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -105181,7 +106598,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     },
     {
      "attachEffectId": 7006101,
@@ -105192,7 +106610,8 @@
      "isCurse": false,
      "compatibilityId": 7006101,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": true
+     "fixedRelicOnly": true,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -112118,7 +113537,8 @@
      "isCurse": false,
      "compatibilityId": 100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -112325,7 +113745,8 @@
      "isCurse": false,
      "compatibilityId": 7043100,
      "inNormalRelicPools": true,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -112426,7 +113847,8 @@
      "isCurse": false,
      "compatibilityId": 7043100,
      "inNormalRelicPools": false,
-     "fixedRelicOnly": false
+     "fixedRelicOnly": false,
+     "exclusivityId": -1
     }
    ],
    "appliesTo": {
@@ -120313,8 +121735,8 @@
    "nameZh": "强化魔法、祷告",
    "nameEn": "Improved Sorceries & Incantations",
    "nameSource": "spEffectName",
-   "displayNameZh": "强化魔法、祷告（武器・×1.1・维持防御时，强化魔法、祷告与缩短咏唱时间・命中时武器效果1）",
-   "displayNameEn": "Improved Sorceries & Incantations (Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 1)",
+   "displayNameZh": "维持防御时，强化魔法、祷告与缩短咏唱时间（第1阶段）",
+   "displayNameEn": "Improved Sorceries & Incantations (Continued Guarding Grants Increased Potency of Sorceries/Incantations and Faster Casting, Stage 1)",
    "paramName": "[Weapon] Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 1",
    "sources": [
     {
@@ -120366,6 +121788,50 @@
    "targetSource": "default",
    "activation": "conditional",
    "activationSource": "eventScriptTimedBuff",
+   "accumulatorStages": {
+    "stage": 1,
+    "stages": 3,
+    "stageSpEffectIds": [
+     8885220,
+     8885221,
+     8885222
+    ],
+    "accumulatorSpEffectIds": [
+     8885201,
+     8885202,
+     8885203
+    ],
+    "thresholds": [
+     4000000,
+     9000000,
+     15000000
+    ],
+    "behaviorSpEffectIds": [
+     8885210,
+     8885211,
+     8885212
+    ],
+    "behaviorParamIds": [
+     900010020,
+     900010021,
+     900010022
+    ],
+    "bulletIds": [
+     98885200,
+     98885201,
+     98885202
+    ],
+    "durations": [
+     28,
+     25.5,
+     22.5
+    ],
+    "expiryAligned": {
+     "unitsPerSecond": 2000000,
+     "commonEndSeconds": 30
+    },
+    "coexist": true
+   },
    "statusLabelsZh": [
     "强化魔法、祷告",
     "缩短咏唱时间"
@@ -120415,8 +121881,8 @@
    "nameZh": "强化魔法、祷告",
    "nameEn": "Improved Sorceries & Incantations",
    "nameSource": "spEffectName",
-   "displayNameZh": "强化魔法、祷告（武器・×1.1・维持防御时，强化魔法、祷告与缩短咏唱时间・命中时武器效果2）",
-   "displayNameEn": "Improved Sorceries & Incantations (Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 2)",
+   "displayNameZh": "维持防御时，强化魔法、祷告与缩短咏唱时间（第2阶段）",
+   "displayNameEn": "Improved Sorceries & Incantations (Continued Guarding Grants Increased Potency of Sorceries/Incantations and Faster Casting, Stage 2)",
    "paramName": "[Weapon] Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 2",
    "sources": [
     {
@@ -120468,6 +121934,50 @@
    "targetSource": "default",
    "activation": "conditional",
    "activationSource": "eventScriptTimedBuff",
+   "accumulatorStages": {
+    "stage": 2,
+    "stages": 3,
+    "stageSpEffectIds": [
+     8885220,
+     8885221,
+     8885222
+    ],
+    "accumulatorSpEffectIds": [
+     8885201,
+     8885202,
+     8885203
+    ],
+    "thresholds": [
+     4000000,
+     9000000,
+     15000000
+    ],
+    "behaviorSpEffectIds": [
+     8885210,
+     8885211,
+     8885212
+    ],
+    "behaviorParamIds": [
+     900010020,
+     900010021,
+     900010022
+    ],
+    "bulletIds": [
+     98885200,
+     98885201,
+     98885202
+    ],
+    "durations": [
+     28,
+     25.5,
+     22.5
+    ],
+    "expiryAligned": {
+     "unitsPerSecond": 2000000,
+     "commonEndSeconds": 30
+    },
+    "coexist": true
+   },
    "statusLabelsZh": [
     "强化魔法、祷告",
     "缩短咏唱时间"
@@ -120517,8 +122027,8 @@
    "nameZh": "强化魔法、祷告",
    "nameEn": "Improved Sorceries & Incantations",
    "nameSource": "spEffectName",
-   "displayNameZh": "强化魔法、祷告（武器・×1.1・维持防御时，强化魔法、祷告与缩短咏唱时间・命中时武器效果3）",
-   "displayNameEn": "Improved Sorceries & Incantations (Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 3)",
+   "displayNameZh": "维持防御时，强化魔法、祷告与缩短咏唱时间（第3阶段）",
+   "displayNameEn": "Improved Sorceries & Incantations (Continued Guarding Grants Increased Potency of Sorceries/Incantations and Faster Casting, Stage 3)",
    "paramName": "[Weapon] Guarding Ups Attack & Casting Speeds - On-Hit Weapon Effect 3",
    "sources": [
     {
@@ -120570,6 +122080,50 @@
    "targetSource": "default",
    "activation": "conditional",
    "activationSource": "eventScriptTimedBuff",
+   "accumulatorStages": {
+    "stage": 3,
+    "stages": 3,
+    "stageSpEffectIds": [
+     8885220,
+     8885221,
+     8885222
+    ],
+    "accumulatorSpEffectIds": [
+     8885201,
+     8885202,
+     8885203
+    ],
+    "thresholds": [
+     4000000,
+     9000000,
+     15000000
+    ],
+    "behaviorSpEffectIds": [
+     8885210,
+     8885211,
+     8885212
+    ],
+    "behaviorParamIds": [
+     900010020,
+     900010021,
+     900010022
+    ],
+    "bulletIds": [
+     98885200,
+     98885201,
+     98885202
+    ],
+    "durations": [
+     28,
+     25.5,
+     22.5
+    ],
+    "expiryAligned": {
+     "unitsPerSecond": 2000000,
+     "commonEndSeconds": 30
+    },
+    "coexist": true
+   },
    "statusLabelsZh": [
     "强化魔法、祷告",
     "缩短咏唱时间"

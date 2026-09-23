@@ -114,6 +114,18 @@ relic affix 7020000, stateInfo 197 (thrusting counter) is no for spells and
 bows, and displayNameZh uses 「第N层」 / 「永久强化」 / the owning affix's
 potency before falling back to #spEffectId.
 
+A third round: the four potency rows of each 『出击时的武器，附加…』 relic
+affix (7120001..7120004 ...), which the affix's own dispatcher row
+(stateInfo 2101) picks from by starting-weapon type, share one key
+"affix#<attachEffectId>" (exclusiveScope affixVariant, buffs[].affixVariant,
+diagnostics.affixVariantScan); relicAffixes[].exclusivityId; the three
+coexisting guard stages of weapon affix 8885200 (accumulator -> behavior ->
+bullet -> buff, buffs[].accumulatorStages); accumulatorLadder
+.shippedTierSpEffectIds and notes.accumulatorLadder (tierSpEffectIds
+includes tier 1, the opposite of stackLadder; "sp120" makes the
+successive-attack items exclusive of each other); the Self / Allies rows of
+one cast (buffs[].selfAllyPair); "Stack N" rows read 「第N层」.
+
 Sources (all local, exported beforehand; nothing is fetched at run time)
 -----------------------------------------------------------------------
   raw/params/*.csv        regulation 1.03.5 (container 10350000), first column
@@ -257,7 +269,32 @@ SCHEMA_CHANGELOG: list[dict[str, Any]] = [
               "notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，"
               "按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；"
               "slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；"
-              "slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。",
+              "slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。"
+              "⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）："
+              "(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant"
+              "（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／"
+              "differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档"
+              "（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）"
+              "由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。"
+              "**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant"
+              "（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、"
+              "exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。"
+              "(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)："
+              "上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。"
+              "(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』"
+              "经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。"
+              "(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），"
+              "新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；"
+              "enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。"
+              "(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)："
+              "算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。"
+              "(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』"
+              "（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』"
+              "（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→"
+              "『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。"
+              "(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，"
+              "counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；"
+              "notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。",
     },
     {
         "version": 5,
@@ -954,7 +991,7 @@ def spcategory_behaviour(value: int) -> tuple[str, str]:
 #     the data shows the whole block is priority-scoped.  201 has 292 rows
 #     over 90 priorities that come in tier pairs (带火破露滴 511028 and its
 #     tier 2 708940 share 226, 带魔力破露滴 511029 / 708950 share 227, ...),
-#     204 has 350 rows in 13 saved ladders and every ladder owns its own
+#     204 has 350 rows in 12 saved ladders and every ladder owns its own
 #     priority (封印监牢 7069001-010 = 11, 黑夜入侵者 7069201-210 = 13,
 #     玛雷家的庇佑 8988200-299 = 5, 复仇的庇佑 8998000-099 = 4, the relic
 #     『每次打倒…强敌』 ladders 8/9/10 ...).  A category-wide "remove previous"
@@ -981,7 +1018,21 @@ EXCLUSIVE_SCOPE_LABELS: "OrderedDict[str, str]" = OrderedDict([
                          "不同效果各有自己的优先度（黑夜入侵者 13、玛雷家的庇佑 5、复仇的庇佑 4），因此彼此独立"),
     ("accumulatorLadder", "累积阶梯（accumuOverFireId 逐档触发的连续攻击类）：各档共用一个键——有档位落在互斥类别里时取该类别的键"
                           "（连续攻击类都是 sp120），否则取 \"ladder#<第 1 档 spEffectId>\"。最高档常是 spCategory=20、"
-                          "effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），按 ID 算会把两档相乘"),
+                          "effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），按 ID 算会把两档相乘。"
+                          "**键 \"sp120\" 同时意味着不同物品之间互斥**：连刺破露滴 3558–3561、米莉森的义手 312505–312508、"
+                          "带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606 都落在 spCategory 120"
+                          "（Paramdex：Remove Previous，新的顶替旧的），任取两件同时装备也只有一份生效，排名只算一份（默认取倍率最高的一档），"
+                          "页面同时选中时应提示。这是按参数推断的，未实测；v6 之前的说明曾把『米莉森的义手＋带翼剑徽章』当作相乘的例子，以本条为准。"
+                          "字段口径见 notes.accumulatorLadder"),
+    # v6 (re-verify, round 3): the 4 potency rows of one relic affix that the
+    # affix's own dispatcher row picks from (stateInfo 2101, only 7 rows in the
+    # table) -- per id they read as four stackSelf buffs and multiplied.
+    ("affixVariant", "同一条词条（AttachEffectParam）下互为替代的档位：键＝\"affix#<attachEffectId>\"，同键只取一档。"
+                     "识别条件（全部满足，见 buffs[].affixVariant 与 diagnostics.affixVariantScan）：只归属这一条词条；"
+                     "词条自己的 passiveSpEffectId_1..3 都不是 buff（只是派发行，如 stateInfo=2101『Apply State Info』）；"
+                     "整张 SpEffectParam 表没有任何指向列（replace／cycle／atkOccurrence／accumuOverFire…）指向这些行，"
+                     "只能由派发行按条件选一档；行名去掉『Potency N』后同干、倍率键相同，除行名、倍率数值与指向列外逐列相同；"
+                     "原来都是按 ID 的键（perSpEffect）。本版本 7 条『出击时的武器，附加…』词条 × 4 档＝28 条"),
 ])
 
 
@@ -1043,14 +1094,8 @@ def exclusive_key_evidence(sp: dict[str, dict[str, str]], attach: dict[str, dict
     }
 
 
-def accumulator_ladders(sp: dict[str, dict[str, str]]) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
-    """Tier SpEffects of every multi-step accumulator ladder, and any unmergeable ladder.
-
-    An accumulator row carries accumuOverFireId (the SpEffect fired once the
-    counter passes accumuOverVal).  One ladder = a run of consecutive
-    accumulator ids with the same stateInfo (312501..312504 -> 312505..312508,
-    thresholds 17/30/45/60).  Single accumulators are not ladders.
-    """
+def accumulator_families(sp: dict[str, dict[str, str]]) -> list[list[int]]:
+    """Runs of consecutive accumulator ids (accumuOverFireId set) with one stateInfo."""
     ids = sorted(int(k) for k, row in sp.items() if ref(row.get("accumuOverFireId")))
     families: list[list[int]] = []
     for value in ids:
@@ -1059,9 +1104,20 @@ def accumulator_ladders(sp: dict[str, dict[str, str]]) -> tuple[dict[str, dict[s
             families[-1].append(value)
         else:
             families.append([value])
+    return families
+
+
+def accumulator_ladders(sp: dict[str, dict[str, str]]) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Tier SpEffects of every multi-step accumulator ladder, and any unmergeable ladder.
+
+    An accumulator row carries accumuOverFireId (the SpEffect fired once the
+    counter passes accumuOverVal).  One ladder = a run of consecutive
+    accumulator ids with the same stateInfo (312501..312504 -> 312505..312508,
+    thresholds 17/30/45/60).  Single accumulators are not ladders.
+    """
     tiers_of: dict[str, dict[str, Any]] = {}
     conflicts: list[dict[str, Any]] = []
-    for family in families:
+    for family in accumulator_families(sp):
         if len(family) < 2:
             continue
         pairs = sorted(((float(sp[str(a)]["accumuOverVal"]), a, ref(sp[str(a)]["accumuOverFireId"]))
@@ -1087,6 +1143,170 @@ def accumulator_ladders(sp: dict[str, dict[str, str]]) -> tuple[dict[str, dict[s
                 "thresholds": [as_number(str(thr)) for thr, _a, t in pairs if t in sp],
             }
     return tiers_of, conflicts
+
+
+def accumulator_stage_chains(sp: dict[str, dict[str, str]], behaviors: dict[str, dict[str, str]],
+                             bullets: dict[str, dict[str, str]], shipped_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Accumulator ladders whose tiers reach their buff through a behavior bullet.
+
+    v6 (re-verify, round 3).  The guarding weapon affix 8885200 has three
+    accumulators 8885201..8885203 (stateInfo 307, thresholds 4M / 9M / 15M)
+    that fire 8885210..8885212 -- rows without a rate of their own but with a
+    behaviorId (900010020..22; BehaviorParam_PC refType 1 = bullet) whose
+    bullet 98885200..02 hands spEffectId0 = 8885220..8885222 to the player.
+    accumulator_ladders() never sees those three buffs (its tiers are the
+    fired rows themselves).  Unlike the successive-attack ladders they are
+    not alternatives: all three are ×1.1 resetOnApply rows of their own id and
+    differ only in effectEndurance (28 / 25.5 / 22.5 s), and the threshold
+    gaps (5M, 6M) and the duration gaps (2.5 s, 3 s) are in one ratio -- the
+    three stages run out at the same moment, i.e. they are built to coexist
+    (the affix text says 『阶段性提升』).  Each stage keeps its own key.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for family in accumulator_families(sp):
+        if len(family) < 2:
+            continue
+        pairs = sorted(((float(sp[str(a)]["accumuOverVal"]), a, ref(sp[str(a)]["accumuOverFireId"]))
+                        for a in family), key=lambda p: (p[0], p[1]))
+        stages: list[tuple[float, int, str, str, str, str]] = []
+        for thr, acc, target in pairs:
+            row = sp.get(target or "")
+            if row is None or target in shipped_ids:
+                break
+            behavior = behaviors.get(ref(row.get("behaviorId")) or "")
+            if behavior is None or behavior.get("refType") != "1":
+                break
+            bullet = bullets.get(ref(behavior.get("refId")) or "")
+            if bullet is None:
+                break
+            hits = [s for s in (ref(bullet.get(f"spEffectId{i}")) for i in range(5)) if s and s in shipped_ids]
+            if len(hits) != 1:
+                break
+            stages.append((thr, acc, target, behavior["ID"], bullet["ID"], hits[0]))
+        if len(stages) != len(pairs) or len(stages) < 2 or len({s[5] for s in stages}) != len(stages):
+            continue
+        thresholds = [s[0] for s in stages]
+        durations = [float(sp[s[5]]["effectEndurance"]) for s in stages]
+        # do the stages run out together?  (threshold gap / duration gap constant)
+        aligned: dict[str, Any] | None = None
+        gaps = [(thresholds[i + 1] - thresholds[i], durations[i] - durations[i + 1]) for i in range(len(stages) - 1)]
+        if all(g > 0 and d > 0 for g, d in gaps):
+            rates = [g / d for g, d in gaps]
+            if max(rates) - min(rates) <= 1e-9 * max(rates):
+                ends = [thresholds[i] / rates[0] + durations[i] for i in range(len(stages))]
+                if max(ends) - min(ends) <= 1e-6:
+                    aligned = {"unitsPerSecond": as_number(str(rates[0])), "commonEndSeconds": as_number(str(round(ends[0], 6)))}
+        for index, stage in enumerate(stages, 1):
+            out[stage[5]] = {
+                "stage": index,
+                "stages": len(stages),
+                "stageSpEffectIds": [int(s[5]) for s in stages],
+                "accumulatorSpEffectIds": [s[1] for s in stages],
+                "thresholds": [as_number(str(t)) for t in thresholds],
+                "behaviorSpEffectIds": [int(s[2]) for s in stages],
+                "behaviorParamIds": [int(s[3]) for s in stages],
+                "bulletIds": [int(s[4]) for s in stages],
+                "durations": [as_number(str(d)) for d in durations],
+                "expiryAligned": aligned,
+                "coexist": True,
+            }
+    return out
+
+
+# v6 (re-verify, round 3): the row-name family of an affix variant -- the
+# Paramdex name without its "- Potency N" / "- Stack N" / trailing number.
+VARIANT_SUFFIX_RE = re.compile(r"\s*-?\s*\b(?:Potency|Level|Lv|Stack|Step|Tier|Phase)\s*\d+\b|\s+\d+$", re.IGNORECASE)
+
+
+def variant_family(name: str | None) -> str:
+    return VARIANT_SUFFIX_RE.sub("", clean_param_name(name or "")).strip().casefold()
+
+
+def affix_variant_scan(buffs: list[dict[str, Any]], sp: dict[str, dict[str, str]],
+                       attach: dict[str, dict[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Groups of buffs that are alternative potencies of one affix, and the near misses.
+
+    v6 (re-verify, round 3).  AttachEffectParam 7120000 『出击时的武器，附加魔力属性
+    攻击力』 has one passive, 7120000 "Apply State Info" (stateInfo 2101 -- only
+    the seven 『出击时的武器，附加…』 affixes use it), and four sibling rows
+    7120001..7120004 "Damage Adjustment - Potency 1..4" (physical -30/-40/-50/
+    -60, magic +33/+44/+55/+66; the affix catalog: 『根据武器类型…』) that no
+    param column points at: the dispatcher picks one of them.  Per id they
+    were four stackSelf buffs with four keys and a relic carrying the affix
+    summed to -180 / +198 (the ×0.85 status rows to ×0.85^4).
+
+    A group needs, for one owning affix (relicAffixes / weaponAffixIds, the
+    buff owned by that affix only): no passive of the affix is itself a buff
+    (the affix only dispatches); no chain column anywhere in SpEffectParam
+    points at a member; the same row-name family (variant_family) and the same
+    rate keys; every other column equal except Name and the chain columns;
+    per-id keys today.  Anything that fails is listed with the reason.
+    """
+    referenced: set[str] = set()
+    for row in sp.values():
+        for field, _label in CHAIN_FIELDS:
+            target = ref(row.get(field))
+            if target:
+                referenced.add(target)
+    shipped = {str(b["spEffectId"]) for b in buffs}
+    chain_fields = [field for field, _label in CHAIN_FIELDS]
+    by_owner: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+    for buff in buffs:
+        owners = ([("relicAffix", e["attachEffectId"]) for e in buff.get("relicAffixes", [])]
+                  + [("weaponAffix", a) for a in buff.get("weaponAffixIds", [])])
+        if len(owners) == 1:
+            by_owner[owners[0]].append(buff)
+    groups: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for (slot, attach_id), members in sorted(by_owner.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        if len(members) < 2:
+            continue
+        attach_row = attach.get(str(attach_id), {})
+        passives = [p for p in (ref(attach_row.get(f"passiveSpEffectId_{i}")) for i in (1, 2, 3)) if p]
+        families: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = defaultdict(list)
+        for buff in members:
+            families[(variant_family(buff["paramName"]), tuple(sorted(buff["rates"])))].append(buff)
+        for (_family, rate_keys), family in sorted(families.items(),
+                                                   key=lambda kv: min(b["spEffectId"] for b in kv[1])):
+            if len(family) < 2:
+                continue
+            ids = sorted(b["spEffectId"] for b in family)
+            rows = [sp[str(i)] for i in ids]
+            base: dict[str, Any] = {"attachEffectId": attach_id, "slot": slot, "spEffectIds": ids}
+            reason = None
+            if any(p in shipped for p in passives):
+                reason = "ownerPassiveIsBuff"
+            elif any(str(i) in referenced for i in ids):
+                reason = "referencedByChain"
+            elif any(b["stacking"]["exclusiveScope"] != "perSpEffect" for b in family):
+                reason = "alreadySharedKey"
+            else:
+                skip = {"ID", "Name", *rate_keys, *chain_fields}
+                differing = sorted(c for c in rows[0] if c not in skip and len({r.get(c) for r in rows}) > 1)
+                if differing:
+                    reason = "columnsDiffer"
+                    base["differingColumns"] = differing
+            if reason:
+                rejected.append({**base, "reason": reason})
+                continue
+            groups.append({
+                **base,
+                "key": f"affix#{attach_id}",
+                "dispatcherSpEffectIds": [int(p) for p in passives],
+                "dispatcherStateInfo": sorted({int(sp[p]["stateInfo"]) for p in passives if p in sp}),
+                "differingRateKeys": [k for k in rate_keys if len({b["rates"][k] for b in family}) > 1],
+                "differingChainFields": [f for f in chain_fields if len({r.get(f) for r in rows}) > 1],
+            })
+    return groups, rejected
+
+
+AFFIX_VARIANT_REJECT_REASONS = OrderedDict([
+    ("ownerPassiveIsBuff", "词条自己的 passiveSpEffectId 就是 buff（词条直接给这一档，其余同干行不是它派发的，"
+                           "如 6610700『减少专注值消耗』只引用档位1 7610700，7610701／7610702 在参数里没有任何引用）"),
+    ("referencedByChain", "有指向列指向这些行（替换、周期、命中、击杀、累积、解析等级…），各行由不同事件分别触发，不是同一派发行的替代档"),
+    ("alreadySharedKey", "原来就共用类别键（removePrevious／applyFirst…），已经互斥，不需要再合并"),
+    ("columnsDiffer", "除行名、倍率与指向列外还有列不同（持续时间、特效、阵营位…），不是单纯的数值档位"),
+])
 
 
 # --------------------------------------------------------------------------
@@ -1561,16 +1781,24 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
    - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），
      各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 "sp120"），否则 "ladder#<第 1 档 id>"。
      最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），
-     按 ID 算会把同一护符的两档相乘。
+     按 ID 算会把同一护符的两档相乘。键 "sp120" 同时让连刺破露滴、米莉森的义手、带翼剑徽章、遗物『连续攻击时，提升攻击力』
+     这几件彼此互斥（同时装备只有一份生效，参数推断、未实测，见 notes.accumulatorLadder）；
+   - exclusiveScope=affixVariant（v6 复核三轮）：同一条词条下互为替代的档位（buffs[].affixVariant），键＝"affix#<attachEffectId>"。
+     『出击时的武器，附加…』7 条遗物词条各有 4 档（7120001–7120004 等），由词条自己的派发行（stateInfo=2101）按出击武器选一档，
+     按 ID 算会把物理 −30／−40／−50／−60 与属性 +33／+44／+55／+66 全加起来、把 ×0.85 乘成 ×0.52；
+   - 反过来，accumulatorStages（8885220–8885222，武器词条『维持防御时…』的三个阶段）各自一键，逐段相乘（notes.accumulatorStages）；
+     selfAllyPair 的 Self／Allies 两行各自一键，但算施放者自己时只计 Self 行（notes.selfAllyPair）。
    同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；
    不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。
    stacking.group 保留旧口径（"sp<spCategory>#<spEffectId>" 或 "sp<spCategory>"，只按类别、不看优先度与阶梯），
    v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。
    正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；
-   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010。
+   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；
+   『出击时的武器，附加魔力属性攻击力』四档 7120001–7120004、『…附加异常状态冻伤』四档 7120401–7120404。
    反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；
    『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；
-   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间。
+   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间；
+   『出击时的武器，附加…』7 条词条彼此之间（各自一键，同 exclusivityId=100 只作提示）；8885220／8885221／8885222 三个阶段；共享圣律 1876／1877。
    这些都写进了 self_check。
 
 3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。
@@ -1779,6 +2007,11 @@ POTENCY_RE = re.compile(r"\b(?:Potency|Level|Lv|Stack|Step|Tier|Phase)\s*(\d+)",
 # a display name that had to fall back to "#<spEffectId>" as its last qualifier
 DISPLAY_ID_TAIL_RE = re.compile(r"#\d+[）)]$")
 PERCENT_RE = re.compile(r"\(([+-]?\d+(?:\.\d+)?)\s*%\)")
+# v6 (re-verify, round 3): the Self / Allies rows of one cast
+# ("[AoW] Shared Order - Damage Buff - Self" / "... - Allies")
+SELF_ALLY_ROW_RE = re.compile(r"^(.*) - (Self|Allies)$")
+# v6 (re-verify, round 3): a ladder layer row ("... - Stack 3"); shown as 「第N层」
+STACK_ROW_RE = re.compile(r"\bStack\s*(\d+)\b", re.IGNORECASE)
 SIDE_RE = re.compile(r"\b(Right|Left)\b")
 
 
@@ -3331,6 +3564,11 @@ def build() -> dict[str, Any]:
             return f"{match.group(1)}%"
         match = POTENCY_RE.search(param_name or "")
         if match:
+            # v6 (re-verify, round 3): a "Stack N" row is layer N of a ladder
+            # (7039900..7039909, spCategory 206), not a potency -- 「档位」 is
+            # the weapon-affix word and confused the two
+            if match.group(0).casefold().startswith("stack"):
+                return f"第{match.group(1)}层" if is_zh else f"Stack {match.group(1)}"
             return f"档位{match.group(1)}" if is_zh else f"Lv{match.group(1)}"
         return None
 
@@ -3789,6 +4027,8 @@ def build() -> dict[str, Any]:
     # ids the dataset will ship, needed before the loop so the stack-ladder scan
     # can stop at the next *reachable* tier instead of swallowing it
     shipped_ids = {sid for sid in sources if sp.get(sid) is not None and classify(sid)[0]}
+    # v6 (re-verify, round 3): accumulator -> behavior bullet -> buff stages
+    accum_stages = accumulator_stage_chains(sp, index_param(read_param("BehaviorParam_PC")), bullets, shipped_ids)
     for sp_id in sorted(sources, key=int):
         row = sp.get(sp_id)
         if row is None:
@@ -4099,6 +4339,11 @@ def build() -> dict[str, Any]:
                 "accumulatorSpEffectIds": accum_tier["accumulatorSpEffectIds"],
                 "thresholds": accum_tier["thresholds"],
             }
+        if sp_id in accum_stages:
+            # v6 (re-verify, round 3): stage N of an accumulator whose tiers
+            # hand their buff over through a behavior bullet (8885220..22);
+            # the stages coexist, so the key stays per id.
+            entry["accumulatorStages"] = accum_stages[sp_id]
         if inferred_name:
             entry["inferredName"] = True
             entry["inferredNameFrom"] = inferred_name_from
@@ -4441,6 +4686,10 @@ def build() -> dict[str, Any]:
     # none: 8810301 / 8810351 are identical rows of AE 8810300 (Potency 1) and
     # 8810350 (Potency 2) and needed #spEffectId to be told apart
     early_owner_potency: dict[int, int] = {}
+    # v6 (re-verify, round 3): the one affix a buff belongs to, for the layer /
+    # stage rows whose own sources carry no localized name (7039900..09 read
+    # 「提升攻击力（档位N）」 with no hint of the relic they come from)
+    early_owner_name: dict[int, tuple[str | None, str | None]] = {}
     for buff in buffs:
         placed_early = classify_source_slots(
             str(buff["spEffectId"]), buff["paramName"], sources[str(buff["spEffectId"])], loadout, attach,
@@ -4450,6 +4699,12 @@ def build() -> dict[str, Any]:
                            for a in ids if a in attach}
         if len(owner_potencies) == 1 and None not in owner_potencies:
             early_owner_potency[buff["spEffectId"]] = owner_potencies.pop()
+        owner_ids = sorted({a for ids in placed_early["attach"].values() for a in ids if a in attach}, key=int)
+        if len(owner_ids) == 1:
+            early_owner_name[buff["spEffectId"]] = attach_names(attach[owner_ids[0]])
+    # layer / stage rows always show the owning affix and the layer / stage
+    forced_step_origin = {b["spEffectId"] for b in buffs
+                          if b.get("accumulatorStages") or STACK_ROW_RE.search(b["paramName"] or "")}
 
     # --- display names ----------------------------------------------------
     # Only names that actually collide get a qualifier: a unique name such as
@@ -4473,7 +4728,11 @@ def build() -> dict[str, Any]:
     # talismans were 「米莉森的义手（护符・×1.04・#312505）」), and a [Weapon]
     # row that only PermanentBuffParam grants reads 「永久强化」 instead of
     # 「武器」 so it cannot be mistaken for the in-run weapon affix.
-    def ladder_step_token(buff: dict[str, Any], is_zh: bool) -> str | None:
+    def ladder_step_token(buff: dict[str, Any], is_zh: bool, with_stages: bool = True) -> str | None:
+        stages = buff.get("accumulatorStages") if with_stages else None
+        if stages:
+            # v6 (re-verify, round 3): 8885220..22 were 「命中时武器效果1..3」
+            return f"第{stages['stage']}阶段" if is_zh else f"Stage {stages['stage']}"
         ladder = buff.get("accumulatorLadder")
         if not ladder:
             return None
@@ -4507,6 +4766,18 @@ def build() -> dict[str, Any]:
                 continue
             src_list, param_name = display_inputs[sp_key]
             head, localized, raw = display_head(base, src_list, is_zh, param_name)
+            # (not in the v6-draft shadow run, whose count Q4 quotes)
+            forced = sp_key in forced_step_origin and not (is_zh and not zh_detail)
+            if forced and (not localized or all(e.get("inferred") for e in src_list)):
+                # the row was found through its Paramdex name only, so its
+                # "origin" is that English row name again -- use the affix
+                owner_names = early_owner_name.get(sp_key)
+                owner = (owner_names[0] if is_zh else owner_names[1]) if owner_names else None
+                if owner and owner != head and owner not in head:
+                    if head in owner:
+                        head, localized = owner, None   # 「提升攻击力」 -> the affix that says so
+                    else:
+                        localized = owner
             if is_zh and zh_detail:
                 # never the English row name in a Chinese list (see above)
                 raw = zh_row_detail(sp_key, param_name, head, localized,
@@ -4521,7 +4792,7 @@ def build() -> dict[str, Any]:
             used[sp_key] = set()
             levels[sp_key] = [
                 localized,
-                (ladder_step_token(buff, is_zh) or step_token(param_name, is_zh)
+                (ladder_step_token(buff, is_zh, not (is_zh and not zh_detail)) or step_token(param_name, is_zh)
                  or owner_potency_token(buff, is_zh)),
                 side_token(buff["scope"], param_name, is_zh),
                 slot_category_label(buff, param_name, is_zh),
@@ -4529,6 +4800,8 @@ def build() -> dict[str, Any]:
                 raw,
                 f"#{sp_key}",
             ]
+            if forced:
+                used[sp_key] |= {level for level in (0, 1) if levels[sp_key][level]}
 
         named = [b for b in buffs if b[field]]
 
@@ -4659,6 +4932,10 @@ def build() -> dict[str, Any]:
             "compatibilityId": int(row.get("compatibilityId") or "-1"),
             "inNormalRelicPools": bool(info["normalTables"]),
             "fixedRelicOnly": not info["random"],
+            # v6 (re-verify, round 3): AttachEffectParam.exclusivityId as is
+            # (-1 = none); same value on two equipped relics = the game's red
+            # 「!」 conflict mark, see notes.relicAffix
+            "exclusivityId": int(row.get("exclusivityId") or "-1"),
         }
 
     # stack caps the params cannot state on the SpEffect row itself
@@ -4849,6 +5126,94 @@ def build() -> dict[str, Any]:
                                  "sourceSlot": buff["sourceSlot"], **{k: buff["stackInput"][k] for k in (
                                      "mode", "paramMaxStacks", "practicalMaxStacks")}})
 
+    # --- v6 (re-verify, round 3) --------------------------------------------
+    by_sp_id = {b["spEffectId"]: b for b in buffs}
+    # (a) alternative potencies of one affix: one key per affix
+    variant_groups, variant_rejected = affix_variant_scan(buffs, sp, attach)
+    for group in variant_groups:
+        ids = group["spEffectIds"]
+        for index, member in enumerate(ids, 1):
+            buff = by_sp_id[member]
+            buff["stacking"]["exclusiveKey"] = group["key"]
+            buff["stacking"]["exclusiveScope"] = "affixVariant"
+            buff["affixVariant"] = {
+                "key": group["key"],
+                "attachEffectId": group["attachEffectId"],
+                "variant": index,
+                "variants": len(ids),
+                "variantSpEffectIds": ids,
+                "dispatcherSpEffectIds": group["dispatcherSpEffectIds"],
+                "dispatcherStateInfo": group["dispatcherStateInfo"],
+                "differingRateKeys": group["differingRateKeys"],
+                "differingChainFields": group["differingChainFields"],
+            }
+    # (b) accumulator ladders: which tiers are buffs at all (7037607, the
+    # relic ladder's tier 4, is sp120 / effectEndurance 0 / no rate)
+    for buff in buffs:
+        ladder = buff.get("accumulatorLadder")
+        if ladder:
+            ladder["shippedTierSpEffectIds"] = [t for t in ladder["tierSpEffectIds"] if t in by_sp_id]
+    # (c) the Self / Allies rows of one cast (Shared Order 1876 / 1877 ...)
+    pair_rows: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for buff in buffs:
+        match = SELF_ALLY_ROW_RE.match((buff["paramName"] or "").strip())
+        if match:
+            pair_rows[match.group(1)][match.group(2)] = buff
+    friendly_hits: dict[str, list[int]] = defaultdict(list)
+    for atk_id, atk_row in sorted(atk_pc.items(), key=lambda kv: int(kv[0])):
+        if atk_row.get("friendlyTarget") == "1" and atk_row.get("selfTarget") == "0":
+            for i in range(5):
+                target = ref(atk_row.get(f"spEffectId{i}"))
+                if target:
+                    friendly_hits[target].append(int(atk_id))
+    cycle_carriers: dict[str, list[int]] = defaultdict(list)
+    for carrier_id, carrier in sp.items():
+        target = ref(carrier.get("cycleOccurrenceSpEffectId"))
+        if target:
+            cycle_carriers[target].append(int(carrier_id))
+    self_ally_pairs: list[dict[str, Any]] = []
+    for stem, rows in sorted(pair_rows.items(), key=lambda kv: min(b["spEffectId"] for b in kv[1].values())):
+        if set(rows) != {"Self", "Allies"}:
+            continue
+        own, allies = rows["Self"], rows["Allies"]
+        own["selfAllyPair"] = {"role": "self", "counterpartSpEffectId": allies["spEffectId"]}
+        allies["selfAllyPair"] = {"role": "ally", "counterpartSpEffectId": own["spEffectId"]}
+
+        def delivery(buff: dict[str, Any]) -> dict[str, Any]:
+            key = str(buff["spEffectId"])
+            carriers = sorted(cycle_carriers.get(key, []))
+            hits = sorted(set(friendly_hits.get(key, []))
+                          | {a for c in carriers for a in friendly_hits.get(str(c), [])})
+            return {"spEffectId": buff["spEffectId"], "target": buff["target"],
+                    "exclusiveKey": buff["stacking"]["exclusiveKey"],
+                    "cycleCarrierSpEffectIds": carriers, "friendlyHitAtkIds": hits}
+        own_d, ally_d = delivery(own), delivery(allies)
+        self_ally_pairs.append({
+            "paramStem": clean_param_name(stem),
+            "self": own_d,
+            "ally": ally_d,
+            # the rows a friendly hit (AtkParam_Pc friendlyTarget=1, selfTarget=0,
+            # i.e. never the attacker) hands out should be the Allies row
+            "deliveryMatchesRowName": bool(ally_d["friendlyHitAtkIds"]) and not own_d["friendlyHitAtkIds"],
+        })
+    # (d) relic affixes that share an exclusivityId (the in-game 「!」 group)
+    exclusivity_members: dict[int, list[int]] = defaultdict(list)
+    for attach_id, attach_row in attach.items():
+        value = int(attach_row.get("exclusivityId") or "-1")
+        if value != -1:
+            exclusivity_members[value].append(int(attach_id))
+    relic_ids_with_buffs = {e["attachEffectId"] for b in buffs for e in b.get("relicAffixes", [])}
+    exclusivity_groups = []
+    for value in sorted({e["exclusivityId"] for b in buffs for e in b.get("relicAffixes", [])} - {-1}):
+        members = sorted(exclusivity_members[value])
+        exclusivity_groups.append({
+            "exclusivityId": value,
+            "attachEffectIds": members,
+            "attachEffectIdsWithBuffs": [a for a in members if a in relic_ids_with_buffs],
+            "compatibilityIds": sorted({int(attach[str(a)].get("compatibilityId") or "-1") for a in members}),
+            "namesZh": [attach_names(attach[str(a)])[0] for a in members],
+        })
+
     weapon_affix_list = []
     for attach_id in sorted(loadout["weaponAffix"], key=int):
         info = loadout["weaponAffix"][attach_id]
@@ -4985,7 +5350,9 @@ def build() -> dict[str, Any]:
                        "`saved`＝true 表示该行 saveCategory≠-1，层数会存进存档槽（这也是把它和"
                        "『可分别装备的词条档位』区分开的依据，见 diagnostics.stackLaddersNote）。"
                        "同层互斥：任何时刻只有一层生效，**各层数值绝不能相乘**，"
-                       "页面要么显示第 1 层并注明满层值，要么让用户选层数。",
+                       "页面要么显示第 1 层并注明满层值，要么让用户选层数。"
+                       "（v6 复核三轮：注意 accumulatorLadder 的同名字段 tierSpEffectIds **含第 1 档**、各档本身就是 buff，"
+                       "口径与这里相反，见 notes.accumulatorLadder。）",
         "activation": "`activation` 是**发动条件的机读标记**，三态：passive／conditional／activated。"
                       "`conditions` 与 `triggered` 只能看到 SpEffectParam 自带的条件列，"
                       "而表里最大的那几个倍率恰恰不写在参数列里——它们由 ESD／EMEVD 脚本开关，"
@@ -5074,7 +5441,13 @@ def build() -> dict[str, Any]:
                    "武器词条栏按 slotRules 组装：常规 6 条、深夜 12 条正面词条（另有每把 1 条诅咒，最多 6 条），"
                    "**其中 weaponAffixDeepOnlyPositive=true 的最多 6 条**（slotRules.weaponAffix.maxDeepOnlyAffixes，每把 1 条；"
                    "诅咒也是 weaponAffixDeepOnly=true，但不计入这个上限，见 slotRules.weaponAffix.deepOnlyCapField）；"
-                   "叠层类按 stackInput 让用户填层数。",
+                   "叠层类按 stackInput 让用户填层数。"
+                   "**v6 复核三轮**：第①步保留 self 与 ally 时，带 `selfAllyPair` 的成对行（同一战技的 Self／Allies 两行）"
+                   "算施放者自己只计 role=self 那一行，role=ally 那一行只在队友施放时计入（notes.selfAllyPair）；"
+                   "第⑥步的 exclusiveKey 新增取值 \"affix#<attachEffectId>\"（exclusiveScope=affixVariant）：同一词条互为替代的 4 档共用一键、"
+                   "只取一档（notes.affixVariant）；relicAffixes[].exclusivityId 相同的不同词条（出击武器附加类 7 条）同时选中时给出提示；"
+                   "accumulatorStages 的各阶段各自一键、逐段相乘（notes.accumulatorStages）；"
+                   "累积阶梯的 \"sp120\" 同时让不同物品互斥（notes.accumulatorLadder）。",
         "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind："
                          "multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；"
                          "flag 只是开关，不参与计算；special 的每个字段语义各不相同、"
@@ -5950,6 +6323,12 @@ def build() -> dict[str, Any]:
         "`requiresGoodsIds`（可缺）：这条遗物效果只在使用这些道具时才出现——7050301 是遗物词条 7050100"
         "『道具效用能扩及我方人物』把『勇者肉块』（GoodsName 1210）的效果分给队友的那一行，target=ally，"
         "sourceSlots=[relicAffix, consumable]，要同时选了遗物词条与道具才成立。"
+        "**v6 复核三轮**：relicAffixes[] 新增 `exclusivityId`（AttachEffectParam 原值，-1＝无）。"
+        "compatibilityId 管『同一件遗物上能否并存』，exclusivityId 管『已装备的几件遗物之间亮不亮红色感叹号』（Smithbox 注释）。"
+        "本版本带 buff 的词条里只有 100 一组：『出击时的武器，附加…』7 条（魔力／火／雷／圣／冻伤／中毒／出血），"
+        "compatibilityId 同为 200，同一件遗物上只能有一条；分装在两件遗物上会亮感叹号，按参数推断只有一条生效（未实测）。"
+        "它们各自的 4 档由词条自己的派发行按出击武器选一档，4 档共用一个 exclusiveKey（\"affix#<attachEffectId>\"，见 notes.affixVariant）；"
+        "不同词条之间没有并键，页面同时选中两条同 exclusivityId 的词条时应提示，分组见 diagnostics.relicAffixExclusivityGroups。"
     )
     payload["notes"]["stackInput"] = (
         "**v6 新增** `stackInput`（可缺）：需要用户填层数的叠层增益。"
@@ -5975,6 +6354,78 @@ def build() -> dict[str, Any]:
         "『永久强化』；落到 #spEffectId 的条目与原因见 diagnostics.displayNameZhIdFallback／Note），"
         "self_check 保证 displayNameZh 里除 NPC／HP／FP 外没有拉丁字母（diagnostics.displayNameZhLatinResidue）。"
         "`descZhSource`（可缺）：descZh 不是来自 SpEffectInfo 时写明出处，本版本只有 PermanentBuffInfo#<PermanentBuffParam 行>。"
+        "（v6 复核三轮：行名是『Stack N』的叠层行写『第N层』而不是『档位N』，并带上所属词条名，"
+        "如 7039900『出现异常状态量表时，能缓慢提升攻击力（第1层）』；accumulatorStages 的各阶段写『第N阶段』。）"
+    )
+    # v6 (re-verify, round 3)
+    sp120_items = sorted({b["accumulatorLadder"]["tierSpEffectIds"][0] for b in buffs
+                          if b.get("accumulatorLadder") and b["stacking"]["exclusiveKey"] == "sp120"})
+    payload["notes"]["accumulatorLadder"] = (
+        f"**v6 复核新增** `accumulatorLadder`（可缺，出现在累积阶梯的**每一档**上，本版本 {sum(1 for b in buffs if b.get('accumulatorLadder'))} 条）各键的口径："
+        "`key`＝这条阶梯共用的 exclusiveKey（与 stacking.exclusiveKey 相同）；"
+        "`tier`＝本条是第几档（从 1 起）；`tiers`＝阶梯总档数，**含第 1 档**；"
+        "`tierSpEffectIds`＝**全部各档**的 spEffectId（含第 1 档、含本条自己），按阈值升序，长度恒等于 tiers；"
+        "`accumulatorSpEffectIds`＝与各档一一对应的累积器行（带 accumuOverFireId 的那一行）；"
+        "`thresholds`＝各档的触发阈值（累积器的 accumuOverVal，单位是累积器自己的计数，连续攻击类随命中累积），升序；"
+        "`shippedTierSpEffectIds`（复核三轮新增）＝tierSpEffectIds 里真正作为 buff 出现在 buffs[] 里的那些档。"
+        "**与 stackLadder 的同名字段含义相反**：stackLadder.tierSpEffectIds 是『第 2 层起、不含第 1 层』，而且那些 id 不会出现在 buffs[] 里；"
+        "accumulatorLadder.tierSpEffectIds 含第 1 档，各档本身就是 buff。例外是没有任何倍率的档不会成为 buff："
+        "遗物『连续攻击时，提升攻击力』7037604 的 tiers=4，但第 4 档 7037607 是 spCategory 120、持续 0 秒、没有倍率的行，"
+        "不在 buffs[] 里，shippedTierSpEffectIds 只有 7037604–7037606 三档——页面显示层数时请用 shippedTierSpEffectIds，"
+        "不要按 tiers 显示『共 4 层』。"
+        "两者的区别：stackLadder 是存档叠层（saveCategory≠-1，打倒首领／监牢囚犯等一层层存起来，数据集只收第 1 层，页面让用户填层数）；"
+        "accumulatorLadder 是局内累积（命中次数达到阈值依次触发下一档，各档都收录，页面让用户选能维持的档）。"
+        "两者都是同一阶梯各档互斥，**各档绝不能相乘**。"
+        "**互斥结论（参数推断，未实测）**：连续攻击类的各档落在 spCategory 120（Paramdex：Remove Previous），键都是 \"sp120\"，"
+        "所以不止同一件物品的各档互斥，不同物品之间也互斥——"
+        + "、".join(f"{SOURCE_SLOTS[by_sp_id[i]['sourceSlot']]['zh']}『{by_sp_id[i]['displayNameZh'].split('（')[0]}』"
+                    f"{i}–{by_sp_id[i]['accumulatorLadder']['shippedTierSpEffectIds'][-1]}"
+                    for i in sp120_items) +
+        " 这几件任取两件同时装备也只有一份生效（新触发的顶替旧的；它们的阈值都是 17／30／45／60，几乎同时触发），"
+        "排名只算一份、默认取倍率最高的一档，页面同时选中时应提示。v6 之前的说明曾把『米莉森的义手＋带翼剑徽章』当成相乘的例子，以本条为准。"
+    )
+    payload["notes"]["accumulatorStages"] = (
+        "**v6 复核三轮新增** `accumulatorStages`（可缺，本版本 3 条：武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』"
+        "的 8885220／8885221／8885222）：累积器依次触发、但每一阶段经『行为→子弹』才把 buff 交给玩家的阶段链。"
+        "链路：累积器 8885201–8885203（stateInfo=307，阈值 4000000／9000000／15000000）→ 8885210–8885212（behaviorId "
+        "900010020–900010022，BehaviorParam_PC refType=1＝子弹）→ Bullet 98885200–98885202 的 spEffectId0 → 8885220–8885222。"
+        "各键：`stage`／`stages`（本条是第几阶段／共几阶段）、`stageSpEffectIds`（各阶段的 buff，按阈值升序，含本条）、"
+        "`accumulatorSpEffectIds`、`thresholds`、`behaviorSpEffectIds`、`behaviorParamIds`、`bulletIds`、`durations`（各阶段 buff 的持续秒数）、"
+        "`expiryAligned`（阈值差与持续时间差成同一比例时给出：unitsPerSecond＝推出的每秒累积量，commonEndSeconds＝各阶段一起结束的时刻；"
+        "不成比例时为 null）、`coexist`=true。"
+        "**与 accumulatorLadder 相反，这里的各阶段是同时存在、逐段相乘的**："
+        "三条都是 ×1.1（另各带 dexterityCancelSystemOnlyAddDexterity=30 的咏唱加速），spCategory=20 各自一个 ID；"
+        "持续时间 28／25.5／22.5 秒，阈值差 5M／6M 与持续时间差 2.5／3 秒同为每秒 2000000，"
+        "即三段在开始防御后第 30 秒一起结束——这是『叠上去一起到期』的设计，游戏文本 AttachEffectInfo#8885200 也写『能阶段性提升』。"
+        "所以三条保持各自的 exclusiveKey：维持到第 n 阶段时 ×1.1^n（第 3 阶段 ×1.331）。"
+        "页面应按阶段勾选：勾第 n 阶段时第 1..n-1 阶段必然也在（依次达到）。累积量随防御时间线性增长是推断，阶段叠乘未实测。"
+    )
+    payload["notes"]["affixVariant"] = (
+        "**v6 复核三轮新增** `affixVariant`（可缺，本版本 28 条）与 exclusiveScope=\"affixVariant\"：同一条词条下互为替代的档位，"
+        "共用键 \"affix#<attachEffectId>\"，**同键只取一档，绝不能相乘**。"
+        "本版本只有『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条，每条 4 档："
+        "词条（AttachEffectParam 7120000 等）只有一个被动 7120000『Apply State Info』（stateInfo=2101，全表只有这 7 行），"
+        "4 档 7120001–7120004 等没有任何参数列指向，只能由这个派发行按条件选一档；"
+        "词条库说明『根据武器类型降低物理攻击力30/40/50/60，并增加魔力属性攻击力33/44/55/66』——按出击武器的类别取一档。"
+        "所以同一词条的 4 档不可能同时生效；它们不是可以分装在不同遗物上的独立词条（能装备的只有词条本身，档位由武器决定）；"
+        "同一词条装在两件遗物上时，词条库叠加性是『不可叠加』，同键也只算一份。"
+        "冻伤／中毒／出血的 4 档逐列相同（×0.85），只差指向的负载行。"
+        "各键：`key`；`attachEffectId`；`variant`／`variants`（第几档／共几档，按 spEffectId 升序）；`variantSpEffectIds`；"
+        "`dispatcherSpEffectIds`／`dispatcherStateInfo`（词条自己的被动行及其 stateInfo）；`differingRateKeys`（各档数值不同的倍率键，"
+        "逐列相同的为空）；`differingChainFields`（各档不同的指向列）。"
+        "页面：让用户按出击武器选一档（不知道时显示档位 1–4 的区间），不要把 4 档都乘进去；"
+        "fixedRelics[].spEffectIds 仍列出全部 4 档（如『细腻的水滴情景』[7120001,7120002,7120003,7120004]），整件选入时同样按键去重。"
+        "识别条件与没合并的近似组见 diagnostics.affixVariantScan(+Note)。"
+    )
+    payload["notes"]["selfAllyPair"] = (
+        "**v6 复核三轮新增** `selfAllyPair`（可缺，本版本 6 条＝3 对）：Paramdex 行名以『- Self』／『- Allies』成对的战技增益，"
+        "`role`（self／ally，与 target 一致）＋`counterpartSpEffectId`（另一行）。"
+        "**算施放者自己的伤害时，不计入同一战技的 role=ally 那一行**——共享圣律 1876（自身 ×1.1）与 1877（队友 ×1.075）："
+        "队友那一行由 AtkParam_Pc 300000820（friendlyTarget=1、selfTarget=0）交给命中的队友，施放者自己不会被命中；"
+        "若只按 notes.ranking 第①步同时保留 self 与 ally 再相乘，施放者会被错算成 ×1.1825。"
+        "role=ally 的行只在『队友施放、落到自己身上』时计入；两名队友都施放时，自己的 1876 与队友给的 1877 确实能同时存在"
+        "（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。投递证据与哀悼墓碑 1835／1836 行名与投递对调的说明见 "
+        "diagnostics.selfAllyPairs(+Note)。"
     )
     payload["enums"]["sourceSlot"] = {k: dict(v) for k, v in SOURCE_SLOTS.items()}
     payload["enums"]["outputClass"] = {k: dict(v) for k, v in OUTPUT_CLASSES.items()}
@@ -6022,6 +6473,11 @@ def build() -> dict[str, Any]:
     payload["counts"]["buffsWithAccumulatorLadder"] = sum(1 for b in buffs if b.get("accumulatorLadder"))
     payload["counts"]["buffsWithWeaponAffixDeepOnlyPositive"] = sum(
         1 for b in buffs if b.get("weaponAffixDeepOnlyPositive"))
+    # v6 (re-verify, round 3)
+    payload["counts"]["buffsWithAffixVariant"] = sum(1 for b in buffs if b.get("affixVariant"))
+    payload["counts"]["affixVariantGroups"] = len(variant_groups)
+    payload["counts"]["buffsWithAccumulatorStages"] = sum(1 for b in buffs if b.get("accumulatorStages"))
+    payload["counts"]["buffsWithSelfAllyPair"] = sum(1 for b in buffs if b.get("selfAllyPair"))
     payload["diagnostics"]["droppedAttackContexts"] = dropped_attack_contexts
     # v6 (re-verify): the measurements behind stackingRules 1-2 / exclusiveKey
     key_evidence = exclusive_key_evidence(sp, attach, load_json(AFFIX_CATALOG_PATH)["affixes"])
@@ -6052,6 +6508,45 @@ def build() -> dict[str, Any]:
         "与四条 204 阶梯彼此之间做反例。"
     )
     payload["diagnostics"]["accumulatorLadderConflicts"] = accum_conflicts
+    # v6 (re-verify, round 3)
+    payload["diagnostics"]["affixVariantScan"] = {"groups": variant_groups, "rejected": variant_rejected}
+    payload["diagnostics"]["affixVariantScanNote"] = (
+        "v6（复核三轮）stacking.exclusiveScope=affixVariant 的识别过程：把只归属一条词条（relicAffixes／weaponAffixIds 恰好一个）"
+        "的 buff 按『行名去掉 Potency／Stack／末尾编号后的词干＋倍率键集合』分组，两条以上的组逐条检查——"
+        "groups 是全部满足条件、已合并成 \"affix#<attachEffectId>\" 的组（dispatcherSpEffectIds／dispatcherStateInfo 是词条自己的"
+        "passiveSpEffectId 及其 stateInfo，differingRateKeys 是各档数值不同的倍率键，differingChainFields 是各档不同的指向列）；"
+        "rejected 是没合并的组及原因：" + "；".join(f"{k}＝{v}" for k, v in AFFIX_VARIANT_REJECT_REASONS.items()) + "。"
+        "本版本合并的全是『出击时的武器，附加…』7 条词条（派发行 stateInfo=2101，全表只有这 7 行用它）："
+        "魔力／火／雷／圣 4 条的 4 档数值是物理 −30／−40／−50／−60、属性 +33／+44／+55／+66"
+        "（词条库说明『根据武器类型降低物理攻击力30/40/50/60…』，即按出击武器的类别取一档），"
+        "冻伤／中毒／出血 3 条的 4 档逐列相同（×0.85），只差 atkOccurrenceSpEffectId 指向的负载行，负载行本来就共用 applyFirst 类别键。"
+        "rejected 里值得一看的：8885220–8885222（columnsDiffer：持续时间不同，是同时存在的三个阶段，见 buffs[].accumulatorStages）；"
+        "7500801–7500803（referencedByChain：学者遗物由 analyzeSelfLevel1..3_effectId 分别指向，三档数值都是 ×0.85，"
+        "是否能同时存在参数里看不出来，保持各自的键）；7610700–7610702（ownerPassiveIsBuff：词条 6610700 只引用档位1，"
+        "7610701／7610702 在参数里没有任何引用，是按行名归到这条词条的）。"
+    )
+    payload["diagnostics"]["selfAllyPairs"] = self_ally_pairs
+    payload["diagnostics"]["selfAllyPairsNote"] = (
+        "v6（复核三轮）Paramdex 行名以『- Self』／『- Allies』成对的战技增益（buffs[].selfAllyPair）。"
+        "friendlyHitAtkIds＝把这一行（或周期性施加它的载体行 cycleCarrierSpEffectIds）交给命中对象的 AtkParam_Pc"
+        "（friendlyTarget=1、selfTarget=0，攻击判定不会命中施放者自己）。"
+        "共享圣律 1876（×1.1，自身）／1877（×1.075，队友）：施放者经 1870（sp160）或 1875 周期性拿到 1876；"
+        "AtkParam_Pc 300000820『[AoW] Shared Order』只把 1871（sp152）交给队友，1871 再周期性施加 1877——"
+        "所以施放者自己的一次施放只拿到 1876，不会同时拿到 1877，算施放者自己的伤害时不能把两行相乘。"
+        "两名队友都施放时，一个人可以同时挂着自己的 1876 和队友给的 1877（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。"
+        "deliveryMatchesRowName=false 的是哀悼墓碑 1835／1836：AtkParam_Pc 303401800『[AoW Golden Epitaph] Last Rites』交给队友的是"
+        "行名写 Self 的 1835，行名写 Allies 的 1836 没有任何参数投递（由战技动作脚本挂给施放者）。两行数值逐列相同、只差 spCategory"
+        "（152／160），target 与 selfAllyPair.role 仍按行名给出，未改，页面计算伤害不受影响，只是与其它 152／160 增益的互斥对象会对调。"
+    )
+    payload["diagnostics"]["relicAffixExclusivityGroups"] = exclusivity_groups
+    payload["diagnostics"]["relicAffixExclusivityGroupsNote"] = (
+        "v6（复核三轮）relicAffixes[].exclusivityId≠-1 的词条按该值分组（attachEffectIds 取自整张 AttachEffectParam）。"
+        "据 Smithbox 注释（见 macos/DataSources/PROVENANCE.md 第 47 行），exclusivityId 只控制『已装备遗物之间的红色感叹号提示』，"
+        "compatibilityId 才决定同一件遗物上能否并存。100＝『出击时的武器，附加…』7 条（compatibilityId 同为 200，"
+        "词条库叠加性都是『不可叠加』）：这 7 条同一件遗物上只能有一条；分装在两件遗物上时游戏会亮红色感叹号。"
+        "它们都改写同一把出击武器的属性（spAttribute 负载），按参数推断两条同时装备时只有一条生效，但这是 UI 提示的含义推断，未实测，"
+        "所以没有并进同一个 exclusiveKey（键仍是每条词条一个 \"affix#<attachEffectId>\"），页面同时选中两条时应给出提示。"
+    )
     payload["diagnostics"]["displayNameZhIdFallback"] = [
         {"spEffectId": b["spEffectId"], "displayNameZh": b["displayNameZh"]}
         for b in buffs if DISPLAY_ID_TAIL_RE.search(b["displayNameZh"] or "")]
@@ -6469,6 +6964,11 @@ def self_check_v6_reverify(payload: dict[str, Any]) -> None:
                     or (behaviour == "removePrevious" and cat < 200)) and key == f"sp{cat}", (sp_id, st)
         elif scope == "categoryPriority":
             assert behaviour == "removePrevious" and 200 <= cat <= 299 and key == f"sp{cat}@p{prio}", (sp_id, st)
+        elif scope == "affixVariant":
+            # v6 (re-verify, round 3): only per-id rows are merged, one key per affix
+            variant = buff["affixVariant"]
+            assert behaviour in PER_ID_BEHAVIOURS and key == variant["key"] == f"affix#{variant['attachEffectId']}", \
+                (sp_id, st, variant)
         else:
             assert key == ladder["key"], (sp_id, st, ladder)
             assert ladder["tierSpEffectIds"][ladder["tier"] - 1] == sp_id, (sp_id, ladder)
@@ -6478,6 +6978,7 @@ def self_check_v6_reverify(payload: dict[str, Any]) -> None:
             assert key.startswith("sp") or key == f"ladder#{ladder['tierSpEffectIds'][0]}", (sp_id, key)
             # the page reads 「第N层」 for every tier
             assert f"第{ladder['tier']}层" in (buff["displayNameZh"] or ""), (sp_id, buff["displayNameZh"])
+        assert (scope == "affixVariant") == bool(buff.get("affixVariant")), (sp_id, scope)
         # tiers of one accumulator ladder that are shipped share the key
         if ladder:
             for other in ladder["tierSpEffectIds"]:
@@ -6557,6 +7058,130 @@ def self_check_v6_reverify(payload: dict[str, Any]) -> None:
         if buff["stacking"]["stateInfo"] == 197 and buff["target"] == "self":
             for cls in ("sorcery", "incantation", "ranged", "throw"):
                 assert buff["appliesTo"][cls] == "no", (buff["spEffectId"], cls)
+    self_check_v6_round3(payload)
+
+
+def self_check_v6_round3(payload: dict[str, Any]) -> None:
+    """Third verification round: affix variants, accumulator stages / ladder fields, Self/Allies pairs."""
+    buffs = payload["buffs"]
+    by_id = {b["spEffectId"]: b for b in buffs}
+    diagnostics = payload["diagnostics"]
+    counts = payload["counts"]
+
+    def key_of(sp_id: int) -> str:
+        return by_id[sp_id]["stacking"]["exclusiveKey"]
+
+    # --- affix variants ------------------------------------------------------
+    # the 7 『出击时的武器，附加…』 affixes: 4 potencies each, one key per affix
+    affix_keys = []
+    for base in (7120000, 7120100, 7120200, 7120300, 7120400, 7120500, 7120600):
+        tiers = [base + i for i in (1, 2, 3, 4)]
+        keys = {key_of(t) for t in tiers}
+        assert keys == {f"affix#{base}"}, (base, keys)
+        for index, sp_id in enumerate(tiers, 1):
+            variant = by_id[sp_id]["affixVariant"]
+            assert variant["attachEffectId"] == base and variant["variant"] == index, (sp_id, variant)
+            assert variant["variantSpEffectIds"] == tiers and variant["variants"] == 4, (sp_id, variant)
+            assert variant["dispatcherSpEffectIds"] == [base] and variant["dispatcherStateInfo"] == [2101], variant
+            assert [r["attachEffectId"] for r in by_id[sp_id]["relicAffixes"]] == [base], sp_id
+            assert by_id[sp_id]["relicAffixes"][0]["exclusivityId"] == 100, sp_id
+        affix_keys.append(key_of(tiers[0]))
+    # different affixes keep different keys (the cross-affix 「!」 group is a hint only)
+    assert len(set(affix_keys)) == 7, affix_keys
+    # the payload rows those tiers point at keep their applyFirst category key
+    for payload_id, cat in ((7120405, 10007), (7120505, 10004), (7120605, 10003)):
+        assert key_of(payload_id) == f"sp{cat}" and not by_id[payload_id].get("affixVariant"), payload_id
+    scan = diagnostics["affixVariantScan"]
+    grouped = sorted(i for g in scan["groups"] for i in g["spEffectIds"])
+    assert grouped == sorted(b["spEffectId"] for b in buffs if b.get("affixVariant")), grouped
+    assert counts["buffsWithAffixVariant"] == len(grouped) == 28 and counts["affixVariantGroups"] == 7, counts
+    for group in scan["groups"]:
+        members = [by_id[i] for i in group["spEffectIds"]]
+        # one key, all passive, same rates keys, owned by the one affix only
+        assert {key_of(i) for i in group["spEffectIds"]} == {group["key"]}, group
+        assert len({tuple(sorted(b["rates"])) for b in members}) == 1, group
+        for b in members:
+            owners = ([e["attachEffectId"] for e in b.get("relicAffixes", [])] + list(b.get("weaponAffixIds", [])))
+            assert owners == [group["attachEffectId"]], (b["spEffectId"], owners)
+    assert all(r["reason"] in AFFIX_VARIANT_REJECT_REASONS for r in scan["rejected"]), scan["rejected"]
+    rejected = {tuple(r["spEffectIds"]): r["reason"] for r in scan["rejected"]}
+    assert rejected.get((8885220, 8885221, 8885222)) == "columnsDiffer", rejected
+    assert rejected.get((7500801, 7500802, 7500803)) == "referencedByChain", rejected
+    assert rejected.get((7610700, 7610701, 7610702)) == "ownerPassiveIsBuff", rejected
+    # no per-id passive family of one dispatching affix is left with a key per row
+    for r in scan["rejected"]:
+        if r["reason"] == "alreadySharedKey":
+            assert len({key_of(i) for i in r["spEffectIds"]}) == 1, r
+    for group in diagnostics["relicAffixExclusivityGroups"]:
+        assert group["exclusivityId"] != -1 and group["attachEffectIdsWithBuffs"], group
+    excl_100 = next(g for g in diagnostics["relicAffixExclusivityGroups"] if g["exclusivityId"] == 100)
+    assert excl_100["attachEffectIds"] == [7120000, 7120100, 7120200, 7120300, 7120400, 7120500, 7120600], excl_100
+    assert excl_100["compatibilityIds"] == [200], excl_100
+    for buff in buffs:
+        for entry in buff.get("relicAffixes", []):
+            assert isinstance(entry["exclusivityId"], int), buff["spEffectId"]
+
+    # --- accumulator stages (8885200) --------------------------------------------
+    staged = [b for b in buffs if b.get("accumulatorStages")]
+    assert [b["spEffectId"] for b in staged] == [8885220, 8885221, 8885222], [b["spEffectId"] for b in staged]
+    assert counts["buffsWithAccumulatorStages"] == len(staged)
+    for buff in staged:
+        stages = buff["accumulatorStages"]
+        assert stages["stageSpEffectIds"][stages["stage"] - 1] == buff["spEffectId"], stages
+        n = stages["stages"]
+        for field in ("stageSpEffectIds", "accumulatorSpEffectIds", "thresholds", "behaviorSpEffectIds",
+                      "behaviorParamIds", "bulletIds", "durations"):
+            assert len(stages[field]) == n, (field, stages)
+        assert stages["thresholds"] == sorted(stages["thresholds"]) and stages["coexist"] is True, stages
+        assert f"第{stages['stage']}阶段" in buff["displayNameZh"], buff["displayNameZh"]
+        assert f"Stage {stages['stage']}" in buff["displayNameEn"], buff["displayNameEn"]
+        # coexisting stages keep a key each (never the per-id key of another stage)
+        assert buff["stacking"]["exclusiveScope"] == "perSpEffect", buff["spEffectId"]
+    stages = staged[0]["accumulatorStages"]
+    assert stages["thresholds"] == [4000000, 9000000, 15000000] and stages["durations"] == [28, 25.5, 22.5], stages
+    assert stages["expiryAligned"] == {"unitsPerSecond": 2000000, "commonEndSeconds": 30}, stages["expiryAligned"]
+    keys = [key_of(i) for i in (8885220, 8885221, 8885222)]
+    assert len(set(keys)) == 3, keys
+
+    # --- accumulator ladder fields ------------------------------------------------
+    for buff in buffs:
+        ladder = buff.get("accumulatorLadder")
+        if not ladder:
+            continue
+        assert ladder["shippedTierSpEffectIds"] == [t for t in ladder["tierSpEffectIds"] if t in by_id], ladder
+        assert buff["spEffectId"] in ladder["shippedTierSpEffectIds"], buff["spEffectId"]
+    relic_ladder = by_id[7037604]["accumulatorLadder"]
+    assert relic_ladder["tiers"] == 4 and relic_ladder["shippedTierSpEffectIds"] == [7037604, 7037605, 7037606], relic_ladder
+    assert 7037607 not in by_id
+    # the successive-attack items all share "sp120": two of them never multiply
+    assert {key_of(i) for i in (3558, 312505, 320804, 7037604)} == {"sp120"}
+    assert "sp120" in payload["enums"]["exclusiveScope"]["accumulatorLadder"]
+    assert "accumulatorLadder" in payload["notes"] and "stackLadder" in payload["notes"]
+
+    # --- layer rows named "Stack N" read 「第N层」 ------------------------------------
+    stack_rows = 0
+    for buff in buffs:
+        match = STACK_ROW_RE.search(buff["paramName"] or "")
+        if match:
+            stack_rows += 1
+            assert f"第{match.group(1)}层" in buff["displayNameZh"], buff["displayNameZh"]
+            assert "档位" not in buff["displayNameZh"], buff["displayNameZh"]
+    assert stack_rows == 13, stack_rows
+    assert by_id[7039900]["displayNameZh"].startswith("出现异常状态量表时，能缓慢提升攻击力"), by_id[7039900]["displayNameZh"]
+
+    # --- Self / Allies pairs -------------------------------------------------------
+    paired = [b for b in buffs if b.get("selfAllyPair")]
+    assert counts["buffsWithSelfAllyPair"] == len(paired) == 6, len(paired)
+    for buff in paired:
+        pair = buff["selfAllyPair"]
+        other = by_id[pair["counterpartSpEffectId"]]["selfAllyPair"]
+        assert other["counterpartSpEffectId"] == buff["spEffectId"] and {pair["role"], other["role"]} == {"self", "ally"}
+        assert buff["target"] == pair["role"], (buff["spEffectId"], buff["target"], pair)
+    assert by_id[1876]["selfAllyPair"] == {"role": "self", "counterpartSpEffectId": 1877}
+    assert key_of(1876) != key_of(1877)
+    pairs = {p["self"]["spEffectId"]: p for p in diagnostics["selfAllyPairs"]}
+    assert pairs[1870]["ally"]["friendlyHitAtkIds"] == [300000820] and pairs[1876]["ally"]["friendlyHitAtkIds"] == [300000820]
+    assert pairs[1876]["deliveryMatchesRowName"] and not pairs[1835]["deliveryMatchesRowName"], pairs
 
 
 def main() -> None:

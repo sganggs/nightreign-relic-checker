@@ -862,3 +862,55 @@ Additional input files now read: ItemLotParam_enemy (row names and 23252000), an
 ## 地图 MSB 提取（extract_msb.py）
 
 为判断首领「放在哪张地图、何时进入远征」，新增 extract_msb.py（复用 extract_msg.py 的归档解密/哈希/解压，用 Smithbox 的 NR 文件字典枚举 /map/mapstudio/*.msb.dcx），oodledec 增加 --batch 模式一次进程解一整批 Kraken 数据；产物 raw/msb/ 不入库。
+
+#### 增伤数据集第六版复核三轮补充
+
+generate_buffs.py（schemaVersion 6，复核三轮）补充：
+
+1. 『出击时的武器，附加…』的 4 档互为替代（exclusiveScope=affixVariant）
+- 所属词条：AttachEffectParam 7120000、7120100、7120200、7120300、7120400、7120500、7120600。
+  - passiveSpEffectId_1 都只指向同号的 SpEffect『[Relic] Starting armament … - Apply State Info』。
+  - 这些行的 stateInfo=2101，全表只有这 7 行用它，本身没有倍率。
+  - compatibilityId 同为 200，exclusivityId 同为 100。
+- 档位行：7120x01–7120x04，SpEffectParam 里没有任何指向列指向它们，只能由上面的派发行选一档。
+  - 魔力、火、雷、圣四条的 4 档：物理攻击力 −30／−40／−50／−60，属性攻击力 +33／+44／+55／+66。
+  - 冻伤、中毒、出血三条的 4 档：都是 ×0.85，逐列相同，只差 atkOccurrenceSpEffectId（7120x05–7120x08）。
+- 词条库说明原文是『根据武器类型降低物理攻击力30/40/50/60…』，叠加性为『不可叠加』。参数里没有武器类别与档位的对应表。
+- 结论：同一词条的 4 档同一时刻只生效一档，改为共用键 "affix#<attachEffectId>"。
+- 全表按『只归属一条词条、词条被动不是 buff、没有指向列、行名去掉 Potency N 后同干、除行名／倍率／指向列外逐列相同、原来按 ID 分键』扫描，只命中这 7 组。
+- 没有合并的近似组：
+  - 6500000：7500001/2，原来就共用类别键。
+  - 6500800：7500801–03，由 analyzeSelfLevel1..3_effectId 分别指向。
+  - 6610700：词条只引用 7610700，7610701/02 在参数里没有引用。
+  - 7037700：7039900–09，原来就共用 sp206@p2。
+  - 8690000／8690200／8690300：原来就共用类别键。
+  - 8885200：持续时间与 vfxId 不同。
+  - 7120x05–08：由 atkOccurrenceSpEffectId 指向。
+- exclusivityId 的语义取自 Smithbox 注释（见本文件第 47 行）：只控制已装备遗物之间的红色感叹号。上述 7 条同为 100。『分装两件时只有一条生效』是推断，没有据此并键。
+
+2. 武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』的三个阶段
+- 链路：累积器 8885201–8885203（stateInfo=307，accumuOverVal 4000000／9000000／15000000，dedupeAccumuTrigger=1）
+  → accumuOverFireId 8885210–8885212（behaviorId 900010020–900010022）
+  → BehaviorParam_PC（refType=1，refId 98885200–98885202）
+  → Bullet spEffectId0 8885220–8885222。
+- 三条都是 ×1.1（另有 dexterityCancelSystemOnlyAddDexterity=30），spCategory=20，effectEndurance 28／25.5／22.5。
+- 阈值差 5M／6M 与持续时间差 2.5／3 秒同为每秒 2,000,000，三段在第 30 秒一起结束。
+- 游戏文本 AttachEffectInfo#8885200 原文为『维持防御时，能阶段性提升魔法、祷告的攻击力与缩短咏唱时间』（英文 "Continued guarding gradually enhances…"）。
+- 结论：三段同时存在、逐段相乘，最多 ×1.331，各自保留原来的键。这是推断，未实测。
+- 同一识别方式（累积器 → 行为 → 子弹 → buff）在全表只命中这一族；8884201（Shielding Creates Holy Ground）的子弹不带 SpEffect。
+
+3. 自身行与队友行（buffs[].selfAllyPair）
+- 共享圣律：
+  - AtkParam_Pc 300000820『[AoW] Shared Order』的 friendlyTarget=1、selfTarget=0、spEffectId1=1871；1871 的 cycleOccurrenceSpEffectId=1877。
+  - 自身侧是 1870（spCategory 160），1875（无行名，8 秒）的 cycleOccurrenceSpEffectId=1876。
+  - 所以施放者自己施放时只拿到 1876（×1.1），队友拿到 1877（×1.075）。
+- 哀悼墓碑：AtkParam_Pc 303401800『[AoW Golden Epitaph] Last Rites』交给队友的是行名写 Self 的 1835，行名写 Allies 的 1836 没有参数投递。两行只差 spCategory 152／160，target 仍按行名给出。
+
+4. 累积阶梯
+- 7037600–7037603 → 7037604–7037607，7037607 没有倍率，不在 buffs 里（shippedTierSpEffectIds）。
+- 连续攻击类 3558–3561、312505–312508、320804–320807、7037604–7037606 都落在 spCategory 120（Paramdex SP_EFFECT_SPCATEGORY：Remove Previous），不同物品之间同样互斥。这是推断，未实测。
+
+5. 验证
+- self_check 新增 self_check_v6_round3，另做 10 种篡改的反例测试，全部被拦下。
+- 连续生成两次，除 generatedAt 外完全一致。
+- macOS RelicCoreChecks 12697 项全过；Windows ranker.test.mjs 与 ranker_crosscheck.test.mjs 共 107 项全过。
