@@ -1,5 +1,6 @@
 // 首领数据页（renderer/pages/bosses.js）纯计算层测试。
-// 口径以 bossesSchemaVersion 3 的字段说明为准：
+// 数值口径以 bossesSchemaVersion 3 的字段说明为准（v4 只增 roles 等场合字段，数值不变）；
+// 分组口径以 v4 的 roles 为准（出场场合分组的专项测试见 bosses_roles.test.mjs）：
 //   常规：hp 已含常驻缩放；多人血量 = hp × scaling.<duo|trio>.hp；
 //   深夜：血量 = depthStats[N].hp × scaling.<tier>.hp（depthStats 已含常驻 × 深夜修正 × 深度倍率）；
 //   有效韧性 = poise / (poiseTakenBase × scaling.<tier>.poiseTaken)，深夜用 depthStats[N].poiseTakenBase；
@@ -31,14 +32,16 @@ test("模块注册：导出 init / refresh，不依赖 window", () => {
   assert.equal(typeof globalThis.NightreignPages, "undefined", "node 下不应尝试注册页面");
 });
 
-test("数据集本身就是 schema 3，且能被页面读懂", () => {
-  // schemaVersion 3 相对 2 是纯增量（新增顶层键与字段，没有删除或改名），
-  // 页面仍按 2 的口径读；这里钉住版本号，数据契约再变时必须同步改本文件。
-  assert.equal(data.bossesSchemaVersion, 3);
+test("数据集本身就是 schema 4，且能被页面读懂", () => {
+  // schemaVersion 4 相对 3 只增字段（roles / rowRoles / roleEvidence / roleNames /
+  // roleSummary / placementMaps…），tier / tiers 与全部数值原样保留；页面改按 roles 分组。
+  // 这里钉住版本号，数据契约再变时必须同步改本文件。
+  assert.equal(data.bossesSchemaVersion, 4);
   assert.ok(data.nightlords.length > 0);
   assert.ok(data.nightBosses.length > 0);
   assert.ok(Array.isArray(data.caveats) && data.caveats.length > 0, "页面底部要展示 caveats");
   assert.ok(Object.keys(data.scalingTiers).length > 0);
+  assert.ok(data.roleNames && data.roleSummary, "v4 的出场场合字段必须在");
 });
 
 test("tierKey：1 人无缩放，2/3 人取 duo/trio", () => {
@@ -228,27 +231,33 @@ test("隐藏实体：默认不显示，开关打开后才出现", () => {
     ],
     "4 组召唤物 / 投射物实体"
   );
-  // 四组都在守夜分组
-  const night = B.filterItems(items, "night", "", Core.foldForSearch);
-  const nightAll = B.filterItems(items, "night", "", Core.foldForSearch, true);
-  assert.equal(night.length, 46);
-  assert.equal(nightAll.length, 50);
-  assert.equal(nightAll.length - night.length, 4);
-  // 野外分组一个隐藏实体都没有，开关不影响条数
-  assert.equal(
-    B.filterItems(items, "field", "", Core.foldForSearch).length,
-    B.filterItems(items, "field", "", Core.foldForSearch, true).length
-  );
+  // v4：四组的场合都只有「随从/召唤物」（+ 未放置），只落在这两个默认隐藏的分组里；
+  // 与另外 8 组只有这两种场合的组一起由同一个开关放出来（12 组，见 bosses_roles.test.mjs）。
+  for (const item of hidden) {
+    assert.ok(item.groups.includes("summon"), `${item.uid} 在「随从/召唤物」`);
+    assert.ok(item.groups.every((group) => B.isHiddenGroup(group)), `${item.uid} 只在默认隐藏的分组里`);
+    assert.equal(item.roleHidden, true);
+  }
+  // 六个默认可见的分组一个隐藏的组都没有，开关不影响条数
+  for (const group of ["nightlords", "night", "stronghold", "field", "evergaol", "other"]) {
+    assert.equal(
+      B.filterItems(items, group, "", Core.foldForSearch).length,
+      B.filterItems(items, group, "", Core.foldForSearch, true).length,
+      group
+    );
+  }
   // 搜索也搜不到隐藏实体，除非开关打开
-  assert.equal(B.filterItems(items, "night", "7931", Core.foldForSearch).length, 0);
-  assert.equal(B.filterItems(items, "night", "7931", Core.foldForSearch, true).length, 1);
+  assert.equal(B.filterItems(items, "summon", "7931", Core.foldForSearch).length, 0);
+  assert.equal(B.filterItems(items, "summon", "7931", Core.foldForSearch, true).length, 1);
 
-  // noReward 不等于 hidden：蚯蚓脸 / Storm King / 巨大骷髅躯干不掉奖励但照常显示
+  // noReward 不等于 hidden：蚯蚓脸 / Storm King / 巨大骷髅躯干不掉奖励，也不是「隐藏实体」；
+  // v4 起它们只有「随从/召唤物」「未放置」场合，另由 roleHidden 默认收起（同一个开关）。
   const noRewardVisible = items.filter((item) => item.noReward && !item.hidden);
   assert.deepEqual(
     noRewardVisible.map((item) => item.uid).sort(),
     ["nb:Dreg Wormface@7660", "nb:Giant Skeleton Torso@4960", "nb:Storm King@7910"]
   );
+  assert.ok(noRewardVisible.every((item) => item.roleHidden));
 });
 
 test("承伤倍率分类：>1 弱点、<1 抗性、=1 正常", () => {
@@ -425,34 +434,38 @@ test("名称徽标：两层判定（名字缺不缺 / 身份谁认的）+ 近似
 
 test("搜索索引收进 nameZhFallback：搜「河马」仍能搜到让出中文名的那一组", () => {
   const items = B.buildItems(data, Core.foldForSearch);
-  const hits = B.filterItems(items, "field", "河马", Core.foldForSearch);
+  // v4：大型黄金河马只在据点首领出场（地下堡垒），不再在守夜 / 野外分组里。
+  const hits = B.filterItems(items, "stronghold", "河马", Core.foldForSearch);
   assert.ok(
     hits.some((item) => item.uid === "nb:Large Golden Hippopotamus@5010"),
     "nameZh 被让出后，旧译名必须仍然可搜"
   );
-  // 其余 13 组参考译名同样可搜
+  // 其余 13 组参考译名同样可搜（在各自的第一个分组里搜）
   const withFallback = data.nightBosses.filter((boss) => boss.nameZhFallback);
   assert.equal(withFallback.length, 14);
+  const byUid = new Map(items.map((item) => [item.uid, item]));
   for (const boss of withFallback) {
-    const group = (boss.tiers || [boss.tier])[0];
+    const group = byUid.get("nb:" + boss.id).groups[0];
     const found = B.filterItems(items, group, boss.nameZhFallback, Core.foldForSearch, true);
     assert.ok(found.some((item) => item.uid === "nb:" + boss.id), `搜不到参考译名：${boss.nameZhFallback}`);
   }
 });
 
-test("buildItems：夜王 / 守夜 / 野外三组齐全，主键用 id 而不是 nameEn", () => {
+test("buildItems：夜王与首领组各一张卡片，主键用 id 而不是 nameEn", () => {
   const items = B.buildItems(data, Core.foldForSearch);
   assert.equal(items.length, data.nightlords.length + data.nightBosses.length);
 
   const uids = new Set(items.map((item) => item.uid));
   assert.equal(uids.size, items.length, "uid 必须唯一");
 
-  const counts = items.reduce((acc, item) => {
-    acc[item.group] = (acc[item.group] || 0) + 1;
-    return acc;
-  }, {});
-  assert.equal(counts.nightlords, data.nightlords.length);
-  assert.equal(counts.night + counts.field, data.nightBosses.length, "每个 Boss 恰好一张卡片");
+  // 主分组 = groups[0]；夜王卡的主分组恒为「夜王」，首领组不会落到「夜王」。
+  for (const item of items) {
+    assert.ok(item.groups.length > 0, `${item.uid} 至少属于一个分组`);
+    assert.equal(item.group, item.groups[0]);
+    assert.equal(item.kind === "nightlord", item.group === "nightlords", item.uid);
+  }
+  assert.equal(items.filter((item) => item.group === "nightlords").length, data.nightlords.length);
+  assert.equal(items.filter((item) => item.kind === "boss").length, data.nightBosses.length, "每个 Boss 恰好一张卡片");
 
   // nameEn 会重复，页面必须用 id 做 key
   const nameEnList = data.nightBosses.map((boss) => boss.nameEn);
@@ -577,16 +590,28 @@ test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡�
   assert.equal(B.deepOfNightCoverage({ entries: [] }), "none");
 
   // 代表行没有深夜值、卡里其余行却有的卡片，一张都不能漏判成 none。
-  // 与 macOS 端 BossDataChecks 的同名断言对着同一组卡片。
-  const misjudged = items.filter((item) => {
-    const main = B.representativeEntry(item.entries, item.group);
-    return B.deepOfNightCoverage(item) !== "none" && !(main && main.deepOfNight);
-  }).map((item) => item.uid);
+  // 与 macOS 端 BossDataChecks 的同名断言对着同一组卡片：v4 按 roles 取代表行后，各卡主分组
+  // 的代表行都带深夜专属修正了（咒剑士 50400120 / 死骑士 50701010 / 救世旗手 76200210），
+  // 但「据点首领」分组下的神兽战士 / 咒剑士 / 死骑士仍是代表行没有、守夜行有。
+  const misjudged = items.filter((item) => B.deepOfNightCoverage(item) !== "none" &&
+    B.visibleGroups(item).some((group) => {
+      const main = B.representativeEntry(item.entries, group);
+      return !(main && main.deepOfNight);
+    })).map((item) => item.uid);
   assert.deepEqual(
     misjudged.sort(),
-    ["nb:Curseblade@5040", "nb:Death Knight@5070", "nb:Dreg Wormface@7660", "nl:18"],
-    "这四张卡靠扫描全部行才判得对（咒剑士与死骑士的深夜行是被 noReward 排除掉的模板行）"
+    ["nb:Curseblade@5040", "nb:Death Knight@5070", "nb:Divine Beast Warrior@5250"],
+    "这 3 张卡靠扫描全部行才判得对"
   );
+  for (const uid of misjudged) {
+    assert.equal(Boolean(B.representativeEntry(byUid.get(uid).entries, "stronghold").deepOfNight), false, `${uid} 在据点首领下判错`);
+  }
+  for (const [uid, npcId] of [["nb:Curseblade@5040", 50400120], ["nb:Death Knight@5070", 50701010], ["nl:18", 76200210]]) {
+    const item = byUid.get(uid);
+    const main = B.representativeEntry(item.entries, item.group);
+    assert.equal(main.npcId, npcId, uid);
+    assert.ok(main.deepOfNight, `${uid} 的代表行自己带深夜修正`);
+  }
   assert.equal(
     items.filter((item) => B.deepOfNightCoverage(item) !== "none").length, 22,
     "带深夜专属数值的卡片共 22 张（与 macOS 自检同一个数）"
@@ -602,7 +627,7 @@ test("深夜徽标扫描整张卡：代表行没有深夜值不等于整张卡�
   assert.equal(B.deepOfNightCoverageBadge("none"), "");
 });
 
-test("深夜数值并非夜王独有：守夜 / 野外里也有带 deepOfNight 的条目", () => {
+test("深夜数值并非夜王独有：守夜首领 / 据点首领里也有带 deepOfNight 的条目", () => {
   // 审查意见称「30 条深夜行全部属于 nightlords」，实际 nightBosses 里有 14 条 / 12 张卡。
   const bossDeepRows = data.nightBosses.flatMap((boss) => boss.variants).filter((v) => v.deepOfNight);
   assert.ok(bossDeepRows.length > 0, "nightBosses 确实存在深夜行，徽标不能只画给夜王");
@@ -610,37 +635,42 @@ test("深夜数值并非夜王独有：守夜 / 野外里也有带 deepOfNight �
   const items = B.buildItems(data, Core.foldForSearch);
   const deepBossCards = items.filter((item) => item.kind === "boss" && B.deepOfNightCoverage(item) !== "none");
   assert.equal(deepBossCards.length, 12);
-  assert.ok(deepBossCards.some((item) => item.groups.includes("field")));
+  assert.ok(deepBossCards.some((item) => item.groups.includes("night")));
+  assert.ok(deepBossCards.some((item) => item.groups.includes("stronghold")));
 });
 
-test("分组按 tiers 判定：同属守夜与野外的 Boss 两个分组都能找到", () => {
-  assert.deepEqual(B.bossGroups({ tier: "night", tiers: ["field", "night"] }), ["night", "field"]);
-  assert.deepEqual(B.bossGroups({ tier: "field", tiers: ["field"] }), ["field"]);
-  assert.deepEqual(B.bossGroups({ tier: "night" }), ["night"]);
+test("分组不再看 tiers：tier / tiers 只是缩放档位，与出场场合对不上", () => {
+  // bossGroups 的名字沿用，口径已换成 roles：tiers 写什么都不影响分组。
+  assert.deepEqual(B.bossGroups({ tier: "night", tiers: ["field", "night"], roles: ["stronghold"] }), ["stronghold"]);
+  assert.deepEqual(B.bossGroups({ tier: "field", tiers: ["field"], roles: ["night", "tower"] }), ["night", "other"]);
+  // roles 缺失时不退回 tier 去猜（那正是要修的错），归「其它场合」、卡上写「数据未内置」。
+  assert.deepEqual(B.bossGroups({ tier: "night" }), ["other"]);
 
-  const dual = data.nightBosses.filter((boss) => new Set(boss.tiers || [boss.tier]).size > 1);
-  assert.equal(dual.length, 6, "数据里有 6 组 tiers 同时含 field 与 night");
-
+  // 数据侧：notes.roleAudit 统计的 tier 与实际场合对不上的组，页面必须按 roles 分。
   const items = B.buildItems(data, Core.foldForSearch);
-  // 分组条数一律按「显示隐藏实体」打开时算，否则 4 组隐藏实体会让守夜少 4 条。
-  const night = B.filterItems(items, "night", "", Core.foldForSearch, true);
-  const field = B.filterItems(items, "field", "", Core.foldForSearch, true);
-  assert.equal(night.length, data.nightBosses.filter((b) => (b.tiers || [b.tier]).includes("night")).length);
-  assert.equal(field.length, data.nightBosses.filter((b) => (b.tiers || [b.tier]).includes("field")).length);
-  assert.equal(night.length + field.length, data.nightBosses.length + dual.length);
-
-  for (const boss of dual) {
-    const uid = "nb:" + boss.id;
-    assert.ok(night.some((item) => item.uid === uid), `${boss.id} 应出现在守夜分组`);
-    assert.ok(field.some((item) => item.uid === uid), `${boss.id} 应出现在野外分组`);
-  }
-
-  // 大金河马的「基准」行 threat 就是 field，之前在野外分组里彻底搜不到。
-  // schemaVersion 3 起它的 nameZh 为空（游戏文本只有 c5011 那条「黄金河马」，
-  // 同一个中文名不允许同时挂在两组首领上，见 notes.nameCollisions），所以按英文名搜。
-  const hippo = B.filterItems(items, "field", "Golden Hippopotamus", Core.foldForSearch);
-  assert.ok(hippo.some((item) => item.uid === "nb:Large Golden Hippopotamus@5010"));
+  const byUid = new Map(items.map((item) => [item.uid, item]));
+  // tier = night 却从不当守夜首领：丘陵飞龙只是场景头目、腐败化身只是据点首领、
+  // 卡利亚禁卫骑士只是场景头目（另各有未放置行，开关打开时也在「未放置」）。
+  const flying = byUid.get("nb:Flying Dragon@4500");
+  assert.equal(data.nightBosses.find((boss) => boss.id === "Flying Dragon@4500").tier, "night");
+  assert.deepEqual(B.visibleGroups(flying), ["field"]);
+  assert.deepEqual(B.visibleGroups(byUid.get("nb:Putrid Avatar@4811")), ["stronghold"]);
+  const carian = byUid.get("nb:Royal Carian Knight@3252");
+  assert.deepEqual(carian.tiers, ["night"]);
+  assert.deepEqual(carian.groups, ["field", "unplaced"]);
+  // tier = field 却确实当守夜首领：熔炉骑士进「守夜首领」、不进「场景头目」。
+  const crucible = byUid.get("nb:Crucible Knight@2500");
+  assert.equal(data.nightBosses.find((boss) => boss.id === "Crucible Knight@2500").tier, "field");
+  assert.deepEqual(B.visibleGroups(crucible), ["night", "stronghold", "evergaol", "other"]);
+  assert.equal(crucible.groups.includes("field"), false);
+  // 大型黄金河马：v3 的 tiers = field + night，实际只出现在地下堡垒（据点首领），另有未放置行。
   const large = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
+  assert.deepEqual(large.tiers, ["field", "night"]);
+  assert.deepEqual(byUid.get("nb:Large Golden Hippopotamus@5010").groups, ["stronghold", "unplaced"]);
+  // schemaVersion 3 起它的 nameZh 为空（游戏文本只有 c5011 那条「黄金河马」，
+  // 同一个中文名不允许同时挂在两组首领上，见 notes.nameCollisions），按英文名也能搜到。
+  const hippo = B.filterItems(items, "stronghold", "Golden Hippopotamus", Core.foldForSearch);
+  assert.ok(hippo.some((item) => item.uid === "nb:Large Golden Hippopotamus@5010"));
   assert.equal(large.nameZh, "");
   assert.equal(large.nameSource, "english-only");
   assert.equal(large.nameZhFallback, "大型黄金河马", "旧手工译名仍在 nameZhFallback 里可兜底");
@@ -688,11 +718,16 @@ test("夜王代表行取主战行里血量最高的一条，而不是第一条",
   assert.equal(multiMain.length, 5, "当前数据里有 5 位夜王带多条 isMain 行");
 
   for (const lord of multiMain) {
-    const mains = lord.fights.filter((f) => f.isMain);
+    // v4：「夜王」分组先只留 nightlord 场合的行，再在主战行里取血量最高。
+    const mains = lord.fights.filter((f) => f.isMain && f.roles.includes("nightlord"));
     const rep = B.representativeEntry(lord.fights, "nightlords");
     assert.equal(rep.isMain, true);
     assert.equal(rep.hp, Math.max(...mains.map((f) => f.hp)), `${lord.nameZh} 应取血量最高的主战行`);
   }
+  // 救世旗手：isMain 的「哈尔莫妮亚 · 蠕虫」46410000（6797）只有未放置场合，不再抢代表位。
+  const bearers = data.nightlords.find((lord) => lord.menuId === 18);
+  assert.deepEqual(bearers.fights.find((f) => f.npcId === 46410000).roles, ["unplaced"]);
+  assert.equal(B.representativeEntry(bearers.fights, "nightlords").npcId, 76200210);
 
   // 玛利斯·永夜之王：一阶段 3172 排在前面，二阶段 29453 才是该显示的那条。
   const maris = data.nightlords.find((lord) => lord.menuId === 13);
@@ -713,33 +748,43 @@ test("夜王代表行取主战行里血量最高的一条，而不是第一条",
   assert.equal(B.representativeEntry(tie, "nightlords").npcId, 10);
 });
 
-test("守夜 / 野外卡片的代表行随分组切换，不再恒取 variants[0]", () => {
+test("首领卡片的代表行随分组切换（按 roles 过滤），不再恒取 variants[0]", () => {
   const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
-  assert.equal(apostle.variants[0].threat, "night", "变体按守夜优先排序，rows[0] 是守夜行");
+  assert.equal(apostle.variants[0].threat, "night", "变体按守夜优先排序，rows[0] 是守夜档位行");
 
-  const night = B.representativeEntry(apostle.variants, "night");
-  const field = B.representativeEntry(apostle.variants, "field");
-  // 35600900「基准（行 35600900）」血量最高（7347）却 noReward = true，是模板行，不该抢代表位。
+  // 35600900「基准（行 35600900）」血量最高（7347）却 noReward = true 且未放置，是模板行。
   assert.equal(apostle.variants.find((v) => v.npcId === 35600900).noReward, true);
-  assert.equal(night.npcId, 35600110);
-  assert.equal(field.npcId, 35600020, "野外分组要取「封印监牢」，不是血量更高的守夜行");
-  assert.equal(field.threat, "field");
-  assert.ok(night.hp > field.hp, "守夜行血量更高，正是它会盖掉野外数值");
+  // 上一版按 threat 取的「守夜代表行」35600110 其实是「最古老的牢狱」——封印监牢行，
+  // 只是挂着守夜档位 7754。v4 按 roles 取：守夜首领 → 守夜双人组，封印监牢 → 它。
+  const night = B.representativeEntry(apostle.variants, "night");
+  const evergaol = B.representativeEntry(apostle.variants, "evergaol");
+  const stronghold = B.representativeEntry(apostle.variants, "stronghold");
+  assert.equal(night.npcId, 35600010);
+  assert.deepEqual(night.roles, ["night", "tower"]);
+  assert.equal(evergaol.npcId, 35600110);
+  assert.equal(evergaol.threat, "night", "封印监牢行挂的是守夜档位——threat 不能拿来分组");
+  assert.equal(stronghold.npcId, 35600050);
 
-  const dual = data.nightBosses.filter((boss) => new Set(boss.tiers || [boss.tier]).size > 1);
-  for (const boss of dual) {
-    assert.equal(B.representativeEntry(boss.variants, "night").threat, "night", boss.id);
-    assert.equal(B.representativeEntry(boss.variants, "field").threat, "field", boss.id);
+  // 全量：每张卡在它出现的每个分组下（含两个默认隐藏的分组），代表行的场合都落在该分组里。
+  const items = B.buildItems(data, Core.foldForSearch);
+  for (const item of items) {
+    for (const group of item.groups) {
+      const rep = B.representativeEntry(item.entries, group);
+      assert.ok(B.rolesInGroup(rep.roles, group).length > 0, `${item.uid} / ${group} → ${rep.npcId}`);
+    }
   }
 
-  // 只有一种档位、且没有无奖励行的组不受影响：按分组取出来的仍是血量最高的那行。
-  const single = data.nightBosses.find((boss) => (boss.tiers || [boss.tier]).length === 1 &&
-    boss.variants.length > 2 && boss.variants.every((v) => !v.noReward));
-  const rep = B.representativeEntry(single.variants, single.tier);
-  assert.equal(rep.hp, Math.max(...single.variants.map((v) => v.hp)));
+  // 只有一个场合、且没有无奖励 / 演出行的组不受影响：按分组取出来的仍是血量最高的那行。
+  const single = items.find((item) => item.kind === "boss" && item.roles.length === 1 &&
+    item.entries.length > 1 && item.entries.every((v) => !v.noReward && !B.isStagingRow(v) && !v.isMain));
+  assert.ok(single, "数据里应存在单一场合的多行组");
+  const rep = B.representativeEntry(single.entries, single.group);
+  assert.equal(rep.hp, Math.max(...single.entries.map((v) => v.hp)));
 
-  // 候选行：夜王收敛到 isMain，守夜 / 野外收敛到该档位，最后都排掉无奖励行。
-  assert.equal(B.candidateEntries(apostle.variants, "field").length, 3, "4 条野外行里 35600060 是无奖励行");
+  // 候选行：夜王收敛到 isMain，首领组收敛到该分组的场合，最后都排掉无奖励行。
+  assert.equal(B.candidateEntries(apostle.variants, "stronghold").length, 2, "据点首领两行（群体首领 / 精英）");
+  assert.equal(B.candidateEntries(apostle.variants, "evergaol").length, 2, "封印监牢两行（最古老的牢狱 / 封印监牢）");
+  // 分组里没有一行对得上时整池放行（再排掉 2 条无奖励行）
   assert.equal(B.candidateEntries(apostle.variants, "nightlords").length, apostle.variants.length - 2);
   assert.equal(B.candidateEntries(data.nightlords.find((l) => l.menuId === 13).fights, "nightlords").length, 2);
 });
@@ -761,18 +806,25 @@ test("代表行第三步：排掉登场演出 / 血条实体 / 教程行（isSta
     "其中 7 条照样掉奖励，noReward 那一层拦不住"
   );
 
-  // 这两张卡就是少了这一步会选错的：上一版 Windows 取的是血量更高的演出行。
+  // 巨鸦群就是少了这一步会选错的：「血条实体」45601020 与实战行 45601010 同在场景头目场合，
+  // 上一版 Windows 取的是血量更高的演出行。
   const crow = data.nightBosses.find((boss) => boss.id === "Giant Crow@4560");
   const crowStaging = crow.variants.find((v) => v.npcId === 45601020);
   assert.equal(crowStaging.labelZh, "血条实体");
   assert.equal(crowStaging.noReward, false, "血条实体也掉奖励，只能靠标签认");
   assert.equal(crowStaging.hp, 2117);
-  assert.equal(B.representativeEntry(crow.variants, "field").npcId, 45600000);
+  assert.deepEqual(crowStaging.roles, ["field"]);
+  assert.equal(B.representativeEntry(crow.variants, "field").npcId, 45601010);
   assert.equal(B.representativeEntry(crow.variants, "field").hp, 1779, "宁可取血量更低的实战行");
 
+  // 鲜血贵族：「鲜血君王 · 登场演出」35500020 是它唯一的守夜前哨行，在「其它场合」下
+  // 整池都是演出行，按规则不排除；据点首领分组则取沼泽群体首领。
   const sanguine = data.nightBosses.find((boss) => boss.id === "Sanguine Noble@3550");
-  assert.equal(sanguine.variants.find((v) => v.npcId === 35500020).labelZh, "鲜血君王 · 登场演出");
-  assert.equal(B.representativeEntry(sanguine.variants, "field").npcId, 35500030);
+  const sanguineStaging = sanguine.variants.find((v) => v.npcId === 35500020);
+  assert.equal(sanguineStaging.labelZh, "鲜血君王 · 登场演出");
+  assert.deepEqual(sanguineStaging.roles, ["prelude"]);
+  assert.equal(B.representativeEntry(sanguine.variants, "other").npcId, 35500020);
+  assert.equal(B.representativeEntry(sanguine.variants, "stronghold").npcId, 35500040);
 
   // 演出行只在评选代表行时被排除，展开区仍然逐行列出来
   const items = B.buildItems(data, Core.foldForSearch);
@@ -806,35 +858,63 @@ test("代表行对照表：卡片 + 分组 → npcId，与 macOS 的 representat
   // 任一端改了过滤顺序，这里必须立刻红。
   const items = B.buildItems(data, Core.foldForSearch);
   const byUid = new Map(items.map((item) => [item.uid, item]));
+  // bossesSchemaVersion 4 起第一步按 roles 过滤（分组 = 夜王 / 守夜首领 / 据点首领 / 场景头目 /
+  // 封印监牢 / 其它场合 / 随从/召唤物 / 未放置），整张表按新口径重排，逐条照抄 macOS 那张
+  //（bosses_parity.test.mjs 另从 Swift 源码读 representativeCases 再跑一遍）。
   const cases = [
     // 夜王：整池都 noReward，先排 noReward 会退化成 75000000 参数标签行
     ["格拉狄乌斯 · 夜王", "nl:0", "nightlords", 75000020],
     ["玛利斯 · 夜王", "nl:3", "nightlords", 75400020],
     ["卡莉果 · 夜王", "nl:6", "nightlords", 49000010],
-    // 同一张卡的两个分组给两条不同的代表行
-    ["大型黄金河马 · 守夜", "nb:Large Golden Hippopotamus@5010", "night", 50100010],
-    ["大型黄金河马 · 野外", "nb:Large Golden Hippopotamus@5010", "field", 50100000],
-    // noReward 那一层：血量最高的 35600900 是 Paramdex 模板行
-    ["神皮使徒 · 守夜", "nb:Godskin Apostle@3560", "night", 35600110],
-    ["神皮使徒 · 野外", "nb:Godskin Apostle@3560", "field", 35600020],
-    // isStagingRow 那一层：这两行都 noReward = false，只能靠标签认出来
-    ["鲜血贵族 · 野外", "nb:Sanguine Noble@3550", "field", 35500030],
-    ["巨鸦群 · 野外", "nb:Giant Crow@4560", "field", 45600000],
-    // 两层都会排掉的行
-    ["恶兆妖鬼 · 守夜", "nb:Morgott@2130", "night", 21300030],
-    ["火焰战车 · 野外", "nb:Flame Chariot@4460", "field", 44600010],
-    // 分组过滤那一层：野外档位只有一行
-    ["死亡仪式鸟 · 野外", "nb:Death Rite Bird@4980", "field", 49800030],
+    // isMain 那一层：75802000 与 75802010 同血量同场合，只有后者是主战行
+    ["布德奇冥 · 夜王", "nl:7", "nightlords", 75802010],
+    // roles 那一层（夜王分组同样过滤）：isMain 的「哈尔莫妮亚 · 蠕虫」46410000 是未放置行
+    ["救世旗手 · 夜王", "nl:18", "nightlords", 76200210],
+    // 铃珠猎人：野外版与守夜版是不同行，四个可见分组 + 未放置各给各的
+    ["铃珠猎人 · 守夜首领", "nb:Bell Bearing Hunter@3100", "night", 31000020],
+    ["铃珠猎人 · 场景头目", "nb:Bell Bearing Hunter@3100", "field", 31000010],
+    ["铃珠猎人 · 据点首领", "nb:Bell Bearing Hunter@3100", "stronghold", 31000040],
+    ["铃珠猎人 · 其它场合（高塔）", "nb:Bell Bearing Hunter@3100", "other", 31000020],
+    ["铃珠猎人 · 未放置", "nb:Bell Bearing Hunter@3100", "unplaced", 31000000],
+    // 大型黄金河马：旧「守夜代表行」其实在地下堡垒；旧「野外代表行」未放置、整池 noReward 不排
+    ["大型黄金河马 · 据点首领", "nb:Large Golden Hippopotamus@5010", "stronghold", 50100010],
+    ["大型黄金河马 · 未放置", "nb:Large Golden Hippopotamus@5010", "unplaced", 50100000],
+    // 神皮使徒：守夜首领是「守夜双人组」（旧版按 threat 取了封印监牢的 35600110）；
+    // 未放置分组里 noReward 那一层把 Paramdex 模板行 35600900 让给 35600000
+    ["神皮使徒 · 守夜首领", "nb:Godskin Apostle@3560", "night", 35600010],
+    ["神皮使徒 · 据点首领", "nb:Godskin Apostle@3560", "stronghold", 35600050],
+    ["神皮使徒 · 封印监牢", "nb:Godskin Apostle@3560", "evergaol", 35600110],
+    ["神皮使徒 · 未放置", "nb:Godskin Apostle@3560", "unplaced", 35600000],
+    // isStagingRow 那一层：「血条实体」45601020 血量更高（2117）且 noReward = false，只能靠标签认出来
+    ["巨鸦群 · 场景头目", "nb:Giant Crow@4560", "field", 45601010],
+    // 演出行 + noReward 两层：「教程」21300520（其他地图，9920 血）两层都会排掉
+    ["恶兆妖鬼 · 其它场合", "nb:Morgott@2130", "other", 21300510],
+    ["恶兆妖鬼 · 守夜首领", "nb:Morgott@2130", "night", 21300510],
+    // 整池都是演出行时不排：鲜血贵族在「其它场合」下只有守夜前哨那一行「登场演出」
+    ["鲜血贵族 · 其它场合（守夜前哨）", "nb:Sanguine Noble@3550", "other", 35500020],
+    ["鲜血贵族 · 据点首领", "nb:Sanguine Noble@3550", "stronghold", 35500040],
+    // 火焰战车：旧版的「营地 · 血条实体」44600015 未放置；未放置分组里靠演出行那层排掉它
+    ["火焰战车 · 据点首领", "nb:Flame Chariot@4460", "stronghold", 44600010],
+    ["火焰战车 · 场景头目", "nb:Flame Chariot@4460", "field", 44600000],
+    ["火焰战车 · 未放置", "nb:Flame Chariot@4460", "unplaced", 44600000],
+    // 死亡仪式鸟：7 个场合；场景头目 / 据点首领共用一条多场合行
+    ["死亡仪式鸟 · 场景头目", "nb:Death Rite Bird@4980", "field", 49801040],
+    ["死亡仪式鸟 · 据点首领", "nb:Death Rite Bird@4980", "stronghold", 49801040],
+    ["死亡仪式鸟 · 封印监牢", "nb:Death Rite Bird@4980", "evergaol", 49801030],
+    ["死亡仪式鸟 · 守夜首领", "nb:Death Rite Bird@4980", "night", 49801010],
   ];
   for (const [title, uid, group, npcId] of cases) {
     const item = byUid.get(uid);
     assert.ok(item, `对照表找不到卡片 ${uid}（${title}）`);
+    assert.ok(item.groups.includes(group), `${title}：卡片确实出现在这个分组里`);
     assert.equal(B.representativeEntry(item.entries, group).npcId, npcId, title);
   }
+  // 鲜血贵族未放置分组里排掉无奖励的 35500015 之后，35500030 / 35500040 同为 920 血，按 npcId 给 35500030
+  assert.equal(B.representativeEntry(byUid.get("nb:Sanguine Noble@3550").entries, "unplaced").npcId, 35500030);
 });
 
 test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一顺序）", () => {
-  // 约定的顺序：分组过滤（threat）→ isMain 收敛 → 排除演出行（isStagingRow）→
+  // 约定的顺序：分组过滤（roles；v3 为 threat）→ isMain 收敛 → 排除演出行（isStagingRow）→
   // 排除 noReward（池内全是 noReward 就不排除）→ 血量最高（同血量取 npcId 小者），
   // 每一步没有候选就原样放行。
   //
@@ -855,11 +935,24 @@ test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一
   const tutorial = morgott.variants.find((v) => v.npcId === 21300520);
   assert.equal(tutorial.hp, 9920);
   assert.equal(tutorial.noReward, true, "「教程」行不掉奖励");
-  assert.equal(B.representativeEntry(morgott.variants, "night").npcId, 21300030, "代表行要让给真正的实战行");
+  assert.deepEqual(tutorial.roles, ["other"], "教程地图 m35_90 是「其他地图」");
+  assert.equal(B.representativeEntry(morgott.variants, "other").npcId, 21300510, "代表行要让给真正的实战行");
+  assert.equal(B.representativeEntry(morgott.variants, "night").npcId, 21300510);
+
+  // v4 按场合过滤后，noReward 真正起作用的一处：神皮使徒在「未放置」分组下，
+  // Paramdex 模板行 35600900（7,347）不掉奖励，让给 35600000。
+  const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
+  const template = apostle.variants.find((v) => v.npcId === 35600900);
+  assert.equal(template.noReward, true);
+  assert.deepEqual(template.roles, ["unplaced"]);
+  assert.equal(B.representativeEntry(apostle.variants, "unplaced").npcId, 35600000);
 
   const chariot = data.nightBosses.find((boss) => boss.id === "Flame Chariot@4460");
-  assert.equal(chariot.variants.find((v) => v.npcId === 44600015).noReward, true, "「血条实体」行不掉奖励");
-  assert.equal(B.representativeEntry(chariot.variants, "field").npcId, 44600010);
+  const chariotBar = chariot.variants.find((v) => v.npcId === 44600015);
+  assert.equal(chariotBar.noReward, true, "「血条实体」行不掉奖励");
+  assert.deepEqual(chariotBar.roles, ["unplaced"], "而且根本没放进地图");
+  assert.equal(B.representativeEntry(chariot.variants, "stronghold").npcId, 44600010);
+  assert.equal(B.representativeEntry(chariot.variants, "field").npcId, 44600000);
 
   // 整组都 noReward 时不排除（否则候选池会空）。
   const allNoReward = [
@@ -877,7 +970,7 @@ test("代表行先排掉 noReward，但必须排在 isMain 之后（两端同一
   }
 });
 
-test("搜索：纯数字按行号前缀匹配，文本串不含分组名与内部枚举值", () => {
+test("搜索：纯数字按行号前缀匹配，文本串收场合名、不收内部枚举值", () => {
   const items = B.buildItems(data, Core.foldForSearch);
   const fold = Core.foldForSearch;
 
@@ -889,14 +982,17 @@ test("搜索：纯数字按行号前缀匹配，文本串不含分组名与内�
   // chrId 与 NpcName ID 仍可搜。
   assert.ok(B.filterItems(items, "night", "7800", fold).length > 0, "chrId 仍可搜");
   const withNameId = data.nightBosses.find((boss) => boss.npcNameId);
+  const withNameIdGroup = items.find((item) => item.uid === "nb:" + withNameId.id).groups[0];
   assert.ok(
-    B.filterItems(items, withNameId.tier, String(withNameId.npcNameId), fold)
+    B.filterItems(items, withNameIdGroup, String(withNameId.npcNameId), fold)
       .some((item) => item.uid === "nb:" + withNameId.id),
     "npcNameId 也应能搜到"
   );
-  // 分组名不进搜索串。
+  // v4：场合名（roleNames 中英文）进搜索串——同一分组里按场合名搜，整组都命中。
   const fieldCount = B.filterItems(items, "field", "", fold).length;
-  assert.ok(B.filterItems(items, "field", "野外", fold).length < fieldCount);
+  assert.equal(B.filterItems(items, "field", "场景头目", fold).length, fieldCount);
+  // 「其它场合」这个分组名本身不是任何场合的名字，不进搜索串。
+  assert.equal(B.filterItems(items, "other", "其它场合", fold).length, 0);
   // 官方弱点文字可搜（与 macOS 端同一组搜索键）。
   assert.ok(B.filterItems(items, "nightlords", "圣", fold).length > 0);
 
@@ -921,16 +1017,17 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
     ["格拉狄乌斯 · 远征首领 / 1 人 · 深度 1", 75000020, 1, 1, null, 14160, 136.363636, "value", 0.058, 0.5, 1, 4.2],
     ["玛利斯 · 永夜之王 · 二阶段 / 2 人", 75410000, 2, 0, null, 58906, 1090.909091, "value", 0, 0.375, 0.85, 3.864],
     ["史柴格斯 · 远征首领 / 3 人 · 深度 3", 76100010, 3, 3, null, 54423, 581.58132, "value", 0.0174, 0.25, 0.7, 6.4512],
-    ["神皮使徒 · 守夜代表行 / 2 人", 35600110, 2, 0, null, 7687, 145.454545, "value", 0.1595, 0.41, 0.889, 3.3],
-    ["神皮使徒 · 野外代表行 / 2 人", 35600020, 2, 0, null, 6535, 106.666667, "value", 0.2175, 0.82, 0.889, 2.97],
+    // 行标题按 v4 的场合改写（npcId 与期望值不变）：35600110 是「最古老的牢狱」封印监牢行
+    ["神皮使徒 · 最古老的牢狱（封印监牢）/ 2 人", 35600110, 2, 0, null, 7687, 145.454545, "value", 0.1595, 0.41, 0.889, 3.3],
+    ["神皮使徒 · 封印监牢 / 2 人", 35600020, 2, 0, null, 6535, 106.666667, "value", 0.2175, 0.82, 0.889, 2.97],
     // 双端对照输入 ②：神皮使徒封印监牢 2 人深度 3，以及同一行叠变异档位 113140
-    ["神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3", 35600020, 2, 3, null, 9723, 124.031008, "value", 0.2175, 0.82, 0.889, 5.46777],
-    ["神皮使徒 · 封印监牢（野外）/ 2 人 · 深度 3 · 变异 113140", 35600020, 2, 3, 113140, 11182, 124.031008, "value", 0.2175, 0.82, 0.889, 6.2879355],
-    // 双端对照输入 ③：死亡仪式鸟（野外代表行）2 人深度 3 变异档位 113340
-    ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3", 49800030, 2, 3, null, 5017, 186.046512, "value", 0.2175, 0.98, 0.985, 2.7615],
-    ["死亡仪式鸟 · 野外代表行 / 2 人 · 深度 3 · 变异 113340", 49800030, 2, 3, 113340, 5770, 186.046512, "value", 0.2175, 0.98, 0.985, 3.175725],
-    ["大型黄金河马 · 守夜代表行 / 3 人", 50100010, 3, 0, null, 17747, 266.666667, "value", 0.087, 0.315, 0.778, 3.672],
-    ["大型黄金河马 · 野外代表行 / 3 人", 50100000, 3, 0, null, 5606, 160, "value", 0.145, 0.95, 0.97, 1.5],
+    ["神皮使徒 · 封印监牢 / 2 人 · 深度 3", 35600020, 2, 3, null, 9723, 124.031008, "value", 0.2175, 0.82, 0.889, 5.46777],
+    ["神皮使徒 · 封印监牢 / 2 人 · 深度 3 · 变异 113140", 35600020, 2, 3, 113140, 11182, 124.031008, "value", 0.2175, 0.82, 0.889, 6.2879355],
+    // 双端对照输入 ③：死亡仪式鸟 49800030（据点首领行）2 人深度 3 变异档位 113340
+    ["死亡仪式鸟 · 49800030（据点首领）/ 2 人 · 深度 3", 49800030, 2, 3, null, 5017, 186.046512, "value", 0.2175, 0.98, 0.985, 2.7615],
+    ["死亡仪式鸟 · 49800030（据点首领）/ 2 人 · 深度 3 · 变异 113340", 49800030, 2, 3, 113340, 5770, 186.046512, "value", 0.2175, 0.98, 0.985, 3.175725],
+    ["大型黄金河马 · 地下堡垒首领（据点首领代表行）/ 3 人", 50100010, 3, 0, null, 17747, 266.666667, "value", 0.087, 0.315, 0.778, 3.672],
+    ["大型黄金河马 · 基准（未放置）/ 3 人", 50100000, 3, 0, null, 5606, 160, "value", 0.145, 0.95, 0.97, 1.5],
     ["未知敌人 c7931（poise = 0）/ 2 人", 79310000, 2, 0, null, 6851, null, "zero", 0.1595, 0.46, 0.955, 1.75],
     ["鲜血君王的长枪 · 召唤物（poise = -1）/ 2 人", 48010010, 2, 0, null, 674, null, "none", 0.0319, 0.375, 0.85, 3.64],
     // 双端对照输入 ④：第二版核验里取整口径统一后 +1 的两条
@@ -955,47 +1052,44 @@ test("双端对照表：同一条行 + 同一组输入，五个数值必须与 m
     assert.ok(Math.abs(stats.attackRate - attack) < 1e-6, `${title}：攻击力倍率 ${stats.attackRate}`);
   }
 
-  // 对照表里的代表行必须就是折叠态会选中的那一行。
+  // 对照表里标着「代表行」的行必须就是折叠态会选中的那一行（v4 分组口径）。
   const hippo = data.nightBosses.find((boss) => boss.id === "Large Golden Hippopotamus@5010");
-  assert.equal(B.representativeEntry(hippo.variants, "night").npcId, 50100010);
-  assert.equal(B.representativeEntry(hippo.variants, "field").npcId, 50100000);
+  assert.equal(B.representativeEntry(hippo.variants, "stronghold").npcId, 50100010);
   assert.equal(B.representativeEntry(data.nightlords.find((l) => l.menuId === 0).fights, "nightlords").npcId, 75000020);
   const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
-  assert.equal(B.representativeEntry(apostle.variants, "night").npcId, 35600110);
-  assert.equal(B.representativeEntry(apostle.variants, "field").npcId, 35600020);
+  assert.equal(B.representativeEntry(apostle.variants, "evergaol").npcId, 35600110);
   const bird = data.nightBosses.find((boss) => boss.id === "Death Rite Bird@4980");
-  assert.equal(B.representativeEntry(bird.variants, "field").npcId, 49800030);
+  assert.ok(B.candidateEntries(bird.variants, "stronghold").some((v) => v.npcId === 49800030));
 
-  // 双端对照输入 ⑤：隐藏开关前后的条数
+  // 双端对照输入 ⑤：隐藏开关前后八个分组的条数（macOS 的 toggleCounts 同一组数）
   const items = B.buildItems(data, Core.foldForSearch);
   assert.deepEqual(
-    ["nightlords", "night", "field"].map((group) => [
+    B.GROUP_ORDER.map((group) => [
       B.filterItems(items, group, "", Core.foldForSearch).length,
       B.filterItems(items, group, "", Core.foldForSearch, true).length,
     ]),
-    [[18, 18], [46, 50], [72, 72]]
+    [[18, 18], [40, 40], [51, 51], [35, 35], [10, 10], [45, 45], [0, 11], [0, 93]]
   );
 });
 
 test("收录统计与 macOS 的 inventorySummary 是同一组数字", () => {
-  const counts = { night: 0, field: 0, both: 0, rows: 0 };
-  for (const boss of data.nightBosses) {
-    const groups = B.bossGroups(boss);
-    if (groups.includes("night")) counts.night += 1;
-    if (groups.includes("field")) counts.field += 1;
-    if (groups.length > 1) counts.both += 1;
-    counts.rows += boss.variants.length;
-  }
-  for (const lord of data.nightlords) counts.rows += lord.fights.length;
+  const items = B.buildItems(data, Core.foldForSearch);
+  const counts = B.inventoryCounts(items);
 
   assert.equal(data.nightlords.length, 18);
-  // schemaVersion 3：守夜组 51 → 50（c7711 与 c7712 被社区资料认出是同一只
-  // Centipede Grub，两组合并成一条），数值行 384 → 394
-  //（merge_key 加入 chaosCorrectId / mutationSetId 后拆分，再扣掉 10 条 Paramdex 模板行）。
-  assert.equal(counts.night, 50);
-  assert.equal(counts.field, 72);
-  assert.equal(counts.both, 6);
+  // v4 按出场场合：「收录」说的是数据集收录了多少，各分组（含默认隐藏的两个）按打开开关计；
+  // 单一场合的分组与 roleSummary 同数，其它场合 45 是七个合并场合的并集。
+  assert.deepEqual(counts.groups, {
+    nightlords: 18, night: 40, stronghold: 51, field: 35, evergaol: 10, other: 45, summon: 11, unplaced: 93,
+  });
+  assert.equal(counts.multi, 49, "49 组首领同时属于多个默认可见分组");
+  // 数值行 394（schemaVersion 3 起不变）
   assert.equal(counts.rows, 394);
+  assert.equal(
+    B.inventoryText(counts),
+    "夜王 18 · 守夜首领 40 · 据点首领 51 · 场景头目 35 · 封印监牢 10 · 其它场合 45 · " +
+      "随从/召唤物 11 · 未放置 93（含 49 组同时属于多个分组） · 数值行 394"
+  );
 });
 
 test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {
@@ -1013,7 +1107,26 @@ test("GROUP_LABELS 覆盖数据集里出现的全部档位分组", () => {
 });
 
 test("分组名与 macOS 的 BossCard.Group.title 一致", () => {
-  assert.deepEqual(B.GROUP_TITLES, { nightlords: "夜王", night: "守夜首领", field: "野外首领" });
+  assert.deepEqual(B.GROUP_TITLES, {
+    nightlords: "夜王",
+    night: "守夜首领",
+    stronghold: "据点首领",
+    field: "场景头目",
+    evergaol: "封印监牢",
+    other: "其它场合",
+    summon: "随从/召唤物",
+    unplaced: "未放置",
+  });
+  assert.deepEqual(
+    B.TABS.map((tab) => tab.label),
+    ["夜王", "守夜首领", "据点首领", "场景头目", "封印监牢", "其它场合", "随从/召唤物", "未放置"]
+  );
+  // 分组标题都取自 ROLE_TEXT（macOS 的 BossRoleText.groupXxx）
+  assert.deepEqual(
+    B.GROUP_ORDER.map((key) => B.GROUP_TITLES[key]),
+    ["groupNightlord", "groupNight", "groupStronghold", "groupField", "groupEvergaol", "groupOther", "groupSummon", "groupUnplaced"]
+      .map((key) => B.ROLE_TEXT[key])
+  );
 });
 
 test("group = null 的 4 个档位写「其它档位」，展开态与底部档位表同名", () => {
@@ -1100,20 +1213,27 @@ test("行内徽标 / 卡头计数文案与 macOS 逐字一致", () => {
     false
   );
 
-  // 守夜 / 野外的威胁短名仍是「守夜 / 野外」（macOS 的 threatTitle）
+  // v4：行级威胁档位「守夜 / 野外」不再当徽标（它只是缩放档位，挨着场合徽标会被读成
+  // 出场位置），改在行标题下方写小字，与 macOS 的 BossFight.threatTierCaption 同一串。
   assert.ok(allEntries.some((entry) => entry.threat === "night"), "数据集里应存在 threat = night 的行");
-  // 顺序也与 macOS 的 Pill 顺序一致：威胁档位在前、主战在后
+  assert.deepEqual(B.THREAT_TIER_GROUPS, { night: "Night Boss Threat", field: "Field Boss Threat" });
+  assert.equal(B.ROLE_TEXT.threatTierCaption(["night"]), "威胁档位 · 守夜首领威胁档");
+  assert.equal(B.ROLE_TEXT.threatTierCaption(["field"]), "威胁档位 · 野外首领威胁档");
+  // 顺序与 macOS 的 Pill 顺序一致：主战 → 标签为社区推测 → …
   assert.deepEqual(
     B.entryBadgeTexts({ kind: "boss" }, { threat: "night", isMain: true }, { isDeep: false }),
-    ["守夜", "主战"]
+    ["主战"]
   );
   assert.deepEqual(
     B.entryBadgeTexts({ kind: "boss" }, { threat: "field", isMain: false, labelUncertain: true }, { isDeep: false }),
-    ["野外", "标签为社区推测"]
+    ["标签为社区推测"]
   );
 
   assert.equal(B.rowCountText(5), "5 条数值行");
   assert.equal(B.rowCountText(1), "1 条数值行");
+  // v4：默认收起的「未放置」「随从/召唤物」行另补一句（macOS 的 BossRoleText.rowCount）
+  assert.equal(B.ROLE_TEXT.rowCount(5, 0), "5 条数值行");
+  assert.equal(B.ROLE_TEXT.rowCount(4, 1), "4 条数值行（另 1 条已隐藏）");
 });
 
 test("「代表行承伤偏高」倍率统一两位小数", () => {
@@ -1259,8 +1379,9 @@ test("多人缩放明细多一列「攻击力」：1 时写「不变」，四个
   }
 
   // 卡片上「多人攻击 ×1.1」的判据就是 stats.partyAttackRate。
+  // 神皮使徒「最古老的牢狱」（封印监牢代表行）挂 7754。
   const apostle = data.nightBosses.find((boss) => boss.id === "Godskin Apostle@3560");
-  const night = B.representativeEntry(apostle.variants, "night");
+  const night = B.representativeEntry(apostle.variants, "evergaol");
   assert.equal(night.scalingId, 7754);
   assert.equal(B.computeStats(night, 1, 0, null).partyAttackRate, 1);
   assert.equal(B.computeStats(night, 2, 0, null).partyAttackRate, 1.1);
@@ -1531,13 +1652,14 @@ test("深度缺失退常规 + 异常发动伤害基准缺字段回落 1（与 ma
 
 test("搜索索引收进 displayFallbackZh：卡头上写着的占位名必须搜得到", () => {
   const items = B.buildItems(data, Core.foldForSearch);
-  const hits = B.filterItems(items, "night", "未知敌人", Core.foldForSearch, true);
+  // v4：这两组只有「随从/召唤物」场合，在那个默认隐藏的分组里（macOS 同一条断言）。
+  const hits = B.filterItems(items, "summon", "未知敌人", Core.foldForSearch, true);
   assert.deepEqual(
     hits.map((item) => item.uid).sort(),
     ["nb:Unknown Enemy (c7931)@7931", "nb:Unknown Enemy (c7932)@7932"]
   );
   // 它们是隐藏实体，开关关着时照旧搜不到
-  assert.equal(B.filterItems(items, "night", "未知敌人", Core.foldForSearch).length, 0);
+  assert.equal(B.filterItems(items, "summon", "未知敌人", Core.foldForSearch).length, 0);
   // 卡片模型里保留原串给展开区说明
   const card = items.find((item) => item.uid === "nb:Unknown Enemy (c7931)@7931");
   assert.equal(card.namePlaceholder, "未知敌人 c7931");

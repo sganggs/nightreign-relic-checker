@@ -1,7 +1,13 @@
 // 首领数据页。页面模块契约见 renderer/pages/README.md。
 // 本文件由「首领数据」功能开发者独占：只改这里与 pages/bosses.css。
 //
-// 数据：ctx.getGameData("bosses") → resources/bosses.json（bossesSchemaVersion 3）。
+// 数据：ctx.getGameData("bosses") → resources/bosses.json（bossesSchemaVersion 4）。
+// 分组（bossesSchemaVersion 4 起）按出场场合 roles，不再看 tier / tiers：
+//   tier 取自 multiPlayCorrectionParamId 的档位名，只是缩放档位——铃珠猎人野外版 31000010
+//   挂的就是 7753「Night Boss Threat」，按它分组会把一批场景头目错归到守夜首领。
+//   默认六组：夜王 / 守夜首领 / 据点首领 / 场景头目 / 封印监牢 / 其它场合；打开「显示隐藏实体」
+//   后再多「随从/召唤物」「未放置」两组。规则见 roleGroups()；
+//   tier / tiers / 行级 threat 只留在展开区作「威胁档位」小字。
 // 数值口径（务必与数据集说明一致）：
 //   · hp 已经含常驻缩放（= hpBase × hpMultiplier），多人血量 = hp × scaling.<duo|trio>.hp
 //   · 深夜深度 N 的血量直接用 depthStats[N].hp（已含常驻缩放 × 深夜修正 × 深度倍率），
@@ -15,14 +21,21 @@
 //   · buildupRate 是 Boss 承受的异常累积量倍率（越小越难打出异常），resist 是累积阈值
 //   · nightBosses 的主键是 id；永夜之王等变体用 variantKey / variantNameZh
 //
-// 双端对齐（macOS：macos/Sources/RelicCore/BossData.swift）——三条规则只有一份正文，
-// 改这边必须同时改那边，两端各有断言守着：
+// 双端对齐（macOS：macos/Sources/RelicCore/BossData.swift）——下面几条规则只有一份正文，
+// 改这边必须同时改那边：
 //   · 名字四级回退：nameZh → nameZhFallback（标「参考译名 · 非本作游戏文本」）
 //     → displayFallbackZh（标「无游戏内名称」）→ nameEn；副标题恒为英文名。
 //     搜索索引把 nameZhFallback 与 displayFallbackZh 都收进去。见 displayName()。
-//   · 代表行：分组过滤 → isMain 收敛 → 排除演出行（isStagingRow）→ 排除 noReward
+//   · 代表行：按当前分组过滤 roles → isMain 收敛 → 排除演出行（isStagingRow）→ 排除 noReward
 //     → 血量最高（同血量取 npcId 小者），每一步没有候选就原样放行。见 candidateEntries()。
-//   · 两端逐字相同的文案集中在 TEXT 里，对应 macOS 的 BossRowText。
+//   · 分组：规则正文是 macOS 端 BossCard.Group 的文档注释（「两端唯一正式版本」），这边照抄：
+//     夜王卡只进「夜王」；守夜 / 野外首领按 roles 多重归属；「随从/召唤物」「未放置」是两个
+//     默认隐藏的分组；展开区默认收起只有这两种场合的行（macOS 的 displayRows(includeHidden:)）。
+//     见 GROUP_ORDER / ROLE_GROUP / HIDDEN_ROLES / roleGroups() / displayEntries()。
+//   · 文案：TEXT 对应 macOS 的 BossRowText，ROLE_TEXT 对应 BossRoleText（键名同名、逐字相同）。
+//     windows/tests/bosses_parity.test.mjs 直接读 macOS 的 Swift 源码逐项比对这两张表，并把
+//     RelicCoreChecks 里的对照表（代表行、各分组开关前后的条数、出处摘要、收录统计）拿来跑
+//     本页的实现；macOS 源码里还没有 BossRoleText 时那一半跳过，测试输出里写明原因。
 (function (root) {
   "use strict";
 
@@ -52,6 +65,9 @@
     { key: "death", zh: "死亡" }
   ];
 
+  // 多人缩放档位组名（macOS 的 BossScalingGroup.title(for:)，两端同一套）。**它们只是
+  // multiPlayCorrectionParamId 的档位名，不是出场场合**：场景头目行照样可能挂「守夜首领威胁档」。
+  // 名字不改（改就得两端一起改），容易误读的行由 threatRoleMismatch() 补一句 threatTierNote。
   var GROUP_LABELS = {
     "Field Boss Threat": "野外首领威胁档",
     "Night Boss Threat": "守夜首领威胁档",
@@ -119,6 +135,133 @@
       "变的只是异常累积量与发动伤害倍率（都往下走，人越多越难上异常）。"
   };
 
+  // 按出场场合分组（bossesSchemaVersion 4）的文案，一一对应 macOS 端 RelicCore 的
+  // `BossRoleText`：字符串常量键名同名、逐字相同；函数与 macOS 的同名静态函数同输出
+  //（macOS 的 RelicCoreChecks roleParityStrings 与 windows/tests/bosses_parity.test.mjs
+  // 钉的是同一批字面量，后者还直接读 Swift 源码比对）。
+  //
+  // 上一版把八条自拟的场合文案塞进 TEXT，注释却写着「对应 macOS 的 BossRowText」，
+  // macOS 根本没有同名常量——测试只是在自己核对自己；这一版整张换成 macOS 那张表。
+  var ROLE_TEXT = {
+    // 分组标题。前五个与数据集 roleNames 的中文名一致（夜王分组不叫「夜王战」），
+    // 「其它场合」是合并分组的名字，不是某个场合。
+    groupNightlord: "夜王",
+    groupNight: "守夜首领",
+    groupStronghold: "据点首领",
+    groupField: "场景头目",
+    groupEvergaol: "封印监牢",
+    groupOther: "其它场合",
+    groupSummon: "随从/召唤物",
+    groupUnplaced: "未放置",
+    // 展开区小字的前缀：tier / threat 只是多人缩放档位。
+    threatTierLabel: "威胁档位",
+    // 为什么「威胁档位」和分组对不上（卡片级小字、底部场合说明、多人缩放小标题下的提示共用）。
+    threatTierNote: "威胁档位只是多人缩放档位（Field / Night Boss Threat），不代表出场场合；分组按地图放置判定的出场场合",
+    // 行 / 组没有 roles（旧版数据集）时的徽标与占位。
+    rolesMissing: "出场场合：数据未内置",
+    // 某个场合没有出处明细时的占位。
+    evidenceMissing: "出处：数据未内置",
+    // 展开区每行「出场场合」小节的标题与说明。
+    roleSectionTitle: "出场场合",
+    roleSectionDetail: "按地图放置与抽选参数判定；分组看这里，不看威胁档位",
+    // 出处多于一条时的展开 / 收起按钮。
+    evidenceExpand: "展开全部出处",
+    evidenceCollapse: "只看每个场合的第一条出处",
+    // 底部说明里标在默认隐藏分组后面的注记。
+    hiddenGroupMark: "（默认隐藏）",
+    // 合并行各原始行场合不同时的小标题。
+    rowRolesTitle: "逐行场合",
+    // 分组切换的提示。
+    groupPickerHelp: "按出场场合分组；一组首领可以同时出现在多个分组里",
+    // 「显示隐藏实体」开关的补充说明（开关原有的 help 文案保持不变）。
+    hiddenToggleRoleHelp: "也控制「未放置」「随从/召唤物」两个场合（分组与展开区的行）",
+    // 底部多重归属说明最多列几个名字，其余写「等」。
+    multiGroupNameLimit: 12,
+    // roleNames 缺失时的内置中文名（与 v4 数据集 roleNames.*.zh 逐字相同，测试断言）。
+    builtinRoleNames: {
+      night: "守夜首领",
+      prelude: "守夜前哨",
+      field: "场景头目",
+      stronghold: "据点首领",
+      mine: "坑道精英",
+      evergaol: "封印监牢",
+      tower: "大空洞高塔首领",
+      raid: "突袭事件",
+      invader: "黑夜入侵者",
+      event: "地图事件",
+      nightlord: "夜王战",
+      summon: "随从/召唤物",
+      other: "其他地图",
+      unplaced: "未放置"
+    },
+    // 底部「出场场合说明」折叠块的标题。
+    overviewTitle: function (count) {
+      return "出场场合说明（" + count + " 种）";
+    },
+    // 底部 notes.roleAudit.summary 的小标题。
+    auditTitle: function (count) {
+      return "与威胁档位的对照（数据集 notes.roleAudit，" + count + " 条）";
+    },
+    // 底部场合说明表里的计数：「40 组」「1 组 · 夜王 6」「夜王 18」。
+    // 夜王战只有夜王有（守夜 / 野外首领 0 组），不写成「0 组 · 夜王 18」。
+    roleCountText: function (groups, nightlords) {
+      var parts = [];
+      if (groups > 0 || nightlords === 0) parts.push(groups + " 组");
+      if (nightlords > 0) parts.push("夜王 " + nightlords);
+      return parts.join(" · ");
+    },
+    // 卡头计数：显示的行数，另有默认隐藏的行时补一句。
+    rowCount: function (visible, hidden) {
+      var base = rowCountText(visible);
+      return hidden > 0 ? base + "（另 " + hidden + " 条已隐藏）" : base;
+    },
+    // 「另有 N 条出处」。
+    evidenceMore: function (count) {
+      return "另有 " + count + " 条出处";
+    },
+    // 展开区底部：默认藏掉的行数。
+    hiddenRows: function (count) {
+      return "另有 " + count + " 条「" + ROLE_TEXT.groupUnplaced + "」/「" + ROLE_TEXT.groupSummon +
+        "」行已隐藏，打开「" + TEXT.hiddenToggleTitle + "」查看";
+    },
+    // 「威胁档位 · 守夜首领威胁档 / 野外首领威胁档」。取值 night / field 翻成档位组名
+    //（与 tierGroupLabel / macOS 的 BossScalingGroup.title(for:) 同一套），未知取值原样写；
+    // 去重保序；一个都没有时写「威胁档位 · 无」。
+    threatTierCaption: function (threats) {
+      var seen = [];
+      var titles = [];
+      (Array.isArray(threats) ? threats : []).forEach(function (threat) {
+        var key = asText(threat);
+        if (!key || seen.indexOf(key) !== -1) return;
+        seen.push(key);
+        titles.push(THREAT_TIER_GROUPS[key] ? tierGroupLabel(THREAT_TIER_GROUPS[key]) : key);
+      });
+      return ROLE_TEXT.threatTierLabel + " · " + (titles.length ? titles.join(" / ") : "无");
+    },
+    // 底部说明：同时出现在多个分组的组数，名字最多列 multiGroupNameLimit 个。
+    multiGroupNote: function (count, names) {
+      var list = (Array.isArray(names) ? names : []);
+      var text = list.slice(0, ROLE_TEXT.multiGroupNameLimit).join("、");
+      if (list.length > ROLE_TEXT.multiGroupNameLimit) text += " 等";
+      return "有 " + count + " 组首领按出场场合同时属于多个分组（" + text + "），" +
+        "它们在各个分组下都会出现：卡头列出全部场合，折叠态代表行跟着当前分组走，" +
+        "展开后每行标了自己的场合与出处。";
+    }
+  };
+
+  // 只有 Windows 页面才有的场合文案：卡片级「出场场合」一览（每个场合几行、当前分组对应
+  // 哪几行并描边高亮）是这边独有的界面元素，macOS 没有对应控件，所以不进双端对照表；
+  // 集中放在这里，免得散在模板字符串里。
+  var ROLE_PAGE_TEXT = {
+    roleRowsChip: function (title, rows) {
+      return title + " · " + rows + " 行";
+    },
+    currentGroupNote: function (groupTitle, rows) {
+      return "当前分组「" + groupTitle + "」对应其中 " + rows + " 条数值行（下方描边高亮），" +
+        "折叠态的代表行只从这几行里选。";
+    }
+  };
+
   var BADGE_LABEL_UNCERTAIN = TEXT.labelUncertainBadge;
   var BADGE_MUTATION = TEXT.mutationTitle;
   var BADGE_HIDDEN = TEXT.hiddenToggleHelp;
@@ -139,19 +282,63 @@
   // 深度只有 1–5 五档（ChaosMatchingRankControlParam 就 5 行）。
   var DEPTHS = [1, 2, 3, 4, 5];
 
-  // 分组名两端一致（macOS 端 BossCard.Group.title）：顶部筛选、卡头徽标都用它。
-  // 行内的威胁档位徽标另用短名「守夜 / 野外」，与 macOS 的 threatTitle 对应。
+  // 顶部分组切换。bossesSchemaVersion 4 起按出场场合 roles 分组，不再看 tier / tiers。
+  // 键序 = macOS 端 BossCard.Group.allCases（夜王的键沿用 "nightlords"），标题取 ROLE_TEXT。
+  // 守夜首领 / 据点首领 / 场景头目 / 封印监牢 / 随从/召唤物 / 未放置 与数据集
+  // roleNames.<role>.zh 逐字相同（「场景头目」是游戏文本对 Field Boss 的叫法，TutorialBody 403200）。
   var GROUP_TITLES = {
-    nightlords: "夜王",
-    night: "守夜首领",
-    field: "野外首领"
+    nightlords: ROLE_TEXT.groupNightlord,
+    night: ROLE_TEXT.groupNight,
+    stronghold: ROLE_TEXT.groupStronghold,
+    field: ROLE_TEXT.groupField,
+    evergaol: ROLE_TEXT.groupEvergaol,
+    other: ROLE_TEXT.groupOther,
+    summon: ROLE_TEXT.groupSummon,
+    unplaced: ROLE_TEXT.groupUnplaced
   };
 
-  var TABS = [
-    { key: "nightlords", label: GROUP_TITLES.nightlords },
-    { key: "night", label: GROUP_TITLES.night },
-    { key: "field", label: GROUP_TITLES.field }
+  var GROUP_ORDER = ["nightlords", "night", "stronghold", "field", "evergaol", "other", "summon", "unplaced"];
+
+  // 默认隐藏的两个分组（macOS 的 Group.isHiddenByDefault）：「显示隐藏实体」打开才出现在分组切换里。
+  var HIDDEN_GROUPS = ["summon", "unplaced"];
+
+  var TABS = GROUP_ORDER.map(function (key) {
+    return { key: key, label: GROUP_TITLES[key], hiddenByDefault: HIDDEN_GROUPS.indexOf(key) !== -1 };
+  });
+
+  // 场合取值的规范顺序 = 数据集 roleNames 的键序（roles 数组就按它排；macOS 的 BossRoleCatalog.order）。
+  var ROLE_ORDER = [
+    "night", "prelude", "field", "stronghold", "mine", "evergaol", "tower",
+    "raid", "invader", "event", "nightlord", "summon", "other", "unplaced"
   ];
+
+  // 合并进「其它场合」分组的已知场合（按规范顺序；macOS 的 BossRoleCatalog.otherGroupRoles）。
+  // 高塔 / 突袭 / 入侵 / 事件是任务书点名的四个；守夜前哨、坑道精英、其他地图同样不属于任何
+  // 独立分组，一并放进来。守夜前哨不并进守夜首领：它是首领本体登场前的那一波敌人。
+  var OTHER_GROUP_ROLES = ["prelude", "mine", "tower", "raid", "invader", "event", "other"];
+
+  // 场合 → 分组（macOS 的 BossCard.Group.forRole）：有独立分组的场合各归各组，其余一律「其它场合」，
+  // 表里没有的新取值同样归「其它场合」。nightlord 只对夜王卡有意义：守夜 / 野外首领万一带了
+  // nightlord 场合，归「其它场合」（见 roleGroups）。
+  var ROLE_GROUP = {
+    nightlord: "nightlords",
+    night: "night",
+    stronghold: "stronghold",
+    field: "field",
+    evergaol: "evergaol",
+    summon: "summon",
+    unplaced: "unplaced"
+  };
+  OTHER_GROUP_ROLES.forEach(function (role) { ROLE_GROUP[role] = "other"; });
+
+  // 默认隐藏的两种场合（沿用「显示隐藏实体」开关；macOS 的 BossRoleCatalog.hiddenRoles）：
+  //   · 全部场合都是这两种的组默认不显示，开关打开后出现在「随从/召唤物」「未放置」两个分组里；
+  //   · 还有别的场合的组照常出现在别的分组，同时也在这两个分组里（开关打开时）；
+  //   · 展开区只有这两种场合的行默认收起，写「另有 N 条…已隐藏」。
+  var HIDDEN_ROLES = ["summon", "unplaced"];
+
+  // 威胁档位取值 → 档位分组（组级 tier / tiers、行级 threat 只剩展开区小字用，不再参与分组）。
+  var THREAT_TIER_GROUPS = { night: "Night Boss Threat", field: "Field Boss Threat" };
 
   var PARTY_OPTIONS = [
     { value: 1, label: "1 人" },
@@ -248,13 +435,13 @@
   }
 
   // 一条数值行的徽标文案（不含 DOM）：顺序即渲染顺序。
+  // 场合徽标另由 entryRoleBadges() 给，排在这一组前面。
   function entryBadgeTexts(item, entry, stats) {
     var out = [];
-    // 顺序与 macOS 端 BossFightRowView 的 Pill 顺序一致：威胁档位 → 主战 →
+    // 顺序与 macOS 端 BossFightRowView 的 Pill 顺序一致：主战 →
     // 标签为社区推测 → 深夜数值 → 深夜专属修正 → 变异个体。
-    if (item && item.kind === "boss" && entry && entry.threat) {
-      out.push(entry.threat === "night" ? "守夜" : "野外");
-    }
+    // 原来排第一的威胁档位「守夜 / 野外」（行级 threat）已降成行尾小字「威胁档位 守夜」：
+    // 它只是缩放档位，与场合徽标「守夜首领 / 场景头目」挨着画会被读成出场位置。
     if (entry && entry.isMain) out.push("主战");
     if (entry && entry.labelUncertain) out.push(BADGE_LABEL_UNCERTAIN);
     // 只在这一行真的换了深度数值时挂「深夜数值」：没有 depthStats 的行在深度模式下
@@ -553,8 +740,11 @@
   // 某个分组下参与「代表行」评选的候选行。四步过滤，**任一步会把候选池清空就跳过
   // 那一步**（跳过是规则的一部分，不是容错）。规则正文见 macOS 端
   // BossCard.rows(in:) 的文档注释，两端必须同序：
-  //   1. 守夜 / 野外分组先按 threat 过滤——同一组首领可能两种档位都有（数据里 6 组），
-  //      在「野外」分组下就该看野外那几行，而不是血量更高的守夜行；
+  //   1. 按当前分组过滤 roles（bossesSchemaVersion 4 起；此前按 threat）——只留场合落在
+  //      该分组里的行（rolesInGroup，macOS 的 BossFight.belongs(to:)）。夜王分组即
+  //      nightlord 行，「其它场合」即高塔 / 突袭 / 入侵 / 事件等行，「未放置」分组即未放置行。
+  //      同一组首领常常横跨几个场合（铃珠猎人的守夜 / 场景头目 / 据点首领各是一行），在
+  //      「场景头目」分组下就该看场景头目那一行，而不是血量更高的守夜行；
   //   2. 再收敛到 isMain（夜王的主战行**不唯一**，多阶段 / 多体有 2～5 条）；
   //   3. 排除登场演出 / 血条实体 / 教程这类演出行（isStagingRow）；
   //   4. 最后排除 noReward = true 的行（整池都 noReward 就不排除）。
@@ -563,18 +753,20 @@
   // noReward = true（奖励挂在远征结算上，不在 NpcParam 的 getSoul/掉落表里），
   // 把这一步提到 isMain 之前会把整组主战行踢掉——玛利斯的代表行会从 12,687 掉到
   // 3,045、格拉狄乌斯会从 npcId 75000020 变成 75000000。放在 isMain 之后，18 位
-  // 夜王的代表行一条不变，只修掉真正抢位的模板/无奖励行：恶兆妖鬼的「教程」行
-  //（21300520，hp 9920）→ 21300030、神皮使徒守夜的「基准」行（35600900）→
-  // 35600110、火焰战车的「血条实体」（44600015，hp 8009）→ 44600010 等 16 组。
+  // 夜王的代表行一条不变，只修掉真正抢位的模板/无奖励行（v3 口径下 16 组）。
+  // v4 按场合过滤后，模板行多半是「未放置」、在别的分组里第 1 步就出局了；第 4 步仍起作用的
+  // 例子：神皮使徒在「未放置」分组下，不掉奖励的 Paramdex 模板行 35600900（7,347）让给 35600000。
   //
-  // 第 3 步是这一轮补上的：**演出行不一定 noReward**，第 4 步拦不住它们。
-  // 少了这一步，巨鸦群野外代表行会是只挂血条的「血条实体」45601020（hp 2117，
-  // noReward = false），鲜血贵族野外代表行会是「鲜血君王 · 登场演出」35500020。
+  // 第 3 步：**演出行不一定 noReward**，第 4 步拦不住它们。少了这一步，巨鸦群在
+  //「场景头目」下的代表行会是只挂血条的「血条实体」45601020（hp 2117，noReward = false）；
+  // 恶兆妖鬼在「其它场合」下会是「教程」行 21300520（hp 9920）。
   function candidateEntries(entries, group) {
     var pool = Array.isArray(entries) ? entries.filter(Boolean) : [];
-    if (group === "night" || group === "field") {
-      var byThreat = pool.filter(function (entry) { return entry.threat === group; });
-      if (byThreat.length) pool = byThreat;
+    if (group && Object.prototype.hasOwnProperty.call(GROUP_TITLES, group)) {
+      var byRole = pool.filter(function (entry) {
+        return rolesInGroup(entryRoles(entry), group).length > 0;
+      });
+      if (byRole.length) pool = byRole;
     }
     var mains = pool.filter(function (entry) { return entry.isMain; });
     if (mains.length) pool = mains;
@@ -602,7 +794,7 @@
     return best;
   }
 
-  // 不区分分组的代表行（夜王卡片用；守夜 / 野外请用 representativeEntry 带上分组）。
+  // 不区分分组的代表行（不按 roles 过滤；按分组取请用 representativeEntry 带上分组）。
   function mainEntry(entries) {
     return representativeEntry(entries, null);
   }
@@ -645,25 +837,403 @@
     return String(value == null ? "" : value).toLowerCase();
   }
 
-  // 一个 Boss 可能同时属于守夜与野外（数据里 tiers = ["field","night"] 的有 6 组，
-  // 而 tier 只保留一个），所以分组一律按 tiers 判定，卡片允许同时出现在两个分组里。
-  function bossGroups(boss) {
-    var raw = boss && Array.isArray(boss.tiers) && boss.tiers.length
-      ? boss.tiers
-      : [boss && boss.tier];
-    var out = [];
-    raw.forEach(function (tier) {
-      var key = tier === "night" ? "night" : (tier === "field" ? "field" : null);
-      if (key && out.indexOf(key) === -1) out.push(key);
+  // ------------------------------------------------------------ 出场场合（roles）
+  // bossesSchemaVersion 4：每个 fight / variant 有 roles（逐行场合的并集）、rowRoles
+  //（逐原始行）、roleEvidence（逐场合证据）；组 / 夜王有 roles（各行并集）与 roleVariants。
+  // 规则与 macOS 端 RelicCore 的 BossRoleCatalog / BossCard.Group / BossCard 同名成员一一对应。
+
+  function roleIndex(role) {
+    var index = ROLE_ORDER.indexOf(role);
+    return index === -1 ? ROLE_ORDER.length : index;
+  }
+
+  // 规范化一份 roles（macOS 的 BossRoleCatalog.normalized）：只留非空字符串、去重，
+  // 已知场合按 ROLE_ORDER 排，表外的新取值按键名排在已知场合之后。
+  function normalizeRoles(list) {
+    var seen = [];
+    (Array.isArray(list) ? list : []).forEach(function (role) {
+      if (typeof role !== "string" || !role || seen.indexOf(role) !== -1) return;
+      seen.push(role);
     });
-    if (!out.length) out.push(boss && boss.tier === "night" ? "night" : "field");
-    // 主分组沿用 tier，方便卡头徽标与默认排序。
-    var primary = boss && boss.tier === "night" ? "night" : "field";
-    if (out.indexOf(primary) > 0) {
-      out.splice(out.indexOf(primary), 1);
-      out.unshift(primary);
-    }
+    return seen.sort(function (a, b) {
+      var left = roleIndex(a);
+      var right = roleIndex(b);
+      if (left !== right) return left - right;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
+  }
+
+  function entryRoles(entry) {
+    return normalizeRoles(entry && entry.roles);
+  }
+
+  // 组 / 夜王的场合：优先读组级 roles（数据里恒为各行 roles 的并集），缺了才自己并。
+  function unionRoles(owner, entries) {
+    var declared = normalizeRoles(owner && owner.roles);
+    if (declared.length) return declared;
+    var all = [];
+    (Array.isArray(entries) ? entries : []).forEach(function (entry) {
+      entryRoles(entry).forEach(function (role) { all.push(role); });
+    });
+    return normalizeRoles(all);
+  }
+
+  function isHiddenRole(role) {
+    return HIDDEN_ROLES.indexOf(role) !== -1;
+  }
+
+  function isHiddenGroup(group) {
+    return HIDDEN_GROUPS.indexOf(group) !== -1;
+  }
+
+  // 场合 → 分组（macOS 的 BossCard.Group.forRole）。
+  function roleGroup(role) {
+    return Object.prototype.hasOwnProperty.call(ROLE_GROUP, role) ? ROLE_GROUP[role] : "other";
+  }
+
+  // 一组场合里落在某个分组的那几个（macOS 的 Group.contains(role:)）。
+  function rolesInGroup(roles, group) {
+    return normalizeRoles(roles).filter(function (role) {
+      return roleGroup(role) === group;
+    });
+  }
+
+  // 只出现在默认隐藏场合（「未放置」「随从/召唤物」）的场合表。没有场合数据的不算——
+  // 缺数据不能被当成「未放置」藏起来（macOS 的 BossFight / BossCard.isHiddenByDefault）。
+  function onlyHiddenRoles(roles) {
+    var list = normalizeRoles(roles);
+    return list.length > 0 && list.every(isHiddenRole);
+  }
+
+  // 卡片属于哪些分组（按 GROUP_ORDER 排）。规则正文是 macOS 端 BossCard.Group 的文档注释
+  //（BossDataIndex.groups(forRoles:)），这里照抄：
+  //   · 夜王卡固定只进「夜王」；它们的突袭 / 地图事件 / 未放置场合只作卡头徽标。
+  //     roleSummary 本来就只数 nightBosses，这样其余分组的计数才能与 roleSummary 逐项相等；
+  //   · 守夜 / 野外首领：每个场合落在哪个分组就出现在哪个分组，**多重归属就在各分组都出现**；
+  //     万一带了 nightlord 场合（当前数据没有）归「其它场合」，免得夜王分组混进非夜王；
+  //   · 「随从/召唤物」「未放置」各是一个分组，默认隐藏；全部场合都是这两种的组
+  //     roleHidden = true，默认不显示（与 boss.hidden 共用「显示隐藏实体」开关）；
+  //   · roles 整个缺失（旧数据）时 roleMissing = true，归「其它场合」、不隐藏，
+  //     卡上写「出场场合：数据未内置」——不退回 tier 猜分组，那正是这一版要修的错。
+  function roleGroups(roles, isNightlord) {
+    var list = normalizeRoles(roles);
+    var roleHidden = onlyHiddenRoles(list);
+    if (isNightlord) return { groups: ["nightlords"], roleHidden: roleHidden, roleMissing: !list.length };
+    if (!list.length) return { groups: ["other"], roleHidden: false, roleMissing: true };
+    var found = [];
+    list.forEach(function (role) {
+      var group = roleGroup(role);
+      if (group === "nightlords") group = "other";
+      if (found.indexOf(group) === -1) found.push(group);
+    });
+    return {
+      groups: GROUP_ORDER.filter(function (key) { return found.indexOf(key) !== -1; }),
+      roleHidden: roleHidden,
+      roleMissing: false
+    };
+  }
+
+  // 首领组的分组（不含夜王）。名字沿用上一版，口径已从 tiers 换成 roles。
+  function bossGroups(boss) {
+    return roleGroups(unionRoles(boss, boss && boss.variants), false).groups;
+  }
+
+  // 卡片默认不显示：hidden（召唤物 / 投射物等非首领实体），或全部场合都是默认隐藏的两种。
+  function isItemHiddenByDefault(item) {
+    return Boolean(item && (item.hidden || item.roleHidden));
+  }
+
+  // 卡片所在的默认可见分组（「随从/召唤物」「未放置」不算）。
+  function visibleGroups(item) {
+    return (item && Array.isArray(item.groups) ? item.groups : []).filter(function (group) {
+      return !isHiddenGroup(group);
+    });
+  }
+
+  // 同时属于多个默认可见分组（macOS 的 BossCard.hasMultipleGroups）。
+  function hasMultipleGroups(item) {
+    return visibleGroups(item).length > 1;
+  }
+
+  // 分组切换里可选的分组：默认隐藏的两个只在打开开关时出现（macOS 的 Group.visibleCases）。
+  function visibleTabs(showHidden) {
+    return TABS.filter(function (tab) { return showHidden || !tab.hiddenByDefault; });
+  }
+
+  // 展开区要逐行列出的行（macOS 的 BossCard.displayRows(includeHidden:)）：默认藏掉只出现在
+  //「未放置」「随从/召唤物」的行；整卡都是这种行（只有打开开关才看得到的卡）时全部列出，
+  // 免得展开后是空的。演出行 / 无奖励行不在此列——它们只在评选代表行时让位。
+  function displayEntries(entries, showHidden) {
+    var list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+    if (showHidden) return list;
+    var shown = list.filter(function (entry) { return !onlyHiddenRoles(entryRoles(entry)); });
+    return shown.length ? shown : list;
+  }
+
+  function hiddenEntryCount(entries, showHidden) {
+    var list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+    return list.length - displayEntries(list, showHidden).length;
+  }
+
+  // 场合的中文名（macOS 的 BossDataset.roleTitle）：数据集 roleNames 的中文名 → 内置表 →
+  // roleNames 的英文名 → 键名原样。未知的新场合也不能渲染成空白徽标。
+  function roleTitle(data, role) {
+    var table = data && data.roleNames && typeof data.roleNames === "object" ? data.roleNames : null;
+    var item = table ? table[role] : null;
+    return asText(item && item.zh) || ROLE_TEXT.builtinRoleNames[role] || asText(item && item.en) || asText(role);
+  }
+
+  function roleDescription(data, role) {
+    var table = data && data.roleNames && typeof data.roleNames === "object" ? data.roleNames : null;
+    var item = table ? table[role] : null;
+    return asText(item && item.description);
+  }
+
+  // 一枚场合徽标的模型：颜色跟它所属的分组走（守夜蓝 / 场景头目绿 …），默认隐藏的两种画灰。
+  function roleBadge(data, role) {
+    return { role: role, text: roleTitle(data, role), group: roleGroup(role), hidden: isHiddenRole(role), current: true };
+  }
+
+  // 卡头的场合徽标：列出这张卡的**全部**场合（含「未放置」「随从/召唤物」，也含夜王卡的
+  //「夜王战」），与 macOS 的 BossRoleBadges 同一组；搜索索引收的也正是这些名字。
+  // current：场合是否落在当前分组（macOS 着色 / 其余中性，一眼看出这张卡为什么在这个分组里）；
+  // 不传分组时全部算当前。
+  function cardRoleBadges(item, data, group) {
+    var roles = item && Array.isArray(item.roles) ? item.roles : [];
+    return roles.map(function (role) {
+      var badge = roleBadge(data, role);
+      badge.current = group ? roleGroup(role) === group : true;
+      return badge;
+    });
+  }
+
+  // 展开区逐行的场合徽标：该行 roles 全部列出。
+  function entryRoleBadges(entry, data) {
+    return entryRoles(entry).map(function (role) { return roleBadge(data, role); });
+  }
+
+  // 搜索索引里的场合名（macOS 的 BossDataIndex.roleSearchTerms）：每个场合的中文名
+  //（roleTitle）+ roleNames 的英文名；不收判定口径（description），也不收取值 key。
+  // 收的是全部场合——卡头徽标也是全部场合，搜得到的名字在卡头上都看得见。
+  function roleSearchTerms(data, roles) {
+    var table = data && data.roleNames && typeof data.roleNames === "object" ? data.roleNames : {};
+    var out = [];
+    normalizeRoles(roles).forEach(function (role) {
+      out.push(roleTitle(data, role));
+      var en = asText(table[role] && table[role].en);
+      if (en) out.push(en);
+    });
     return out;
+  }
+
+  // 每个场合涉及这张卡的几条数值行（按变体 / 战斗行的 roles 数，含默认收起的行）。
+  function roleEntryCounts(entries, roles) {
+    var list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+    return normalizeRoles(roles).map(function (role) {
+      return {
+        role: role,
+        rows: list.filter(function (entry) { return entryRoles(entry).indexOf(role) !== -1; }).length
+      };
+    });
+  }
+
+  // 某个场合的出处（坏元素跳过，缺了给空数组；macOS 的 BossFight.evidence(for:)）。
+  function roleEvidenceList(entry, role) {
+    var table = entry && entry.roleEvidence && typeof entry.roleEvidence === "object" ? entry.roleEvidence : null;
+    var list = table && Array.isArray(table[role]) ? table[role] : [];
+    return list.filter(function (item) {
+      return item !== null && typeof item === "object" && !Array.isArray(item);
+    });
+  }
+
+  // 出处摘要「表名 行 · 地图」，与 macOS 的 BossRoleEvidence.summary 逐字同一口径：
+  //   · row 为空或「—」（未放置那种占位）时只写表名；
+  //   · msb 为空、或与 row 相同（「其他地图」那种 row 就是地图名）时不重复写地图；
+  //   · 表名与行都没有时写「出处：数据未内置」。
+  // note 不进摘要（最长 500 多字），页面放在摘要下面的小字里。
+  function evidenceSummaryText(evidence) {
+    var table = asText(evidence && evidence.table);
+    var row = asText(evidence && evidence.row);
+    var msb = asText(evidence && evidence.msb);
+    var head = table;
+    if (row && row !== "—") head = head ? head + " " + row : row;
+    var parts = head ? [head] : [];
+    if (msb && msb !== row) parts.push(msb);
+    return parts.length ? parts.join(" · ") : ROLE_TEXT.evidenceMissing;
+  }
+
+  // 出处的地图名（placementMaps 里的 Paramdex 名或开放地块的地形名）与 MSB part：
+  // 摘要本身与 macOS 逐字一致，这两项只放进悬停提示，不改摘要文字。
+  function evidenceHint(data, evidence) {
+    var msb = asText(evidence && evidence.msb);
+    var maps = data && data.placementMaps && typeof data.placementMaps === "object" ? data.placementMaps : null;
+    var info = msb && maps ? maps[msb] : null;
+    var name = "";
+    if (info) name = asText(info.paramdexName) || (info.tileVariant ? asText(info.tileVariant.zh) : "");
+    return [name ? msb + "：" + name : "", asText(evidence && evidence.part)].filter(Boolean).join(" · ");
+  }
+
+  // 展开区每行「出场场合」小节的模型（macOS 的 BossRoleEvidenceSection）：每个场合给第一条
+  // 出处（showAll 时给全部），另报「另有 N 条出处」。出处来自被合并掉的原始行时标「行 N」。
+  function roleEvidenceLines(entry, data, showAll) {
+    var selfId = entry ? entry.npcId : null;
+    return entryRoles(entry).map(function (role) {
+      var list = roleEvidenceList(entry, role);
+      var shown = showAll ? list : list.slice(0, 1);
+      var line = roleBadge(data, role);
+      line.total = list.length;
+      line.missing = !list.length;
+      line.more = list.length - shown.length;
+      line.items = shown.map(function (item) {
+        var npcId = item.npcId === null || item.npcId === undefined || item.npcId === "" ? null : item.npcId;
+        return {
+          npcId: npcId !== null && Number(npcId) !== Number(selfId) ? npcId : null,
+          summary: evidenceSummaryText(item),
+          note: asText(item.note),
+          hint: evidenceHint(data, item)
+        };
+      });
+      return line;
+    });
+  }
+
+  // 有没有哪个场合不止一条出处（此时给「展开全部出处」按钮）。
+  function hasMoreEvidence(entry) {
+    return entryRoles(entry).some(function (role) { return roleEvidenceList(entry, role).length > 1; });
+  }
+
+  // 合并行的原始行按场合归拢（macOS 的 BossFight.rowRoleGroups）：同一组场合的 npcId 放在一起，
+  // 顺序按 npcIds 里第一次出现的顺序，rowRoles 里多出来的键按数值升序接在后面；
+  // 转不成 npcId 的键丢掉。
+  function rowRoleGroups(entry) {
+    var raw = entry && entry.rowRoles && typeof entry.rowRoles === "object" ? entry.rowRoles : {};
+    var table = {};
+    var keys = [];
+    Object.keys(raw).forEach(function (key) {
+      if (!/^-?\d+$/.test(key)) return;
+      var id = Number(key);
+      table[String(id)] = normalizeRoles(raw[key]);
+      keys.push(id);
+    });
+    var npcIds = entry && Array.isArray(entry.npcIds) && entry.npcIds.length
+      ? entry.npcIds.map(Number)
+      : (entry && entry.npcId !== undefined ? [Number(entry.npcId)] : []);
+    var ids = npcIds.filter(function (id) { return Object.prototype.hasOwnProperty.call(table, String(id)); })
+      .concat(keys.filter(function (id) { return npcIds.indexOf(id) === -1; }).sort(function (a, b) { return a - b; }));
+    var order = [];
+    var members = {};
+    ids.forEach(function (id) {
+      var roles = table[String(id)];
+      var key = roles.join("+");
+      if (!members[key]) { members[key] = { roles: roles, npcIds: [] }; order.push(key); }
+      if (members[key].npcIds.indexOf(id) === -1) members[key].npcIds.push(id);
+    });
+    return order.map(function (key) { return members[key]; });
+  }
+
+  // 合并行的「逐行场合」（macOS 的 BossDataset.rowRolesSummary）：
+  // 「逐行场合：夜王战 75000020 / 75002020；未放置 75001020」，同一组场合用「 + 」连接。
+  // 各原始行场合都一样（或没有 rowRoles）时返回空串——页面不写这一行。
+  function rowRolesSummary(entry, data) {
+    var groups = rowRoleGroups(entry);
+    if (groups.length < 2) return "";
+    return ROLE_TEXT.rowRolesTitle + "：" + groups.map(function (group) {
+      return group.roles.map(function (role) { return roleTitle(data, role); }).join(" + ") +
+        " " + group.npcIds.join(" / ");
+    }).join("；");
+  }
+
+  // 组级威胁档位（macOS 的 BossCard.tiers）：tiers 非空就用它，否则用 tier；tier 缺字段时
+  // 按 "field" 处理（macOS 解码 `bossString(.tier, default: "field")`），空串算没有。
+  function cardTiers(boss) {
+    if (boss && Array.isArray(boss.tiers) && boss.tiers.length) {
+      return boss.tiers.map(asText).filter(Boolean);
+    }
+    var tier = boss && typeof boss.tier === "string" ? boss.tier : "field";
+    return tier ? [tier] : [];
+  }
+
+  // 这一行的多人缩放档位名与它是不是守夜首领对不上：不当守夜首领的行挂着「守夜首领威胁档」
+  //（铃珠猎人野外版 31000010 就是 7753 · Night Boss Threat，35 行），或守夜首领行挂着
+  //「野外首领威胁档」（熔炉骑士那类，10 行）。展开区「多人缩放（档位 #7753 · 守夜首领威胁档）」
+  // 在这种行上最容易被读成出场位置，只在这 45 行补一句 threatTierNote；档位名本身不改
+  //（与 macOS 的 BossScalingGroup.title 同一套，GROUP_LABELS 注释里写明了它只是档位名）。
+  // 默认收起的未放置 / 随从行不算：它们没有出场位置可供误读。
+  function threatRoleMismatch(entry, tiers) {
+    var roles = entryRoles(entry);
+    if (!roles.length || onlyHiddenRoles(roles)) return false;
+    var id = entry && entry.scalingId;
+    if (id === null || id === undefined) return false;
+    var meta = tiers ? tiers[String(id)] : null;
+    var group = meta ? meta.group : null;
+    var isNightRow = roles.indexOf("night") !== -1;
+    if (group === THREAT_TIER_GROUPS.night) return !isNightRow;
+    if (group === THREAT_TIER_GROUPS.field) return isNightRow;
+    return false;
+  }
+
+  // 各分组的卡片数（顶部切换上的数字，macOS 的 cards(in:includeHidden:).count）。
+  // 开关关着时两个默认隐藏的分组为 0，其余分组滤掉默认隐藏的卡。
+  function groupCounts(items, showHidden) {
+    var out = {};
+    GROUP_ORDER.forEach(function (key) { out[key] = 0; });
+    (Array.isArray(items) ? items : []).forEach(function (item) {
+      if (!item || (!showHidden && isItemHiddenByDefault(item))) return;
+      (Array.isArray(item.groups) ? item.groups : [item.group]).forEach(function (group) {
+        if (!showHidden && isHiddenGroup(group)) return;
+        out[group] = (out[group] || 0) + 1;
+      });
+    });
+    return out;
+  }
+
+  // 同时属于多个默认可见分组的卡片（macOS 的 BossDataIndex.multiGroupCards）。
+  function multiGroupItems(items) {
+    return (Array.isArray(items) ? items : []).filter(hasMultipleGroups);
+  }
+
+  // 底部「出场场合说明」要列的全部场合（macOS 的 BossDataset.orderedRoles）：内置顺序在前，
+  // 数据集里多出来的未知场合（roleNames / roleSummary 的键）按键名排在后面。
+  function orderedRoles(data) {
+    var extra = [];
+    [data && data.roleNames, data && data.roleSummary].forEach(function (table) {
+      if (!table || typeof table !== "object") return;
+      Object.keys(table).forEach(function (key) {
+        if (ROLE_ORDER.indexOf(key) === -1 && extra.indexOf(key) === -1) extra.push(key);
+      });
+    });
+    return ROLE_ORDER.concat(extra.sort());
+  }
+
+  // 「出场场合说明」表的一行（macOS 的 BossRoleOverview.roleRow）：场合 → 分组（默认隐藏的
+  // 分组后面标「（默认隐藏）」），计数按卡片重数（守夜 / 野外首领里带它的组数 + 带它的夜王数）。
+  function roleOverviewRows(data, items) {
+    var list = Array.isArray(items) ? items : [];
+    return orderedRoles(data).map(function (role) {
+      var group = roleGroup(role);
+      var bosses = list.filter(function (item) { return item.kind !== "nightlord" && item.roles.indexOf(role) !== -1; }).length;
+      var lords = list.filter(function (item) { return item.kind === "nightlord" && item.roles.indexOf(role) !== -1; }).length;
+      var names = data && data.roleNames && typeof data.roleNames === "object" ? data.roleNames : {};
+      return {
+        role: role,
+        title: roleTitle(data, role),
+        en: asText(names[role] && names[role].en),
+        group: group,
+        groupText: GROUP_TITLES[group] + (isHiddenGroup(group) ? ROLE_TEXT.hiddenGroupMark : ""),
+        countText: ROLE_TEXT.roleCountText(bosses, lords),
+        description: roleDescription(data, role)
+      };
+    });
+  }
+
+  // 列表计数里的「已隐藏 / 含隐藏」一段。v4 起只有 hidden 的非首领实体、或全部场合都是
+  //「未放置」「随从/召唤物」的组默认隐藏，它们只落在那两个默认隐藏的分组里，所以这段
+  // 实际只在打开开关、切到这两个分组时出现（写「含隐藏 N 组」）。
+  function hiddenCountText(count, shown) {
+    if (!count) return "";
+    return shown
+      ? "含隐藏 " + count + " 组"
+      : "已隐藏 " + count + " 组（未放置 / 随从 / 非首领实体）";
   }
 
   // 一张卡里有多少行带某类深夜数值。只看代表行会把「首条没有、其余行有」的卡片判错，
@@ -715,11 +1285,18 @@
     (Array.isArray(data.nightlords) ? data.nightlords : []).forEach(function (lord) {
       var entries = Array.isArray(lord.fights) ? lord.fights : [];
       var variant = VARIANT_PILL[lord.variantKey] || null;
+      var roles = unionRoles(lord, entries);
+      var placement = roleGroups(roles, true);
       items.push({
         uid: "nl:" + String(lord.menuId),
         kind: "nightlord",
-        group: "nightlords",
-        groups: ["nightlords"],
+        group: placement.groups[0],
+        groups: placement.groups,
+        roles: roles,
+        roleHidden: placement.roleHidden,
+        roleMissing: placement.roleMissing,
+        // 夜王没有 tier / tiers（macOS 的 BossCard.tiers 同样为空），展开区不写威胁档位小字。
+        tiers: [],
         name: lord.nameZh || lord.nameEn || "未知夜王",
         nameEn: lord.nameEn || "",
         expedition: lord.expeditionZh || lord.expeditionEn || "",
@@ -739,16 +1316,18 @@
         weakness: Array.isArray(lord.weakness) ? lord.weakness : [],
         description: lord.descriptionZh || "",
         entries: entries,
-        main: mainEntry(entries),
+        main: representativeEntry(entries, "nightlords"),
         idText: "菜单行 " + String(lord.menuId),
-        // 搜索串的组成两端必须一致：中英文名 + 远征名 + 变体名 + 官方弱点 + 每行标签。
-        // 分组名、nameSource / threat / variantKey 这类内部枚举值都不进搜索串。
+        // 搜索串的组成两端必须一致：中英文名 + 远征名 + 变体名 + 官方弱点 + 场合名
+        //（全部场合的 roleNames 中英文，卡头徽标上都看得见）+ 每行标签。
+        // nameSource / threat / variantKey 这类内部枚举值与场合的取值 key 都不进搜索串。
         search: folder(joinSearch([
           lord.nameZh, lord.nameEn, lord.expeditionZh, lord.expeditionEn,
           lord.variantNameZh, lord.variantNameEn
         ].concat((Array.isArray(lord.weakness) ? lord.weakness : []).map(function (weak) {
           return joinSearch([weak.zh, weak.en]);
-        })).concat(entries.map(function (fight) { return joinSearch([fight.labelZh, fight.labelEn]); })))),
+        })).concat(roleSearchTerms(data, roles))
+          .concat(entries.map(function (fight) { return joinSearch([fight.labelZh, fight.labelEn]); })))),
         numbers: numberKeys(entryNumbers(entries))
       });
     });
@@ -756,12 +1335,20 @@
     (Array.isArray(data.nightBosses) ? data.nightBosses : []).forEach(function (boss) {
       var entries = Array.isArray(boss.variants) ? boss.variants : [];
       var info = displayName(boss);
-      var groups = bossGroups(boss);
+      var roles = unionRoles(boss, entries);
+      var placement = roleGroups(roles, false);
+      var groups = placement.groups;
       items.push({
         uid: "nb:" + String(boss.id),
         kind: "boss",
         group: groups[0],
         groups: groups,
+        roles: roles,
+        // roleHidden：全部场合都是「未放置」「随从/召唤物」，默认隐藏（与 hidden 同一个开关）。
+        roleHidden: placement.roleHidden,
+        roleMissing: placement.roleMissing,
+        // tier / tiers 不再参与分组，只在展开区写成「威胁档位」小字。
+        tiers: cardTiers(boss),
         name: info.primary,
         nameEn: info.secondary,
         expedition: "",
@@ -794,10 +1381,12 @@
         // nameZhFallback 必须进搜索串：schemaVersion 3 把「大型黄金河马」这类旧译名
         // 移出了 nameZh，不收进索引的话用户搜「河马」就再也搜不到这张卡。
         // displayFallbackZh（「未知敌人 cXXXX」）同理——它现在就是卡头上写着的名字，
-        // 页面上看得见的名字必须搜得到。两端同一组搜索键。
+        // 页面上看得见的名字必须搜得到。场合名（roleNames 中英文）同样收进来：
+        // 卡头挂着的场合徽标（全部场合）必须搜得到。两端同一组搜索键。
         search: folder(joinSearch([
           boss.nameZh, boss.nameEn, boss.nameZhFallback, boss.displayFallbackZh
-        ].concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); })))),
+        ].concat(roleSearchTerms(data, roles))
+          .concat(entries.map(function (variant) { return joinSearch([variant.labelZh, variant.labelEn]); })))),
         numbers: numberKeys(
           entryNumbers(entries)
             .concat(Array.isArray(boss.chrIds) ? boss.chrIds : [])
@@ -824,12 +1413,16 @@
     return item.search.indexOf(needle) !== -1;
   }
 
-  // showHidden 缺省为 false：hidden = true 的组（召唤物 / 投射物等非首领实体）默认不出现。
+  // showHidden 缺省为 false（macOS 的 BossDataIndex.cards(in:query:includeHidden:)）：
+  //   · 「随从/召唤物」「未放置」两个分组整组不显示；
+  //   · 其余分组滤掉默认隐藏的卡——hidden = true 的组（召唤物 / 投射物等非首领实体）与
+  //     roleHidden = true 的组（全部场合都是「未放置」「随从/召唤物」）。
   function filterItems(items, group, query, fold, showHidden) {
     var folder = typeof fold === "function" ? fold : defaultFold;
     var needle = folder(String(query == null ? "" : query).trim());
+    if (group && isHiddenGroup(group) && !showHidden) return [];
     return items.filter(function (item) {
-      if (!showHidden && item.hidden) return false;
+      if (!showHidden && isItemHiddenByDefault(item)) return false;
       if (group && !itemInGroup(item, group)) return false;
       return itemMatches(item, needle);
     });
@@ -944,6 +1537,8 @@
     showHidden: false,
     // 每条数值行各自选中的变异档位：key = "<卡片 uid>#<npcId>"，value = 档位 id 字符串。
     mutation: {},
+    // 展开了「全部出处」的数值行：key 同上，收起卡片时一并清掉（macOS 每行各自记、收起归零）。
+    evidenceOpen: {},
     data: null,
     items: [],
     hasDepth: false,
@@ -1002,13 +1597,27 @@
     }).join("");
   }
 
+  // 八个分组按钮，每个带一个卡片数（renderList 里按隐藏开关刷新）；「随从/召唤物」「未放置」
+  // 两个默认隐藏，打开「显示隐藏实体」才出现（renderControls 里切 hidden）。
   function groupControl() {
     return TABS.map(function (tab) {
       var active = tab.key === state.group;
-      return "<button type='button' class='segment-button" + (active ? " is-active" : "") + "'" +
+      return "<button type='button' class='segment-button bosses-group-button" + (active ? " is-active" : "") + "'" +
         " data-bosses-group='" + tab.key + "' data-testid='bosses-group-" + tab.key + "'" +
-        " role='radio' aria-checked='" + active + "'>" + esc(tab.label) + "</button>";
+        (tab.hiddenByDefault && !state.showHidden ? " hidden" : "") +
+        " role='radio' aria-checked='" + active + "'>" + esc(tab.label) +
+        "<span class='bosses-group-count' data-bosses-group-count='" + tab.key + "'></span></button>";
     }).join("");
+  }
+
+  // 场合徽标：颜色跟所属分组走（bosses.css 的 .bosses-role--<分组>），默认隐藏的两种画虚线灰；
+  // 卡头上不属于当前分组的场合压成中性色（badge.current === false）；
+  // 悬停显示 roleNames 里的判定口径。text 可以覆盖（展开区「守夜首领 · 2 行」这种）。
+  function rolePill(badge, text) {
+    var desc = roleDescription(state.data, badge.role);
+    return "<span class='pill bosses-role bosses-role--" + esc(badge.group) +
+      (badge.hidden ? " is-hidden-role" : "") + (badge.current === false ? " is-muted" : "") + "'" +
+      (desc ? " title='" + esc(desc) + "'" : "") + ">" + esc(text || badge.text) + "</span>";
   }
 
   // 「常规 / 深夜·深度 1…5」六选一。深度差别大（最终 Boss 档深度 5 的伤害是深度 1
@@ -1048,7 +1657,7 @@
       "<div class='page-content bosses-content'>" +
       "<header class='title-block page-title'>" +
       "<div class='logo-mark logo-mark--medium' aria-hidden='true'><i></i><i></i><i></i><span>✓</span></div>" +
-      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
+      "<div><h1>首领数据</h1><p>《黑夜君临》首领的出场场合、血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
       "</header>" +
       "<section class='card bosses-toolbar' data-testid='bosses-toolbar'>" +
       "<div class='bosses-toolbar-row'>" +
@@ -1057,17 +1666,19 @@
       partyControl() + "</div></div>" +
       "<div class='bosses-control bosses-control--grow'><span class='bosses-control-label'>搜索</span>" +
       "<label class='search-field'><span aria-hidden='true'>⌕</span>" +
-      "<input type='search' placeholder='搜索首领名、参考译名、远征名、变体标签，或输入 npcId / chrId 前缀' autocomplete='off' data-testid='bosses-search'></label></div>" +
+      "<input type='search' placeholder='搜索首领名、参考译名、远征名、变体标签、出场场合，或输入 npcId / chrId 前缀' autocomplete='off' data-testid='bosses-search'></label></div>" +
       "<div class='bosses-control'><span class='bosses-control-label'>模式</span>" +
       depthControl() + "</div>" +
       "<div class='bosses-control'><span class='bosses-control-label'>隐藏实体</span>" +
       "<label class='switch-control bosses-hidden-switch' title='" + esc(TEXT.hiddenToggleHelp) +
-      "：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵。默认不显示。'>" +
+      "：整组不掉任何奖励，且不吃削韧 / 连社区资料都认不出名字 / 被社区标为杂兵。默认不显示；" +
+      esc(ROLE_TEXT.hiddenToggleRoleHelp) + "。'>" +
       "<input type='checkbox' data-testid='bosses-hidden'>" +
       "<span class='switch-track'></span><span>" + esc(TEXT.hiddenToggleTitle) + "</span></label></div>" +
       "</div>" +
       "<div class='bosses-toolbar-row bosses-toolbar-row--tabs'>" +
-      "<div class='segmented-control bosses-group' role='radiogroup' aria-label='首领分组' data-testid='bosses-group'>" +
+      "<div class='segmented-control bosses-group' role='radiogroup' aria-label='首领分组' data-testid='bosses-group'" +
+      " title='" + esc(ROLE_TEXT.groupPickerHelp) + "'>" +
       groupControl() + "</div>" +
       "<span class='bosses-count' data-testid='bosses-count'>—</span>" +
       "</div>" +
@@ -1085,7 +1696,7 @@
       "<div class='page-content bosses-content'>" +
       "<header class='title-block page-title'>" +
       "<div class='logo-mark logo-mark--medium' aria-hidden='true'><i></i><i></i><i></i><span>✓</span></div>" +
-      "<div><h1>首领数据</h1><p>《黑夜君临》首领的血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
+      "<div><h1>首领数据</h1><p>《黑夜君临》首领的出场场合、血量、承伤倍率、韧性、深夜深度与人数缩放</p></div>" +
       "</header>" +
       "<article class='card page-placeholder-card' data-testid='bosses-card'>" +
       "<div class='section-heading'><div class='section-icon'>✸</div>" +
@@ -1142,13 +1753,18 @@
 
   function cardHeadBadges(item) {
     var badges = [];
-    if (item.kind === "nightlord") {
-      badges.push(pill("夜王", "purple"));
-      if (item.variantPill) badges.push(pill(item.variantPill.text, item.variantPill.kind));
+    if (item.kind === "nightlord" && item.variantPill) {
+      badges.push(pill(item.variantPill.text, item.variantPill.kind));
+    }
+    // 卡头列出这一组的全部出场场合（与 macOS 的 BossRoleBadges 同一组：含「未放置」
+    //「随从/召唤物」，夜王卡含「夜王战」），属于当前分组的着色、其余压成中性色——
+    // 一眼看出这张卡为什么出现在这个分组里；「其它场合」分组靠这些徽标说清具体是
+    // 高塔 / 突袭 / 入侵 / 事件里的哪一种。夜王卡原来那枚「夜王」徽标由「夜王战」接替。
+    if (item.roleMissing) {
+      badges.push(pill(ROLE_TEXT.rolesMissing, "gray"));
     } else {
-      // tiers 里同时含 field 与 night 的 Boss 两枚徽标都画，和分组切换里两边都能搜到对应。
-      (Array.isArray(item.groups) && item.groups.length ? item.groups : [item.group]).forEach(function (group) {
-        badges.push(pill(GROUP_TITLES[group] || group, group === "night" ? "blue" : "green"));
+      cardRoleBadges(item, state.data, state.group).forEach(function (badge) {
+        badges.push(rolePill(badge));
       });
     }
     (item.nameBadges || []).forEach(function (badge) {
@@ -1182,33 +1798,36 @@
   // 卡面这三格只是「代表行」的数值。同一张卡常有 5 组差距很大的数值（古龙 2,672～6,167），
   // 不写清楚取自哪一行会被当成算错；而且两种情况必须分别说明：
   //   · 夜王的 isMain 不唯一（多阶段 / 多体有 2～5 条），并列列出全部主战血量；
-  //   · 守夜 / 野外的候选行随分组切换（同一组首领可能两种档位都有）。
-  function summaryCaption(item, entry) {
+  //   · 首领组的候选行随分组切换（同一组首领常常横跨几个出场场合）。
+  function summaryCaption(item, entry, shown) {
     if (!entry) return "";
     var pool = candidateEntries(item.entries, state.group);
-    // 只有「代表行本身有歧义」的卡片才铺开列全部候选行，别把普通卡片的摘要撑成两行：
+    // 只有「代表行本身有歧义」的卡片才铺开列全部候选行，别把普通卡片的摘要撑成两行
+    //（与 macOS 的 BossCardView.primaryRowNote 同一判据）：
     //   · 夜王有多条 isMain（哪条才是「这只夜王的血量」说不清）；
-    //   · 同时属于守夜与野外的组（同一张卡在两个分组下给的是不同的行）。
-    var ambiguous = item.kind === "nightlord"
-      ? mainRows(item.entries).length > 1
-      : (Array.isArray(item.groups) ? item.groups.length : 1) > 1;
+    //   · 同时属于多个默认可见分组的组（同一张卡在不同分组下给的是不同的行）。
+    var isLord = item.kind === "nightlord";
+    var ambiguous = isLord ? mainRows(item.entries).length > 1 : hasMultipleGroups(item);
     if (ambiguous && pool.length > 1) {
       var list = pool.map(function (row) {
         return entryLabel(row) + " " +
           fmtInt(computeStats(row, state.party, state.depth, null).hp);
       }).join(" · ");
-      var lead = item.kind === "nightlord"
+      var lead = isLord
         ? pool.length + " 条主战行，上方取血量最高的一条："
         : "该分组 " + pool.length + " 条数值行，上方取血量最高的一条：";
       return "<div class='bosses-stat-caption bosses-stat-caption--warn'>" + esc(lead + list) + "</div>";
     }
-    if (item.entries.length < 2) return "";
+    // 「共 N 组」数的是展开区真正列出来的行（默认不含只在未放置 / 随从场合的行）。
+    var count = Array.isArray(shown) ? shown.length : item.entries.length;
+    if (count < 2) return "";
     var label = entryLabel(entry);
     return "<div class='bosses-stat-caption'>代表行：" + esc(label) +
-      "<span>共 " + item.entries.length + " 组，展开看全部</span></div>";
+      "<span>共 " + count + " 组，展开看全部</span></div>";
   }
 
   // 夜王的主战行不止一条时要标明头条取的是最高那条，别让用户以为「这只夜王就这点血」。
+  // 夜王卡只在「夜王」分组出现，代表行恒为主战行。
   function hpMetricTitle(item) {
     if (item.kind !== "nightlord") return "血量";
     return mainRows(item.entries).length > 1 ? "主战血量 · 最高" : "主战血量";
@@ -1233,10 +1852,10 @@
         "时敌人攻击力也会上浮，不只是血条变长。") + "</div>";
   }
 
-  function cardSummary(item, entry) {
+  function cardSummary(item, entry, shown) {
     if (!entry) return "<p class='bosses-none'>该首领没有可用的数值行。</p>";
     var stats = computeStats(entry, state.party, state.depth, null);
-    return summaryCaption(item, entry) + partyAttackNote(stats) + "<div class='bosses-stat-row'>" +
+    return summaryCaption(item, entry, shown) + partyAttackNote(stats) + "<div class='bosses-stat-row'>" +
       statCell(hpMetricTitle(item) + "（" + partyLabel() + "）", fmtInt(stats.hp), summaryHpHint(stats)) +
       statCell("有效韧性", fmtPoise(stats.effectivePoise, stats.poiseKind), stats.effectivePoise === null ? "" : "韧性槽 " + fmtNumber(stats.poise, 0)) +
       statCell("攻击力倍率", fmtMul(stats.attackRate, 3),
@@ -1396,27 +2015,78 @@
     }).join("");
   }
 
+  // 展开区逐行的「出场场合」小节（macOS 的 BossRoleEvidenceSection）：每个场合给第一条出处
+  //（「表名 行 · 地图」+ 下方说明小字），另有几条就写「另有 N 条出处」；有哪个场合不止一条时
+  // 给「展开全部出处 / 只看每个场合的第一条出处」切换；合并行各原始行场合不同时再列逐行场合。
+  // 地图的 Paramdex 名 / 地形名与 MSB part 放在摘要的悬停提示里，摘要文字与 macOS 逐字一致。
+  function entryRoleBlock(item, entry) {
+    var key = entryKey(item, entry);
+    var showAll = Boolean(state.evidenceOpen[key]);
+    var head = "<div class='bosses-sub'>" + esc(ROLE_TEXT.roleSectionTitle) +
+      "<span class='bosses-sub-detail'>" + esc(ROLE_TEXT.roleSectionDetail) + "</span></div>";
+    if (!entryRoles(entry).length) {
+      return "<div class='bosses-role-evidence' data-testid='bosses-role-evidence'>" + head +
+        "<p class='bosses-note bosses-note--muted'>" + esc(ROLE_TEXT.rolesMissing) + "</p></div>";
+    }
+    var lines = roleEvidenceLines(entry, state.data, showAll).map(function (line) {
+      var body;
+      if (line.missing) {
+        body = "<span class='bosses-evidence-missing'>" + esc(ROLE_TEXT.evidenceMissing) + "</span>";
+      } else {
+        body = line.items.map(function (ev) {
+          return "<div class='bosses-evidence-item'><div class='bosses-evidence-head'>" +
+            (ev.npcId !== null ? "<span class='bosses-evidence-row'>" + esc("行 " + ev.npcId) + "</span>" : "") +
+            "<span class='bosses-evidence-summary'" + (ev.hint ? " title='" + esc(ev.hint) + "'" : "") + ">" +
+            esc(ev.summary) + "</span></div>" +
+            (ev.note
+              ? "<p class='bosses-evidence-note" + (showAll ? "" : " is-clamped") + "' title='" + esc(ev.note) + "'>" +
+                esc(ev.note) + "</p>"
+              : "") +
+            "</div>";
+        }).join("") +
+          (line.more ? "<span class='bosses-evidence-more'>" + esc(ROLE_TEXT.evidenceMore(line.more)) + "</span>" : "");
+      }
+      return "<li>" + rolePill(line) + "<div class='bosses-evidence-body'>" + body + "</div></li>";
+    }).join("");
+    var toggle = hasMoreEvidence(entry)
+      ? "<button type='button' class='bosses-evidence-toggle' data-bosses-evidence='" + esc(key) + "'" +
+        " aria-expanded='" + showAll + "'>" +
+        esc(showAll ? ROLE_TEXT.evidenceCollapse : ROLE_TEXT.evidenceExpand) + "</button>"
+      : "";
+    var perRow = rowRolesSummary(entry, state.data);
+    return "<div class='bosses-role-evidence' data-testid='bosses-role-evidence'>" + head +
+      "<ul class='bosses-evidence-list'>" + lines + "</ul>" + toggle +
+      (perRow ? "<p class='bosses-note bosses-row-roles'>" + esc(perRow) + "</p>" : "") + "</div>";
+  }
+
   function entryBlock(item, entry) {
     var stats = statsFor(item, entry);
     var tiers = state.data && state.data.scalingTiers ? state.data.scalingTiers : null;
     var caption = scalingCaption(entry, tiers);
-    var badges = entryBadgeTexts(item, entry, stats).map(function (text) {
+    // 场合徽标在前（该行 roles 全部列出），状态徽标在后。行级 threat 不再当徽标：
+    // 它只是缩放档位，挨着场合徽标会被读成出场位置，降为标题下方的「威胁档位」小字。
+    var badges = entryRoleBadges(entry, state.data).map(function (badge) {
+      return rolePill(badge);
+    }).concat(entryBadgeTexts(item, entry, stats).map(function (text) {
       if (text === "主战") return pill(text, "green");
-      if (text === "守夜") return pill(text, "blue");
-      if (text === "野外") return pill(text, "green");
       if (text === BADGE_MUTATION) return pill(text, "red");
       return pill(text, "amber");
-    });
+    }));
 
     var npcIds = Array.isArray(entry.npcIds) ? entry.npcIds : [];
     var idText = "npcId " + String(entry.npcId) + (npcIds.length > 1 ? "（合并 " + npcIds.length + " 行）" : "");
+    // 当前分组对应的行描边高亮（卡里不止一行时才有意义）。
+    var inGroup = item.entries.length > 1 && rolesInGroup(entryRoles(entry), state.group).length > 0;
+    var threat = asText(entry.threat);
 
-    return "<section class='bosses-entry'>" +
+    return "<section class='bosses-entry" + (inGroup ? " is-in-group" : "") + "'>" +
       "<header class='bosses-entry-head'>" +
       "<strong>" + esc(entryLabel(entry)) + "</strong>" +
       "<span class='bosses-entry-badges'>" + badges.join("") + "</span>" +
       "<span class='bosses-entry-id'>" + esc(idText) + "</span>" +
       "</header>" +
+      (threat ? "<p class='bosses-entry-threat'>" + esc(ROLE_TEXT.threatTierCaption([threat])) + "</p>" : "") +
+      entryRoleBlock(item, entry) +
       "<div class='bosses-stat-row bosses-stat-row--compact'>" +
       statCell("血量（" + partyLabel() + "）", fmtInt(stats.hp),
         stats.depth && stats.hasDepth
@@ -1437,6 +2107,11 @@
       depthTable(item, entry) +
       mutationBlock(item, entry) +
       "<div class='bosses-sub'>多人缩放" + (caption ? "（" + esc(caption) + "）" : "") + "</div>" +
+      // 档位名「守夜首领威胁档」挂在场景头目 / 据点首领行上最容易被读成出场位置
+      //（铃珠猎人野外版 31000010 就是 7753 · Night Boss Threat）：只在这种行上补一句说明。
+      (threatRoleMismatch(entry, tiers)
+        ? "<p class='bosses-note bosses-note--muted'>" + esc(ROLE_TEXT.threatTierNote) + "。</p>"
+        : "") +
       scalingTable(entry) +
       permScalingLine(stats) +
       entryNotes(entry, stats) +
@@ -1491,25 +2166,62 @@
       "<table class='bosses-mini-table bosses-chance-table'><thead><tr>" + head + "</tr></thead>" +
       "<tbody><tr>" + cells + "</tr></tbody></table>" +
       "<p class='bosses-note bosses-note--muted'>权重来自 NightBossMenuParam.depth1..5ChanceWeight，是同一深度内各夜王之间的相对权重，不是百分比。" +
-      "守夜 / 野外首领没有按深度的出现权重参数，数据集里也没有。</p>";
+      "守夜首领、场景头目等其余首领没有按深度的出现权重参数，数据集里也没有。</p>";
   }
 
-  function cardBody(item) {
+  // 卡片级「出场场合」一览（Windows 独有的界面元素）：每个场合涉及几条数值行、当前分组
+  // 对应哪几行（下方描边高亮），以及降成小字的「威胁档位」——后者与 macOS 展开区的
+  // identifierNote 同一句（threatTierCaption(tiers) + "：" + threatTierNote）。
+  // 场合数据缺失时写「出场场合：数据未内置」。
+  function roleSectionBlock(item) {
+    var parts = [];
+    if (item.roleMissing) {
+      parts.push("<p class='bosses-note'>" + esc(ROLE_TEXT.rolesMissing) + "</p>");
+    } else {
+      var chips = roleEntryCounts(item.entries, item.roles).map(function (row) {
+        var badge = roleBadge(state.data, row.role);
+        return rolePill(badge, ROLE_PAGE_TEXT.roleRowsChip(badge.text, row.rows));
+      }).join("");
+      parts.push("<div class='bosses-chips'>" + chips + "</div>");
+      var here = item.entries.filter(function (entry) {
+        return rolesInGroup(entryRoles(entry), state.group).length > 0;
+      }).length;
+      if (item.entries.length > 1 && here) {
+        parts.push("<p class='bosses-note bosses-note--muted'>" +
+          esc(ROLE_PAGE_TEXT.currentGroupNote(GROUP_TITLES[state.group] || "", here)) + "</p>");
+      }
+    }
+    if (item.tiers && item.tiers.length) {
+      parts.push("<p class='bosses-note bosses-note--muted'>" +
+        esc(ROLE_TEXT.threatTierCaption(item.tiers) + "：" + ROLE_TEXT.threatTierNote) + "</p>");
+    }
+    return "<div class='bosses-role-section' data-testid='bosses-role-section'>" +
+      "<div class='bosses-sub'>" + esc(ROLE_TEXT.roleSectionTitle) + "</div>" + parts.join("") + "</div>";
+  }
+
+  function cardBody(item, shown) {
     if (!item.entries.length) return "<p class='bosses-none'>没有可用的数值行。</p>";
     var head = "";
     if (item.description) {
       head = "<p class='bosses-desc'>" + esc(item.description) + "</p>";
     }
-    return head + nameNoteBlock(item) + depthChanceBlock(item) + item.entries.map(function (entry) {
+    var hiddenRows = item.entries.length - shown.length;
+    return head + roleSectionBlock(item) + nameNoteBlock(item) + depthChanceBlock(item) + shown.map(function (entry) {
       return entryBlock(item, entry);
-    }).join("");
+    }).join("") +
+      (hiddenRows > 0
+        ? "<p class='bosses-note bosses-note--muted bosses-hidden-rows' data-testid='bosses-hidden-rows'>" +
+          esc(ROLE_TEXT.hiddenRows(hiddenRows)) + "</p>"
+        : "");
   }
 
   function cardInner(item) {
     var expanded = Boolean(state.expanded[item.uid]);
-    // 折叠态的代表行跟着当前分组走：同一张卡可能同时出现在「守夜」与「野外」里，
-    // 野外分组下就该看野外那几行，而不是恒取 variants[0]（常常是血量更高的守夜行）。
+    // 折叠态的代表行跟着当前分组走：同一张卡可能同时出现在「守夜首领」「场景头目」「据点首领」里，
+    // 场景头目分组下就该看场景头目那几行，而不是恒取 variants[0]（常常是血量更高的守夜行）。
     var entry = representativeEntry(item.entries, state.group);
+    // 展开区列出的行：默认收起只出现在「未放置」「随从/召唤物」的行（开关打开才列）。
+    var shown = displayEntries(item.entries, state.showHidden);
     return "" +
       "<button type='button' class='bosses-card-head' data-bosses-toggle='" + esc(item.uid) + "' aria-expanded='" + expanded + "'>" +
       "<span class='bosses-card-title'>" +
@@ -1520,23 +2232,31 @@
       "<span class='bosses-chevron' aria-hidden='true'>" + (expanded ? "▴" : "▾") + "</span>" +
       "</button>" +
       "<div class='bosses-weakness'>" + weaknessRow(item, entry) +
-      "<span class='bosses-entry-count'>" + esc(rowCountText(item.entries.length)) + "</span></div>" +
-      cardSummary(item, entry) +
-      (expanded ? "<div class='bosses-card-body'>" + cardBody(item) + "</div>" : "");
+      "<span class='bosses-entry-count'>" +
+      esc(ROLE_TEXT.rowCount(shown.length, item.entries.length - shown.length)) + "</span></div>" +
+      cardSummary(item, entry, shown) +
+      (expanded ? "<div class='bosses-card-body'>" + cardBody(item, shown) + "</div>" : "");
   }
 
   function cardHtml(item) {
     var expanded = Boolean(state.expanded[item.uid]);
     return "<article class='card bosses-card" + (expanded ? " is-expanded" : "") +
-      (item.hidden ? " is-hidden-entity" : "") + "'" +
+      (isItemHiddenByDefault(item) ? " is-hidden-entity" : "") + "'" +
       " data-bosses-card='" + esc(item.uid) + "'>" + cardInner(item) + "</article>";
   }
 
   // ------------------------------------------------------------ 模板：底部
 
+  // 页脚各块共用的卡片列表：页面已经建好的就直接用，否则现建一份（测试 / 首次渲染）。
+  function itemsFor(data) {
+    return state.data === data && state.items.length ? state.items : buildItems(data, fold);
+  }
+
   function caveatsBlock(data) {
     var list = Array.isArray(data.caveats) ? data.caveats : [];
     if (!list.length) return "";
+    // 多重归属说明（macOS 在「数据说明」里的同一句 BossRoleText.multiGroupNote）。
+    var multi = multiGroupItems(itemsFor(data));
     return "<details class='card bosses-details' data-testid='bosses-caveats'>" +
       "<summary><span class='bosses-summary-title'>数据说明与已知取舍</span>" +
       pill(list.length + " 条", "amber") + "</summary>" +
@@ -1544,7 +2264,12 @@
       "<p class='bosses-note'>本页数值直接读取游戏参数表，不是官方公布数据，也不是实测结论；标注与实际手感可能有出入。</p>" +
       "<ul class='bosses-caveat-list'>" + list.map(function (text) {
         return "<li>" + esc(text) + "</li>";
-      }).join("") + "</ul></div></details>";
+      }).join("") + "</ul>" +
+      (multi.length
+        ? "<p class='bosses-note' data-testid='bosses-multi-group-note'>" + esc(ROLE_TEXT.multiGroupNote(
+          multi.length, multi.map(function (item) { return item.name; }))) + "</p>"
+        : "") +
+      "</div></details>";
   }
 
   function scalingTiersBlock(data) {
@@ -1671,7 +2396,7 @@
       "<div class='bosses-details-body'>" +
       "<p class='bosses-note bosses-note--lead'>" + esc(TEXT.mutationCountNote) +
       "：数字说的是「该地图、该深度下这一类敌人有几只会变异」，这点最容易读错。" +
-      "野外首领与封印监牢首领深度 1 全是 0，也就是深度 1 遇不到变异的野外/监牢首领。</p>" +
+      "场景头目与封印监牢首领深度 1 全是 0，也就是深度 1 遇不到变异的场景头目 / 监牢首领。</p>" +
       "<div class='table-wrap bosses-table-wrap'><table class='bosses-mini-table bosses-mutation-table'>" +
       "<thead><tr><th scope='col'>地图</th><th scope='col'>敌人类别</th>" +
       DEPTHS.map(function (depth) {
@@ -1689,26 +2414,62 @@
       "</div></details>";
   }
 
-  function versionBlock(data) {
-    var counts = {
-      lords: Array.isArray(data.nightlords) ? data.nightlords.length : 0,
-      night: 0,
-      field: 0,
-      both: 0,
-      hidden: 0,
-      rows: 0
+  // 「出场场合说明」（macOS 的 BossRoleOverview）：先写为什么「威胁档位」和分组对不上，
+  // 再逐个场合列「→ 所属分组（默认隐藏的分组标注）」、卡片计数（守夜 / 野外首领里带它的组数，
+  // 夜王另计）与判定口径（roleNames.description），最后是 notes.roleAudit.summary 的对照结论。
+  // 「未放置」「随从/召唤物」各自是一个默认隐藏的分组，计数就是打开开关后该分组里的卡片数。
+  function roleOverviewBlock(data) {
+    var rows = roleOverviewRows(data, itemsFor(data));
+    var body = rows.map(function (row) {
+      return "<tr><th scope='row'>" + rolePill(roleBadge(data, row.role)) +
+        (row.en ? "<span>" + esc(row.en) + "</span>" : "") + "</th>" +
+        "<td>" + esc("→ " + row.groupText) + "</td><td>" + esc(row.countText) + "</td>" +
+        "<td class='bosses-role-desc'>" + esc(row.description) + "</td></tr>";
+    }).join("");
+    var audit = data.notes && data.notes.roleAudit && Array.isArray(data.notes.roleAudit.summary)
+      ? data.notes.roleAudit.summary
+      : [];
+    return "<details class='card bosses-details' data-testid='bosses-roles'>" +
+      "<summary><span class='bosses-summary-title'>" + esc(ROLE_TEXT.overviewTitle(rows.length)) + "</span></summary>" +
+      "<div class='bosses-details-body'>" +
+      "<p class='bosses-note bosses-note--lead'>" + esc(ROLE_TEXT.threatTierNote + "。") + "</p>" +
+      "<div class='table-wrap bosses-table-wrap'><table class='bosses-mini-table bosses-role-table'>" +
+      "<thead><tr><th scope='col'>场合</th><th scope='col'>分组</th><th scope='col'>组数</th>" +
+      "<th scope='col'>判定口径</th></tr></thead><tbody>" + body + "</tbody></table></div>" +
+      (audit.length
+        ? "<div class='bosses-sub'>" + esc(ROLE_TEXT.auditTitle(audit.length)) + "</div>" +
+          "<ul class='bosses-caveat-list'>" + audit.map(function (line) {
+            return "<li>" + esc(line) + "</li>";
+          }).join("") + "</ul>"
+        : "") +
+      "</div></details>";
+  }
+
+  // 底部「收录」一行的数字（macOS 的 BossDataIndex.inventorySummary，同一组数、同一句话）：
+  // 每个分组（含默认隐藏的两个）按打开开关计的卡片数、同时属于多个默认可见分组的组数、数值行总数。
+  // 「收录」说的是数据集收录了多少，不跟着开关变。
+  function inventoryCounts(items) {
+    var list = Array.isArray(items) ? items : [];
+    var rows = 0;
+    list.forEach(function (item) { rows += Array.isArray(item.entries) ? item.entries.length : 0; });
+    return {
+      groups: groupCounts(list, true),
+      multi: multiGroupItems(list).length,
+      rows: rows
     };
-    (Array.isArray(data.nightBosses) ? data.nightBosses : []).forEach(function (boss) {
-      var groups = bossGroups(boss);
-      if (groups.indexOf("night") !== -1) counts.night += 1;
-      if (groups.indexOf("field") !== -1) counts.field += 1;
-      if (groups.length > 1) counts.both += 1;
-      if (boss.hidden) counts.hidden += 1;
-      counts.rows += Array.isArray(boss.variants) ? boss.variants.length : 0;
+  }
+
+  function inventoryText(counts) {
+    var parts = GROUP_ORDER.map(function (key) {
+      return GROUP_TITLES[key] + " " + (counts.groups[key] || 0);
     });
-    (Array.isArray(data.nightlords) ? data.nightlords : []).forEach(function (lord) {
-      counts.rows += Array.isArray(lord.fights) ? lord.fights.length : 0;
-    });
+    var text = parts.join(" · ");
+    if (counts.multi) text += "（含 " + counts.multi + " 组同时属于多个分组）";
+    return text + " · 数值行 " + counts.rows;
+  }
+
+  function versionBlock(data) {
+    var counts = inventoryCounts(itemsFor(data));
 
     var sources = (Array.isArray(data.sources) ? data.sources : []).map(function (source) {
       return "<li><strong>" + esc(source.name) + "</strong>" +
@@ -1725,17 +2486,14 @@
       "<div><dt>数据版本</dt><dd>" + esc(data.dataVersion || "—") + "</dd></div>" +
       "<div><dt>生成时间</dt><dd>" + esc(data.generatedAt || "—") + "</dd></div>" +
       "<div><dt>数据集结构版本</dt><dd>bossesSchemaVersion " + esc(data.bossesSchemaVersion || "—") + "</dd></div>" +
-      "<div><dt>收录</dt><dd>夜王 " + counts.lords + " · 守夜 " + counts.night +
-      " · 野外 " + counts.field + (counts.both ? "（含 " + counts.both + " 组两边都出现）" : "") +
-      (counts.hidden ? " · 隐藏实体 " + counts.hidden : "") +
-      " · 数值行 " + counts.rows + "</dd></div>" +
+      "<div class='bosses-meta-wide'><dt>收录</dt><dd>" + esc(inventoryText(counts)) + "</dd></div>" +
       "</dl>" +
       (sources ? "<div class='bosses-sub'>来源</div><ul class='bosses-source-list'>" + sources + "</ul>" : "") +
       "</div></details>";
   }
 
   function footerHtml(data) {
-    return caveatsBlock(data) + scalingTiersBlock(data) + depthOverviewBlock(data) +
+    return caveatsBlock(data) + roleOverviewBlock(data) + scalingTiersBlock(data) + depthOverviewBlock(data) +
       mutationCategoryBlock(data) + versionBlock(data);
   }
 
@@ -1752,19 +2510,18 @@
     var visible = filterItems(state.items, state.group, state.query, fold, state.showHidden);
     list.innerHTML = visible.map(cardHtml).join("");
     if (empty) empty.hidden = visible.length > 0;
+    var perGroup = groupCounts(state.items, state.showHidden);
+    dom.querySelectorAll("[data-bosses-group-count]").forEach(function (node) {
+      node.textContent = String(perGroup[node.getAttribute("data-bosses-group-count")] || 0);
+    });
     if (count) {
       var inGroup = state.items.filter(function (item) { return itemInGroup(item, state.group); });
-      var total = inGroup.filter(function (item) { return state.showHidden || !item.hidden; }).length;
-      var hiddenCount = inGroup.filter(function (item) { return item.hidden; }).length;
+      var total = perGroup[state.group] || 0;
+      var hiddenCount = inGroup.filter(isItemHiddenByDefault).length;
       var depthText = state.depth ? " · " + depthLabel(state.data, state.depth) : "";
-      var hiddenText = "";
-      if (hiddenCount) {
-        hiddenText = state.showHidden
-          ? " · 含隐藏实体 " + hiddenCount + " 个"
-          : " · 已隐藏 " + hiddenCount + " 个非首领实体";
-      }
+      var hiddenText = hiddenCountText(hiddenCount, state.showHidden);
       count.textContent = "显示 " + visible.length + " / " + total + " 个首领 · " +
-        partyLabel() + depthText + hiddenText;
+        partyLabel() + depthText + (hiddenText ? " · " + hiddenText : "");
     }
   }
 
@@ -1776,9 +2533,12 @@
       button.setAttribute("aria-checked", String(active));
     });
     dom.querySelectorAll("[data-bosses-group]").forEach(function (button) {
-      var active = button.dataset.bossesGroup === state.group;
+      var key = button.dataset.bossesGroup;
+      var active = key === state.group;
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-checked", String(active));
+      // 「随从/召唤物」「未放置」只在打开「显示隐藏实体」时出现在分组切换里。
+      button.hidden = isHiddenGroup(key) && !state.showHidden;
     });
   }
 
@@ -1833,11 +2593,26 @@
         renderList();
         return;
       }
+      var evidence = event.target.closest("[data-bosses-evidence]");
+      if (evidence) {
+        var evidenceKey = evidence.getAttribute("data-bosses-evidence");
+        if (state.evidenceOpen[evidenceKey]) delete state.evidenceOpen[evidenceKey];
+        else state.evidenceOpen[evidenceKey] = true;
+        renderCard(evidenceKey.slice(0, evidenceKey.lastIndexOf("#")), "data-bosses-evidence", evidenceKey);
+        return;
+      }
       var toggle = event.target.closest("[data-bosses-toggle]");
       if (toggle) {
         var uid = toggle.dataset.bossesToggle;
-        if (state.expanded[uid]) delete state.expanded[uid];
-        else state.expanded[uid] = true;
+        if (state.expanded[uid]) {
+          delete state.expanded[uid];
+          // 收起卡片时「展开全部出处」一并归零（macOS 每行各自记，收起后重来）。
+          Object.keys(state.evidenceOpen).forEach(function (key) {
+            if (key.slice(0, key.lastIndexOf("#")) === uid) delete state.evidenceOpen[key];
+          });
+        } else {
+          state.expanded[uid] = true;
+        }
         renderCard(uid);
       }
     });
@@ -1862,6 +2637,10 @@
       var hidden = event.target.closest("[data-testid='bosses-hidden']");
       if (hidden) {
         state.showHidden = Boolean(hidden.checked);
+        // 关掉开关时正停在「随从/召唤物」「未放置」上：那两个分组已经不在切换里了，
+        // 退回默认的「夜王」（macOS 退回「全部」，Windows 没有「全部」这一项）。
+        if (!state.showHidden && isHiddenGroup(state.group)) state.group = GROUP_ORDER[0];
+        renderControls();
         renderList();
       }
     });
@@ -1894,6 +2673,7 @@
     state.hasDepth = hasDepthData(data);
     if (!state.hasDepth) state.depth = 0;
     state.mutation = {};
+    state.evidenceOpen = {};
     dom.innerHTML = shell();
     bindEvents();
     var search = dom.querySelector("[data-testid='bosses-search']");
@@ -1958,6 +2738,44 @@
       representativeEntry: representativeEntry,
       itemMatches: itemMatches,
       bossGroups: bossGroups,
+      normalizeRoles: normalizeRoles,
+      entryRoles: entryRoles,
+      unionRoles: unionRoles,
+      isHiddenRole: isHiddenRole,
+      isHiddenGroup: isHiddenGroup,
+      onlyHiddenRoles: onlyHiddenRoles,
+      roleGroup: roleGroup,
+      rolesInGroup: rolesInGroup,
+      roleGroups: roleGroups,
+      isItemHiddenByDefault: isItemHiddenByDefault,
+      visibleGroups: visibleGroups,
+      hasMultipleGroups: hasMultipleGroups,
+      visibleTabs: visibleTabs,
+      displayEntries: displayEntries,
+      hiddenEntryCount: hiddenEntryCount,
+      roleTitle: roleTitle,
+      roleDescription: roleDescription,
+      roleBadge: roleBadge,
+      cardRoleBadges: cardRoleBadges,
+      entryRoleBadges: entryRoleBadges,
+      roleSearchTerms: roleSearchTerms,
+      roleEntryCounts: roleEntryCounts,
+      roleEvidenceList: roleEvidenceList,
+      evidenceSummaryText: evidenceSummaryText,
+      evidenceHint: evidenceHint,
+      roleEvidenceLines: roleEvidenceLines,
+      hasMoreEvidence: hasMoreEvidence,
+      rowRoleGroups: rowRoleGroups,
+      rowRolesSummary: rowRolesSummary,
+      cardTiers: cardTiers,
+      threatRoleMismatch: threatRoleMismatch,
+      groupCounts: groupCounts,
+      multiGroupItems: multiGroupItems,
+      orderedRoles: orderedRoles,
+      roleOverviewRows: roleOverviewRows,
+      hiddenCountText: hiddenCountText,
+      inventoryCounts: inventoryCounts,
+      inventoryText: inventoryText,
       deepCoverage: deepCoverage,
       deepOfNightCoverage: deepOfNightCoverage,
       deepCoverageBadge: deepCoverageBadge,
@@ -1988,9 +2806,19 @@
       DEPTHS: DEPTHS,
       GROUP_LABELS: GROUP_LABELS,
       GROUP_TITLES: GROUP_TITLES,
+      GROUP_ORDER: GROUP_ORDER,
+      HIDDEN_GROUPS: HIDDEN_GROUPS,
+      TABS: TABS,
+      ROLE_ORDER: ROLE_ORDER,
+      OTHER_GROUP_ROLES: OTHER_GROUP_ROLES,
+      ROLE_GROUP: ROLE_GROUP,
+      HIDDEN_ROLES: HIDDEN_ROLES,
+      THREAT_TIER_GROUPS: THREAT_TIER_GROUPS,
       NAME_SOURCE_BADGES: NAME_SOURCE_BADGES,
       STAGING_LABEL_KEYWORDS: STAGING_LABEL_KEYWORDS,
-      TEXT: TEXT
+      TEXT: TEXT,
+      ROLE_TEXT: ROLE_TEXT,
+      ROLE_PAGE_TEXT: ROLE_PAGE_TEXT
     }
   };
 

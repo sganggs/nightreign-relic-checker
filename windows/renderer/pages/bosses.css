@@ -60,9 +60,40 @@
   grid-template-columns: repeat(3, minmax(52px, 1fr));
 }
 
+/* 分组切换：默认六个（夜王 / 守夜首领 / 据点首领 / 场景头目 / 封印监牢 / 其它场合），
+   打开「显示隐藏实体」后再多「随从/召唤物」「未放置」两个，每个带卡片数。
+   按钮数会变，所以按列自动排，不写死列数。 */
 .bosses-group {
-  grid-template-columns: repeat(3, minmax(88px, 1fr));
-  flex: 0 1 340px;
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(78px, 1fr);
+  flex: 1 1 620px;
+  max-width: 900px;
+}
+
+.bosses-group-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+/* display: inline-flex 会盖掉 [hidden] 的默认 display: none，两个默认隐藏的分组得显式藏起来。 */
+.bosses-group-button[hidden] {
+  display: none;
+}
+
+.bosses-group-count {
+  color: var(--text-tertiary);
+  font: 600 10px Consolas, "Microsoft YaHei UI", monospace;
+}
+
+.bosses-group-count:empty {
+  display: none;
+}
+
+.bosses-group-button.is-active .bosses-group-count {
+  color: rgba(255, 255, 255, .72);
 }
 
 /* 「常规 / 深夜·深度 1…5」六选一，比布尔开关宽一些才放得下游戏文本。 */
@@ -193,6 +224,34 @@
   justify-content: flex-end;
   gap: 4px;
   max-width: 54%;
+}
+
+/* 出场场合徽标：颜色跟所属分组走（与顶部分组一一对应），「其它场合」里的高塔 / 突袭 /
+   入侵 / 事件等同一个青色、靠文字区分；默认隐藏的「未放置」「随从/召唤物」画虚线灰。
+   卡头上不属于当前分组的场合压成中性色（is-muted），一眼看出这张卡为什么在这个分组里。
+   名称可信度徽标用的是实心灰（pill--gray），两者不会混。 */
+.bosses-role {
+  cursor: help;
+}
+
+.bosses-role--nightlords { color: var(--purple-soft); background: rgba(183, 154, 255, .08); border-color: rgba(183, 154, 255, .22); }
+.bosses-role--night { color: #7ab8f5; background: rgba(122, 184, 245, .09); border-color: rgba(122, 184, 245, .26); }
+.bosses-role--stronghold { color: var(--amber); background: rgba(238, 193, 109, .09); border-color: rgba(238, 193, 109, .26); }
+.bosses-role--field { color: var(--green); background: var(--green-faint); border-color: rgba(85, 214, 165, .26); }
+.bosses-role--evergaol { color: #e39be0; background: rgba(227, 155, 224, .09); border-color: rgba(227, 155, 224, .26); }
+.bosses-role--other { color: #6fd0d6; background: rgba(111, 208, 214, .08); border-color: rgba(111, 208, 214, .24); }
+
+.bosses-role.is-muted {
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: var(--border);
+}
+
+.bosses-role.is-hidden-role {
+  color: var(--text-tertiary);
+  background: transparent;
+  border-color: var(--border);
+  border-style: dashed;
 }
 
 .bosses-chevron {
@@ -326,6 +385,152 @@
   border-radius: 11px;
   background: var(--field);
   background: color-mix(in srgb, var(--field) 50%, transparent);
+}
+
+/* 当前分组对应的数值行：左侧描边，折叠态代表行只从这几行里选。 */
+.bosses-entry.is-in-group {
+  border-color: rgba(183, 154, 255, .3);
+  box-shadow: inset 3px 0 0 var(--purple-soft);
+}
+
+/* 卡片级「出场场合」与逐行「场合依据」。 */
+.bosses-role-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bosses-role-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* 小节标题右边的一句说明（「按地图放置与抽选参数判定；分组看这里，不看威胁档位」）。 */
+.bosses-sub-detail {
+  margin-left: 8px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+/* 行标题下方的「威胁档位 · 守夜首领威胁档」小字。 */
+.bosses-entry-threat {
+  margin: -4px 0 0;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+
+/* 每个场合一行：左列徽标定宽（场合名长短不一），右列是出处摘要 + 说明小字。 */
+.bosses-evidence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bosses-evidence-list li {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bosses-evidence-list li > .pill {
+  justify-self: start;
+  max-width: 100%;
+  min-height: 18px;
+  padding: 1px 7px;
+  font-size: 9.5px;
+}
+
+.bosses-evidence-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.bosses-evidence-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bosses-evidence-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bosses-evidence-row,
+.bosses-evidence-summary {
+  font: 600 9.5px Consolas, "Microsoft YaHei UI", monospace;
+  word-break: break-word;
+  user-select: text;
+}
+
+.bosses-evidence-row {
+  color: var(--amber);
+}
+
+.bosses-evidence-summary {
+  color: var(--text-secondary);
+}
+
+.bosses-evidence-summary[title] {
+  cursor: help;
+}
+
+.bosses-evidence-note {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+  line-height: 1.5;
+  word-break: break-word;
+  user-select: text;
+}
+
+/* 默认只露两行，全文在悬停提示与「展开全部出处」里（macOS 的 lineLimit(2)）。 */
+.bosses-evidence-note.is-clamped {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.bosses-evidence-more,
+.bosses-evidence-missing {
+  color: var(--text-tertiary);
+  font-size: 9.5px;
+}
+
+.bosses-evidence-toggle {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  color: var(--purple-soft);
+  background: transparent;
+  font-size: 9.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.bosses-evidence-toggle:hover {
+  text-decoration: underline;
+}
+
+/* 合并行的「逐行场合：夜王战 75000020 / 75002020；未放置 75001020」。 */
+.bosses-row-roles {
+  color: var(--amber);
+  word-break: break-word;
+  user-select: text;
 }
 
 .bosses-entry-head {
@@ -656,13 +861,56 @@
   user-select: text;
 }
 
+/* 「收录」一行按八个分组列数字，放不进一格，独占整行并允许换行。 */
+.bosses-meta > .bosses-meta-wide {
+  grid-column: 1 / -1;
+}
+
+.bosses-meta-wide dd {
+  white-space: normal;
+  line-height: 1.55;
+}
+
+/* 底部「出场场合说明」：左列徽标 + 英文名，右列判定口径是长文本。 */
+.bosses-role-table {
+  table-layout: auto;
+}
+
+.bosses-role-table th[scope="row"] {
+  min-width: 118px;
+  background: var(--field-soft);
+  text-align: left;
+}
+
+.bosses-role-table th[scope="row"] span:not(.pill) {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.bosses-role-table td {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.bosses-role-table td.bosses-role-desc {
+  min-width: 260px;
+  font-size: 9.5px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+}
+
 /* --------------------------------------------------------------- 窄窗口适配 */
 
 @media (max-width: 1120px) {
   .bosses-content { padding-left: 18px; padding-right: 18px; }
   .bosses-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
   .bosses-card-badges { max-width: 62%; }
-  .bosses-group { flex: 0 1 300px; grid-template-columns: repeat(3, minmax(76px, 1fr)); }
+  .bosses-group { flex: 1 1 100%; max-width: none; grid-auto-flow: row; grid-template-columns: repeat(3, minmax(76px, 1fr)); }
   .bosses-mode { min-width: 132px; }
   .bosses-entry { padding: 10px; }
   .bosses-mini-table th, .bosses-mini-table td { padding: 5px 2px; }
