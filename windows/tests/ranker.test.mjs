@@ -1,11 +1,14 @@
-// 增伤排名页（renderer/pages/ranker.js）纯计算层测试。
+// 增伤排名页（renderer/pages/ranker.js）纯计算层单元测试。
 //
-// 口径以两份数据集自带的说明为准：
+// 口径以数据集自带的说明为准：
 //   · skills：usage.选段（必读）／近战武器段／法术 · 子弹段／削韧／伤害类型（斩 / 打 / 突）
-//   · buffs：notes.ranking、notes.howToUseRates、stackingRules、rateFields[].countsAsDamage
+//   · buffs（schemaVersion 6）：notes.ranking、notes.appliesTo、stackingRules、slotRules、
+//     rateFields[].countsAsDamage、stackInput、accumulatorLadder、stacking.exclusiveKey
 //
 // 数据集仍在做取值层面的修复，所以这里一律写**结构性断言**
-// （某个字段存在、某个占比大于 0、某个排序关系成立），不断言具体数值。
+// （某个字段存在、某个占比大于 0、某个排序关系成立），不断言会随数据变化的具体数值；
+// 合成用例（自己拼的 buff）才断言精确数值。整套配置的用例见 ranker_config.test.mjs，
+// 双端对照用例见 ranker_crosscheck.test.mjs。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -15,16 +18,18 @@ import path from "node:path";
 
 const require = createRequire(import.meta.url);
 const Page = require("../renderer/pages/ranker.js");
+const Core = require("../renderer/core.js");
 const R = Page._internals;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const resource = (name) => path.join(repoRoot, "windows", "resources", name);
 const skills = R.decorateSkills(JSON.parse(readFileSync(resource("skills.json"), "utf8")));
 const buffs = JSON.parse(readFileSync(resource("buffs.json"), "utf8"));
+const catalog = JSON.parse(readFileSync(resource("affixes.json"), "utf8"));
 
 const plan = R.rateFieldPlan(buffs);
 const index = R.indexBuffs(buffs);
-const skillOptions = { mode: "skill", hand: 1, includeAlly: false, includeConditional: false };
+const cfgIndex = R.buildConfigIndex(buffs, index, catalog, Core);
 
 // 一把「物理 + 属性都有基础攻击力」的武器，用来验证构成会同时出现两种伤害类型。
 function firstMixedWeapon() {
@@ -39,31 +44,62 @@ function skillOf(weapon) {
   return skills.skills.find((skill) => (skill.weaponIds || []).indexOf(weapon.id) !== -1);
 }
 
+function shares(map) {
+  const out = {};
+  R.TYPE_KEYS.forEach((key) => { out[key] = map[key] || 0; });
+  return out;
+}
+
+// 合成一条 buff（默认：物理 ×1.2、对三类输出都 yes、被动、按 ID 互斥）。
+function synth(id, extra) {
+  return R.indexBuff(Object.assign({
+    spEffectId: id,
+    rates: { physicsAttackRate: 1.2 },
+    target: "self",
+    activation: "passive",
+    direction: "increase",
+    appliesTo: { skill: "yes", sorcery: "yes", incantation: "yes" },
+    stacking: { spCategory: 10, spCategoryBehavior: "stackSelf", exclusiveKey: "sp10#" + id }
+  }, extra || {}), plan);
+}
+
+function out(options, data) {
+  return R.makeOutput(Object.assign({
+    mode: "skill", meansId: null, weapon: null, hand: 1,
+    shares: shares({ slash: 1 }), contexts: {}
+  }, options || {}), data || buffs);
+}
+
+function env(output, config) {
+  return { plan, out: output, config: config || R.emptyConfig(), ladders: cfgIndex.ladders };
+}
+
 test("模块注册：导出 init / refresh，不依赖 window", () => {
   assert.equal(typeof Page.init, "function");
   assert.equal(typeof Page.refresh, "function");
   assert.equal(typeof globalThis.NightreignPages, "undefined", "node 下不应尝试注册页面");
 });
 
-test("两份数据集都带着页面真正依赖的结构（schemaVersion 只卡下限，新版本不得弄红）", () => {
-  // skills 第三轮不动，仍是 2；buffs 会升到 4（只增字段），所以这里只能卡下限。
+test("两份数据集都带着页面真正依赖的结构（buffs 需要 v6 的 appliesTo / slotRules / exclusiveKey）", () => {
   assert.equal(skills.schemaVersion, 2);
-  assert.ok(buffs.schemaVersion >= 3, "buffs schemaVersion 应当 ≥ 3（v4 只增字段，向后兼容）");
+  assert.ok(buffs.schemaVersion >= 6, "配置组装依赖 schemaVersion 6 的字段");
   assert.ok(skills.usage && skills.usage["选段（必读）"], "选段规则必须来自数据集");
   assert.ok(skills.usage["本数据集的边界"], "页面要引用『绝对伤害不在范围内』这段");
-  assert.ok(Array.isArray(skills.caveats) && skills.caveats.length > 0);
-  assert.ok(buffs.notes && buffs.notes.ranking, "底部折叠要展示 notes.ranking 原文");
-  assert.ok(buffs.notes.howToUseRates && buffs.notes.activation);
-  assert.ok(buffs.stackingRules && buffs.stackingRules.zh, "底部折叠要展示 stackingRules 原文");
-  // 页面真正读的那些键必须在：倍率字段表、来源枚举、子类别枚举、每条 buff 的 scope/stacking。
-  assert.ok(Array.isArray(buffs.rateFields) && buffs.rateFields.length > 0);
-  assert.ok(buffs.enums && buffs.enums.sourceKind && buffs.enums.atkSubCategory);
-  assert.ok(Array.isArray(buffs.enums.spCategoryBehavior));
+  assert.ok(buffs.notes && buffs.notes.ranking && buffs.notes.appliesTo && buffs.notes.userQuestions);
+  assert.ok(buffs.stackingRules && buffs.stackingRules.zh);
+  assert.ok(buffs.slotRules && buffs.slotRules.modes && buffs.slotRules.weaponAffix && buffs.slotRules.relic);
+  assert.ok(Array.isArray(buffs.weaponAffixes) && buffs.weaponAffixes.length > 0);
+  assert.ok(Array.isArray(buffs.fixedRelics) && buffs.fixedRelics.length > 0);
+  assert.ok(buffs.attackIndex && buffs.attackIndex.skills && buffs.attackIndex.spells);
+  assert.ok(buffs.enums && buffs.enums.sourceSlot && buffs.enums.wepType && buffs.enums.attackContext);
   buffs.buffs.forEach((buff) => {
     assert.equal(typeof buff.spEffectId, "number");
-    assert.ok(buff.scope && typeof buff.scope === "object", buff.spEffectId + " 缺 scope");
-    assert.ok(buff.stacking && typeof buff.stacking.group === "string", buff.spEffectId + " 缺 stacking.group");
-    assert.ok(typeof buff.activation === "string" && typeof buff.target === "string");
+    assert.ok(buff.appliesTo && typeof buff.appliesTo === "object", buff.spEffectId + " 缺 appliesTo");
+    R.OUTPUT_CLASSES.forEach((cls) => {
+      assert.ok(["yes", "no", "conditional"].indexOf(buff.appliesTo[cls]) !== -1, buff.spEffectId + " 的 appliesTo." + cls);
+    });
+    assert.ok(buff.stacking && typeof buff.stacking.exclusiveKey === "string", buff.spEffectId + " 缺 exclusiveKey");
+    assert.ok(typeof buff.sourceSlot === "string", buff.spEffectId + " 缺 sourceSlot");
   });
 });
 
@@ -571,365 +607,29 @@ test("削韧 / 削精力：poise + 武器基础 × mv / 100", () => {
   assert.equal(R.hitPoise({}, weapon), 0);
 });
 
-// ------------------------------------------------------------------ 作用范围
-
-test("scopeVerdict：战技命中按战技攻击子类别（112）匹配", () => {
-  const skillScoped = R.scopeInfo({ scope: { subCategories: [R.SKILL_SUB_CATEGORY, 111] } });
-  assert.equal(R.scopeVerdict(skillScoped, skillOptions).ok, true);
-
-  const jumpOnly = R.scopeInfo({ scope: { subCategories: [102] } });
-  assert.equal(R.scopeVerdict(jumpOnly, skillOptions).ok, false);
-
-  const unscoped = R.scopeInfo({ scope: {} });
-  assert.equal(R.scopeVerdict(unscoped, skillOptions).ok, true);
-});
-
-test("scopeVerdict：武器槽默认右手，左手条目不计入", () => {
-  const left = R.scopeInfo({ scope: { weaponSlot: 2 } });
-  assert.equal(R.scopeVerdict(left, skillOptions).ok, false);
-  assert.equal(R.scopeVerdict(left, { mode: "skill", hand: 2 }).ok, true);
-
-  const right = R.scopeInfo({ scope: { weaponSlot: 1 } });
-  assert.equal(R.scopeVerdict(right, skillOptions).ok, true);
-  assert.equal(R.scopeVerdict(right, { mode: "skill", hand: 2 }).ok, false);
-});
-
-test("scopeVerdict：只作用于法术的条目不计入战技，反之亦然", () => {
-  const sorceryOnly = R.scopeInfo({
-    scope: { weaponSlot: 3, affectsSorcery: true, affectsIncantation: false, affectsShaman: false }
+test("multiplierMap：只收 countsAsDamage 的乘数字段，非默认值才乘", () => {
+  const plan = index.plan;
+  const table = R.multiplierMap({
+    physicsAttackRate: 1.1,
+    magicAttackRate: 1,            // 等于默认值 → 不乘
+    saAttackPowerRate: 2,          // 削韧 → 不乘
+    bloodAttackPower: 30,          // 异常累积 → 不乘
+    weakDmgRateB: 10,              // 特攻（conditionalDamage）→ 不乘
+    restageAttackRate: 0.6         // special → 不乘
+  }, plan, null);
+  R.TYPES_BY_ELEMENT.physical.forEach((type) => {
+    assert.ok(Math.abs(table[type] - 1.1) < 1e-9, type + " 应当吃到物理倍率");
   });
-  assert.equal(sorceryOnly.spellOnly, true);
-  assert.equal(R.scopeVerdict(sorceryOnly, skillOptions).ok, false);
-  assert.equal(R.scopeVerdict(sorceryOnly, { mode: "sorcery", hand: 1 }).ok, true);
-  assert.equal(R.scopeVerdict(sorceryOnly, { mode: "incantation", hand: 1 }).ok, false);
+  assert.equal(table.magic, 1);
+  assert.equal(table.fire, 1);
+  assert.equal(table.holy, 1);
 
-  // 纯武器 buff（一个法术标记都没点）对魔法／祷告不生效。
-  const weaponOnly = R.scopeInfo({ scope: {} });
-  assert.equal(R.scopeVerdict(weaponOnly, { mode: "sorcery", hand: 1 }).ok, false);
+  const used = [];
+  R.multiplierMap({ fireAttackRate: 1.25, physicsAttackRate: 0 }, plan, used);
+  assert.deepEqual(used.map((field) => field.key), ["fireAttackRate"], "0 不是合法乘数，必须跳过");
 });
 
-test("scopeVerdict：只点亮 affectsThrow 的条目＝致命一击／投掷，不进通用排名", () => {
-  const throwOnly = R.scopeInfo({ scope: { affectsThrow: true } });
-  assert.equal(throwOnly.throwOnly, true);
-  assert.equal(R.scopeVerdict(throwOnly, skillOptions).ok, false);
-  assert.equal(R.scopeVerdict(throwOnly, { mode: "incantation", hand: 1 }).ok, false);
-
-  // 数据集里确实存在这种签名（否则这条判定就该删掉）。
-  const real = index.entries.filter((entry) => entry.scope.throwOnly && entry.hasMultiplier);
-  assert.ok(real.length > 0, "数据集里应当有只点 affectsThrow 的倍率条目");
-  real.forEach((entry) => {
-    assert.equal(R.scopeVerdict(entry.scope, skillOptions).ok, false);
-  });
-});
-
-test("scopeVerdict：只标 130（近战武器攻击）而没有 112 的条目在战技模式下判为作用域不符", () => {
-  const melee = R.scopeInfo({ scope: { subCategories: [R.MELEE_SUB_CATEGORY] } });
-  assert.equal(melee.meleeOnly, true);
-  const verdict = R.scopeVerdict(melee, skillOptions);
-  assert.equal(verdict.ok, false);
-  assert.ok(verdict.reason.indexOf("130") !== -1, "排除原因要点明是哪一条判定，供底部说明分项展示");
-
-  // 同时标了 112 的就照常放行。
-  const both = R.scopeInfo({ scope: { subCategories: [R.MELEE_SUB_CATEGORY, R.SKILL_SUB_CATEGORY] } });
-  assert.equal(both.meleeOnly, false);
-  assert.equal(R.scopeVerdict(both, skillOptions).ok, true);
-});
-
-test("scope.attackContexts：默认不计入，勾选该情境后才参与（v3 数据里没有这个键 = no-op）", () => {
-  // notes.ranking（v4）第④步：attackContexts 非空＝只在列出的攻击情境下吃得到。
-  const gated = R.scopeInfo({ scope: { attackContexts: ["thrustingCounter", "guardCounter"] } });
-  assert.deepEqual(gated.attackContexts, ["thrustingCounter", "guardCounter"]);
-
-  const off = R.scopeVerdict(gated, skillOptions);
-  assert.equal(off.ok, false, "默认不得乘进通用排名");
-  assert.equal(off.context, true, "要能和普通的『作用域不符』区分开，UI 才能提示『勾选情境后计入』");
-
-  const on = R.scopeVerdict(gated, { mode: "skill", hand: 1, contexts: { guardCounter: true } });
-  assert.equal(on.ok, true, "勾选了其中一个情境就应当参与乘算");
-
-  const other = R.scopeVerdict(gated, { mode: "skill", hand: 1, contexts: { jumpAttack: true } });
-  assert.equal(other.ok, false, "勾了别的情境不算");
-
-  // attackContexts 存在时以它为准，不再用 affectsThrow 推断（否则会被 throwOnly 先拦掉）。
-  const throwWithContext = R.scopeInfo({ scope: { affectsThrow: true, attackContexts: ["criticalHit"] } });
-  assert.equal(throwWithContext.throwOnly, false);
-  assert.equal(R.scopeVerdict(throwWithContext, { mode: "skill", hand: 1, contexts: { criticalHit: true } }).ok, true);
-
-  // 缺失 attackContexts（当前 v3 数据）时一切照旧：判定与排名不受影响。
-  const plain = R.scopeInfo({ scope: {} });
-  assert.deepEqual(plain.attackContexts, []);
-  assert.equal(R.scopeVerdict(plain, skillOptions).ok, true);
-});
-
-test("rankEntries：受攻击情境限制的条目单独计数，作用域排除按原因分项", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-
-  // 给一条合成条目挂上情境限制，确认它默认不进榜、勾选情境后进榜。
-  const gated = R.indexBuff({
-    spEffectId: -99,
-    rates: { physicsAttackRate: 1.5 },
-    target: "self",
-    activation: "passive",
-    direction: "increase",
-    stacking: { group: "sp0#-99", spCategory: 0, spCategoryBehavior: "none", stateInfo: 0 },
-    scope: { attackContexts: ["jumpAttack"] }
-  }, plan);
-  const entries = index.entries.concat([gated]);
-
-  const base = R.rankEntries(entries, comp.shares, skillOptions);
-  assert.ok(base.excluded.context >= 1, "情境限制要单独计数，不混进『作用域不符』");
-  assert.equal(base.rows.some((row) => row.id === -99), false);
-
-  const picked = R.rankEntries(entries, comp.shares,
-    { mode: "skill", hand: 1, includeAlly: false, includeConditional: false, contexts: { jumpAttack: true } });
-  assert.equal(picked.rows.some((row) => row.id === -99), true, "勾选情境后应当参与排名");
-
-  // 作用域排除给出按原因的分项，总数对得上。
-  const reasons = base.excluded.scopeReasons;
-  assert.ok(Object.keys(reasons).length > 0);
-  const summed = Object.keys(reasons).reduce((total, key) => total + reasons[key], 0);
-  assert.equal(summed, base.excluded.scope + base.excluded.context);
-});
-
-test("availableContexts：中文名一律取 enums.attackContext，没有这个键时返回空表", () => {
-  assert.deepEqual(R.availableContexts({}, []), []);
-  assert.deepEqual(R.availableContexts(buffs, index.entries), index.contexts);
-  index.contexts.forEach((item) => {
-    assert.ok(item.zh && item.count > 0);
-    assert.ok(buffs.enums.attackContext && buffs.enums.attackContext[item.key],
-      item.key + " 必须能在 enums.attackContext 里查到中文名");
-  });
-
-  const fake = {
-    enums: { attackContext: { jumpAttack: { zh: "跳跃攻击", en: "Jump Attack" } } }
-  };
-  const entries = [
-    R.indexBuff({ spEffectId: 1, rates: { fireAttackRate: 1.1 }, scope: { attackContexts: ["jumpAttack"] } }, plan),
-    R.indexBuff({ spEffectId: 2, rates: { fireAttackRate: 1.2 }, scope: { attackContexts: ["jumpAttack", "zzz"] } }, plan),
-    R.indexBuff({ spEffectId: 3, rates: { saAttackPowerRate: 2 }, scope: { attackContexts: ["zzz"] } }, plan)
-  ];
-  const listed = R.availableContexts(fake, entries);
-  assert.deepEqual(
-    listed.map((item) => item.key), ["jumpAttack", "zzz"],
-    "按 ATTACK_CONTEXT_ORDER 的固定顺序排，枚举表里没有的键排最后"
-  );
-  assert.equal(listed[0].zh, "跳跃攻击");
-  assert.equal(listed[0].count, 2);
-  assert.equal(listed[1].count, 1, "不带伤害倍率的条目不计数");
-});
-
-test("scope.subCategories 的取值都能在 enums.atkSubCategory 里查到中文名", () => {
-  let checked = 0;
-  buffs.buffs.forEach((buff) => {
-    ((buff.scope || {}).subCategories || []).forEach((value) => {
-      assert.ok(buffs.enums.atkSubCategory[String(value)], "子类别 " + value + " 没有中文名");
-      checked += 1;
-    });
-  });
-  assert.ok(checked > 0);
-});
-
-// ------------------------------------------------------------------ 有效倍率
-
-test("effectiveFor：Σ 占比 × 该类型的倍率连乘", () => {
-  const entry = R.indexBuff({ spEffectId: -7, rates: { physicsAttackRate: 1.5, fireAttackRate: 1.1 } }, plan);
-  const pure = R.effectiveFor(entry, Object.assign(R.TYPE_KEYS.reduce((acc, key) => {
-    acc[key] = 0;
-    return acc;
-  }, {}), { slash: 1 }));
-  assert.ok(Math.abs(pure.multiplier - 1.5) < 1e-9);
-
-  const half = R.effectiveFor(entry, Object.assign(R.TYPE_KEYS.reduce((acc, key) => {
-    acc[key] = 0;
-    return acc;
-  }, {}), { slash: 0.5, fire: 0.5 }));
-  assert.ok(Math.abs(half.multiplier - (0.5 * 1.5 + 0.5 * 1.1)) < 1e-9);
-  assert.ok(half.multiplier < pure.multiplier, "属性占比越高，纯物理倍率的收益越低");
-
-  // 没勾任何段时不给倍率。
-  const none = R.effectiveFor(entry, R.TYPE_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {}));
-  assert.equal(none.multiplier, 1);
-  assert.equal(none.useful, false);
-});
-
-test("effectiveFor：只带点数加算的条目倍率仍是 1，但按占比加权后算有收益", () => {
-  const entry = R.indexBuff({ spEffectId: -8, rates: { fireAttackPower: 40 } }, plan);
-  const shares = R.TYPE_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {});
-  shares.fire = 0.5;
-  shares.slash = 0.5;
-  const effective = R.effectiveFor(entry, shares);
-  assert.equal(effective.multiplier, 1);
-  assert.ok(Math.abs(effective.flat - 20) < 1e-9);
-  assert.equal(effective.useful, true);
-});
-
-// ------------------------------------------------------------------ 排名
-
-test("rankEntries：默认只留 self + increase/mixed + passive + 作用域匹配", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const ranked = R.rankEntries(index.entries, comp.shares, skillOptions);
-
-  assert.ok(ranked.rows.length > 0);
-  ranked.rows.forEach((row) => {
-    assert.equal(row.entry.target, "self");
-    assert.equal(row.entry.activation, "passive");
-    assert.notEqual(row.entry.direction, "decrease");
-    assert.equal(R.scopeVerdict(row.entry.scope, skillOptions).ok, true);
-  });
-  for (let i = 1; i < ranked.rows.length; i += 1) {
-    assert.ok(ranked.rows[i - 1].multiplier >= ranked.rows[i].multiplier, "必须按有效倍率降序");
-  }
-  assert.ok(ranked.excluded.scope > 0 || ranked.excluded.activation > 0);
-});
-
-test("rankEntries：打开条件型 / 队友开关后条目只增不减", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-
-  const base = R.rankEntries(index.entries, comp.shares, skillOptions);
-  const withConditional = R.rankEntries(index.entries, comp.shares,
-    { mode: "skill", hand: 1, includeAlly: false, includeConditional: true });
-  const withAlly = R.rankEntries(index.entries, comp.shares,
-    { mode: "skill", hand: 1, includeAlly: true, includeConditional: true });
-
-  assert.ok(withConditional.rows.length > base.rows.length, "条件型条目应当能被纳入");
-  assert.ok(withAlly.rows.length >= withConditional.rows.length);
-  assert.ok(withConditional.rows.some((row) => row.conditional === true));
-  assert.ok(withAlly.rows.some((row) => row.entry.target === "ally"));
-});
-
-test("rankEntries：法术按魔法／祷告匹配，换一边结果就不一样", () => {
-  const spell = skills.spells.find((one) => one.kind === "sorcery" && (one.hits || []).length > 0);
-  const comp = R.composition(spell.hits, null, true);
-  const asSorcery = R.rankEntries(index.entries, comp.shares, { mode: "sorcery", hand: 1, includeAlly: false, includeConditional: false });
-  const asIncantation = R.rankEntries(index.entries, comp.shares, { mode: "incantation", hand: 1, includeAlly: false, includeConditional: false });
-  const ids = (result) => result.rows.map((row) => row.id).sort().join(",");
-  assert.ok(asSorcery.rows.length > 0);
-  assert.notEqual(ids(asSorcery), ids(asIncantation), "魔法与祷告的可用条目不该完全相同");
-});
-
-// ------------------------------------------------------------------ 叠加与组合
-
-test("stackingGroupKey：一律用数据集算好的 stacking.group，stateInfo 不参与分组", () => {
-  // stackingRules 第 3 条：stateInfo「并不是互斥分组」，只是「值得怀疑」。
-  assert.equal(
-    R.stackingGroupKey({ stacking: { spCategoryBehavior: "stackSelf", stateInfo: 367, group: "sp10#1" } }),
-    "sp10#1"
-  );
-  assert.equal(
-    R.stackingGroupKey({ stacking: { spCategoryBehavior: "none", stateInfo: 0, group: "sp0#1" } }),
-    "sp0#1"
-  );
-  assert.equal(
-    R.stackingGroupKey({ stacking: { spCategoryBehavior: "removePrevious", stateInfo: 9, group: "sp151" } }),
-    "sp151"
-  );
-  // 交叉参考键单独给出，只对本身不互斥的 none / stackSelf 有意义。
-  assert.equal(
-    R.stateGroupKey({ stacking: { spCategoryBehavior: "stackSelf", stateInfo: 367, group: "sp10#1" } }),
-    "state#367"
-  );
-  assert.equal(R.stateGroupKey({ stacking: { spCategoryBehavior: "stackSelf", stateInfo: 0 } }), null);
-  assert.equal(R.stateGroupKey({ stacking: { spCategoryBehavior: "removePrevious", stateInfo: 9 } }), null);
-});
-
-test("stateInfo 交叉参考默认关闭：同一 stateInfo 下挂着互不相干的效果，不能当成一个叠加组", () => {
-  // 数据实测：至少有一个 stateInfo 值下面挂着一堆 paramName 完全不同的条目
-  // （护符、遗物、武器被动各一套），按它合并会把本可共存的组合砍掉。
-  const byState = new Map();
-  index.entries.forEach((entry) => {
-    if (!entry.state) return;
-    if (!byState.has(entry.state)) byState.set(entry.state, []);
-    byState.get(entry.state).push(entry);
-  });
-  const mixed = [...byState.values()].filter((list) => {
-    const families = new Set(list.map((entry) => entry.family));
-    return list.length > 2 && families.size === list.length;
-  });
-  assert.ok(mixed.length > 0, "应当存在『同 stateInfo 但互不同族』的成组条目");
-
-  // 这些条目必须落在各自独立的叠加组里（默认口径）。
-  const sample = mixed[0];
-  const rows = sample.map((entry) => ({ id: entry.id, multiplier: 1.1, flat: 0, entry }));
-  const relaxed = R.bucketRows(rows, false, false);
-  assert.equal(Object.keys(relaxed).length, rows.length, "默认口径下不该按 stateInfo 并成一组");
-  // 打开交叉参考开关才合并，用户可以随时退回。
-  const strict = R.bucketRows(rows, false, true);
-  assert.equal(Object.keys(strict).length, 1, "打开开关后按 stateInfo 合并成一组");
-  assert.ok(R.recommendCombo(rows, false, true).product <= R.recommendCombo(rows, false, false).product);
-});
-
-test("每条 buff 的 spCategoryBehavior 都能在 enums 里查到标签", () => {
-  const codes = new Set(buffs.enums.spCategoryBehavior.map((row) => row.code));
-  buffs.buffs.forEach((buff) => {
-    assert.ok(codes.has(buff.stacking.spCategoryBehavior), buff.spEffectId + " 的叠加行为查不到标签");
-  });
-});
-
-test("familyKey：档位后缀归一到同一族", () => {
-  const potency1 = R.familyKey({ spEffectId: 1, paramName: "[Weapon] Improved Skill Attack Power - Potency 1" });
-  const potency3 = R.familyKey({ spEffectId: 2, paramName: "[Weapon] Improved Skill Attack Power - Potency 3" });
-  assert.equal(potency1, potency3);
-  assert.equal(
-    R.familyKey({ spEffectId: 3, paramName: "[Relic] Physical Attack Up +4" }),
-    R.familyKey({ spEffectId: 4, paramName: "[Relic] Physical Attack Up" })
-  );
-  assert.equal(
-    R.familyKey({ spEffectId: 5, paramName: "[Item - Level 3] Exalted Flesh" }),
-    R.familyKey({ spEffectId: 6, paramName: "[Item] Exalted Flesh" })
-  );
-  assert.notEqual(
-    R.familyKey({ spEffectId: 7, paramName: "[Talisman] Improved Skill Attack Power" }),
-    potency1,
-    "护符与武器被动是两件东西，不该并成一族"
-  );
-  assert.equal(R.familyKey({ spEffectId: 8, paramName: null }), "id#8");
-});
-
-test("recommendCombo：同组只取一条，连乘等于取出条目的乘积", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const ranked = R.rankEntries(index.entries, comp.shares, skillOptions);
-
-  const merged = R.recommendCombo(ranked.rows, true);
-  const raw = R.recommendCombo(ranked.rows, false);
-
-  assert.ok(merged.picks.length > 0);
-  assert.ok(merged.picks.length <= raw.picks.length, "合并同族后组数只会更少");
-  assert.ok(merged.product <= raw.product + 1e-9);
-
-  const product = merged.picks.reduce((total, pick) => total * pick.row.multiplier, 1);
-  assert.ok(Math.abs(product - merged.product) < 1e-9);
-
-  const groups = merged.picks.map((pick) => pick.row.entry.group);
-  assert.equal(new Set(groups).size, groups.length, "同一个叠加组不该出现两条");
-  merged.picks.forEach((pick) => assert.ok(pick.row.multiplier > 1));
-});
-
-test("bucketRows：同一个 stacking 组的条目一定落在同一个桶里", () => {
-  const rows = [
-    { id: 1, multiplier: 1.2, flat: 0, entry: { group: "sp151", family: "[Item] A", buff: { stacking: {} } } },
-    { id: 2, multiplier: 1.1, flat: 0, entry: { group: "sp151", family: "[Item] B", buff: { stacking: {} } } },
-    { id: 3, multiplier: 1.3, flat: 0, entry: { group: "sp10#3", family: "[Weapon] C", buff: { stacking: {} } } },
-    { id: 4, multiplier: 1.4, flat: 0, entry: { group: "sp10#4", family: "[Weapon] C", buff: { stacking: {} } } }
-  ];
-  const separate = R.bucketRows(rows, false);
-  assert.equal(Object.keys(separate).length, 3);
-  const merged = R.bucketRows(rows, true);
-  assert.equal(Object.keys(merged).length, 2, "同族的 sp10#3 / sp10#4 应当并成一桶");
-
-  const combo = R.recommendCombo(rows, true);
-  assert.equal(combo.picks.length, 2);
-  assert.ok(Math.abs(combo.product - 1.2 * 1.4) < 1e-9, "每桶取最高");
-});
-
-// ------------------------------------------------------------------ 列表与格式
+// ------------------------------------------------------------------ 输出手段列表与显示名
 
 test("buildMeansItems / filterMeans：中英文都能搜到，且只收算得出构成的条目", () => {
   const items = R.buildMeansItems(skills);
@@ -985,17 +685,6 @@ test("groupWeapons：按武器类别中文名分组，组内保持原顺序", ()
     });
   });
 });
-
-test("sourceKindsOf / 徽标：数据集里出现的来源类型都有中文名", () => {
-  const known = new Set(R.SOURCE_KINDS.map((kind) => kind.key));
-  Object.keys(buffs.enums.sourceKind).forEach((kind) => {
-    assert.ok(known.has(kind), "来源类型 " + kind + " 在页面上没有徽标");
-    assert.ok(R.sourceKindLabel(kind) !== kind, kind + " 没有中文名");
-  });
-  assert.deepEqual(R.sourceKindsOf({ sources: [] }), ["other"]);
-  assert.deepEqual(R.sourceKindsOf({ sources: [{ kind: "goods" }, { kind: "goods" }] }), ["goods"]);
-});
-
 test("列表一律显示 displayNameZh（notes.displayName：nameZh 重名极多）", () => {
   const withDisplay = buffs.buffs.find((buff) => buff.displayNameZh);
   assert.equal(R.buffDisplayName(withDisplay), withDisplay.displayNameZh);
@@ -1014,496 +703,616 @@ test("格式化：倍率 / 百分比 / 持续时间", () => {
 
 // ------------------------------------------------------------------ 性能
 
-test("性能：索引只建一次，选段变化时的重算是纯加权（全表远低于 50ms）", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const hits = R.selectHits(skill, weapon);
+// ------------------------------------------------------------------ v6 索引字段
+
+test("indexBuff：带出 v6 的来源槽位 / appliesTo / 互斥键 / 叠层输入 / 累积阶梯", () => {
+  const byId = index.byId;
+  const skillAttack = byId[8350000];
+  assert.equal(skillAttack.slot, "weaponAffix");
+  assert.equal(skillAttack.key, "sp10#8350000");
+  assert.equal(skillAttack.appliesTo.skill, "conditional");
+  const evergaol = byId[7069001];
+  assert.ok(evergaol.stackInput && evergaol.stackInput.mode === "ladder");
+  const grace = byId[8970000];
+  assert.ok(grace.stackInput && grace.stackInput.mode === "copies");
+  assert.equal(grace.slot, "runStack");
+  const prosthesis = byId[312506];
+  assert.ok(prosthesis.accLadder, "米莉森的义手是累积阶梯");
+  assert.equal(prosthesis.ladderGroup, 312505, "阶梯组 id 取第 1 档");
+  assert.equal(prosthesis.ladderTier, 2);
+  assert.equal(index.entries.length, buffs.buffs.length, "索引应当覆盖全表");
+  index.entries.forEach((entry) => {
+    if (entry.keyInferred) {
+      // 数据还没有 affixVariant 时推断出的多档组：键合并成 affix#<词条 ID>（与数据将来给的键同形）。
+      assert.equal(entry.key, "affix#" + entry.buff.relicAffixes[0].attachEffectId, entry.id + " 的推断互斥键");
+      return;
+    }
+    assert.equal(entry.key, entry.buff.stacking.exclusiveKey, entry.id + " 的互斥键必须原样取 exclusiveKey");
+  });
+});
+
+// ------------------------------------------------------------------ 多档词条（affixVariant）
+
+test("多档词条：数据没有 affixVariant 时按参数结构推断，恰好是 schema 复核三轮列出的 7 组 × 4 档", () => {
+  assert.equal(buffs.buffs.some((buff) => buff.affixVariant), false, "当前数据还没有 affixVariant（有了就改走数据分支）");
+  const groups = index.variants;
+  const expected = [7120000, 7120100, 7120200, 7120300, 7120400, 7120500, 7120600];
+  assert.deepEqual(Object.keys(groups).sort(), expected.map((id) => "affix#" + id).sort());
+  expected.forEach((attachId) => {
+    const members = groups["affix#" + attachId];
+    assert.deepEqual(members.map((entry) => entry.id), [1, 2, 3, 4].map((n) => attachId + n), attachId + " 的四档");
+    members.forEach((entry, i) => {
+      assert.equal(entry.variantTier, i + 1);
+      assert.equal(entry.variantSource, "inferred");
+      assert.equal(entry.key, "affix#" + attachId);
+      assert.equal(entry.variantMembers, members);
+    });
+  });
+  // 状态负载行（7120405 等）不含伤害倍率，不进组，键不变。
+  assert.equal(index.byId[7120405].variantGroup, null);
+  assert.equal(index.byId[7120405].key, buffs.buffs.find((buff) => buff.spEffectId === 7120405).stacking.exclusiveKey);
+  // 累积阶梯、叠层、连续三阶段（8885220–22 各自一个键、同时存在）都不能被并成一组。
+  [7037604, 7069001, 8885220, 8885221].forEach((id) => assert.equal(index.byId[id].variantGroup, null, id + " 不是多档词条"));
+});
+
+test("多档词条：同一组只算选中的那一档（默认第 1 档），config.variants 可以改选", () => {
+  const members = index.variants["affix#7120000"];
+  const config = R.emptyConfig();
+  const first = members.map((entry) => R.evaluateEntry(entry, env(out({ shares: shares({ slash: 0.5, magic: 0.5 }) }), config), { explicit: true }));
+  assert.deepEqual(first.map((item) => item.state), ["counted", "variantOff", "variantOff", "variantOff"]);
+  assert.ok(first[1].reasons[0].indexOf("第 1 档") !== -1 && first[1].reasons[0].indexOf("未实测") !== -1);
+  config.variants["affix#7120000"] = members[2].id;
+  const third = members.map((entry) => R.evaluateEntry(entry, env(out(), config), { explicit: true }).state);
+  assert.deepEqual(third, ["variantOff", "variantOff", "counted", "variantOff"]);
+  assert.equal(R.selectedVariant(members[0], config).tier, 3);
+  assert.equal(R.selectedVariant(members[0], R.emptyConfig()).tiers, 4);
+});
+
+test("多档词条：数据给了 affixVariant 就只用数据，不再推断", () => {
+  const base = { target: "self", activation: "passive", direction: "increase",
+    appliesTo: { skill: "yes", sorcery: "yes", incantation: "yes" } };
+  const data = {
+    rateFields: buffs.rateFields,
+    buffs: [
+      Object.assign({ spEffectId: 11, paramName: "[Relic] A - Potency 1", rates: { physicsAttackRate: 1.1 },
+        relicAffixes: [{ attachEffectId: 10 }], stacking: { exclusiveKey: "affix#10" },
+        affixVariant: { key: "affix#10", attachEffectId: 10, variant: 1, variants: 2 } }, base),
+      Object.assign({ spEffectId: 12, paramName: "[Relic] A - Potency 2", rates: { physicsAttackRate: 1.2 },
+        relicAffixes: [{ attachEffectId: 10 }], stacking: { exclusiveKey: "affix#10" },
+        affixVariant: { key: "affix#10", attachEffectId: 10, variant: 2, variants: 2 } }, base),
+      // 结构上像多档、但数据没标 affixVariant：有数据字段时不推断。
+      Object.assign({ spEffectId: 21, paramName: "[Relic] B - Potency 1", rates: { physicsAttackRate: 1.1 },
+        relicAffixes: [{ attachEffectId: 20 }], stacking: { exclusiveKey: "sp10#21" } }, base),
+      Object.assign({ spEffectId: 22, paramName: "[Relic] B - Potency 2", rates: { physicsAttackRate: 1.2 },
+        relicAffixes: [{ attachEffectId: 20 }], stacking: { exclusiveKey: "sp10#22" } }, base)
+    ]
+  };
+  const own = R.indexBuffs(data);
+  assert.deepEqual(Object.keys(own.variants), ["affix#10"]);
+  assert.equal(own.byId[11].variantSource, "data");
+  assert.equal(own.byId[12].variantTier, 2);
+  assert.equal(own.byId[21].variantGroup, null);
+  assert.equal(own.byId[21].key, "sp10#21");
+  // 同样两条去掉 affixVariant：推断成一组，键合并。
+  const bare = R.indexBuffs({ rateFields: buffs.rateFields, buffs: data.buffs.slice(2) });
+  assert.deepEqual(Object.keys(bare.variants), ["affix#20"]);
+  assert.equal(bare.byId[22].key, "affix#20");
+  assert.equal(bare.byId[22].keyInferred, true);
+});
+
+// ------------------------------------------------------------------ 减益（notes.ranking ②）
+
+test("evaluateEntry：direction=decrease 一律不计入（notes.ranking 第②步），mixed 照常计入", () => {
+  const debuff = synth(-40, { rates: { physicsAttackRate: 0.87 }, direction: "decrease" });
+  const item = R.evaluateEntry(debuff, env(out()), { explicit: true });
+  assert.equal(item.state, "no");
+  assert.equal(item.reasons[0], R.TEXT.reasonDecrease);
+  const mixed = synth(-41, { rates: { physicsAttackPower: -30, magicAttackPower: 33 }, direction: "mixed" });
+  assert.equal(R.evaluateEntry(mixed, env(out()), { explicit: true }).state, "counted");
+  // 真实数据：【无赖】技艺命中敌人时降低对方攻击力（7500401），target=self、appliesTo.skill=yes，但它是减益。
+  const raider = index.byId[7500401];
+  assert.equal(raider.direction, "decrease");
+  assert.equal(raider.appliesTo.skill, "yes");
+  assert.equal(R.evaluateEntry(raider, env(out()), { explicit: true }).state, "no");
+  index.entries.forEach((entry) => {
+    if (entry.direction !== "decrease") return;
+    const state = R.evaluateEntry(entry, env(out()), { explicit: true }).state;
+    assert.notEqual(state, "counted", entry.id + " 是减益，不能计入");
+    assert.notEqual(state, "pending", entry.id + " 是减益，不该等用户确认");
+  });
+});
+
+// ------------------------------------------------------------------ 加算的符号
+
+test("fmtFlat / hasFlat：攻击力加算按数值带符号，不会出现「+-」", () => {
+  assert.equal(R.fmtFlat(-76.86486), "-76.9");
+  assert.equal(R.fmtFlat(12.34), "+12.3");
+  assert.equal(R.fmtFlat(-0.04), "0");
+  assert.equal(R.fmtFlat(66, 0), "+66");
+  assert.equal(R.hasFlat(-12.8), true);
+  assert.equal(R.hasFlat(0.01), false);
+  assert.equal(R.hasFlat(0), false);
+});
+
+test("exclusiveKeyOf：exclusiveKey 缺失时退回 stacking.group，再退回 sp<cat>#<id>", () => {
+  assert.equal(R.exclusiveKeyOf({ spEffectId: 5, stacking: { exclusiveKey: "sp204@p11", group: "sp204" } }), "sp204@p11");
+  assert.equal(R.exclusiveKeyOf({ spEffectId: 5, stacking: { group: "sp160" } }), "sp160");
+  assert.equal(R.exclusiveKeyOf({ spEffectId: 5, stacking: { spCategory: 20 } }), "sp20#5");
+});
+
+test("characterKey / characterLabel：按 Paramdex 行名方括号分组，中文名与 heroes 数据集一致", () => {
+  assert.equal(R.characterKey({ paramName: "[Skill - Revenant] Spirit Stat Change - Level 2" }), "Revenant");
+  assert.equal(R.characterKey({ paramName: "[Ultimate - Executor] Beast Depth 1" }), "Executor");
+  assert.equal(R.characterKey({ paramName: "Magic Cocktail" }), "");
+  assert.equal(R.characterLabel("Revenant"), "复仇者");
+  assert.equal(R.characterLabel(""), "其他角色");
+  const heroes = JSON.parse(readFileSync(resource("heroes.json"), "utf8"));
+  (heroes.heroes || []).forEach((hero) => {
+    assert.equal(R.CHARACTER_NAMES[hero.nameEn], hero.nameZh, hero.nameEn + " 的中文名应与 heroes 数据集一致");
+  });
+});
+
+test("outputWepType：战技取所选武器的类别，魔法＝手杖，祷告＝圣印记", () => {
+  const weapon = skills._weaponById[9040000];
+  assert.equal(R.outputWepType(out({ mode: "skill", weapon })), weapon.wepType);
+  assert.equal(R.outputWepType(out({ mode: "skill", weapon: null })), null);
+  assert.equal(R.outputWepType(out({ mode: "sorcery" })), R.CASTER_WEP_TYPE.sorcery);
+  assert.equal(R.outputWepType(out({ mode: "incantation" })), R.CASTER_WEP_TYPE.incantation);
+  assert.equal(buffs.enums.wepType[String(R.CASTER_WEP_TYPE.sorcery)].zh, "手杖");
+  assert.equal(buffs.enums.wepType[String(R.CASTER_WEP_TYPE.incantation)].zh, "圣印记");
+});
+
+// ------------------------------------------------------------------ appliesTo 判定
+
+test("appliesVerdict：yes 直接生效，no 带上数据给的 reason", () => {
+  const yes = synth(-1);
+  assert.equal(R.appliesVerdict(yes, out()).state, "yes");
+  const no = synth(-2, {
+    appliesTo: { skill: "no", sorcery: "yes", incantation: "yes" },
+    appliesToDetail: { skill: { reason: "wepParamChange=3（自身）：不作用于武器攻击" } }
+  });
+  const verdict = R.appliesVerdict(no, out());
+  assert.equal(verdict.state, "no");
+  assert.deepEqual(verdict.reasons, ["wepParamChange=3（自身）：不作用于武器攻击"]);
+  assert.equal(R.appliesVerdict(no, out({ mode: "sorcery" })).state, "yes", "换输出类别就换 appliesTo 的键");
+  const missing = synth(-3, { appliesTo: null });
+  assert.equal(R.appliesVerdict(missing, out()).state, "no", "没有 appliesTo 的数据按不生效处理");
+});
+
+test("appliesVerdict：requires.hand 按当前手自动判定", () => {
+  const right = synth(-4, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "wepParamChange=1", requires: { hand: 1 } } }
+  });
+  assert.equal(R.appliesVerdict(right, out({ hand: 1 })).state, "yes");
+  const left = R.appliesVerdict(right, out({ hand: 2 }));
+  assert.equal(left.state, "no");
+  assert.ok(left.reasons[0].indexOf("右手") !== -1 && left.reasons[0].indexOf("左手") !== -1);
+});
+
+test("appliesVerdict：requires.attackWeaponTypes 按当前武器（法术按施法器）自动判定", () => {
+  const dagger = synth(-5, {
+    appliesTo: { skill: "conditional", sorcery: "conditional" },
+    appliesToDetail: {
+      skill: { reason: "triggerOnWepType=1", requires: { attackWeaponTypes: [1] } },
+      sorcery: { reason: "triggerOnWepType=57", requires: { attackWeaponTypes: [57] } }
+    }
+  });
+  assert.equal(R.appliesVerdict(dagger, out({ weapon: { wepType: 1 } })).state, "yes");
+  const katana = R.appliesVerdict(dagger, out({ weapon: { wepType: 13 } }));
+  assert.equal(katana.state, "no");
+  assert.ok(katana.reasons[0].indexOf("短剑") !== -1 && katana.reasons[0].indexOf("刀") !== -1, "类别名取 enums.wepType");
+  assert.equal(R.appliesVerdict(dagger, out({ weapon: null })).state, "no", "没有武器就对不上出手武器类别");
+  assert.equal(R.appliesVerdict(dagger, out({ mode: "sorcery" })).state, "yes", "魔法由手杖施放");
+});
+
+test("appliesVerdict：requires.physicalType 只落在对应物理通道，构成里没有这一类就不生效", () => {
+  const pierce = synth(-6, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "atkAttribute=2", requires: { physicalType: 2 } } }
+  });
+  const mixed = out({ shares: shares({ slash: 0.5, thrust: 0.5 }) });
+  const verdict = R.appliesVerdict(pierce, mixed);
+  assert.equal(verdict.state, "yes");
+  assert.equal(verdict.restrictedType, "thrust");
+  const tables = R.entryTables(pierce, plan, verdict.restrictedType, verdict.weight, null);
+  assert.equal(tables.table.thrust, 1.2);
+  assert.equal(tables.table.slash, 1, "只乘对应的那一格");
+  assert.equal(R.appliesVerdict(pierce, out({ shares: shares({ slash: 1 }) })).state, "no");
+});
+
+test("appliesVerdict：requires.subCategoriesAny 用 attackIndex 逐段判定（全中 / 全不中 / 部分按段加权）", () => {
+  const data = {
+    enums: buffs.enums,
+    attackIndex: {
+      skills: {
+        1: { subCategorySets: [{ subs: [112, 130], hits: 4 }] },
+        2: { subCategorySets: [{ subs: [106, 130], hits: 3 }] },
+        3: { subCategorySets: [{ subs: [112], hits: 1 }, { subs: [130], hits: 3 }] }
+      },
+      spells: {}
+    }
+  };
+  const skillAttack = synth(-7, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "子类别限定 [112]", requires: { subCategoriesAny: [111, 112] } } }
+  });
+  assert.equal(R.appliesVerdict(skillAttack, out({ meansId: 1 }, data)).state, "yes");
+  const none = R.appliesVerdict(skillAttack, out({ meansId: 2 }, data));
+  assert.equal(none.state, "no");
+  assert.ok(none.reasons[0].indexOf("112") !== -1);
+  const partial = R.appliesVerdict(skillAttack, out({ meansId: 3 }, data));
+  assert.equal(partial.state, "yes");
+  assert.equal(partial.weight, 0.25, "4 段里 1 段带 112");
+  assert.ok(partial.notes[0].indexOf("1/4") !== -1);
+  const weighted = R.entryTables(skillAttack, plan, null, partial.weight, null);
+  assert.ok(Math.abs(weighted.table.slash - (1 + 0.2 * 0.25)) < 1e-12, "按段加权：1 + (m − 1) × 命中段占比");
+  const unknown = R.appliesVerdict(skillAttack, out({ meansId: 99 }, data));
+  assert.equal(unknown.state, "pending", "attackIndex 里查不到就要用户确认");
+});
+
+test("appliesVerdict：requires.attackContexts 只认攻击情境勾选；附魔武器限定等要用户确认", () => {
+  const counter = synth(-8, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "stateInfo=197", requires: { attackContexts: ["thrustingCounter"] } } }
+  });
+  const unchecked = R.appliesVerdict(counter, out());
+  assert.equal(unchecked.state, "context");
+  assert.ok(unchecked.reasons[0].indexOf("突刺反击") !== -1, "情境中文名取 enums.attackContext");
+  assert.equal(R.appliesVerdict(counter, out({ contexts: { thrustingCounter: true } })).state, "yes");
+
+  const imbued = synth(-9, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "spAttribute=10", requires: { imbuedWeaponOnly: true } } }
+  });
+  const pending = R.appliesVerdict(imbued, out());
+  assert.equal(pending.state, "pending");
+  assert.equal(pending.needs[0], R.TEXT.requireImbued);
+
+  const bare = synth(-10, { appliesTo: { skill: "conditional" }, appliesToDetail: { skill: { reason: "看战技" } } });
+  assert.equal(R.appliesVerdict(bare, out()).state, "pending", "conditional 却没有机读条件 → 要确认");
+  const odd = synth(-11, {
+    appliesTo: { skill: "conditional" },
+    appliesToDetail: { skill: { reason: "x", requires: { someNewKey: 1 } } }
+  });
+  assert.equal(R.appliesVerdict(odd, out()).state, "pending", "数据新增的 requires 键不能被静默放行");
+});
+
+// ------------------------------------------------------------------ 叠层
+
+test("stackedRates：ladder 取 tierMultipliers[n−1]（超出按最后一层），copies 取 perStackMultiplier^n", () => {
+  const evergaol = index.byId[7069001];
+  const si = evergaol.stackInput;
+  assert.ok(Array.isArray(si.tierMultipliers) && si.tierMultipliers.length > 1);
+  const seven = R.stackedRates(evergaol, 7);
+  si.appliesToRateKeys.forEach((key) => assert.equal(seven[key], si.tierMultipliers[6]));
+  const over = R.stackedRates(evergaol, 99);
+  assert.equal(over[si.multiplierKey], si.tierMultipliers[si.tierMultipliers.length - 1]);
+  assert.equal(R.stackedRates(evergaol, 0), null, "0 层 = 不计入");
+  assert.equal(R.stackedRates(evergaol, 1)[si.multiplierKey], si.tierMultipliers[0]);
+
+  const grace = index.byId[8970000];
+  const three = R.stackedRates(grace, 3);
+  assert.ok(Math.abs(three[grace.stackInput.multiplierKey] - Math.pow(grace.stackInput.perStackMultiplier, 3)) < 1e-12);
+  assert.equal(grace.rates[grace.stackInput.multiplierKey], grace.stackInput.perStackMultiplier, "原 rates 不被改写");
+});
+
+test("stacksFor / stackWarnings：亲手放入默认实际上限（没有就 1 层），随整件带入默认 0；超出上限给提示", () => {
+  const evergaol = index.byId[7069001];
+  const invader = index.byId[7069201];
+  const grace = index.byId[8970000];
+  assert.equal(R.stacksFor(evergaol, R.emptyConfig(), true), evergaol.stackInput.practicalMaxStacks);
+  assert.equal(R.stacksFor(evergaol, R.emptyConfig(), false), 0);
+  assert.equal(R.stacksFor(grace, R.emptyConfig(), true), 1, "参数表无上限时默认 1 份");
+  const config = R.emptyConfig();
+  config.stacks[invader.id] = 3.7;
+  assert.equal(R.stacksFor(invader, config, false), 3, "层数取整，且用户填过就不看来源");
+  assert.equal(R.stackWarnings(evergaol, 7).length, 0);
+  assert.ok(R.stackWarnings(evergaol, 8)[0].indexOf("7") !== -1, "超过一局实际上限要提示");
+  assert.ok(R.stackWarnings(evergaol, 12).length === 2, "超过参数表层数再多一条");
+  assert.ok(R.stackWarnings(grace, 11)[0].indexOf("10") !== -1, "copies 超过游戏文本备好的＋N 标签要提示");
+  assert.equal(R.stackParamMax(evergaol), evergaol.stackInput.paramMaxStacks);
+});
+
+test("累积阶梯：同一组只算选中的那一层，默认取数据里收录的最高层", () => {
+  const config = R.emptyConfig();
+  const members = cfgIndex.ladders[312505];
+  assert.ok(members && members.length >= 3);
+  const top = members[members.length - 1];
+  members.forEach((entry) => {
+    const item = R.evaluateEntry(entry, env(out(), config), { column: "accessory", explicit: true });
+    assert.equal(item.state, entry.id === top.id ? "counted" : "tierOff", entry.id + " 的状态");
+  });
+  config.tiers[312505] = members[0].id;
+  const chosen = R.evaluateEntry(members[0], env(out(), config), { column: "accessory", explicit: true });
+  assert.equal(chosen.state, "counted");
+  assert.equal(R.selectedLadderTier(top, config, cfgIndex.ladders).tier, 1);
+});
+
+// ------------------------------------------------------------------ 单条评估
+
+test("evaluateEntry：条件型——亲手放入默认已确认，随整件带入默认未确认，ticks 可以覆盖", () => {
+  const conditional = synth(-12, { activation: "conditional" });
+  const config = R.emptyConfig();
+  const explicit = R.evaluateEntry(conditional, env(out(), config), { explicit: true });
+  assert.equal(explicit.state, "counted");
+  assert.equal(explicit.needs.length, 1);
+  assert.equal(explicit.ticked, true);
+  const implicit = R.evaluateEntry(conditional, env(out(), config), { explicit: false });
+  assert.equal(implicit.state, "pending");
+  config.ticks[-12] = true;
+  assert.equal(R.evaluateEntry(conditional, env(out(), config), { explicit: false }).state, "counted");
+  config.ticks[-12] = false;
+  assert.equal(R.evaluateEntry(conditional, env(out(), config), { explicit: true }).state, "pending");
+});
+
+test("evaluateEntry：作用于队友 / 敌人 / 召唤物的一律不计入自己的输出", () => {
+  assert.equal(R.evaluateEntry(synth(-13, { target: "ally" }), env(out()), { explicit: true }).state, "no");
+  assert.equal(R.evaluateEntry(synth(-14, { target: "enemy" }), env(out()), { explicit: true }).state, "no");
+  assert.equal(R.evaluateEntry(synth(-15, { target: "summon" }), env(out()), { explicit: true }).state, "no");
+  assert.equal(R.evaluateEntry(synth(-16, { rates: { saAttackPowerRate: 2 } }), env(out()), { explicit: true }).state, "noDamage");
+});
+
+test("evaluateEntry：有效倍率 = Σ 占比 × 倍率表；攻击力倍率层与伤害倍率层相乘；加算只按占比加权", () => {
+  const both = synth(-17, { rates: { fireAttackRate: 1.5, fireAttackPowerRate: 1.2, physicsAttackPower: 30 } });
+  const half = out({ shares: shares({ slash: 0.5, fire: 0.5 }) });
+  const item = R.evaluateEntry(both, env(half), { explicit: true });
+  assert.ok(Math.abs(item.table.fire - 1.8) < 1e-12, "两层相乘 1.5 × 1.2");
+  assert.equal(item.table.slash, 1);
+  assert.ok(Math.abs(item.multiplier - (0.5 * 1 + 0.5 * 1.8)) < 1e-12);
+  assert.ok(Math.abs(item.flat - 15) < 1e-12, "物理加算 30 × 物理占比 0.5");
+  const none = R.evaluateEntry(both, env(out({ shares: shares({}) })), { explicit: true });
+  assert.equal(none.multiplier, null, "没有构成就算不出倍率");
+});
+
+// ------------------------------------------------------------------ 去重
+
+test("dedupeItems：同一互斥键只留一份（取倍率高的），不同键都留", () => {
+  const e = env(out());
+  const small = synth(-20, { rates: { physicsAttackRate: 1.1 }, stacking: { spCategory: 160, spCategoryBehavior: "removePrevious", exclusiveKey: "sp160" } });
+  const big = synth(-21, { rates: { physicsAttackRate: 1.3 }, stacking: { spCategory: 160, spCategoryBehavior: "removePrevious", exclusiveKey: "sp160" } });
+  const other = synth(-22, { rates: { physicsAttackRate: 1.05 } });
+  const items = [small, big, other].map((entry) => R.evaluateEntry(entry, e, { explicit: true, label: "#" + entry.id }));
+  const winners = R.dedupeItems(items);
+  assert.deepEqual(winners.map((item) => item.entry.id).sort((a, b) => a - b), [-22, -21]);
+  assert.equal(items[0].state, "duplicate");
+  assert.equal(items[0].dupOf, items[1]);
+  assert.ok(items[0].reasons[0].indexOf("sp160") !== -1);
+});
+
+test("dedupeItems：同一效果两份——stackSelf 也只计一份，并写明数据口径与本页口径不同", () => {
+  const e = env(out());
+  const one = synth(-23);
+  const items = [
+    R.evaluateEntry(one, e, { explicit: true, label: "武器 A" }),
+    R.evaluateEntry(one, e, { explicit: true, label: "武器 B" })
+  ];
+  const winners = R.dedupeItems(items);
+  assert.equal(winners.length, 1);
+  assert.equal(items[1].state, "duplicate");
+  assert.ok(items[1].reasons[0].indexOf("stackSelf") !== -1 && items[1].reasons[0].indexOf("未实测") !== -1);
+  const refresh = synth(-24, { stacking: { spCategory: 20, spCategoryBehavior: "resetOnApply", exclusiveKey: "sp20#-24" } });
+  const refreshItems = [R.evaluateEntry(refresh, e, { explicit: true }), R.evaluateEntry(refresh, e, { explicit: true })];
+  R.dedupeItems(refreshItems);
+  assert.ok(refreshItems[1].reasons[0].indexOf("只刷新") !== -1);
+});
+
+test("prefersItem：两边都是 applyHighest 时按 categoryPriority 取数值小的，否则比有效倍率", () => {
+  const e = env(out());
+  const low = synth(-25, { rates: { physicsAttackRate: 1.1 }, stacking: { spCategory: 1001, spCategoryBehavior: "applyHighest", categoryPriority: 1, exclusiveKey: "sp1001" } });
+  const high = synth(-26, { rates: { physicsAttackRate: 1.5 }, stacking: { spCategory: 1001, spCategoryBehavior: "applyHighest", categoryPriority: 5, exclusiveKey: "sp1001" } });
+  const a = R.evaluateEntry(low, e, { explicit: true });
+  const b = R.evaluateEntry(high, e, { explicit: true });
+  assert.equal(R.prefersItem(a, b), true, "priority 1 优先于 5，即使倍率更低");
+  assert.equal(R.prefersItem(b, a), false);
+});
+
+// ------------------------------------------------------------------ 槽位规则
+
+test("slotCaps：常规 / 深夜的武器词条上限、深夜专属上限、遗物与护符格数一律取 slotRules", () => {
+  const rules = buffs.slotRules;
+  const normal = R.slotCaps(rules, "normal");
+  const deep = R.slotCaps(rules, "deep");
+  assert.equal(normal.weaponAffix, rules.weaponAffix.maxAffixesNormal);
+  assert.equal(deep.weaponAffix, rules.weaponAffix.maxAffixesDeep);
+  assert.equal(deep.deepOnly, rules.weaponAffix.maxDeepOnlyAffixes);
+  assert.equal(normal.deepOnly, rules.weaponAffix.maxWeapons * rules.modes.normal.deepOnlyAffixesPerWeapon);
+  assert.equal(normal.relics, rules.modes.normal.relicSlots);
+  assert.equal(deep.relics, rules.modes.deep.relicSlots);
+  assert.equal(deep.relicNormal, rules.relic.normal);
+  assert.equal(deep.relicDeep, rules.relic.deepExtra);
+  assert.equal(normal.accessory, rules.accessory.slots);
+  // 数据缺失时有兜底，不抛错。
+  const fallback = R.slotCaps(null, "deep");
+  assert.ok(fallback.weaponAffix > 0 && fallback.relics > 0 && fallback.accessory > 0);
+});
+
+// ------------------------------------------------------------------ 配置索引
+
+test("buildConfigIndex：武器词条按 AttachEffect 列出、不含诅咒；护符按护符分组；其它栏按主槽位分组", () => {
+  assert.ok(cfgIndex.weaponAffixes.length > 0);
+  cfgIndex.weaponAffixes.forEach((affix) => {
+    assert.equal(affix.roles.indexOf("curse"), -1, affix.id + " 是诅咒，不该进正面词条栏");
+    assert.ok(affix.entries.some((entry) => entry.countsAsDamage), affix.id + " 没有增伤条目");
+    const raw = buffs.weaponAffixes.find((one) => one.attachEffectId === affix.id);
+    assert.equal(affix.deepOnlyPositive, raw.deepOnlyPositive === true, affix.id + " 的深夜专属标记");
+  });
+  const prosthesis = cfgIndex.talismanById[1250];
+  assert.ok(prosthesis && prosthesis.entries.length >= 3, "米莉森的义手带一整条累积阶梯");
+  R.OTHER_SLOTS.forEach((slot) => {
+    (cfgIndex.otherRows[slot] || []).forEach((row) => {
+      row.entries.forEach((entry) => {
+        assert.equal(entry.slot, slot);
+        assert.ok(entry.countsAsDamage);
+      });
+    });
+  });
+  const dew = cfgIndex.otherRows.consumable.find((row) => row.ladder && row.key === 3558);
+  assert.ok(dew, "连刺破露滴的各层合成一行");
+  assert.ok(dew.entries.length >= 2);
+});
+
+test("buildCatalogIndex：诅咒池从词条库现算（只装诅咒词条的池，当前是 3000000），按 (sortId, effectId) 排序", () => {
+  const cat = R.buildCatalogIndex(catalog);
+  assert.ok(cat.available);
+  assert.equal(cat.cursePoolId, 3000000, "与 core.js 的 DEEP_CURSE_POOL_ID 同值");
+  assert.ok(cat.curses.length > 0);
+  assert.equal(R.cursePoolOf([
+    { isCurse: true, poolIds: [7, 9] }, { isCurse: true, poolIds: [9] }, { isCurse: false, poolIds: [7] }
+  ]), 9, "混有正面词条的池不算诅咒池");
+  assert.equal(R.cursePoolOf([]), 3000000, "算不出来退回兜底常量");
+  cat.curses.forEach((curse, i) => {
+    assert.equal(curse.isCurse, true);
+    assert.ok(curse.poolIds.indexOf(3000000) !== -1);
+    if (i) {
+      const prev = cat.curses[i - 1];
+      assert.ok(prev.sortId < curse.sortId || (prev.sortId === curse.sortId && prev.effectId < curse.effectId));
+    }
+  });
+  assert.equal(R.buildCatalogIndex(null).available, false, "词条库缺失时降级，不抛错");
+  const empty = R.buildConfigIndex(buffs, index, null, Core);
+  assert.equal(empty.relicCandidates.normal.length, 0, "没有词条库就不能自组遗物");
+});
+
+test("自组遗物候选：只收能增伤、且 Core.isEligible 认可当前模式的词条", () => {
+  ["normal", "deep"].forEach((kind) => {
+    const modeKey = kind === "deep" ? "deepPositive" : "currentNormal";
+    const list = cfgIndex.relicCandidates[kind];
+    assert.ok(list.length > 0);
+    list.forEach((candidate) => {
+      assert.equal(Core.isEligible(candidate.affix, modeKey), true, candidate.id + " 不在 " + modeKey + " 的池里");
+      assert.equal(candidate.affix.isCurse, false);
+      assert.ok(candidate.entries.some((entry) => entry.countsAsDamage));
+    });
+  });
+});
+
+test("availableContexts：只统计 requires.attackContexts 里真正要求过的情境，中文名取 enums.attackContext", () => {
+  const contexts = index.contexts;
+  assert.ok(contexts.length > 0);
+  contexts.forEach((one) => {
+    assert.equal(one.zh, buffs.enums.attackContext[one.key].zh);
+    assert.ok(one.count > 0);
+  });
+  assert.deepEqual(R.availableContexts({}, []), []);
+});
+
+// ------------------------------------------------------------------ 文案常量表
+
+test("TEXT：文案集中在一张常量表里，fmt 按位置替换", () => {
+  function walk(node, pathName) {
+    Object.keys(node).forEach((key) => {
+      const value = node[key];
+      if (value && typeof value === "object") walk(value, pathName + "." + key);
+      else assert.ok(typeof value === "string" && value.length > 0, pathName + "." + key + " 应是非空文案");
+    });
+  }
+  walk(R.TEXT, "TEXT");
+  assert.equal(R.fmt("第 {0} 行：{1}", 2, "名"), "第 2 行：名");
+  assert.equal(R.fmt("{0}{0}", "a"), "aa");
+  assert.equal(R.fmt("{1}", "a"), "", "缺的参数替换成空串");
+  R.COLUMN_ORDER.forEach((column) => assert.ok(R.TEXT.columns[column]));
+  R.OTHER_SLOTS.forEach((slot) => assert.ok(R.TEXT.otherGroups[slot]));
+});
+
+test("TEXT：配置部分（计算层、工具条、四栏、汇总、口径说明、一览）不写行内中文文案", () => {
+  // 两端逐键对照靠这张表：配置相关的源码段里，带汉字的字符串字面量只能出现在 TEXT 里。
+  // 只含标点的连接符（「、」「／」「；」）不算文案。原样保留的输出手段／分段命中／伤害构成不在检查范围。
+  const source = readFileSync(path.join(repoRoot, "windows", "renderer", "pages", "ranker.js"), "utf8");
+  const lines = source.split("\n");
+  const ranges = [
+    ["// ---- 倍率字段表", "// ---- 输出手段列表"],
+    ["// ---- 说明区（结论简述", "// ---- 格式化"],
+    ["// ---- 配置工具条", "// ---- 底部折叠"]
+  ];
+  const literal = /(["'])((?:(?!\1).)*)\1/g;
+  const offenders = [];
+  ranges.forEach(([from, to]) => {
+    const start = lines.findIndex((line) => line.indexOf(from) !== -1);
+    const end = lines.findIndex((line, i) => i > start && line.indexOf(to) !== -1);
+    assert.ok(start >= 0 && end > start, "找不到源码段 " + from);
+    for (let i = start; i < end; i += 1) {
+      const code = lines[i].trim().startsWith("//") ? "" : lines[i].replace(/\s\/\/\s.*$/, "");
+      let match;
+      literal.lastIndex = 0;
+      while ((match = literal.exec(code))) {
+        if (/[一-鿿]/.test(match[2])) offenders.push((i + 1) + ": " + match[0]);
+      }
+    }
+  });
+  assert.deepEqual(offenders, [], "这些中文文案应当移进 TEXT");
+});
+
+test("configWarnings：relicAffixes[].exclusivityId 同组的不同遗物词条同时计入时给出提示", () => {
+  const make = (id, attachId) => synth(id, { relicAffixes: [{ attachEffectId: attachId, exclusivityId: 100 }] });
+  const e = env(out());
+  const a = R.evaluateEntry(make(-50, 900), e, { column: "relic", explicit: true, label: "遗物 1：甲" });
+  const b = R.evaluateEntry(make(-51, 901), e, { column: "relic", explicit: true, label: "遗物 2：乙" });
+  const warnings = R.configWarnings([a, b], [a, b]);
+  const hit = warnings.find((one) => one.kind === "exclusivity");
+  assert.ok(hit, "同一 exclusivityId 的两条不同词条要提示");
+  assert.ok(hit.text.indexOf("100") !== -1 && hit.text.indexOf("未实测") !== -1);
+  const same = R.evaluateEntry(make(-52, 900), e, { column: "relic", explicit: true, label: "遗物 3：甲" });
+  assert.equal(R.configWarnings([a, same], [a, same]).some((one) => one.kind === "exclusivity"), false, "同一词条不算");
+  assert.equal(R.configWarnings([], []).length, 0);
+});
+
+test("briefNotes：说明区条数与叠层数字照数据现算，并点明「参数推断，未实测」", () => {
+  const notes = R.briefNotes(buffs, cfgIndex);
+  assert.ok(notes.length >= 8);
+  const all = notes.join("\n");
+  assert.equal(all.indexOf("{"), -1, "格式串都填满了");
+  const decreases = index.entries.filter((entry) => entry.countsAsDamage && entry.direction === "decrease").length;
+  assert.ok(all.indexOf("direction=decrease 的 " + decreases + " 条") !== -1, "减益条数照数据现算");
+  assert.ok(all.indexOf("7 组 28 条") !== -1, "多档词条的组数与条数照索引现算");
+  assert.ok(all.indexOf(String(cfgIndex.catalog.cursePoolId)) !== -1, "诅咒池 ID 取词条库现算的值");
+  // 「提升战技攻击力」的子类别从数据现算：改数据，说明跟着变。
+  assert.deepEqual(R.skillOnlySubCategories(buffs), ["112 战技攻击", "111 蓄力战技攻击"]);
+  assert.ok(all.indexOf("子类别 112 战技攻击／111 蓄力战技攻击") !== -1);
+  const edited = JSON.parse(JSON.stringify(buffs));
+  edited.buffs.forEach((buff) => {
+    const requires = buff.appliesToDetail && buff.appliesToDetail.skill && buff.appliesToDetail.skill.requires;
+    if (requires && Array.isArray(requires.subCategoriesAny) && requires.subCategoriesAny.indexOf(112) !== -1) {
+      requires.subCategoriesAny = [112];
+    }
+  });
+  assert.deepEqual(R.skillOnlySubCategories(edited), ["112 战技攻击"]);
+  assert.ok(all.indexOf("未实测") !== -1);
+  assert.ok(all.indexOf(String(buffs.slotRules.weaponAffix.maxDeepOnlyAffixes)) !== -1, "深夜专属上限取 slotRules");
+  assert.ok(all.indexOf(buffs.slotRules.weaponAffix.duplicateWithinWeapon.status) !== -1, "同一把武器两条正面词条能否重复：照数据写未知");
+  index.entries.filter((entry) => entry.stackInput).forEach((entry) => {
+    assert.ok(all.indexOf(entry.name) !== -1, entry.name + " 的叠层说明要出现在说明区");
+  });
+  assert.ok(all.indexOf("赐福") !== -1, "赐福王的余威的层数单位是新发现的赐福");
+});
+
+test("slotLabel：槽位中文名优先取 enums.sourceSlot", () => {
+  Object.keys(buffs.enums.sourceSlot).forEach((slot) => {
+    assert.equal(R.slotLabel(buffs, slot), buffs.enums.sourceSlot[slot].zh);
+  });
+  assert.equal(R.slotLabel({}, "weaponAffix"), R.TEXT.columns.weaponAffix);
+});
+
+test("格式化：没有构成时倍率显示成「—」", () => {
+  assert.equal(R.fmtMultiplier(null), "—");
+  assert.equal(R.fmtGain(null), "—");
+  assert.equal(R.fmtMultiplier(1.2), "×1.200");
+});
+
+// ------------------------------------------------------------------ 性能
+
+test("性能：索引只建一次，换构成后整套配置的评估与推荐填满都很快", () => {
+  const weapon = skills._weaponById[9040000];
+  const skill = skills._skillById[1177];
+  const hits = R.selectHits(skill, weapon).filter((hit) => !hit.noDamage && !hit.noFp);
   const started = Date.now();
-  for (let i = 0; i < 20; i += 1) {
+  let config = R.emptyConfig();
+  for (let i = 0; i < 10; i += 1) {
     const comp = R.composition(hits.slice(0, (i % hits.length) + 1), weapon, false);
-    R.rankEntries(index.entries, comp.shares, skillOptions);
+    const output = R.makeOutput({ mode: "skill", meansId: 1177, weapon, hand: 1, shares: comp.shares, contexts: {} }, buffs);
+    config = R.recommendFill(cfgIndex, output, R.emptyConfig(), Core, weapon.wepType).config;
+    R.evaluateConfig(cfgIndex, output, config, Core);
   }
   const elapsed = Date.now() - started;
-  assert.ok(elapsed < 50 * 20, "20 次全表重算用了 " + elapsed + "ms，太慢了");
-  assert.equal(index.entries.length, buffs.buffs.length, "索引应当覆盖全表");
-});
-
-// ------------------------------------------------ v4 / v5 字段与两端共用口径
-
-test("scopeVerdict：武器槽 0 / 3 不限，4（踢击）一律判为作用域不符", () => {
-  const unlimited = R.scopeInfo({ scope: {} });
-  assert.equal(unlimited.slot, 0);
-  assert.equal(R.scopeVerdict(unlimited, skillOptions).ok, true);
-
-  const onSelf = R.scopeInfo({ scope: { weaponSlot: 3 } });
-  assert.equal(R.scopeVerdict(onSelf, skillOptions).ok, true);
-  assert.equal(R.scopeVerdict(onSelf, { mode: "skill", hand: 2 }).ok, true);
-
-  const kick = R.scopeInfo({ scope: { weaponSlot: 4 } });
-  assert.equal(R.scopeVerdict(kick, skillOptions).ok, false, "踢击槽与武器／法术命中无关");
-  assert.equal(R.scopeVerdict(kick, { mode: "skill", hand: 2 }).ok, false);
-});
-
-test("scopeVerdict：法术也按当前手判定 scope.weaponSlot（施法器同样占左右手）", () => {
-  const leftHandSorcery = R.scopeInfo({ scope: { weaponSlot: 2, affectsSorcery: true } });
-  assert.equal(R.scopeVerdict(leftHandSorcery, { mode: "sorcery", hand: 1 }).ok, false);
-  assert.equal(R.scopeVerdict(leftHandSorcery, { mode: "sorcery", hand: 2 }).ok, true);
-});
-
-test("scope.spAttribute：默认不计入，打开开关后才进榜", () => {
-  const scoped = R.scopeInfo({ scope: { spAttribute: 11 } });
-  assert.equal(scoped.attributeScoped, true);
-  const blocked = R.scopeVerdict(scoped, skillOptions);
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.attribute, true, "要和普通的作用域不符区分开，UI 才能提示『打开开关后计入』");
-  assert.equal(
-    R.scopeVerdict(scoped, { mode: "skill", hand: 1, includeAttributeScoped: true }).ok,
-    true
-  );
-
-  // 数据集里确实有一批（油脂类全在这），否则这条判定就该删掉。
-  const real = index.entries.filter((entry) => entry.scope.attributeScoped && entry.countsAsDamage);
-  assert.ok(real.length > 0, "数据集里应当有 spAttribute 限定且带伤害字段的条目");
-});
-
-test("rankEntries：属性限定的条目单独计数，打开开关后条目只增不减", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-
-  const base = R.rankEntries(index.entries, comp.shares, skillOptions);
-  assert.ok(base.excluded.attribute > 0, "应当有条目因为属性限定被拦下");
-  base.rows.forEach((row) => {
-    assert.equal(row.entry.scope.attributeScoped, false, "默认榜单里不该有属性限定的条目");
-  });
-
-  const opened = R.rankEntries(index.entries, comp.shares, {
-    mode: "skill", hand: 1, includeAttributeScoped: true
-  });
-  assert.ok(opened.rows.length >= base.rows.length, "打开开关后条目不应变少");
-  assert.equal(opened.excluded.attribute, 0);
-});
-
-test("stackLadder：解出总层数与满层倍率，同一阶梯共用一个叠加组键", () => {
-  const ladders = index.entries.filter((entry) => entry.ladder);
-  assert.ok(ladders.length > 0, "数据集里应当有 stackLadder 条目");
-  assert.equal(
-    ladders.length,
-    (buffs.buffs || []).filter((buff) => buff.stackLadder).length,
-    "每条带 stackLadder 的 buff 都该解出来"
-  );
-
-  ladders.forEach((entry) => {
-    assert.ok(entry.ladder.tiers > 1, "叠层阶梯至少两层");
-    assert.ok(entry.ladder.key.indexOf("ladder#") === 0);
-    assert.ok(
-      entry.ladder.tierSpEffectIds.indexOf(entry.id) !== -1,
-      "阶梯键要把自己也算进去（tierSpEffectIds 是第 2 层起）"
-    );
-    assert.equal(
-      entry.ladder.tierSpEffectIds.length,
-      entry.ladder.tiers,
-      "并上自己之后应当正好是总层数"
-    );
-    // 满层数值必须 ≥ 第 1 层。
-    R.TYPE_KEYS.forEach((type) => {
-      assert.ok(entry.ladder.multiplier[type] >= entry.multiplier[type] - 1e-9);
-    });
-    assert.equal(R.stackKeyFor(entry), entry.ladder.key, "叠层条目的组键必须是阶梯键");
-  });
-
-  const plain = index.entries.find((entry) => !entry.ladder);
-  assert.equal(R.stackKeyFor(plain), plain.group, "非叠层条目仍用 stacking.group");
-});
-
-test("effectiveFor：「按满层计算」改用 topRates，默认口径不受影响", () => {
-  const entry = index.entries.find((one) => one.ladder);
-  const shares = {};
-  R.TYPE_KEYS.forEach((key) => { shares[key] = 0; });
-  shares.slash = 1;
-
-  const first = R.effectiveFor(entry, shares, false);
-  const top = R.effectiveFor(entry, shares, true);
-  assert.ok(top.multiplier > first.multiplier, "满层数值应当高于第 1 层");
-  assert.ok(Math.abs(first.multiplier - entry.multiplier.slash) < 1e-9);
-  assert.ok(Math.abs(top.multiplier - entry.ladder.multiplier.slash) < 1e-9);
-
-  // 非叠层条目不受开关影响。
-  const plain = index.entries.find((one) => !one.ladder && one.hasMultiplier);
-  assert.equal(
-    R.effectiveFor(plain, shares, true).multiplier,
-    R.effectiveFor(plain, shares, false).multiplier
-  );
-});
-
-test("rankEntries：ladderTop 开关只改叠层条目的倍率", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const options = { mode: "skill", hand: 1, includeConditional: true };
-  const base = R.rankEntries(index.entries, comp.shares, options);
-  const top = R.rankEntries(index.entries, comp.shares, Object.assign({ ladderTop: true }, options));
-
-  const baseById = {};
-  base.rows.forEach((row) => { baseById[row.id] = row; });
-  let changed = 0;
-  top.rows.forEach((row) => {
-    const before = baseById[row.id];
-    if (!before) return;
-    if (row.entry.ladder) {
-      if (row.multiplier > before.multiplier + 1e-9) changed += 1;
-    } else {
-      assert.ok(Math.abs(row.multiplier - before.multiplier) < 1e-9, "非叠层条目不该被开关影响");
-    }
-  });
-  assert.ok(changed > 0, "打开后至少有一条叠层条目的倍率变高");
-
-  // 无论开关怎么拨，同一阶梯都只按一层进组合。
-  base.rows.concat(top.rows).forEach((row) => {
-    if (!row.entry.ladder) return;
-    assert.equal(R.stackKeyFor(row.entry), row.entry.ladder.key);
-  });
-});
-
-test("selfInflictedStatus：解出 v5 的自伤标记，且它们一条都不进伤害乘积", () => {
-  const flagged = index.entries.filter((entry) => entry.selfInflictedStatus);
-  const raw = (buffs.buffs || []).filter((buff) => buff.selfInflictedStatus === true);
-  assert.equal(flagged.length, raw.length, "带 selfInflictedStatus 的条目都该解出来");
-  if (buffs.counts && typeof buffs.counts.buffsWithSelfInflictedStatus === "number") {
-    assert.equal(flagged.length, buffs.counts.buffsWithSelfInflictedStatus);
-  }
-  assert.ok(flagged.length > 0, "v5 数据里应当有自伤型异常累积行");
-
-  flagged.forEach((entry) => {
-    assert.equal(entry.buff.target, "self", "自伤标记只会出现在 target=self 上");
-    assert.equal(entry.hasMultiplier, false, "自伤行不该有伤害倍率");
-    assert.equal(entry.hasFlat, false, "自伤行的加算是 status 组，不进攻击力加算");
-    assert.equal(entry.countsAsDamage, false, "伤害榜一个数都不该被它们影响");
-    entry.otherRateKeys.forEach((key) => {
-      const field = index.plan.byKey[key];
-      if (field && field.group === "status") {
-        assert.equal(field.countsAsDamage, false);
-      }
-    });
-  });
-});
-
-test("multiplierMap：只收 countsAsDamage 的乘数字段，非默认值才乘", () => {
-  const plan = index.plan;
-  const table = R.multiplierMap({
-    physicsAttackRate: 1.1,
-    magicAttackRate: 1,            // 等于默认值 → 不乘
-    saAttackPowerRate: 2,          // 削韧 → 不乘
-    bloodAttackPower: 30,          // 异常累积 → 不乘
-    weakDmgRateB: 10,              // 特攻（conditionalDamage）→ 不乘
-    restageAttackRate: 0.6         // special → 不乘
-  }, plan, null);
-  R.TYPES_BY_ELEMENT.physical.forEach((type) => {
-    assert.ok(Math.abs(table[type] - 1.1) < 1e-9, type + " 应当吃到物理倍率");
-  });
-  assert.equal(table.magic, 1);
-  assert.equal(table.fire, 1);
-  assert.equal(table.holy, 1);
-
-  const used = [];
-  R.multiplierMap({ fireAttackRate: 1.25, physicsAttackRate: 0 }, plan, used);
-  assert.deepEqual(used.map((field) => field.key), ["fireAttackRate"], "0 不是合法乘数，必须跳过");
-});
-
-test("prefersRow：applyHighest 组按 categoryPriority 取数值小的那一份", () => {
-  const strong = {
-    id: 1, multiplier: 1.5,
-    entry: { buff: { stacking: { spCategoryBehavior: "applyHighest", categoryPriority: 9 } } }
-  };
-  const prior = {
-    id: 2, multiplier: 1.2,
-    entry: { buff: { stacking: { spCategoryBehavior: "applyHighest", categoryPriority: 1 } } }
-  };
-  assert.equal(R.prefersRow(prior, strong), true, "stackingRules 第 4 条：数值小的优先");
-  assert.equal(R.prefersRow(strong, prior), false);
-
-  // 不是 applyHighest 的组照旧按倍率高的留下。
-  const plainStrong = {
-    id: 3, multiplier: 1.5, entry: { buff: { stacking: { spCategoryBehavior: "none", categoryPriority: 9 } } }
-  };
-  const plainWeak = {
-    id: 4, multiplier: 1.2, entry: { buff: { stacking: { spCategoryBehavior: "none", categoryPriority: 1 } } }
-  };
-  assert.equal(R.prefersRow(plainStrong, plainWeak), true);
-  assert.equal(R.prefersRow(plainWeak, plainStrong), false);
-
-  // 倍率与优先度都一样时按 spEffectId 稳定取小的，保证两端结果可重复。
-  const a = { id: 5, multiplier: 1.3, entry: { buff: { stacking: { spCategoryBehavior: "none" } } } };
-  const b = { id: 6, multiplier: 1.3, entry: { buff: { stacking: { spCategoryBehavior: "none" } } } };
-  assert.equal(R.prefersRow(a, b), true);
-  assert.equal(R.prefersRow(b, a), false);
-});
-
-test("recommendCombo：同一叠层阶梯的两层永远只留一条", () => {
-  const ladder = { tiers: 10, saved: true, tierSpEffectIds: [101, 102], key: "ladder#101", multiplier: {} };
-  const shared = { group: "sp204", family: "[Relic] Ladder", ladder: ladder, buff: { stacking: {} } };
-  const rows = [
-    { id: 101, multiplier: 1.05, flat: 0, entry: Object.assign({}, shared) },
-    { id: 102, multiplier: 1.63, flat: 0, entry: Object.assign({}, shared) },
-    { id: 200, multiplier: 1.10, flat: 0, entry: { group: "sp10#200", family: "[Relic] Other", buff: { stacking: {} } } }
-  ];
-  const combo = R.recommendCombo(rows, false, false);
-  assert.equal(combo.picks.length, 2, "阶梯的两层必须并成一组");
-  assert.ok(Math.abs(combo.product - 1.63 * 1.1) < 1e-9, "阶梯组内取更高的那一层");
-});
-
-test("推荐组合不受搜索框与来源类型筛选影响（两端同一口径）", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const ranked = R.rankEntries(index.entries, comp.shares, skillOptions);
-
-  const all = R.recommendCombo(ranked.rows, true, false);
-  // 模拟「只看遗物词条」这一类视图筛选：组合仍按全部命中条目算。
-  const filtered = ranked.rows.filter((row) => row.entry.kinds.indexOf("relicAffix") !== -1);
-  assert.ok(filtered.length > 0 && filtered.length < ranked.rows.length, "筛选应当真的筛掉了一些");
-  const still = R.recommendCombo(ranked.rows, true, false);
-  assert.ok(Math.abs(all.product - still.product) < 1e-12, "视图筛选不参与组合计算");
-});
-
-test("默认排名口径：direction 只取 increase / mixed", () => {
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const ranked = R.rankEntries(index.entries, comp.shares, skillOptions);
-  ranked.rows.forEach((row) => {
-    assert.ok(
-      row.entry.direction === "increase" || row.entry.direction === "mixed",
-      "#" + row.id + " 的 direction=" + row.entry.direction + " 不该进榜"
-    );
-  });
-  const odd = R.candidateFilter(
-    { target: "self", direction: "unknown", countsAsDamage: true, activation: "passive", scope: R.scopeInfo({}) },
-    skillOptions
-  );
-  assert.equal(odd.ok, false);
-  assert.equal(odd.reason, "direction");
-});
-
-test("数据版本：本页按 buffs schemaVersion 5 的字段口径实现", () => {
-  assert.ok(buffs.schemaVersion >= 5, "当前数据集应当是 schemaVersion ≥ 5");
-  assert.ok(buffs.notes.stackLadder, "v5 起 notes.stackLadder 必须在（底部原文要展示它）");
-  assert.ok(buffs.notes.attackContext, "v4 起 notes.attackContext 必须在");
-  assert.equal(typeof buffs.counts.buffsWithSelfInflictedStatus, "number");
-  assert.equal(typeof buffs.counts.stateInfoLabels, "number");
-  assert.equal(
-    Object.keys(buffs.enums.stateInfo || {}).length,
-    buffs.counts.stateInfoLabels,
-    "enums.stateInfo 的条数应与 counts.stateInfoLabels 对得上"
-  );
-  // 43 条 target 改判 enemy 的累积行：一条都不该进伤害榜。
-  const enemyStatus = (buffs.buffs || []).filter((buff) => buff.target === "enemy");
-  assert.ok(enemyStatus.length > 0);
-  enemyStatus.forEach((buff) => {
-    const entry = index.entries.find((one) => one.id === buff.spEffectId);
-    assert.equal(
-      R.candidateFilter(entry, skillOptions).reason,
-      "target",
-      "#" + buff.spEffectId + " 是挂在敌人身上的，必须按 target 拦下"
-    );
-  });
-});
-
-// ============================================================ 两端口径对齐
-// 下面这一组断言全部是为了**钉住两端同一套口径**：目标白名单、计数点、chip 顺序、
-// 徽标与说明文案、可检索字段、组合的组数定义。macOS 端
-// macos/Sources/RelicCoreChecks/BuffRankerChecks.swift 的 checkTwoSidedParity
-// 有逐条对应的同名断言。
-
-test("两端对齐：target 用白名单（self 恒取 / ally 看开关 / 其余一律排除）", () => {
-  // 与 macOS 端 `["self","ally","summon","enemy"].contains($0.target)` 那条取值词表对应：
-  // 数据集当前只有这四种，但页面的判定必须是白名单——黑名单会在数据集加新取值时静默放行。
-  const known = ["self", "ally", "summon", "enemy"];
-  buffs.buffs.forEach((buff) => {
-    assert.ok(known.indexOf(buff.target) !== -1, "#" + buff.spEffectId + " 的 target 取值超出词表：" + buff.target);
-  });
-
-  const make = (target) => ({
-    target: target, direction: "increase", countsAsDamage: true,
-    activation: "passive", scope: R.scopeInfo({})
-  });
-  assert.equal(R.candidateFilter(make("self"), skillOptions).ok, true);
-  assert.equal(R.candidateFilter(make("ally"), skillOptions).reason, "ally");
-  assert.equal(
-    R.candidateFilter(make("ally"), { mode: "skill", hand: 1, includeAlly: true }).ok, true
-  );
-  ["summon", "enemy", "party", "", "unknown-future-value"].forEach((target) => {
-    assert.equal(
-      R.candidateFilter(make(target), skillOptions).reason, "target",
-      "target=" + target + " 不在白名单里，必须排除"
-    );
-  });
-});
-
-test("两端对齐：scope.atkAttribute 只作用于一个物理攻击类型（数据集 0 例，用合成用例覆盖）", () => {
-  // macOS 端 makeProfile 会把倍率限制到 SkillDamageChannel.physical(code:) 那一个通道，
-  // scopeVerdict 在当前构成该通道占比为 0 时返回「限定物理攻击类型」。两端必须同口径。
-  const dataHas = buffs.buffs.some((buff) => typeof (buff.scope || {}).atkAttribute === "number");
-  assert.equal(dataHas, false, "本版本数据集还没有 atkAttribute；出现后请把这条改成真实用例");
-
-  const info = R.scopeInfo({ scope: { atkAttribute: 0 } });   // 0 = 斩击
-  assert.equal(info.atkAttribute, 0);
-  assert.equal(info.restrictedType, "slash");
-
-  // 倍率只落在斩击那一格：physicsAttackRate 本来覆盖全部物理子类型。
-  const restricted = R.indexBuff({ spEffectId: -601, rates: { physicsAttackRate: 1.5 }, scope: { atkAttribute: 0 } }, plan);
-  assert.equal(restricted.multiplier.slash, 1.5);
-  ["blow", "thrust", "neutral", "physNone"].forEach((type) => {
-    assert.equal(restricted.multiplier[type], 1, type + " 不该吃到只限定斩击的倍率");
-  });
-  const unrestricted = R.indexBuff({ spEffectId: -602, rates: { physicsAttackRate: 1.5 } }, plan);
-  R.TYPES_BY_ELEMENT.physical.forEach((type) => {
-    assert.equal(unrestricted.multiplier[type], 1.5, "没有 atkAttribute 时物理各子类型都吃");
-  });
-
-  // 当前构成里这个通道占比为 0 → 作用域不符；有占比 → 照常计入；没有构成时不判。
-  const zero = R.TYPE_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {});
-  const thrustOnly = Object.assign({}, zero, { thrust: 1 });
-  const slashOnly = Object.assign({}, zero, { slash: 1 });
-  assert.equal(R.scopeVerdict(info, { mode: "skill", hand: 1, shares: slashOnly }).ok, true);
-  const missed = R.scopeVerdict(info, { mode: "skill", hand: 1, shares: thrustOnly });
-  assert.equal(missed.ok, false);
-  assert.equal(missed.reason, "限定物理攻击类型");
-  assert.equal(R.scopeVerdict(info, skillOptions).ok, true, "一段都没勾时不判这一关");
-
-  // 叠层阶梯的满层数值同样受限制。
-  const ladder = R.indexBuff({
-    spEffectId: -603,
-    rates: { physicsAttackRate: 1.2 },
-    scope: { atkAttribute: 1 },   // 1 = 打击
-    stackLadder: { tiers: 3, tierSpEffectIds: [-604], topRates: { physicsAttackRate: 2 }, saved: true }
-  }, plan);
-  assert.equal(ladder.ladder.multiplier.blow, 2);
-  assert.equal(ladder.ladder.multiplier.slash, 1);
-});
-
-test("两端对齐：推荐组合的「组数」＝取用条目数，纯加算行不占掉一个叠加组", () => {
-  const shares = R.TYPE_KEYS.reduce((acc, key) => { acc[key] = 0; return acc; }, {});
-  shares.slash = 1;
-  // 同一个叠加组里放两条：一条纯加算（倍率恒为 1、categoryPriority 更小），一条真增伤。
-  const group = { group: "sp1234", spCategory: 1234, spCategoryBehavior: "applyHighest", stateInfo: 0 };
-  const flatOnly = R.indexBuff({
-    spEffectId: 1, rates: { physicsAttackPower: 40 }, target: "self", activation: "passive",
-    direction: "increase", stacking: Object.assign({ categoryPriority: 0 }, group)
-  }, plan);
-  const real = R.indexBuff({
-    spEffectId: 2, rates: { physicsAttackRate: 1.3 }, target: "self", activation: "passive",
-    direction: "increase", stacking: Object.assign({ categoryPriority: 9 }, group)
-  }, plan);
-  const ranked = R.rankEntries([flatOnly, real], shares, skillOptions);
-  assert.equal(ranked.rows.length, 2, "两条都该进榜（纯加算行按 flat > 0 也算有用）");
-
-  const combo = R.recommendCombo(ranked.rows, true, false);
-  assert.equal(combo.picks.length, 1, "同组只取一条");
-  assert.equal(combo.groups, combo.picks.length, "「组数」必须等于取用条目数（与 macOS 端 groupCount 同一定义）");
-  assert.equal(combo.picks[0].row.id, 2, "纯加算行不得凭更小的 categoryPriority 赢下整组后被丢弃");
-  assert.ok(Math.abs(combo.product - 1.3) < 1e-12);
-
-  // 真实数据上：组数恒等于取用条目数，且入选条目一定真增伤。
-  const weapon = firstMixedWeapon();
-  const skill = skillOf(weapon);
-  const comp = R.composition(R.selectHits(skill, weapon).filter((hit) => !hit.noFp), weapon, false);
-  const realRanked = R.rankEntries(index.entries, comp.shares, skillOptions);
-  const realCombo = R.recommendCombo(realRanked.rows, true, false);
-  assert.equal(realCombo.groups, realCombo.picks.length);
-  realCombo.picks.forEach((pick) => assert.ok(pick.row.multiplier > 1));
-  // 并列倍率按 spEffectId 升序（与 macOS 端 stackPlan 的 picks 排序一致）。
-  for (let i = 1; i < realCombo.picks.length; i += 1) {
-    const prev = realCombo.picks[i - 1];
-    const cur = realCombo.picks[i];
-    if (prev.row.multiplier === cur.row.multiplier) {
-      assert.ok(prev.row.id < cur.row.id, "并列时应按 spEffectId 升序");
-    }
-  }
-});
-
-test("两端对齐：攻击情境 chip 按固定顺序，且只统计带伤害倍率字段的条目", () => {
-  const keys = index.contexts.map((item) => item.key);
-  const expected = keys.slice().sort((a, b) => {
-    let left = R.ATTACK_CONTEXT_ORDER.indexOf(a);
-    let right = R.ATTACK_CONTEXT_ORDER.indexOf(b);
-    if (left < 0) left = R.ATTACK_CONTEXT_ORDER.length;
-    if (right < 0) right = R.ATTACK_CONTEXT_ORDER.length;
-    return left !== right ? left - right : (a < b ? -1 : (a > b ? 1 : 0));
-  });
-  assert.deepEqual(keys, expected, "chip 顺序不得随数据计数重排");
-  index.contexts.forEach((item) => {
-    const counted = index.entries.filter((entry) => {
-      return entry.countsAsDamage && entry.scope.attackContexts.indexOf(item.key) !== -1;
-    }).length;
-    assert.equal(item.count, counted, item.key + " 的计数应只含带伤害倍率字段的条目");
-    // 数据集自带的 counts.buffsByAttackContext 统计的是**全部**条目，chip 只会更少。
-    assert.ok(item.count <= (buffs.counts.buffsByAttackContext || {})[item.key]);
-  });
-});
-
-test("两端对齐：「本页自己承担的判定」13 条与 macOS 端逐字同文，且条数照数据现算", () => {
-  const notes = R.pageRuleNotes(skills, buffs, index);
-  assert.equal(notes.length, 13);
-  notes.forEach((text) => assert.ok(text && text.length > 20));
-
-  // 锚点表：macOS 端 BuffRankerChecks 里有一份一模一样的。
-  const anchors = [
-    "weapons[].skillVariant → skills[].variants[i].atkIds",
-    "只有法术段忽略 motion",
-    "rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier",
-    "武器槽（scope.weaponSlot）",
-    "scope.spAttribute（只对带某种属性／异常的攻击生效",
-    "叠层阶梯（stackLadder，本版本",
-    "selfInflictedStatus（v5，本版本",
-    "本页额外做了三条数据集没有直接字段的判定",
-    "叠加分组只用数据集算好的 stacking.group",
-    "「推荐组合」用全部命中条目计算",
-    "攻击力加算（attackPowerFlat）是点数",
-    "输出手段列表只收「至少有一段能算出非 0 相对值」的战技与法术",
-    "只在特定攻击情境成立的倍率（scope.attackContexts"
-  ];
-  anchors.forEach((anchor, i) => {
-    assert.ok(notes[i].indexOf(anchor) !== -1, "第 " + (i + 1) + " 条应包含锚点「" + anchor + "」");
-  });
-
-  // 条数一律现算：把数字挖掉之后的正文在两端必须逐字节相同（FNV-1a 32 位）。
-  // 这个摘要与数据无关（数字全部归一成 #），数据集改数值不会弄红它；
-  // 两端任何一句措辞漂移都会立刻分叉。macOS 端断言同一个值。
-  const normalized = notes.join("\n").replace(/[0-9]+/g, "#");
-  let hash = 0x811c9dc5 >>> 0;
-  for (const byte of Buffer.from(normalized, "utf8")) {
-    hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
-  }
-  assert.equal(hash.toString(16).padStart(8, "0"), "333839f9", "两端 13 条说明的正文必须逐字相同");
-
-  // 真的照数据现算，不是写死的数字。
-  const attributeScoped = buffs.buffs.filter((buff) => typeof (buff.scope || {}).spAttribute === "number").length;
-  const melee = index.entries.filter((entry) => entry.scope.meleeOnly).length;
-  const without = R.meansWithoutDamage(skills);
-  assert.ok(notes[4].indexOf("本版本 " + attributeScoped + " 条") !== -1);
-  assert.ok(notes[7].indexOf("等 " + melee + " 条") !== -1);
-  assert.ok(notes[11].indexOf("（" + without.skills + " 条）") !== -1);
-  assert.ok(notes[11].indexOf("（" + without.spells + " 条）") !== -1);
-  assert.ok(without.skills > 0 && without.spells > 0, "确实有一批输出手段被挡在列表外");
-});
-
-test("两端对齐：可检索字段取并集（描述 / 来源类型 / spEffectId 都搜得到）", () => {
-  const withDesc = buffs.buffs.find((buff) => (buff.descZh || "").length > 6);
-  assert.ok(withDesc, "数据集里应当有带 descZh 的条目");
-  const entry = index.entries.find((one) => one.id === withDesc.spEffectId);
-  assert.ok(entry.searchText.indexOf(withDesc.descZh.slice(0, 6).toLowerCase()) !== -1, "descZh 里的词应当搜得到");
-  assert.ok(entry.searchText.indexOf(String(withDesc.spEffectId)) !== -1, "spEffectId 应当搜得到");
-  assert.ok(
-    entry.searchText.indexOf(R.sourceKindLabel(entry.kinds[0]).toLowerCase()) !== -1,
-    "来源类型的中文标签应当搜得到"
-  );
-
-  const many = buffs.buffs.find((buff) => (buff.sources || []).length > 6);
-  if (many) {
-    const row = index.entries.find((one) => one.id === many.spEffectId);
-    const last = many.sources[many.sources.length - 1];
-    const name = (last.nameZh || last.nameEn || "").toLowerCase();
-    if (name) assert.ok(row.searchText.indexOf(name) !== -1, "来源超过 6 个时后面的也要搜得到");
-  }
+  assert.ok(elapsed < 3000, "10 次「推荐填满 + 评估」用了 " + elapsed + "ms，太慢了");
 });
