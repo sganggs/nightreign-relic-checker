@@ -65,14 +65,28 @@ go-winres make --arch 386,amd64
 node --test tests/*.test.mjs
 ```
 
-当前覆盖 `tests/` 下八个文件：`core_audit`（存档审计规则，用例取自仓库根
-`testdata/`，与 macOS 端对拍）、`save_report` / `save_diff`（报告导出与存档对比，
-口径与 macOS 端 `SaveReport.swift` / `SaveCompare.swift` 逐行一致）、
-`bosses` / `heroes` / `lookup_index` / `ranker` / `ranker_crosscheck`（四个新页面的纯逻辑层，
-以及增伤排名与 macOS 端的对照用例）。`heroes.test.mjs` 覆盖角色属性页的逐级插值、
-转职遗物叠加与钳位、利普拉的交易与同级对比，并与 macOS 端 `HeroStatsChecks.swift`
-共用一组对照用例。两端的数据契约断言要一起改：`bosses.test.mjs` 钉着
-`bossesSchemaVersion` 与收录统计（夜王 18 · 守夜 50 · 野外 72 · 数值行 394），
+当前覆盖 `tests/` 下十一个文件：
+
+- 存档页：`core_audit`（存档审计规则，用例取自仓库根 `testdata/`，与 macOS 端对拍）、
+  `save_report` / `save_diff`（报告导出与存档对比，口径与 macOS 端 `SaveReport.swift` /
+  `SaveCompare.swift` 逐行一致）；
+- 首领数据：`bosses`（数值口径、代表行与收录统计）、`bosses_roles`（按出场场合分组的专项：
+  默认六组与两个默认隐藏的分组、多重归属、代表行按分组过滤、逐行场合与出处）、
+  `bosses_parity`（直接读仓库内 macOS 的 `BossData.swift` 与 `BossDataChecks.swift`，
+  文案表逐项比对、macOS 自检钉住的对照表逐条拿来跑本端实现）；
+- 角色属性：`heroes`（逐级插值、转职遗物叠加与钳位、利普拉的交易与同级对比，与 macOS 端
+  `HeroStatsChecks.swift` 共用一组对照用例）；
+- 词条反查：`lookup_index`；
+- 增伤排名：`ranker`（纯计算层单元测试）、`ranker_config`（「自己组一套配置」的整套口径：
+  槽位与深夜专属上限、互斥键去重、遗物合法性与深夜诅咒配对、appliesTo 分流、叠层换算、
+  汇总连乘、按推荐填满不越界）、`ranker_crosscheck`（与 macOS 端
+  `BuffRankerChecks.swift` 的 `checkLoadoutParity` 同一组输入、同一套断言口径，含三组固定
+  配置对照与文案表摘要）。
+
+两端的数据契约断言要一起改：`bosses.test.mjs` / `bosses_roles.test.mjs` 钉着
+`bossesSchemaVersion` 4 与收录统计（夜王 18 · 守夜首领 40 · 据点首领 51 · 场景头目 35 ·
+封印监牢 10 · 其它场合 45 · 随从/召唤物 11 · 未放置 93，含 49 组同时属于多个分组 ·
+数值行 394），`ranker.test.mjs` 要求 buffs `schemaVersion` ≥ 6、skills `schemaVersion` 2，
 重新生成数据集时必须同步。
 
 存档解析器（Go 子包，无平台约束）：
@@ -109,7 +123,7 @@ zsh scripts/sync-data.sh
 
 `resources/bosses.json`、`skills.json`、`buffs.json`、`heroes.json` 的生成管线在
 [`../macos/DataSources/`](../macos/DataSources/PROVENANCE.md)（`dump_regulation.py` /
-`extract_msg.py` / `generate_*.py`，需要本机游戏本体；Oodle 解压器的构建与调用
+`extract_msg.py` / `extract_msb.py`（首领出场场合用的地图敌人放置）/ `generate_*.py`，需要本机游戏本体；Oodle 解压器的构建与调用
 见 [`../macos/DataSources/tools/oodledec/README.md`](../macos/DataSources/tools/oodledec/README.md)）。
 数据集的来源、字段映射与已知局限见同目录的 `PROVENANCE.md`。
 
@@ -137,7 +151,11 @@ zsh scripts/sync-data.sh
   整体排在「存档检查」之后、「数据设置」之前）各自的
   `<key>.js` 与 `<key>.css`。**页面模块契约见 [`renderer/pages/README.md`](renderer/pages/README.md)**：
   注册方式、`ctx` 的内容、`ctx.getGameData` 的语义、样式与 CSP 约束都在那里，
-  功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。
+  功能开发只改这两个文件，不必动 `index.html` / `app.js` / `main.go`。其中「首领数据」按出场场合分组
+  （`bossesSchemaVersion` 4 的 `roles`），规则与文案表照抄 macOS 端 `RelicCore/BossData.swift`；
+  「增伤排名」是「自己组一套局内配置」（常规 / 深夜、局内武器词条、遗物、护符、其它增益、汇总），
+  口径与 macOS 端 `RelicCore/BuffLoadout.swift` 相同，配置部分的文案集中在 `ranker.js` 的 `TEXT`
+  常量表，与 macOS 端 `LoadoutText.table` 按点号路径逐键同文。
 - `resources/affixes.json`、`relics.json`、`bosses.json`、`skills.json`、
   `buffs.json`、`heroes.json`、`build/icon.ico` — 内置词条库、遗物物品表与四套游戏数据集
   （全部由 `go:embed` 内嵌，经 `window.nightreign.loadGameData(name)` 桥交给渲染层）

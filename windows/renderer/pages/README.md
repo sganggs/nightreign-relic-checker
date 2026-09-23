@@ -86,7 +86,8 @@ ctx.getGameData("bosses").then(function (data) {
   由另一条数据流水线生成，换版本或重新生成期间随时可能缺位。
 - bosses / heroes / skills / buffs 四份数据现已全部就位（regulation 1.03.5 导出，当前
   `bossesSchemaVersion` 4 / heroes `schemaVersion` 1 / skills `schemaVersion` 2 /
-  buffs `schemaVersion` 5——这四个数字在页面与测试里是写死的，重新生成数据集时要连同
+  buffs `schemaVersion` 6——这四个数字在页面与测试里是写死的（增伤排名页与 `ranker.test.mjs`
+  要求 buffs ≥ 6，旧数据缺配置页要用的字段时页面会提示结果不可信），重新生成数据集时要连同
   `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
   [`macos/DataSources/PROVENANCE.md`](../../../macos/DataSources/PROVENANCE.md)
   和 JSON 自带的 `notes` / `usage` / `caveats` / `fieldNotes` 为准**，页面不要另立说法，
@@ -132,6 +133,25 @@ ctx.getGameData("bosses").then(function (data) {
   底部隐藏说明）来跑本页实现，一项都不跳过；分组专项在 `tests/bosses_roles.test.mjs`。
   改分组规则或文案必须两端一起改。
 
+### ranker（增伤排名）页的配置口径
+
+- 页面是「自己组一套局内配置」：输出手段（战技 + 武器，或法术；分段勾选与伤害构成沿用旧版算法）→
+  常规 / 深夜开关（buffs 的 `slotRules.modes`：常规每把武器 1 条局内词条、3 件遗物；深夜诅咒武器每把
+  2 条正面词条且深夜专属正面每把 ≤ 1 条、3 普通 + 3 深夜遗物）→ 局内武器词条栏（`weaponAffixes`，
+  数量步进，按当前武器 / 施法器的类别过滤）→ 遗物栏（`fixedRelics` 整件，或自组 ≤ 3 条：普通遗物走
+  `Core.check("currentNormal")`，深夜遗物走 `Core.check("deepPositive")` + 诅咒逐行配对，需诅咒的词条
+  自动配诅咒）→ 护符栏（2 槽）→ 其它增益栏（按 `sourceSlot` 分道具 / 增益法术 / 战技自增益 / 武器固有 /
+  角色 / 永久强化 / 局内叠层 / 其它）→ 汇总（总倍率、各栏小计、槽位用量、「按推荐填满」）。
+- 生效判定一律用 `buffs[].appliesTo[输出类别]`（战技 → `skill`，魔法 → `sorcery`，祷告 → `incantation`），
+  `conditional` 按 `appliesToDetail.<类别>.requires` 逐项判定；不生效项默认隐藏，「显示不生效项」
+  打开后虚化并写明原因。去重按 `stacking.exclusiveKey`（同键只留一份、不同键相乘），同一 spEffectId
+  多份时只有 `stackSelf`（且按 ID 互斥）的按份数相乘、其余只算一份；`affixVariant` 的 4 档只算选中的一档；叠层按 `stackInput` 手填层数。
+  这些叠加取舍都是参数推断、未实测，页面在对应位置标注。
+- 口径正文写在 `ranker.js` 的顶部注释，与 macOS 端 `macos/Sources/RelicCore/BuffLoadout.swift` 顶部注释是同一套口径。
+  配置部分的文案全部在 `ranker.js` 的 `TEXT` 常量表，与 macOS 的 `LoadoutText.table` 按点号路径逐键同文，
+  两端测试校验同一个摘要；整套配置口径的测试在 `tests/ranker_config.test.mjs`，与 macOS 自检
+  `checkLoadoutParity` 对拍的三组固定配置在 `tests/ranker_crosscheck.test.mjs`。改口径或文案必须两端一起改。
+
 ## 4. 样式约定
 
 - 共用外壳类写在 `styles.css`，可直接用：`.page-content`（页面宽度与留白）、
@@ -156,9 +176,10 @@ ctx.getGameData("bosses").then(function (data) {
 - 需要新的测试钩子时，沿用 `data-testid="<key>-xxx"` 命名。
 - 纯计算层建议写成既能被浏览器加载、又能被 node `require` 的模块（顶层不碰
   `document` / `window`，渲染部分放进 `install(root)` 之后再执行，见 `lookup.js`），
-  这样可以直接用 `node --test tests/*.test.mjs` 覆盖，不必起浏览器。当前
-  `tests/bosses.test.mjs`、`tests/heroes.test.mjs`、`tests/lookup_index.test.mjs`、
-  `tests/ranker.test.mjs`（外加与 macOS 对拍的 `tests/ranker_crosscheck.test.mjs`）
-  就是这四页的纯逻辑测试；改页面时请一并更新，整套测试的条数只增不减。
+  这样可以直接用 `node --test tests/*.test.mjs` 覆盖，不必起浏览器。当前这四页的纯逻辑测试是：
+  首领数据 `tests/bosses.test.mjs`、`tests/bosses_roles.test.mjs`、`tests/bosses_parity.test.mjs`
+  （后者直接读仓库内的 macOS 源码对照）；角色属性 `tests/heroes.test.mjs`；词条反查
+  `tests/lookup_index.test.mjs`；增伤排名 `tests/ranker.test.mjs`、`tests/ranker_config.test.mjs`、
+  `tests/ranker_crosscheck.test.mjs`（与 macOS 对拍）。改页面时请一并更新，整套测试的条数只增不减。
 - 新增数据文件（除上面四个以外）需要同时改 `main.go` 的 `go:embed` 与
   `scripts/sync-data.sh`，请先与维护者确认。
