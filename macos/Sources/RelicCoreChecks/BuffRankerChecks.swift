@@ -471,7 +471,7 @@ private func pageNotesDigest(_ notes: [String]) -> String {
 // MARK: - 合成算例：分段伤害换算
 
 private func checkDamageMath(counter count: inout Int) throws {
-    // 武器：物理 100 / 火 50，斩击（atkAttribute=0），削韧基础 10、耐力基础 20。
+    // 武器：物理 100 / 火 50，斩击（atkAttribute=0），削韧基础 10、精力伤害基础 20。
     let weapon = SkillWeapon(
         id: 1, nameZh: "测试武器", nameEn: "Test", wepTypeZh: "刀", wepTypeEn: "Katana",
         attackBase: [.physical: 100, .fire: 50], staminaBase: 20, poiseDamageBase: 10,
@@ -503,8 +503,8 @@ private func checkDamageMath(counter count: inout Int) throws {
     )
     // 削韧 = poise + poiseDamageBase × poiseMv/100 = 0 + 10 × 1.5
     try rankerExpectClose(segments[0].poise, 15, "削韧应为 poise + 武器 poiseDamageBase × poiseMv/100", counter: &count)
-    // 耐力 = stamina + staminaBase × staminaMv/100 = 0 + 20 × 0.5
-    try rankerExpectClose(segments[0].stamina, 10, "耐力削减应为 stamina + 武器 staminaBase × staminaMv/100", counter: &count)
+    // 削精力 = stamina + staminaBase × staminaMv/100 = 0 + 20 × 0.5
+    try rankerExpectClose(segments[0].stamina, 10, "削精力应为 stamina + 武器 staminaBase × staminaMv/100", counter: &count)
 
     // 第二段：attribute=WeaponAtkAttribute2 → 武器的 atkAttribute2（突刺）。
     try rankerExpect(
@@ -2577,7 +2577,7 @@ private func checkCrossPlatformCases(
         )
         try rankerExpect(
             bullet.segments.contains { $0.noDamage },
-            "对照：喷火里应有 noDamage 段（耐力消耗），用来验证它不进构成",
+            "对照：喷火里应有 noDamage 段（精力消耗），用来验证它不进构成",
             counter: &count
         )
     }

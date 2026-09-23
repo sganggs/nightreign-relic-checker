@@ -564,7 +564,7 @@ test("真实数据：法术的构成只由固定值决定，不会凭空多出�
   assert.equal(physical, 0, "辉石杖的 attackBase 只有 physical，乘上去会凭空造出物理伤害");
 });
 
-test("削韧 / 耐力：poise + 武器基础 × mv / 100", () => {
+test("削韧 / 削精力：poise + 武器基础 × mv / 100", () => {
   const weapon = { poiseDamageBase: 10, staminaBase: 40 };
   assert.equal(R.hitPoise({ poise: 5, poiseMv: 200 }, weapon), 25);
   assert.equal(R.hitStamina({ stamina: 2, staminaMv: 50 }, weapon), 22);

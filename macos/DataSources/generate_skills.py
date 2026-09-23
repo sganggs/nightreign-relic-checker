@@ -289,7 +289,7 @@ LABEL_WORDS = {
     "Launching": "起跳",
     "Attempt": "尝试",
     "Hold": "保持",
-    "Stamina": "耐力",
+    "Stamina": "精力",
     "Cost": "消耗",
     "Middle": "中段",
     "Midleft": "中左",
@@ -635,7 +635,7 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
               ctx_kind: str = "", aec_ids: frozenset[str] = frozenset(),
               aec_dangling: Counter | None = None) -> dict | None:
     """把一行 AtkParam_Pc 变成一个 hit。
-    全零（无伤害、无削韧、无耐力）的行：若只是子弹链/锚点顺带捞到的辅助行（Blank、
+    全零（无伤害、无削韧、无精力削减）的行：若只是子弹链/锚点顺带捞到的辅助行（Blank、
     No Target、Spell Helper 之类）就丢弃；若是行名直接点名的攻击行（source 含 n），
     则保留——那是该战技确实存在但只挂异常状态 / 减益的一段。"""
     motion = {el: to_num(atk_row.get(MV_FIELDS[el], "0")) for el in ELEMENTS}
@@ -1411,7 +1411,7 @@ def main() -> None:
             "poise": "poise = atkSuperArmor（固定削韧值）；poiseMv = atkSuperArmorCorrection"
                      "（百分比，乘武器 poiseDamageBase = saWeaponDamage）。"
                      "玩家武器攻击基本只用 poiseMv，子弹 / 法术多用 poise。",
-            "stamina": "stamina = atkStam（固定耐力削减）；staminaMv = atkStamCorrection"
+            "stamina": "stamina = atkStam（固定精力削减，即对格挡中敌人精力条的伤害）；staminaMv = atkStamCorrection"
                        "（百分比，乘武器 attackBaseStamina）。",
             "小数": "poise / poiseMv / weapons.poiseDamageBase 在参数表里就是浮点"
                   "（如 5.5、10.175、262.5），这里原样保留；其余数值字段都是整数。",
@@ -1511,14 +1511,14 @@ def main() -> None:
                         "而法术本身不吃物理。法术段请只用 flat[el]（如 4021 帚星 flat.magic=285）"
                         "做属性配比与相对排名；motion 只在施法器该属性 attackBase 非 0 时才有意义。",
             "削韧": "单段削韧 = poise + 武器 poiseDamageBase × poiseMv / 100。"
-                  "单段耐力削减 = stamina + 武器 staminaBase × staminaMv / 100。",
+                  "单段精力削减（对格挡中敌人的精力条，与玩家自身精力无关）= stamina + 武器 staminaBase × staminaMv / 100。",
             "本数据集的边界": "没有收录 ReinforceParamWeapon（强化倍率，武器 reinforceTypeId 指向）与 "
                         "AttackElementCorrectParam（能力值补正曲线，武器 attackElementCorrectId / "
                         "段 overrideAecId 指向），也没有 CalcCorrectGraph。"
                         "因此**绝对伤害数值无法由本数据集还原**；它支持的是："
                         "(a) 同一把武器上不同战技 / 不同段的相对比较，"
                         "(b) 按伤害类型加权的属性配比排名，"
-                        "(c) 削韧 / 耐力的绝对值（这两项不走上面那几张表）。"
+                        "(c) 削韧 / 精力削减的绝对值（这两项不走上面那几张表）。"
                         "要算绝对值，请由调用方提供游戏内显示的最终分属性攻击力。",
         },
         "caveats": [

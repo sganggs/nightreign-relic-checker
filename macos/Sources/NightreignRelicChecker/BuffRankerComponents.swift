@@ -295,7 +295,9 @@ struct RankerSegmentRow: View {
 
                     HStack(spacing: 12) {
                         metric("削韧", BuffFormat.trim(segment.poise, digits: 1))
-                        metric("耐力", BuffFormat.trim(segment.stamina, digits: 1))
+                            .help("对敌人韧性（削韧槽）的削减量")
+                        metric("削精力", BuffFormat.trim(segment.stamina, digits: 1))
+                            .help("对格挡中敌人精力条的削减量（武器基础精力伤害 × 动作值），与角色自己的精力无关")
                         // 物理这一项也按「真正有贡献」显示：法术段的 physicalChannel 来自
                         // 占位写法的 motion，不该在没有物理芯片时还挂一个物理类型。
                         if let channel = segment.physicalChannel,

@@ -308,7 +308,7 @@
     return num(hit.poise) + (base * num(hit.poiseMv)) / 100;
   }
 
-  // 单段耐力削减 = stamina + 武器 staminaBase × staminaMv / 100。
+  // 单段削精力（对格挡敌人精力条的削减）= stamina + 武器 staminaBase × staminaMv / 100。
   function hitStamina(hit, weapon) {
     if (!hit) return 0;
     var base = num(weapon && weapon.staminaBase);
@@ -1452,8 +1452,8 @@
         "<span class='ranker-hit-name'>" + esc(zhFpText(hit.labelZh) || hit.label || ("段 " + hit.atkId)) +
         "<span class='ranker-hit-id'>#" + hit.atkId + "</span></span>" +
         "<span class='ranker-hit-damage'>" + hitDamageHtml(hit, weapon, isSpell) + "</span>" +
-        "<span class='ranker-hit-poise'>削韧 " + fmtNumber(hitPoise(hit, weapon), 1) +
-        " · 耐力 " + fmtNumber(hitStamina(hit, weapon), 1) + "</span>" +
+        "<span class='ranker-hit-poise' title='削韧：对敌人韧性（削韧槽）的削减量；削精力：对格挡中敌人精力条的削减量（武器基础精力伤害 × 动作值），与角色自己的精力无关'>削韧 " + fmtNumber(hitPoise(hit, weapon), 1) +
+        " · 削精力 " + fmtNumber(hitStamina(hit, weapon), 1) + "</span>" +
         "<span class='ranker-hit-marks'>" + marks.join("") + "</span></label>";
     }).join("");
 

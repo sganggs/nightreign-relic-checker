@@ -600,7 +600,7 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
     public let components: [SkillSegmentComponent]
     /// 单段削韧 = poise + 武器 poiseDamageBase × poiseMv / 100。
     public let poise: Double
-    /// 单段耐力削减 = stamina + 武器 staminaBase × staminaMv / 100。
+    /// 单段削精力（对格挡敌人精力条的削减）= stamina + 武器 staminaBase × staminaMv / 100。
     public let stamina: Double
     public let isBullet: Bool
     public let noFp: Bool

@@ -281,7 +281,7 @@ test("对照：带子弹的战技，子弹段照常按 攻击力 × motion/100 +
     return TYPE_KEYS.some((key) => one[key] > 0);
   });
   assert.ok(damaging.length > 0, "战技的子弹段不得被整段归零");
-  assert.ok(run.hits.some((hit) => hit.noDamage === true), "喷火里应有 noDamage 段（耐力消耗）");
+  assert.ok(run.hits.some((hit) => hit.noDamage === true), "喷火里应有 noDamage 段（精力消耗）");
   assert.ok(
     run.selected.every((hit) => hit.noDamage !== true),
     "noDamage 段不该进构成"
