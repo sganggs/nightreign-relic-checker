@@ -125,10 +125,11 @@ internal fun SettingsScreen(
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NightPill("离线", NightColors.Green, dot = true)
-                    Text("本地完成，不读取存档", fontWeight = FontWeight.SemiBold)
+                    Text("本地完成，存档只读", fontWeight = FontWeight.SemiBold)
                 }
                 Text(
-                    "应用未声明 INTERNET 权限，不收集或上传数据。内置词条库、搜索、随机和判定都只在设备上运行。",
+                    "应用未声明 INTERNET 权限，不收集或上传数据。搜索、判定、数值换算与存档解析都只在设备上运行；" +
+                        "存档检查只读取你选中的那一个文件，不申请存储权限。",
                     style = MaterialTheme.typography.bodySmall,
                     color = NightColors.TextSecondary,
                 )
@@ -157,7 +158,9 @@ internal fun SettingsScreen(
             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("夜幕验物 · Android", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "与 Windows、macOS 版共享同一份权威词条数据和核心判定口径。Android 版目前专注三词条手动验物，尚未移植 .sl2 / .co2 存档解析。",
+                    "与 Windows、macOS 版共享同一份权威数据和核心判定口径。首领数据、角色属性、增伤排名的数值来自游戏参数表 1.03.5，" +
+                        "不是游戏内实测；词条反查与存档检查使用内置词条库与遗物物品表（v1.03.4）。" +
+                        "存档检查通过系统文件选择器只读打开 .sl2 / .co2，在本机解析，不上传、不修改存档。",
                     style = MaterialTheme.typography.bodySmall,
                     color = NightColors.TextSecondary,
                 )

@@ -4,7 +4,7 @@
 
 > 本工具为非官方社区工具，与 FromSoftware、Bandai Namco Entertainment 及原参考网站无关；游戏名称与游戏内文本的权利归其各自权利方所有。
 
-当前版本：**v0.3.0**（桌面双端新增「首领数据」「角色属性」「词条反查」「增伤排名」四页，存档检查新增自动查找、拖拽打开、导出报告与存档对比；首领数据改为按出场场合分组，增伤排名改为「自己组一套局内配置、看总增伤」）。Android 手机版本轮**没有新功能**，仍是 v0.2.1。
+当前版本：**v0.3.0**（桌面双端新增「首领数据」「角色属性」「词条反查」「增伤排名」四页，存档检查新增自动查找、拖拽打开、导出报告与存档对比；首领数据改为按出场场合分组，增伤排名改为「自己组一套局内配置、看总增伤」）。Android 手机版同步到 v0.3.0：新增词条反查、首领数据、角色属性、增伤排名、存档检查五页，数据与判定口径同桌面端（手机版的取舍见 [`android/README.md`](android/README.md)）。
 
 ## 下载
 
@@ -14,11 +14,11 @@
 | --- | --- |
 | `NightreignRelicChecker-Windows-x64-v0.3.0.exe` | **Windows 版**。约 11 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
 | `NightreignRelicChecker-macOS-Universal-v0.3.0.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行），约 7.5 MB。 |
-| `NightreignRelicChecker-Android-v0.2.1.apk` | Android 8.0+ 手机版：三词条手动检查与词条库（暂无存档检查），自签名安装包。**v0.3.0 未更新手机版**，此附件仍是 v0.2.1，桌面端本轮新增的四页与存档检查增强都不在其中。 |
+| `NightreignRelicChecker-Android-v0.3.0.apk` | **Android 版**。Android 8.0+，约 10 MB，自签名安装包，与 v0.2.1 同一签名密钥，可直接覆盖安装。三词条检查、词条反查、词条库，以及「数据」页里的首领数据、角色属性、增伤排名与存档检查；存档经系统文件选择器只读打开（手机上没有自动查找与拖拽），增伤排名暂无「全部增益一览」。 |
 
 （GitHub Release 附件名不支持中文，故采用英文文件名。）
 
-体积变大的主因是内置了四套新的游戏数据集（约 6.3 MB 未压缩 JSON），不是代码膨胀。
+桌面双端体积变大的主因是内置了四套新的游戏数据集（约 6.3 MB 未压缩 JSON），不是代码膨胀；Android APK 里这些 JSON 压缩后不到 1 MB，手机版的体积增长主要来自五个新页面的代码。
 
 自定义词条库保存位置：Windows 为 `%LOCALAPPDATA%\NightreignRelicChecker\affixes.json`，macOS 为 `~/Library/Application Support/NightreignRelicChecker/affixes.json`。
 
@@ -51,7 +51,7 @@
 - **自动查找存档**：直接扫描系统默认存档目录，列出找到的存档供选择，不必手动翻目录。Windows 扫 `%APPDATA%\Nightreign\<SteamID>\`；macOS 上游戏跑在 CrossOver / Wine 里，扫的是 `~/Library/Application Support/CrossOver/Bottles/<bottle>/drive_c/users/<用户名>/AppData/Roaming/Nightreign/<SteamID>/`（结果按 bottle 名与账户名标注），不在 CrossOver bottle 里的存档仍需手动选择或拖入。
 - **拖拽打开**：把 `.sl2` / `.co2` 拖到本页任意位置即可解析。
 - **导出报告**：把当前检查结果导出为可留档的文本报告或 CSV（文件名形如 `夜幕验物-存档报告-<存档名>-<时间戳>`）。
-- **存档对比**：与另一份存档逐件对比，列出新增、消失与被改动的遗物，便于确认某次改动到底动了什么。
+- **存档对比**：与另一份存档逐件对比，按角色槽位列出新增与减少的遗物（词条被改动的遗物记为一减一增），便于确认某次改动到底动了什么。
 - 另外，遗物卡片上带说明的词条名后面会出现 ⓘ，可展开该条词条的完整说明（与词条库页同一份文案）。
 
 逐件校验的具体项目见下面的[存档检查的校验项](#存档检查的校验项)。
@@ -111,7 +111,7 @@
 | [`windows/`](windows/) | Windows 版：Go + WebView2 壳，对应 Windows EXE；四个新页面在 [`windows/renderer/pages/`](windows/renderer/pages/README.md) |
 | [`macos/`](macos/) | macOS 版：Swift / SwiftUI（`RelicCore` 纯逻辑 + `NightreignRelicChecker` 界面 + `RelicCoreChecks` 自检） |
 | [`macos/DataSources/`](macos/DataSources/PROVENANCE.md) | 数据导出与生成管线：`dump_regulation.py`（regulation.bin → 每表一个 CSV）、`extract_msg.py`（游戏归档 → 每个 FMG 一个 JSON）、`extract_msb.py`（游戏归档 → 地图 MSB 的敌人放置，首领数据按出场场合分组的依据）、`tools/oodledec`（借游戏自带 Oodle DLL 解 KRAK 压缩）、六个 `generate_*.py`（含角色属性的 `generate_heroes.py`）；**需要本机已安装的游戏本体与 CrossOver / Wine**，产物 `raw/` 不入库。来源、字段映射与已知局限见 `PROVENANCE.md` |
-| [`android/`](android/) | Android 手机版：Kotlin / Jetpack Compose / Material 3；手动验物、词条库与离线说明。**v0.3.0 未更新**，仍是 v0.2.1 |
+| [`android/`](android/) | Android 手机版：Kotlin / Jetpack Compose / Material 3，`:rules` / `:catalog` / `:gamedata` / `:app` 四模块；三词条检查、词条库，以及移植自桌面端的词条反查、首领数据、角色属性、增伤排名、存档检查五页（纯逻辑在 `:gamedata`，移植约定见 [`android/PAGES.md`](android/PAGES.md)）。直接读根 `data/`，不经 `sync-data.sh` |
 | [`data/`](data/) | 各端共用的权威数据集：词条库 `nightreign-affixes-v1.03.4.json`、遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用）、首领数据 `nightreign-bosses-v1.03.5.json`（`bossesSchemaVersion` 4）、战技/法术/武器 `nightreign-skills-v1.03.5.json`（`schemaVersion` 2）、增伤手段 `nightreign-buffs-v1.03.5.json`（`schemaVersion` 6）、角色属性 `nightreign-heroes-v1.03.5.json`（`schemaVersion` 1） |
 | [`scripts/`](scripts/) | 跨端脚本；[`sync-data.sh`](scripts/sync-data.sh) 把 `data/` 下的权威 JSON 同步到两端的内置资源目录 |
 | [`testdata/`](testdata/) | 两端校验器共用的对拍用例 |
@@ -134,9 +134,9 @@ bosses、skills、buffs、heroes 六项）。源文件不存在时跳过并提�
 
 - **Windows 版**（Go 1.25+，纯 Go 构建）：`go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe`
 - **macOS 版**（macOS 13+，Swift）：`swift build && swift run RelicCoreChecks && zsh Scripts/build_app.sh`（`swift build` 不能省——应用资源包没构建过时，`GameDataLoader 能定位已构建的资源包` 那一组会跳过，自检总数少 4 项；顺序见 [`macos/README.md`](macos/README.md)）
-- **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`
+- **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`（四个模块共 449 个 JVM 测试；发布包用 `assembleRelease` 后以 `zipalign` + `apksigner` 签名，见 [`android/README.md`](android/README.md)）
 
-Android 版专注手机化的三词条检查与词条库，尚未移植桌面端 `.sl2/.co2` 存档解析，也没有本轮新增的四页；详细边界见 [`android/README.md`](android/README.md)。
+Android 版除三词条检查与词条库外，已移植词条反查、首领数据、角色属性、增伤排名与存档检查：内置数据与桌面端同一份，纯逻辑在 `:gamedata` 里逐条移植桌面端并用同一批对拍用例测试。手机上的取舍：存档只能经系统文件选择器只读打开（没有自动查找与拖拽），报告用「保存到文件」或分享导出；增伤排名暂无「全部增益一览」；设置页不能导入 / 导出自定义词条库；首领数据与增伤排名首次进入要在后台解析 1.5–3 MB 的 JSON，之后进程内缓存。详细边界见 [`android/README.md`](android/README.md)。
 
 ## 判定规则
 
