@@ -273,7 +273,7 @@ VARIANT_ZH = {
     "Sundered": "分离体", "Sword Sundered": "断剑分离体", "Dual Swords": "双剑",
     "Demon from Below": "洞底恶魔", "Demon in Pain": "负伤恶魔",
     "Straghess": "史柴格斯阵营", "Glaive": "剑刃戟", "Flail": "连枷",
-    # 黑夜入侵者对应的夜行者职业
+    # 黑夜入侵者对应的渡夜者职业
     "Wylder": "追踪者", "Guardian": "守护者", "Ironeye": "铁之眼", "Duchess": "女爵",
     "Raider": "无赖", "Revenant": "复仇者", "Recluse": "隐士", "Executor": "执行者",
     "Scholar": "学者", "Undertaker": "送葬者", "Priestess": "女巫",

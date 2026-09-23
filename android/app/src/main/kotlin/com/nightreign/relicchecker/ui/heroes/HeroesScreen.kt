@@ -36,7 +36,7 @@ import com.nightreign.relicchecker.ui.gamedata.rememberGameData
 import com.nightreign.relicchecker.ui.theme.NightColors
 
 /**
- * 角色属性（数据 → 角色属性）：10 位夜行者 1–15 级的八项属性与派生值，可叠加转职遗物与利普拉的交易，
+ * 角色属性（数据 → 角色属性）：10 位渡夜者 1–15 级的八项属性与派生值，可叠加转职遗物与利普拉的交易，
  * 另有「同级对比」横向表。所有换算都在 :gamedata 的 heroes 包（与 macOS RelicCore/HeroData.swift
  * 逐条对应、JVM 测试钉死），本文件只负责页面状态与布局。
  *

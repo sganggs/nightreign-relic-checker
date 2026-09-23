@@ -253,7 +253,7 @@ internal fun HeroPickerSection(heroes: List<HeroEntry>, selectedKey: String, onS
     val selectedIndex = heroes.indexOfFirst { it.key == selectedKey }.coerceAtLeast(0)
     val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (selectedIndex - 1).coerceAtLeast(0))
     Column(modifier = SectionPadding, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        SectionLabel("选择夜行者", "共 ${heroes.size} 位")
+        SectionLabel("选择渡夜者", "共 ${heroes.size} 位")
         LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(heroes, key = { _, hero -> hero.key }) { _, hero ->
                 HeroChip(hero, hero.key == selectedKey) { onSelect(hero.key) }
@@ -779,7 +779,7 @@ internal fun CompareHeader(level: Int, count: Int) {
     Column(modifier = Modifier.padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("同级对比（$level 级）", style = MaterialTheme.typography.titleMedium, color = NightColors.TextPrimary)
         Text(
-            "$count 位夜行者的 8 项属性与派生值；点列头排序，每列最高值标绿；点一行查看该角色",
+            "$count 位渡夜者的 8 项属性与派生值；点列头排序，每列最高值标绿；点一行查看该角色",
             style = MaterialTheme.typography.bodySmall,
             color = NightColors.TextMuted,
         )

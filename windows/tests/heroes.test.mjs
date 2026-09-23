@@ -764,7 +764,7 @@ test("双端共用文案 COPY：逐字钉死（macOS 端 HeroStatsCopy 有同一
   assert.equal(H.COPY.caveatsTitle(13), "已知取舍（13 条）");
   assert.equal(H.COPY.sourcesTitle(10), "数据出处（10 条）与外部对照");
   assert.deepEqual(H.COPY.versionLabels, ["游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"]);
-  assert.equal(H.COPY.contentSummary(10, 15, 20, 5), "10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易");
+  assert.equal(H.COPY.contentSummary(10, 15, 20, 5), "10 位渡夜者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易");
 });
 
 test("数据版本块：5 行标签与「收录」口径按数据集实算", () => {
@@ -773,7 +773,7 @@ test("数据版本块：5 行标签与「收录」口径按数据集实算", () 
   assert.equal(rows[0].value, data.gameVersion);
   assert.equal(rows[1].value, data.dataVersion);
   assert.equal(rows[3].value, "schemaVersion 1");
-  assert.equal(rows[4].value, "10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易");
+  assert.equal(rows[4].value, "10 位渡夜者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易");
   // 缺字段时给破折号，不要写「未知」/ 0
   const bare = H.versionRows({ heroes: [], statModifiers: [], libraRespecs: [] });
   assert.equal(bare[0].value, "—");

@@ -243,5 +243,5 @@ object HeroStatsCopy {
     val versionLabels: List<String> = listOf("游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录")
 
     fun contentSummary(heroes: Int, maxLevel: Int, modifiers: Int, libra: Int): String =
-        "$heroes 位夜行者 × $maxLevel 级 · $modifiers 条转职遗物词条 · $libra 笔利普拉交易"
+        "$heroes 位渡夜者 × $maxLevel 级 · $modifiers 条转职遗物词条 · $libra 笔利普拉交易"
 }

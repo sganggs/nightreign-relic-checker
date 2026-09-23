@@ -240,7 +240,7 @@ CTX_ALIAS_ZH = {
     "scythe": ("Scythe", "镰"),
 }
 
-# "[AoW - X]" 带连字符的形式全部是夜行者（角色）名，共 10 个，只用在 1200 风暴管束者上。
+# "[AoW - X]" 带连字符的形式全部是渡夜者（角色）名，共 10 个，只用在 1200 风暴管束者上。
 CHR_CTX_ZH = {"default": "默认角色"}
 
 # BehaviorParam_PC 唯一无法区分的战技：103 回旋斩的 4 套动作（无 ctx / Large Weapon /
@@ -1438,7 +1438,7 @@ def main() -> None:
             "ctx": "该段命中来自哪一套动作，取自 Paramdex 行名方括号里 \"AoW\" 之后的部分；"
                    "缺失表示方括号里只有 \"AoW\"（不分武器的默认套）。ctxKind 说明它是什么："
                    "weapon=具体武器名（如 \"Rivers of Blood\"）、category=武器类别或动作组名"
-                   "（如 \"Axe\"、\"Large Weapon\"）、chr=夜行者角色名（行名写作 \"[AoW - Duchess]\"）。"
+                   "（如 \"Axe\"、\"Large Weapon\"）、chr=渡夜者角色名（行名写作 \"[AoW - Duchess]\"）。"
                    "ctxZh 是中文，与 ctx 相同时省略。"
                    "**ctx 只用来显示，不要拿它做过滤**：同一招的默认套与各动作组套是互斥变体，"
                    "按「ctx == 武器名 or ctx == 类别名 or ctx 缺失」取并集会把两套一起算进去；"
@@ -1565,7 +1565,7 @@ def main() -> None:
             "ctxKind": {
                 "weapon": "具体武器名（ctx 与某把武器的 nameEn 相同）",
                 "category": "武器类别名（WEP_TYPE 枚举名）或 Paramdex 的动作组别名",
-                "chr": "夜行者角色名，行名写作 \"[AoW - Duchess]\" 这种带连字符的形式",
+                "chr": "渡夜者角色名，行名写作 \"[AoW - Duchess]\" 这种带连字符的形式",
             },
             "ctxAlias": {
                 en: {"zh": zh,

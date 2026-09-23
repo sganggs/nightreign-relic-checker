@@ -205,7 +205,7 @@ class HeroStatsIndex(val dataset: HeroDataset) {
         return HeroStatsCopy.crossCheckNote(check.mismatchCount, check.note)
     }
 
-    val summary: String get() = "${dataset.heroes.size} 位夜行者 · 1–$maxLevel 级"
+    val summary: String get() = "${dataset.heroes.size} 位渡夜者 · 1–$maxLevel 级"
 
     /** 基础属性表：选了利普拉的交易就整套换成对应的表（heroStatusId 替换）。 */
     fun baseLevels(heroKey: String, libraKey: String?): List<HeroLevelRow> =

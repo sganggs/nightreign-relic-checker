@@ -17,7 +17,7 @@ object GameDataFiles {
     /** 增伤手段：局内武器词条、固定遗物、护符与其它增益。 */
     const val BUFFS = "nightreign-buffs-v1.03.5.json"
 
-    /** 角色属性：10 个夜行者 1–15 级属性、转职遗物与利普拉的交易。 */
+    /** 角色属性：10 个渡夜者 1–15 级属性、转职遗物与利普拉的交易。 */
     const val HEROES = "nightreign-heroes-v1.03.5.json"
 
     /** 遗物物品表：词条反查与存档检查用的遗物、槽池与额外词条。 */

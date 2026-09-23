@@ -87,7 +87,7 @@ private func checkHeroDataset(_ index: HeroStatsIndex) throws -> Int {
     )
     try heroExpect(!dataset.caveats.isEmpty, "caveats 不应为空（页面底部要展示）", counter: &count)
     try heroExpect(!dataset.sources.isEmpty, "sources 不应为空", counter: &count)
-    try heroExpect(dataset.heroes.count == 10, "应有 10 位夜行者，实际 \(dataset.heroes.count)", counter: &count)
+    try heroExpect(dataset.heroes.count == 10, "应有 10 位渡夜者，实际 \(dataset.heroes.count)", counter: &count)
     try heroExpect(dataset.statModifiers.count == 20, "应有 20 条转职遗物词条，实际 \(dataset.statModifiers.count)", counter: &count)
     try heroExpect(dataset.libraRespecs.count == 5, "利普拉的交易应有 5 套，实际 \(dataset.libraRespecs.count)", counter: &count)
     try heroExpect(index.maxLevel == 15, "最大等级应为 15，实际 \(index.maxLevel)", counter: &count)
@@ -910,7 +910,7 @@ private func checkHeroText(_ index: HeroStatsIndex) throws -> Int {
     try heroExpect(HeroStatsText.derivedText(72, integer: false) == "72.0", "负重上限固定 1 位小数（整数值）", counter: &count)
     try heroExpect(HeroStatsText.derivedText(1120, integer: true) == "1120", "整数派生值不带小数点", counter: &count)
 
-    try heroExpect(index.summary.contains("10 位夜行者"), "页面摘要应写角色数，实际 \(index.summary)", counter: &count)
+    try heroExpect(index.summary.contains("10 位渡夜者"), "页面摘要应写角色数，实际 \(index.summary)", counter: &count)
     try heroExpect(index.summary.contains("1–15 级"), "页面摘要应写等级范围，实际 \(index.summary)", counter: &count)
 
     return count
@@ -1369,7 +1369,7 @@ private func checkHeroCrossEndCopy(_ index: HeroStatsIndex) throws -> Int {
                    "数据版本块的 5 行标签", counter: &count)
     try heroExpect(
         HeroStatsCopy.contentSummary(heroes: 10, maxLevel: 15, modifiers: 20, libra: 5)
-            == "10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易",
+            == "10 位渡夜者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易",
         "数据版本块的「收录」", counter: &count
     )
 
@@ -1488,7 +1488,7 @@ private func checkHeroCrossEndParity(_ index: HeroStatsIndex) throws -> Int {
     )
     try heroExpect(
         HeroStatsCopy.contentSummary(heroes: 1, maxLevel: big.maxLevel, modifiers: 0, libra: 0)
-            == "1 位夜行者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易",
+            == "1 位渡夜者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易",
         "版本块的「收录」同样是 20 级", counter: &count
     )
     // 没声明 maxLevel 时退回各角色 levels 的最大等级（Windows 端 maxLevelOf 同一条兜底）

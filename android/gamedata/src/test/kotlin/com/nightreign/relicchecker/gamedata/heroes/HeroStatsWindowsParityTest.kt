@@ -409,7 +409,7 @@ class HeroStatsWindowsParityTest {
         assertEquals(index.dataset.dataVersion, rows[1].second)
         assertEquals(index.dataset.generatedAt, rows[2].second)
         assertEquals("schemaVersion 1", rows[3].second)
-        assertEquals("10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易", rows[4].second)
+        assertEquals("10 位渡夜者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易", rows[4].second)
         val bare = HeroDataset().versionRows(15)
         assertEquals("—", bare[0].second)
         assertEquals("—", bare[2].second)

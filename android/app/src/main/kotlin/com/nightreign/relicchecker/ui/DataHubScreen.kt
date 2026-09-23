@@ -71,7 +71,7 @@ internal enum class DataPage(
     HEROES(
         title = "角色属性",
         eyebrow = "HERO STATS",
-        summary = "10 个夜行者 1–15 级的八项属性与血量、专注值、精力等派生值；可叠加转职遗物与利普拉的交易。",
+        summary = "10 个渡夜者 1–15 级的八项属性与血量、专注值、精力等派生值；可叠加转职遗物与利普拉的交易。",
         provenance = "来自游戏参数表 1.03.5 · 锚点等级间逐级插值",
         section = DataSection.PARAMS,
     ),

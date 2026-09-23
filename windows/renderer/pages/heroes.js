@@ -198,7 +198,7 @@
     sourcesTitle: function (count) { return "数据出处（" + count + " 条）与外部对照"; },
     versionLabels: ["游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"],
     contentSummary: function (heroes, maxLevel, modifiers, libra) {
-      return heroes + " 位夜行者 × " + maxLevel + " 级 · " +
+      return heroes + " 位渡夜者 × " + maxLevel + " 级 · " +
         modifiers + " 条转职遗物词条 · " + libra + " 笔利普拉交易";
     }
   };
@@ -762,7 +762,7 @@
   function titleBlock() {
     return "<header class='title-block page-title'>" +
       "<div class='logo-mark logo-mark--medium' aria-hidden='true'><i></i><i></i><i></i><span>✓</span></div>" +
-      "<div><h1>角色属性</h1><p>《黑夜君临》各夜行者逐等级属性，以及装备转职遗物后的属性</p></div>" +
+      "<div><h1>角色属性</h1><p>《黑夜君临》各渡夜者逐等级属性，以及装备转职遗物后的属性</p></div>" +
       "</header>";
   }
 
@@ -1142,7 +1142,7 @@
     return "<section class='card heroes-card' data-testid='heroes-compare'>" +
       "<div class='section-heading'><div class='section-icon'>◫</div>" +
       "<div><h2>同级对比（" + state.level + " 级）</h2>" +
-      "<p>" + rows.length + " 个夜行者在同一等级下的属性与派生值，点列头排序</p></div></div>" +
+      "<p>" + rows.length + " 个渡夜者在同一等级下的属性与派生值，点列头排序</p></div></div>" +
       "<div class='table-wrap heroes-table-wrap'>" +
       "<table class='heroes-table heroes-compare-table' data-testid='heroes-compare-table'>" +
       "<thead>" + head + "</thead><tbody>" + body + "</tbody></table></div>" +

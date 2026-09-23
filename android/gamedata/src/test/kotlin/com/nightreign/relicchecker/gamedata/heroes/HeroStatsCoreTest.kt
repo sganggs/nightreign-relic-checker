@@ -32,7 +32,7 @@ class HeroStatsCoreTest {
         assertEquals(20, index.dataset.statModifiers.size)
         assertEquals(5, index.libraRespecs.size)
         assertEquals(15, index.maxLevel)
-        assertEquals("10 位夜行者 · 1–15 级", index.summary)
+        assertEquals("10 位渡夜者 · 1–15 级", index.summary)
     }
 
     @Test
@@ -560,7 +560,7 @@ class HeroStatsCoreTest {
         assertEquals("72.0", HeroStatsText.derivedText(72.0, false))
         assertEquals("1120", HeroStatsText.derivedText(1120.0, true))
 
-        assertTrue(index.summary.contains("10 位夜行者"))
+        assertTrue(index.summary.contains("10 位渡夜者"))
         assertTrue(index.summary.contains("1–15 级"))
     }
 

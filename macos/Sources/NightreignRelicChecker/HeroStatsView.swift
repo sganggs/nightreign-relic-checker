@@ -1,7 +1,7 @@
 import SwiftUI
 import RelicCore
 
-/// 角色属性页：10 位夜行者 1–15 级的属性、派生值，以及装备转职遗物 /
+/// 角色属性页：10 位渡夜者 1–15 级的属性、派生值，以及装备转职遗物 /
 /// 做了利普拉的交易之后的属性。
 ///
 /// 由「角色属性」功能开发者独占：只改本文件与 HeroStats*.swift、RelicCore 的
@@ -69,7 +69,7 @@ struct HeroStatsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("角色属性")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
-                    Text("《黑夜君临》各夜行者逐等级属性，以及装备转职遗物后的属性")
+                    Text("《黑夜君临》各渡夜者逐等级属性，以及装备转职遗物后的属性")
                         .font(.caption)
                         .foregroundStyle(AppTheme.secondaryText)
                 }
@@ -207,7 +207,7 @@ struct HeroStatsView: View {
     private func heroPickerCard(_ index: HeroStatsIndex) -> some View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeading(
-                title: "选择夜行者",
+                title: "选择渡夜者",
                 subtitle: "共 \(index.heroes.count) 位，属性表取自 HeroStatusParam"
                     + "（\(anchorText(index)) 级为参数原值）",
                 symbol: "person.2"
@@ -481,7 +481,7 @@ struct HeroStatsView: View {
         return VStack(alignment: .leading, spacing: 13) {
             SectionHeading(
                 title: "同级对比（\(level) 级）",
-                subtitle: "\(rows.count) 位夜行者的 8 项属性与派生值；点列头排序，每列最高值标绿",
+                subtitle: "\(rows.count) 位渡夜者的 8 项属性与派生值；点列头排序，每列最高值标绿",
                 symbol: "arrow.up.arrow.down.square"
             )
             if rows.isEmpty {
@@ -629,7 +629,7 @@ struct HeroStatsView: View {
         guard case .ready(let index) = state else { return "完全离线，数值取自游戏参数表" }
         switch tab {
         case .compare:
-            return "同级对比 · \(index.comparisonRows(level: level).count) 位夜行者 · \(level) 级"
+            return "同级对比 · \(index.comparisonRows(level: level).count) 位渡夜者 · \(level) 级"
         case .single:
             let hero = index.hero(heroKey)?.display ?? "—"
             let levelText = showAllLevels ? "1–\(index.maxLevel) 级" : "\(level) 级"

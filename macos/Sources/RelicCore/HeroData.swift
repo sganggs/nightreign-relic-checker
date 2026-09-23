@@ -470,7 +470,7 @@ public struct HeroLevelRow: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
-/// 一位夜行者。
+/// 一位渡夜者。
 public struct HeroEntry: Codable, Sendable, Hashable, Identifiable {
     public let id: Int
     public let key: String
@@ -1090,7 +1090,7 @@ public struct HeroStatsIndex: Sendable {
     }
 
     public var summary: String {
-        "\(dataset.heroes.count) 位夜行者 · 1–\(maxLevel) 级"
+        "\(dataset.heroes.count) 位渡夜者 · 1–\(maxLevel) 级"
     }
 
     /// 基础属性表：选了利普拉的交易就整套换成对应的表（heroStatusId 替换）。
@@ -1422,7 +1422,7 @@ public enum HeroStatsCopy {
     public static func sourcesTitle(_ count: Int) -> String { "数据出处（\(count) 条）与外部对照" }
     public static let versionLabels = ["游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"]
     public static func contentSummary(heroes: Int, maxLevel: Int, modifiers: Int, libra: Int) -> String {
-        "\(heroes) 位夜行者 × \(maxLevel) 级 · \(modifiers) 条转职遗物词条 · \(libra) 笔利普拉交易"
+        "\(heroes) 位渡夜者 × \(maxLevel) 级 · \(modifiers) 条转职遗物词条 · \(libra) 笔利普拉交易"
     }
     public static let emptyData = "数据未内置"
 }

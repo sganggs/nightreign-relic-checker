@@ -305,7 +305,7 @@ let slot0Plain = characterPlaintext(
             curses: [0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF]
         )
     ],
-    name: "夜行者甲"
+    name: "渡夜者甲"
 )
 let slot1Plain = characterPlaintext(
     records: [
@@ -316,7 +316,7 @@ let slot1Plain = characterPlaintext(
             curses: [0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF]
         )
     ],
-    name: "夜行者乙"
+    name: "渡夜者乙"
 )
 let stubPlain = sealPlaintext([UInt8](repeating: 0, count: 4))
 var fixtureEntries: [[UInt8]] = [slot0Plain, slot1Plain]
@@ -329,8 +329,8 @@ try expect(parsed.fileName == "NR0000.sl2", "解析结果应保留文件名")
 try expect(parsed.checksumOk, "合成存档全部条目校验和应通过")
 try expect(parsed.characters.count == 2, "占用标志应筛出两个角色")
 try expect(parsed.characters.map(\.slot) == [0, 1], "角色槽位应为 0 与 1")
-try expect(parsed.characters[0].name == "夜行者甲", "角色 0 名字应按 UTF-16LE 读取")
-try expect(parsed.characters[1].name == "夜行者乙", "角色 1 名字应按 UTF-16LE 读取")
+try expect(parsed.characters[0].name == "渡夜者甲", "角色 0 名字应按 UTF-16LE 读取")
+try expect(parsed.characters[1].name == "渡夜者乙", "角色 1 名字应按 UTF-16LE 读取")
 try expect(parsed.characters.allSatisfy { $0.parseError == nil }, "合成存档不应产生槽位解析错误")
 try expect(parsed.characters[0].relics.count == 2, "角色 0 应解析出两件遗物（穿插武器/防具/空槽）")
 let fixtureRelic0 = parsed.characters[0].relics[0]

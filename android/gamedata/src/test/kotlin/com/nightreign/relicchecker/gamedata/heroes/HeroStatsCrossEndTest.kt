@@ -245,7 +245,7 @@ class HeroStatsCrossEndTest {
         assertEquals("数据出处（10 条）与外部对照", HeroStatsCopy.sourcesTitle(10))
         assertEquals("数据出处（10 条）与外部对照", HeroStatsCopy.sourcesTitle(index.dataset.sources.size))
         assertEquals(listOf("游戏版本", "数据版本", "生成时间", "数据集结构版本", "收录"), HeroStatsCopy.versionLabels)
-        assertEquals("10 位夜行者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易", HeroStatsCopy.contentSummary(10, 15, 20, 5))
+        assertEquals("10 位渡夜者 × 15 级 · 20 条转职遗物词条 · 5 笔利普拉交易", HeroStatsCopy.contentSummary(10, 15, 20, 5))
 
         val row12 = assertNotNull(index.modifier(6_640_000).level(12))
         assertEquals("生命力 -5、集中力 +10", HeroStatsCopy.deltaSummary(row12.delta, names))
@@ -313,8 +313,8 @@ class HeroStatsCrossEndTest {
             "1–20 级里有 1 级叠加后不足 1：20 级 灵巧；已钳到最低 1（游戏里属性不会低于 1）",
             HeroStatsCopy.clampSummaryByLevel(listOf(HeroClampedLevel(20, listOf("灵巧"))), big.maxLevel),
         )
-        assertEquals("1 位夜行者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易", HeroStatsCopy.contentSummary(1, big.maxLevel, 0, 0))
-        assertEquals("1 位夜行者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易", big.versionRows()[4].second)
+        assertEquals("1 位渡夜者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易", HeroStatsCopy.contentSummary(1, big.maxLevel, 0, 0))
+        assertEquals("1 位渡夜者 × 20 级 · 0 条转职遗物词条 · 0 笔利普拉交易", big.versionRows()[4].second)
         val undeclared = HeroesParser.parse(levelsDataset(levels = 20, declaredMaxLevel = null))
         assertEquals(0, undeclared.dataset.interpolation.maxLevel, "没声明时不该假装声明了 15")
         assertEquals(20, undeclared.maxLevel)

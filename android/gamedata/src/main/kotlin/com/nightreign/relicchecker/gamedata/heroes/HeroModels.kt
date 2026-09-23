@@ -96,7 +96,7 @@ data class HeroLevelRow(
     val derived: Map<String, Double> = emptyMap(),
 )
 
-/** 一位夜行者。 */
+/** 一位渡夜者。 */
 data class HeroEntry(
     val id: Int,
     val key: String,

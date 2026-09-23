@@ -465,7 +465,7 @@ self_check 新增：stateInfo 枚举与观测值双向相等；selfInflictedStat
 **产物** `data/nightreign-heroes-v1.03.5.json` → `scripts/sync-data.sh` 同步到 `windows/resources/heroes.json` 与 `macos/Sources/NightreignRelicChecker/Resources/heroes.json`（三份字节一致，sha256 `1640d3cb6f2f0eb8844bd44697ac6c2a507bf9c99195cd17f1e1d1fb37d4b0d1`）
 
 **一次来源（游戏本体，regulation 10350000 / exe 1.3.3.0，v1.03.5 + DLC1）**
-- `raw/params/HeroParam.csv` —— 10 个夜行者，`characterNameId` → CL_MenuText 288050+
+- `raw/params/HeroParam.csv` —— 10 个渡夜者，`characterNameId` → CL_MenuText 288050+
 - `raw/params/HeroStatusParam.csv` —— 基础锚点表（10000+，每人 Level 1/2/12/15）、利普拉整套替换表（210000–250003）、转职遗物增减量行（300000–309101，每条只有 L1/L12）
 - `raw/params/AttachEffectParam.csv` —— 6640000–6647500 共 20 条转职遗物词条（`attachTextId`、`allow<角色>` 位、`passiveSpEffectId_1`）
 - `raw/params/AttachEffectTableParam.csv` —— 随机池 → 词条的权重表（`chanceWeight` 基础权重 / `chanceWeight_dlc` DLC 权重，−1 = 不覆盖）
