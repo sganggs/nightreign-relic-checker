@@ -15,12 +15,14 @@ import androidx.compose.ui.platform.LocalContext
 import com.nightreign.relicchecker.gamedata.GameDataFormatException
 import com.nightreign.relicchecker.gamedata.GameDataHeader
 import com.nightreign.relicchecker.gamedata.GameDataKey
+import java.io.FileNotFoundException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.serialization.SerializationException
 
 /** 某个数据集在页面上的加载状态。 */
 @Stable
@@ -66,7 +68,7 @@ class GameDataLoadException(val key: GameDataKey, cause: Throwable) : RuntimeExc
  * - 原始 JSON 文本不缓存，只缓存解析结果（buffs 约 3 MB，文本常驻不划算）；
  * - 解析在进程级作用域的 [Dispatchers.IO] 上进行：页面在解析中途离开组合，结果也会落进缓存，
  *   同一键的并发请求共享同一次解析；
- * - 失败也缓存（asset 缺失或格式错误是确定性的，重试没有意义），页面显示失败原因。
+ * - 确定性的失败（asset 缺失或格式错误）也缓存，页面显示失败原因；内存不足、临时 IO 错误之类不缓存，下次重试。
  */
 internal object GameDataRepository {
     private const val LOG_TAG = "GameData"
@@ -96,10 +98,21 @@ internal object GameDataRepository {
                 }.recoverCatching { error -> throw GameDataLoadException(key, error) }
                 // 解析耗时：adb logcat -s GameData 查看，调 DTO 时用来对比
                 Log.i(LOG_TAG, "$id ${if (result.isSuccess) "ok" else "failed"} in ${SystemClock.elapsedRealtime() - started} ms")
-                completed[id] = result
+                if (result.isSuccess || isDeterministicFailure(result.exceptionOrNull())) {
+                    completed[id] = result
+                } else {
+                    // 内存不足、临时 IO 错误之类下次可能成功：不缓存，让下一次 rememberGameData 重试
+                    inFlight.remove(id)
+                }
                 result
             }
         }
+    }
+
+    /** asset 缺失或格式错误是确定性的，重试没有意义；其它异常（OOM、临时 IO 错误）不缓存。 */
+    private fun isDeterministicFailure(error: Throwable?): Boolean {
+        val cause = (error as? GameDataLoadException)?.cause ?: error
+        return cause is GameDataFormatException || cause is SerializationException || cause is FileNotFoundException
     }
 
     /** 非 Composable 场景（例如一次性合并多个数据集）用的挂起版本。 */

@@ -166,21 +166,29 @@ internal fun NightBackButton(
     modifier: Modifier = Modifier,
     label: String = "返回",
 ) {
+    // 点击区 48dp（触控最小尺寸），圆形底只画 38dp，顶栏高度不变
     Box(
         modifier = modifier
-            .size(38.dp)
+            .size(48.dp)
             .clip(CircleShape)
-            .background(NightColors.FieldSoft)
-            .border(1.dp, NightColors.BorderStrong, CircleShape)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(NightColors.FieldSoft)
+                .border(1.dp, NightColors.BorderStrong, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
         Canvas(modifier = Modifier.size(15.dp)) {
             val width = 2.dp.toPx()
             val tip = Offset(size.width * .3f, size.height * .5f)
             drawLine(NightColors.TextPrimary, Offset(size.width * .68f, size.height * .1f), tip, width, StrokeCap.Round)
             drawLine(NightColors.TextPrimary, tip, Offset(size.width * .68f, size.height * .9f), width, StrokeCap.Round)
+        }
         }
     }
 }

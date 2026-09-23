@@ -61,7 +61,7 @@ internal fun XxxScreen(
     catalog: AffixCatalog,       // 已加载的词条库（527 条），直接用，不要再读一次 JSON
     settings: UserSettings,      // 用户设置（只读）：defaultMode / autoInspect / selectorShowUnavailable / libraryCompact
     onBack: (() -> Unit)?,       // 词条反查为 null；四个子页非空，传给 GameDataScreenScaffold 即可
-    modifier: Modifier = Modifier, // 已含状态栏与底栏的 Scaffold 内边距，必须加在页面根节点上
+    modifier: Modifier = Modifier, // 必须加在页面根节点上；词条反查收到的是含底栏内边距的 Modifier，四个子页收到的是空 Modifier（内边距已在外层加过）
 )
 ```
 

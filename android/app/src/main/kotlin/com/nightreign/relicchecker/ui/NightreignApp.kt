@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import com.nightreign.relicchecker.ui.gamedata.GameDataLayout
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -113,6 +115,10 @@ private fun AppScaffold(
             animationSpec = tween(180),
             label = "root-destination",
         ) { current ->
+            // 五个目的地共用同一条内容列：平板 / 横屏时最大 720dp 居中，新旧页面宽度一致
+            // （数据页外壳与枢纽页内部也各自限宽，嵌套限宽结果相同）。
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(modifier = Modifier.widthIn(max = GameDataLayout.MaxContentWidth).fillMaxSize()) {
             stateHolder.SaveableStateProvider(current.name) {
                 when (current) {
                     AppDestination.CHECKER -> CheckerScreen(
@@ -155,6 +161,8 @@ private fun AppScaffold(
                         },
                         modifier = Modifier.padding(padding),
                     )
+                }
+            }
                 }
             }
         }
