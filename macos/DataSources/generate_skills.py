@@ -41,21 +41,61 @@
                          behaviorJudgeId ∈ [900,950) 的行是「该武器专属战技」的攻击槽
                          （refType 0=攻击 / 1=子弹）；
                      (2) **动作套归属**：行 ID = base + variationId*1000 + behaviorJudgeId。
-                         同一个 (base, judge) 上，variationId = 武器 behaviorVariationId 的行
-                         优先，没有才落到 variationId = 0 的通用行——游戏就是这样挑动作的。
+                         同一个 (base, judge) 上按三级回退取行：武器 behaviorVariationId 本身 →
+                         向下取整到百位的「族」variationId（v3 补上，例 1406 → 1400、117 → 100）→
+                         variationId = 0 的通用行——游戏就是这样挑动作的。
                          据此可以把「这把武器的这个战技实际会打出哪些 AtkParam 行」解出来，
-                         写进 skills[].variants，武器侧再给一个 skillVariant 下标。
+                         写进 skills[].variants，武器侧再给 skillVariant / skillVariants 下标。
+  （v3）局内武器的战技池：
+  EquipParamCustomWeapon   局内掉落 / 商店 / 宝箱给出的「成品武器」：targetWeaponId → EquipParamWeapon
+                     基础武器，swordArtsTableId → SwordArtsTableParam 池（-1 = 不抽池）
+  SwordArtsTableParam      战技池：**同一个 ID 的全部行 = 一个池**（与 AttachEffectTableParam
+                     同一惯例），每行 swordArtsId + chanceWeight（权重，>0 才算池成员）
+  ItemTableParam / ItemLotParam_map / ItemLotParam_enemy / ShopLineupParam
+                     只用来判「哪些 custom 行真的会给到玩家」：itemCategory=6 /
+                     lotItemCategory0N=6 / equipType=6 引用的 custom 行 ID（实测三者引用的 ID
+                     全部落在 EquipParamCustomWeapon 里，见 PROVENANCE「战技池（v3）」）
+
+战技池（v3）
+-----------
+  本作局内拿到的武器几乎都是 EquipParamCustomWeapon 行，战技由 swordArtsTableId 指向的池随机决定；
+  EquipParamWeapon.swordArtsParamId 只是「基础武器自带的那一个」。v2 只看后者，于是风暴刃（210）、
+  狩猎巨人（116）等 52 个战技没有任何武器引用、在增伤排名里选不到。v3 起：
+    skills[].weaponIds     = 固定引用 ∪ 可达 custom 行的池（chanceWeight>0）里出现该战技的 targetWeaponId；
+    skills[].weaponSources = 每把武器的来源（fixed / pool，池条目权重与 custom 行数）；
+    weapons[].skillIds / skillVariants / customWeapons 与顶层 swordArtsPools 给出反向与回溯信息。
+  池的分组规则（同 ID = 一池）的证据与反证见 PROVENANCE「战技池（v3）」与 fieldNotes.swordArtsPools。
+
+命中段 TAE 核实（v3 第二部分）
+----------------------------
+  行为表（BehaviorParam_PC）解出的段不一定被本作的动画调用：1188 狩猎大蛇的两段 "Beam of Light" 参数还在，
+  但战技 TAE a788 调用它们的事件带 stateInfo 187 门控（本作玩家拿不到）；二连斩 / 剑舞 / 鲜血斩击的几套动作
+  挂在同一个 variationId=0 上，行为表分不出来，TAE 里却是互斥的几套 4xxxx 动画。所以生成时读
+  raw/tae/invoked.json（extract_tae.py 从本机 c0000 动画包解出），用同目录 verify_skill_hits.py 的 TaeVerifier
+  逐 (战技, 武器) 判定每段的状态，variants[].atkIds 只留 invoked / weaponTae / spEffect / conditional / noJudge；
+  在所有武器上都被移除的段在 hits[] 里标 notInvoked + notInvokedReason；动画完全匹配不到的战技（弓系）标
+  taeUnmatched、不过滤。invoked.json 缺失或 --no-tae 时保持行为表口径（counts.taeVerified=false），
+  weapons / skills / spells / swordArtsPools 与 TAE 核实前逐项相同（审查修正后只差 hits[].selfOrAllyOnly 标记，其中带数值的几段另加 noDamage）。
+  法术不做 TAE 过滤。判定规律见 PROVENANCE「TAE 动画事件与命中核实」，
+  本步骤的结果见 PROVENANCE「命中段 TAE 核实（v3）」与产物的 diagnostics.taeVerification。
+  同一趟 TAE 还用来分带 FP / 无 FP：战技 TAE 的 4xxxx 动画个位 0–4 是带 FP 版、5–9 是无 FP 版，行名没写 "No FP"
+  但只被无 FP 版动画调用的段补标 hits[].noFp（noFpSource="tae"），两侧共用的段标 fpBoth。
+  AtkParam 只打自己 / 队友的行（opposeTarget=0 且 selfTarget / friendlyTarget=1，祈祷一击的回血子弹）标
+  noDamage + selfOrAllyOnly，不算对敌伤害。
 
 动作套（variants）为什么必须存在
 ------------------------------
   通用战技（战吼 / 野蛮咆哮 / 回旋斩 / 盲击…）在参数里同时存在「不分武器的默认套」
   （行名 "[AoW] War Cry"）和「每个动作组各一套」（"[AoW Axe] War Cry"），
   两者是同一招的互斥变体，不是可叠加的分段。而行名方括号里的动作组名
-  （Small Weapon / Large Weapon / Polearm / Scythe）既不在 WEP_TYPE 枚举里，
-  也**不能**映射成 wepType——实测 110 盲击里 behaviorVariationId=1400 的斧走
-  "Small Weapon"、1406/1407 的斧走 "Large Weapon"，同一个 wepType=17 被拆进了两组。
+  （Small Weapon / Large Weapon / Polearm / Scythe）不在 WEP_TYPE 枚举里，
+  也没有全局的「别名 → wepType」对应：它们是**逐个战技**的动作族（110 盲击里
+  Small Weapon = 曲剑 / 锤 / 连枷 / 斧、Large Weapon = 大剑 / 大曲剑 / 大锤 / 大斧），
+  而且哪一族挂在 variationId=0 上当默认套也因战技而异。
   所以按 ctx 字符串过滤既会漏（斧 / 镰类取不到段）又会重（默认套与类别套一起算）。
-  唯一正确的做法是 BehaviorParam_PC 实解，见 variants / skillVariant。
+  唯一正确的做法是 BehaviorParam_PC 实解，见 variants / skillVariant / skillVariants。
+  （v2 的实解少了「取整到百位」这一级回退，曾得出「1400 的斧走 Small Weapon、1406/1407 的斧走
+  Large Weapon」的结论；v3 补上后同一战技里同一武器类别只落进一套动作，无一例外。）
 
 命中归属（hits）的几条路线，取并集，每条 hit 用 source 标明
 ----------------------------------------------------------
@@ -76,6 +116,7 @@
 ----
   cd "<repo>/macos/DataSources" && python3 generate_skills.py
   可选： --params <dir> --msg <dir> --out <file> --pretty
+        --invoked raw/tae/invoked.json --sp-enum raw/paramdex/SP_EFFECT_TYPE.json --no-tae
 """
 
 import argparse
@@ -87,7 +128,70 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2   # v2：新增 skills[].variants + weapons[].skillVariant（取代按 ctx 字符串过滤）
+SCHEMA_VERSION = 3   # v3：局内战技池（SwordArtsTableParam）进 weaponIds，新增 weaponSources / skillIds / skillVariants
+
+# 结构变更记录：消费方可以程序化地知道每一版加了 / 改了什么（同 generate_buffs.py 的 schemaChangelog 惯例）。
+SCHEMA_CHANGELOG = [
+    {"version": 1,
+     "summary": "初版：weapons / skills / spells 三张表，skills[].hits 与 spells[].hits 是按五条路线"
+                "（n / b / r / a / w）收集的分段命中。"},
+    {"version": 2,
+     "summary": "新增 skills[].variants + weapons[].skillVariant（BehaviorParam_PC 实解每把武器实际打出的动作套，"
+                "取代按 ctx 字符串过滤）；第二轮核验补 weapons[].atkAttribute / atkAttribute2、"
+                "hits[].noVariant，悬空 overrideAecId 不再写出，跨条目误配段丢弃。"},
+    {"version": 3,
+     "summary": "两部分：(1) 局内武器的战技池进数据集——只增字段、旧字段语义不变，但 weaponIds 等字段的**取值范围**扩大；"
+                "(2) 命中段按 TAE 动画事件核实——variants[].atkIds 只保留该战技的动画真正会打出的段"
+                "（逐武器核对，互斥动画套只留这把武器播的一套），被移除的段仍留在 hits[] 并标 notInvoked。"
+                "（2）需要生成时有 raw/tae/invoked.json，counts.taeVerified 标明本文件是否做过。",
+     "added": [
+         "skills[].weaponSources（每把武器的来源：fixed / pool，pool 项 = [swordArtsTableId, chanceWeight, custom 行数]）",
+         "weapons[].skillIds（该武器局内可能出现的全部战技，含固定）",
+         "weapons[].skillVariants（{战技 ID 字符串: 该战技 variants 的下标}，覆盖 skillIds 里每个有命中段的战技）",
+         "weapons[].customWeapons（可达的 EquipParamCustomWeapon 行：[customId, swordArtsTableId]）",
+         "swordArtsPools（顶层：被可达 custom 行引用的 SwordArtsTableParam 池，{池 ID: [[战技 ID, 权重], ...]}）",
+         "schemaChangelog、coverage.skillsWithoutWeapons / skillsWithoutFixedWeapons / skillsPoolOnly、"
+         "counts 里的池相关计数",
+         "（TAE 核实）skills[].hits[].notInvoked + notInvokedReason：行为表给至少一把武器解出了这段、但在所有这些武器上"
+         "都不会被该战技的动画调用（从 variants 移除，hits 里保留）；取值见 enums.notInvokedReason",
+         "（TAE 核实）skills[].taeUnmatched：战技动画匹配不到的战技（本版本是弓系战技），hits / variants 不做过滤",
+         "（TAE 核实）counts.taeVerified 与 hitsNotInvoked / hitsNotInvokedDamaging / hitsPartiallyRemovedByTae / "
+         "weaponHitsRemovedByTae / skillWeaponPairsChangedByTae / skillsChangedByTae / skillsTaeUnmatched；"
+         "enums.notInvokedReason；顶层 diagnostics.taeVerification（移除清单、部分武器移除清单、互斥动画套的选套、"
+         "保留的条件触发 / SpEffect 触发 / 无法判定段）",
+         "（审查修正）skills[].hits[].noFpSource（\"tae\" = noFp 由 TAE 判出）与 fpBoth（带 FP / 无 FP 两侧动画共用的段）；"
+         "counts.hitsNoFpByTae / hitsNoFpByTaeDamaging / hitsFpBoth；diagnostics.taeVerification.noFpRule / noFpFromTae / "
+         "fpBoth / noFpConflicts",
+         "（审查修正）hits[].selfOrAllyOnly（AtkParam opposeTarget=0 且 selfTarget / friendlyTarget=1：只打自己 / 队友）；"
+         "counts.hitsSelfOrAllyOnly / hitsSelfOrAllyOnlyWithValues",
+     ],
+     "changed": [
+         "skills[].weaponIds：v2 = 只有 EquipParamWeapon.swordArtsParamId 反查；v3 = 固定引用 ∪ 局内战技池"
+         "（可达 custom 行的 targetWeaponId，池里含该战技且 chanceWeight>0）。「能带这个战技的武器」这个含义不变，"
+         "只是补上了池来源。",
+         "skills[].variants[].weaponIds 随之扩展（新增的 (战技, 武器) 对同样用 BehaviorParam_PC 实解）；"
+         "variants 的顺序仍按最小 atkId 排，所以已有武器的 skillVariant 下标可能变化，但始终与本文件的 variants 对齐。",
+         "hits[].noVariant 按新的 variants 重算：原来没有武器的战技现在也会标记，原来标了的段可能因为新武器而变为可达。",
+         "weapons[].skillVariant 语义不变：仍只指「swordArtsParamId 指向的那个固定战技」的 variants 下标。",
+         "选段实解补上 BehaviorParam_PC 的「variationId 取整到百位」一级回退，1200 风暴管束者按「武器有专属行的"
+         "行为组」消歧，103 回旋斩的手工表补齐新类别：hits 不变，但 58 个固定武器 (战技, 武器) 对的选段随之改变"
+         "（109 连击 1、110 盲击 17、650 野蛮咆哮 24、651 战吼 16；regulation 10350000 实测，见 caveats）。",
+         "（TAE 核实）skills[].variants[].atkIds：在行为表选段之上再按 TAE 核实，只留这把武器用这个战技时动画真会打出的段"
+         "（invoked / weaponTae / spEffect / conditional，以及无法经 TAE 判定、保守保留的 noJudge）。"
+         "含义从「行为表解得到的段」收窄为「本作真正打得出的段」，页面的取段写法不变。"
+         "同一行为表选段的武器可能因动作组 TAE 或互斥动画套不同而分到不同 variant，所以 variants 数量、顺序与"
+         "weapons[].skillVariant / skillVariants 下标都会变，但始终与本文件的 variants 对齐。",
+         "（TAE 核实）hits[].noVariant 改按 TAE 核实**之前**的行为表选段判定（含义同 A 阶段：行为表层就没有武器用到），"
+         "与 notInvoked 互斥。",
+         "（TAE 核实）spells[] 不做 TAE 过滤（施法动画只按 refId 槽发射，见 fieldNotes.法术与 TAE）。",
+         "（审查修正）hits[].noFp：原先只看行名里的 \"No FP\"；TAE 核实时再按战技 TAE 动画号（4xxxx 个位 5–9 = 无 FP 版）"
+         "补标行名没写的无 FP 段（noFpSource=\"tae\"，labelZh 前补「无FP版」），例：风暴刃 300000411–413、狩猎巨人 301700915。"
+         "按「noFp 与开关同侧」取段的页面不用改写法，带 FP 版不再混进无 FP 段。",
+         "（审查修正）hits[].noDamage：除了六项全 0 的挂状态行，只打自己 / 队友的行（selfOrAllyOnly，如祈祷一击的回血子弹 "
+         "1202100 / 1202110）也标 noDamage，motion / flat 原值保留。这一条不依赖 TAE，--no-tae 时同样生效。",
+         "（审查修正）counts 的 *Damaging 计数（hitsWithoutVariantDamaging / hitsNotInvokedDamaging）不再把 noDamage 段算作带伤害。",
+     ]},
+]
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
 
@@ -95,6 +199,9 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_PARAMS = HERE / "raw" / "params"
 DEFAULT_MSG = HERE / "raw" / "msg"
 DEFAULT_OUT = HERE.parents[1] / "data" / "nightreign-skills-v1.03.5.json"
+# TAE 核实（v3 第二部分）：extract_tae.py 解出的动画事件 + Paramdex 的 SP_EFFECT_TYPE（可选，只影响门控名的显示）
+DEFAULT_INVOKED = HERE / "raw" / "tae" / "invoked.json"
+DEFAULT_SP_ENUM = HERE / "raw" / "paramdex" / "SP_EFFECT_TYPE.json"
 
 ELEMENTS = ("physical", "magic", "fire", "lightning", "holy")
 # AtkParam_Pc 动作值字段（百分比，作用于武器对应属性攻击力）
@@ -226,11 +333,12 @@ WEP_CORRECT_FIELDS = {
 # Paramdex 在 AtkParam_Pc / Bullet 行名方括号里用 "[AoW <X>]" 标出这一段属于哪一套动作。
 # X 有三种：武器名、武器「动作组」名、角色名（"[AoW - Duchess]" 这种带连字符的形式）。
 #
-# 动作组名里有 4 个不是 WEP_TYPE 枚举名的别名。**它们不能映射成 wepType**：
-# 实测 Wild Strikes（盲击）里，behaviorVariationId=1400 的斧走 "Small Weapon"，
-# 而 1406/1407 的斧走 "Large Weapon"——同一个 wepType=17 被拆到了两组，
-# 分组依据是单把武器的动作变体而不是武器类别。所以本脚本不输出「别名→wepType」映射，
-# 每把武器到底用哪一套由 skills[].variants（BehaviorParam_PC 实解）给出。
+# 动作组名里有 4 个不是 WEP_TYPE 枚举名的别名。**它们没有全局的 wepType 对应**：
+# 同一个别名在不同战技里覆盖的类别不同，哪一族挂在 variationId=0 上当默认套也因战技而异
+# （110 盲击：Small Weapon = 曲剑 / 锤 / 连枷 / 斧，Large Weapon = 大剑 / 大曲剑 / 大锤 / 大斧）。
+# 所以本脚本不输出「别名→wepType」映射，每把武器到底用哪一套由 skills[].variants
+# （BehaviorParam_PC 实解）给出。v2 曾记「1400 的斧走 Small、1406/1407 的斧走 Large」，
+# 那是解析时漏了「variationId 取整到百位」这一级回退造成的，v3 已更正。
 CTX_ALIAS_ZH = {
     "small weapon": ("Small Weapon", "小型武器动作组"),
     "large weapon": ("Large Weapon", "大型武器动作组"),
@@ -248,8 +356,32 @@ CHR_CTX_ZH = {"default": "默认角色"}
 # 任何武器解出来都是 4 套全中。这里按武器类别手工归组：
 # 直剑 / 曲剑走无 ctx 的默认套，大曲剑走 Large Weapon，双头剑走 Twinblade，戟 / 镰走 Polearm。
 # （依据：这 4 套正好对应引用该战技的 6 个类别所共用的 4 组动作。）
+# v3：局内战技池让 103 还能出现在短剑 / 大剑 / 刀 / 斧 / 大斧 / 矛上，按同一套「动作族」补齐：
+#   大剑、大斧 → Large Weapon；矛 → Polearm；短剑、刀、斧 → 默认套。
+#   依据是行为表能解出来的同类战技：110 盲击（v3 三级回退后）Large Weapon = 大剑 / 大曲剑 / 大锤 / 大斧，
+#   Small Weapon = 曲剑 / 锤 / 连枷 / 斧；矛 / 大矛 / 戟 / 镰在 118 罗蕾塔的斩击里同属长柄一族。
+#   这是推断（行为表本身分不出来）；Large Weapon 与 Polearm 两套数值完全相同，所以真正有影响的
+#   只是「默认套 vs 大型 / 长柄套」这一刀（动作值差 5）。
+# hits[].notInvokedReason 的取值（= verify_skill_hits.py 的 status 里表示「这把武器用这个战技时打不出」的那些），
+# 顺序即「不同武器原因不同时取哪一个」的优先级（与 verify_skill_hits.STATUS_ORDER 一致）
+NOT_INVOKED_REASON_ZH = {
+    "exclusiveBlock": "在战技动画里被调用，但只在另一套互斥的 4xxxx 动画里（战技 TAE 按百位分套：400 默认 / 402 大型武器 / "
+                      "403 长柄 / 4XX = 该动作组专属），用到它的武器都播别的那套",
+    "roarR2Only": "只出现在武器动作组的吼叫 R2 动画（30600–30635 / 32600–32635）里，而本战技不是吼叫类"
+                  "（例：狩猎大蛇 301703955 只在大枪动作组的 a37_030605）",
+    "gated": "只有带 stateInfo 187 门控的事件调用它，187 玩家拿不到（本作只有 SpEffect 1908 带它，1908 只被 NPC 召唤石引用）"
+             "——例：狩猎大蛇的两段 Beam of Light",
+    "elsewhere": "通用行（variationId=0）只在别的战技 / 动画里被调用，本战技在这些武器上的动画不调用它",
+    "notInvoked": "解出的 TAE judgeId 在战技 TAE 与武器动作组 TAE 里都没有事件",
+    "spEffectNoSource": "由 SpEffectParam.behaviorId 触发，但该 SpEffect 在全部参数表与全部 TAE 事件里都没有来源",
+    "rowForOtherWeapon": "产出它的 BehaviorParam_PC 行只属于别的 behaviorVariationId，这些武器解不到",
+    "unreferenced": "没有任何 BehaviorParam_PC 行、子弹、Magic 或其它参数列引用它",
+}
+
 CTX_MANUAL_BY_SKILL: dict[int, dict[int, str]] = {
-    103: {3: "", 9: "", 11: "Large Weapon", 14: "Twinblade", 29: "Polearm", 31: "Polearm"},
+    103: {1: "", 3: "", 9: "", 13: "", 17: "",
+          5: "Large Weapon", 11: "Large Weapon", 19: "Large Weapon",
+          14: "Twinblade", 25: "Polearm", 29: "Polearm", 31: "Polearm"},
 }
 
 # ---------------------------------------------------------------- 段标签中文化
@@ -648,6 +780,12 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
              and not poise_mv and not stamina and not stamina_mv)
     if empty and "n" not in sources:
         return None
+    # 只打自己 / 队友的行：opposeTarget=0 且 selfTarget 或 friendlyTarget=1。祈祷一击的回血子弹
+    # 1202100 "Heal Self"（selfTarget）/ 1202110 "Heal Others"（friendlyTarget）各带圣 motion 100——那是回血量的倍率，
+    # 不是对敌伤害。标 noDamage（三端都不把 noDamage 段计入构成）并加 selfOrAllyOnly 说明原因。
+    # opposeTarget=0 但三项全 0 的行（神圣光环的光环、各种子弹链上的行）不在此列：它们由子弹自己的判定命中敌人。
+    self_ally = (to_int(atk_row.get("opposeTarget", "1"), 1) == 0
+                 and (to_int(atk_row.get("selfTarget", "0")) == 1 or to_int(atk_row.get("friendlyTarget", "0")) == 1))
 
     attr = to_int(atk_row.get("atkAttribute", "254"), 254)
     attr_en, attr_zh = ATK_ATTR_ZH.get(attr, (f"unknown({attr})", "未知"))
@@ -685,8 +823,10 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
         hit["bulletIds"] = [to_int(b) for b in sorted(set(bullet_ids), key=int)][:8]
     if no_fp:
         hit["noFp"] = True
-    if empty:
+    if empty or self_ally:
         hit["noDamage"] = True
+    if self_ally:
+        hit["selfOrAllyOnly"] = True
     if to_int(atk_row.get("isAddBaseAtk", "0")):
         hit["addBaseAtk"] = True
     over = to_int(atk_row.get("overwriteAttackElementCorrectId", "-1"), -1)
@@ -700,6 +840,31 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
             aec_dangling[over] += 1
     hit["source"] = "".join(sorted(sources))
     return hit
+
+
+def hit_has_damage(hit: dict) -> bool:
+    """对敌伤害段：motion / flat 非空，且没标 noDamage（noDamage 含只打自己 / 队友的 selfOrAllyOnly 行）。
+    counts 里所有 *Damaging 计数都按它算。"""
+    return bool(hit.get("motion") or hit.get("flat")) and not hit.get("noDamage")
+
+
+# hits[] 元素的键顺序（build_hit 的写出顺序，再接后面各步追加的标记）；后补字段时按它重排，保证输出稳定可读
+HIT_KEY_ORDER = ("atkId", "ctx", "ctxKind", "ctxZh", "label", "labelZh", "motion", "flat", "poise", "poiseMv",
+                 "stamina", "staminaMv", "attribute", "attributeZh", "isBullet", "bulletIds", "noFp", "noFpSource",
+                 "fpBoth", "noDamage", "selfOrAllyOnly", "addBaseAtk", "overrideAecId", "source",
+                 "noVariant", "notInvoked", "notInvokedReason")
+
+
+def set_hit_fields(hit: dict, **fields) -> None:
+    """原地给 hit 加字段并按 HIT_KEY_ORDER 重排（保持对象身份，别处持有的引用不失效）。"""
+    merged = dict(hit, **fields)
+    rank = {k: i for i, k in enumerate(HIT_KEY_ORDER)}
+    ordered = sorted(merged.items(), key=lambda kv: rank.get(kv[0], len(rank)))
+    hit.clear()
+    hit.update(ordered)
+
+
+NO_FP_LABEL_PREFIX = "无FP版"   # 与 label_to_zh() 给行名带 "No FP" 的段加的前缀一致
 
 
 class HitCollector:
@@ -734,6 +899,10 @@ def main() -> None:
     ap.add_argument("--msg", type=Path, default=DEFAULT_MSG)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--pretty", action="store_true", help="indent=1 输出（默认紧凑）")
+    ap.add_argument("--invoked", type=Path, default=DEFAULT_INVOKED,
+                    help="extract_tae.py 的 raw/tae/invoked.json；缺失时不做 TAE 核实（counts.taeVerified=false）")
+    ap.add_argument("--sp-enum", type=Path, default=DEFAULT_SP_ENUM, help="Paramdex SP_EFFECT_TYPE.json（可选）")
+    ap.add_argument("--no-tae", action="store_true", help="跳过 TAE 核实（等同 invoked.json 缺失，保持 A 阶段口径）")
     args = ap.parse_args()
 
     weapons_raw = read_param(args.params, "EquipParamWeapon")
@@ -744,6 +913,13 @@ def main() -> None:
     behavior_raw = read_param(args.params, "BehaviorParam_PC")
     # 只用来校验 hits[].overrideAecId 是否真的存在（本表本身不收录，见 usage.本数据集的边界）
     aec_ids = frozenset(row["ID"] for row in read_param(args.params, "AttackElementCorrectParam"))
+    # v3：局内武器的战技池
+    arts_table_raw = read_param(args.params, "SwordArtsTableParam")
+    custom_raw = read_param(args.params, "EquipParamCustomWeapon")
+    item_table_raw = read_param(args.params, "ItemTableParam")
+    lot_raw = (read_param(args.params, "ItemLotParam_map")
+               + read_param(args.params, "ItemLotParam_enemy"))
+    shop_raw = read_param(args.params, "ShopLineupParam")
 
     wep_zh = read_fmg(args.msg, "zhocn", "item", "WeaponName")
     wep_en = read_fmg(args.msg, "engus", "item", "WeaponName")
@@ -818,11 +994,20 @@ def main() -> None:
     weapons: list[dict] = []
     skill_to_weapons: dict[str, list[int]] = defaultdict(list)
     unnamed_weapon_type: Counter = Counter()
+    # 没有 WeaponName 文本的 EquipParamWeapon 行（例如 100000–101000 这批 wepType 3、rarity 0、
+    # Paramdex 行名为空的测试行，它们把 swordArtsParamId 指到 210 风暴刃）一律不收录：
+    # 这里记下它们对战技的引用，只用于 fieldNotes 说明「为什么 v2 里 210 看着有引用却没有武器」。
+    unnamed_skill_refs: Counter = Counter()
+    unnamed_rows = 0
     for row in weapons_raw:
         wid = to_int(row["ID"])
         name_zh = wep_zh.get(wid)
         name_en = wep_en.get(wid)
         if not name_zh and not name_en:
+            unnamed_rows += 1
+            ref_arts = to_int(row.get("swordArtsParamId", "-1"), -1)
+            if ref_arts > 0:
+                unnamed_skill_refs[ref_arts] += 1
             continue
         wep_type = to_int(row.get("wepType", "0"))
         type_en, type_zh = WEP_TYPE_ZH.get(wep_type, ("unknown", "unknown"))
@@ -864,6 +1049,118 @@ def main() -> None:
         entry["_behaviorVariationId"] = behavior_var  # 内部用，输出前删掉
 
     weapons.sort(key=lambda e: e["id"])
+    weapon_ids_named = {str(w["id"]) for w in weapons}
+
+    # ---------------------------------------------------- 局内武器的战技池（v3）
+    # SwordArtsTableParam 的分组规则：**同一个 ID 的全部行 = 一个池**。
+    #   * 表里 11896 行只有 841 个不同 ID（例如 ID 10000000 有 44 行、每行一个不同的 swordArtsId），
+    #     与 AttachEffectTableParam（generate_buffs.py 的 pool_members，已对词条库 283 个成员验证）同一惯例；
+    #   * EquipParamCustomWeapon.swordArtsTableId 的 497 个不同取值（-1 除外）**全部**等于某个表行 ID；
+    #   * 带 "<类别>" 前缀的池（"<Dagger>" / "<Untyped Straight Sword>" …）只被 targetWeaponId 属于
+    #     该类别的 custom 行引用，按「同 ID」分组后类别前缀与武器类别零冲突（按「连续行到下一个起点」分组则会
+    #     把未被 custom 引用的 xx10 池并进来——那些池被 EquipParamWeapon.swordArtsTableId 单独引用，是独立的池）。
+    # 详细证据与反证写在 PROVENANCE「战技池（v3）」。
+    # 同一个池里同一个战技偶尔出现两行（例 50000000 刺剑池把 850 白影诱惑写了两遍、120000110 整池重复
+    # 20 个战技），抽取时等于权重相加，所以这里按池内首次出现的顺序把权重累加成一项。
+    pool_weights: dict[str, dict[int, int]] = defaultdict(dict)
+    pool_dup_rows = 0
+    for row in arts_table_raw:
+        arts = to_int(row.get("swordArtsId", "-1"), -1)
+        weight = to_int(row.get("chanceWeight", "0"))
+        if arts <= 0 or weight <= 0:
+            continue
+        bucket = pool_weights[row["ID"]]
+        if arts in bucket:
+            pool_dup_rows += 1
+        bucket[arts] = bucket.get(arts, 0) + weight
+    pool_entries: dict[str, list[tuple[int, int]]] = {
+        pid: list(bucket.items()) for pid, bucket in pool_weights.items()}
+
+    # 「可达」的 custom 行：被 ItemTableParam（itemCategory=6）、ItemLotParam_map/_enemy
+    # （lotItemCategory0N=6）或 ShopLineupParam（equipType=6）引用。三处引用到的 ID 全部是
+    # EquipParamCustomWeapon 的行（实测 4165 / 453 / 1554 条引用全中），所以 6 = custom weapon。
+    # 没有被任何一处引用的 custom 行（1288 行，多为 [Common] Longsword 这类早期测试行，
+    # 例如 custom 10 把长剑配成 100 狮子斩、50000001–50000008 把混种大剑配成各种单一战技）不算来源。
+    reachable_custom: set[str] = set()
+    for row in item_table_raw:
+        if row.get("itemCategory") == "6":
+            reachable_custom.add(row.get("itemId", ""))
+    for row in lot_raw:
+        for i in range(1, 9):
+            if row.get(f"lotItemCategory0{i}") == "6":
+                reachable_custom.add(row.get(f"lotItemId0{i}", ""))
+    for row in shop_raw:
+        if row.get("equipType") == "6":
+            reachable_custom.add(row.get("equipId", ""))
+
+    # (战技, 武器) → {池 ID: [权重, 引用该池的可达 custom 行数]}
+    pool_pairs: dict[tuple[str, str], dict[str, list[int]]] = defaultdict(dict)
+    custom_by_weapon: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    used_pools: set[str] = set()
+    custom_stats: Counter = Counter()
+    unreachable_pairs: set[tuple[str, str]] = set()
+    for row in custom_raw:
+        cid = row["ID"]
+        target = row.get("targetWeaponId", "-1")
+        table = row.get("swordArtsTableId", "-1")
+        if cid not in reachable_custom:
+            custom_stats["unreachable"] += 1
+            if target in weapon_ids_named:
+                for arts, _w in pool_entries.get(table, ()):
+                    unreachable_pairs.add((str(arts), target))
+            continue
+        if target not in weapon_ids_named:
+            custom_stats["reachableUnnamedTarget"] += 1
+            continue
+        custom_stats["reachable"] += 1
+        custom_by_weapon[target].append((to_int(cid), to_int(table, -1)))
+        if table == "-1":
+            custom_stats["reachableFixedOnly"] += 1
+            continue
+        if table not in pool_entries:
+            custom_stats["reachableEmptyPool"] += 1
+            continue
+        used_pools.add(table)
+        for arts, weight in pool_entries[table]:
+            slot = pool_pairs[(str(arts), target)].setdefault(table, [weight, 0])
+            slot[1] += 1
+
+    skill_to_pool_weapons: dict[str, set[int]] = defaultdict(set)
+    weapon_pool_skills: dict[str, set[int]] = defaultdict(set)
+    for (sid, wid), _tables in pool_pairs.items():
+        skill_to_pool_weapons[sid].add(int(wid))
+        weapon_pool_skills[wid].add(int(sid))
+    # 只在未可达 custom 行里出现、可达行里没有的 (战技, 武器) 对（写进 coverage 说明）
+    unreachable_only_pairs = sorted(
+        (int(s), int(w)) for s, w in unreachable_pairs
+        if (s, w) not in pool_pairs and int(w) not in skill_to_weapons.get(s, []))
+
+    # EquipParamWeapon 自己也有一个 swordArtsTableId 列（指向不被任何 custom 行引用的 xx10 池，
+    # 内容 = 同类别 xx00 全池，或「该属性池 ∪ Untyped 池」）。参数表里看不出它在本作何时生效
+    # （局内掉落走 custom 行），所以不作为来源，只统计「若算上它会多出多少 (战技, 武器) 对 / 多少战技」。
+    epw_table_pairs: set[tuple[int, int]] = set()
+    for row in weapons_raw:
+        if row["ID"] not in weapon_ids_named:
+            continue
+        for arts, _w in pool_entries.get(row.get("swordArtsTableId", "-1"), ()):
+            epw_table_pairs.add((arts, int(row["ID"])))
+
+    def weapon_sources(sid: str) -> list[dict]:
+        """skills[].weaponSources：与 weaponIds 同序，每把武器一项。
+        fixed=true  → EquipParamWeapon.swordArtsParamId 就是这个战技（v2 的唯一来源）；
+        pool        → [[swordArtsTableId, 该战技在池里的 chanceWeight, 引用该池的可达 custom 行数], ...]，
+                      按池 ID 升序；具体是哪几行见 weapons[].customWeapons 里 table 相同的那些。"""
+        fixed_ids = set(skill_to_weapons.get(sid, []))
+        out = []
+        for wid in sorted(fixed_ids | skill_to_pool_weapons.get(sid, set())):
+            item: dict = {"id": wid}
+            if wid in fixed_ids:
+                item["fixed"] = True
+            tables = pool_pairs.get((sid, str(wid)))
+            if tables:
+                item["pool"] = [[to_int(t), w, n] for t, (w, n) in sorted(tables.items(), key=lambda kv: int(kv[0]))]
+            out.append(item)
+        return out
 
     # ---------------------------------------------------------------- skills
     skills: list[dict] = []
@@ -893,7 +1190,11 @@ def main() -> None:
             "nameZh": name_zh or name_en,
             "nameEn": name_en or name_zh,
             "sparring": bool(to_int(row.get("enableSparringGrounds", "0"))),
-            "weaponIds": sorted(skill_to_weapons.get(sid, [])),
+            # v3：固定引用 ∪ 局内战技池。命中归属（行名消歧的武器提示、路线 w 的「唯一武器」判定）
+            # 仍只用固定引用 skill_to_weapons，保证 hits 与 v2 完全一致。
+            "weaponIds": sorted(set(skill_to_weapons.get(sid, []))
+                                | skill_to_pool_weapons.get(sid, set())),
+            "weaponSources": weapon_sources(sid),
             "_rowId": sid,
         })
 
@@ -1168,30 +1469,60 @@ def main() -> None:
             for aid in bullet_atks(ref):
                 judges_by_atk[aid].add((base, judge))
 
-    def resolve_by_behavior(var: int, judges: set[tuple[int, int]],
-                            pool: set[str]) -> set[str]:
+    def behavior_row(base: int, var: int, judge: int, legacy: bool = False) -> dict | None:
+        """按游戏的回退顺序取行为行：武器自己的 variationId → 向下取整到百位的「族」variationId
+        → 0 号通用行。v3 起补上中间这一级（v2 只有「自己 → 0」）。证据（PROVENANCE「战技池（v3）」）：
+          * 1200 风暴管束者的 10 套角色动作挂在 variationId 0/100/500/900/1100/1102/1800/2100/2300/4100 上，
+            正好是各渡夜者专属武器 behaviorVariationId（117/503/900/1100/1102/1800/2151/2304/4100，
+            追踪者 300 无专属行 → 0 = Default 套）取整到百位的值，与 Paramdex 行名的角色名逐一对上；
+            没有这一级时女爵 / 学者 / 复仇者 / 无赖会被算成追踪者的 Default 套，执行者等 5 把一套都解不出。
+          * 加上这一级后，每个战技里「同一武器类别只落进一套动作」无一例外（self_check 断言）；两级回退时
+            650 野蛮咆哮、651 战吼、110 盲击等都有同类别武器被拆进默认套与类别套两边，例如 1400 的斧走
+            Small Weapon、1406/1407 的斧却落到 0 号行的 Large Weapon（实测个数写进 caveats）。"""
+        if legacy:  # v2 口径，只用来统计 v3 改了哪些 (战技, 武器) 对的选段
+            return behavior_by_key.get((base, var, judge)) or behavior_by_key.get((base, 0, judge))
+        return (behavior_by_key.get((base, var, judge))
+                or (behavior_by_key.get((base, var // 100 * 100, judge)) if var % 100 else None)
+                or behavior_by_key.get((base, 0, judge)))
+
+    def resolve_by_behavior(var: int, judges: set[tuple[int, int]], pool: set[str],
+                            legacy: bool = False) -> tuple[set[str], dict[str, set[tuple[int, bool]]]]:
+        """返回 (解出的 atkId 集合, {atkId: {(解出它的行为组 base, 该行是否专属行 variationId≠0)}})。
+        第二项只在消歧时用：见 variants 循环里的「只看有专属行的行为组」。"""
         out: set[str] = set()
+        prov: dict[str, set[tuple[int, bool]]] = defaultdict(set)
         for base, judge in judges:
-            row = (behavior_by_key.get((base, var, judge))
-                   or behavior_by_key.get((base, 0, judge)))
+            row = behavior_row(base, var, judge, legacy)
             if not row:
                 continue
             ref_type = to_int(row.get("refType", "0"))
             ref = row.get("refId", "-1")
+            got: set[str] = set()
             if ref_type == 0:
                 if ref in pool:
-                    out.add(ref)
+                    got = {ref}
             elif ref_type == 1 and ref in bullets_by_id:
-                out |= bullet_atks(ref) & pool
-        return out
+                got = bullet_atks(ref) & pool
+            out |= got
+            own = to_int(row.get("variationId", "0")) != 0
+            for aid in got:
+                prov[aid].add((base, own))
+        return out, prov
 
-    def choose_ctx(wep: dict, skill_id: int, pool_ctx: set[str]) -> str | None:
-        """BehaviorParam_PC 分不出来时，按「武器名 → 同名基础武器 → 手工表 → 武器类别
-        → 唯一的具名套 → 默认套」的顺序单选一套（**不取并集**）。"""
+    def choose_ctx(wep: dict, skill_id: int, pool_ctx: set[str],
+                   chr_ctx: frozenset[str] = frozenset()) -> str | None:
+        """BehaviorParam_PC 分不出来时，按「武器名 → 武器名里的渡夜者名（v3）→ 同名基础武器 → 手工表
+        → 武器类别 → 唯一的具名套 → 默认套」的顺序单选一套（**不取并集**）。"""
         for cand in (norm_key(wep["nameEn"]),):
             for ctx in pool_ctx:
                 if ctx and norm_key(ctx) == cand:
                     return ctx
+        # v3：角色套（"[AoW - Ironeye] Storm Ruler"）按专属武器英文名里的角色名选
+        # （"Ironeye's Bow" → Ironeye）。只有 1200 风暴管束者有角色套。
+        name_tokens = set(norm_key(wep["nameEn"]).split())
+        for ctx in sorted(pool_ctx & chr_ctx):
+            if norm_key(ctx) in name_tokens:
+                return ctx
         # 亲和 / 强化变体：武器 ID 的百位是亲和偏移，行名里用的是基础 ID 那把的名字
         # （例：18100800 魔力罗蕾塔的战镰 → 18100000 罗蕾塔的战镰）
         base_id = wep["id"] - wep["id"] % 1000
@@ -1217,28 +1548,91 @@ def main() -> None:
 
     variant_stats: Counter = Counter()
     variant_gaps: list[str] = []
+    # v2 口径（两级回退、无「只看有专属行的行为组」、无角色名选套）解出来的段，与 v3 不同的 (战技, 武器) 对
+    legacy_changed: list[tuple[int, int, bool, str, str]] = []
+    legacy_sel: dict[tuple[int, int], frozenset[str]] = {}
+
+    def legacy_pick(wep: dict, skill_id: int, var: int, judges: set[tuple[int, int]],
+                    pool: set[str], ctx_of: dict[str, str]) -> set[str]:
+        atks, _prov = resolve_by_behavior(var, judges, pool, legacy=True) if judges else (set(), {})
+        named = {ctx_of[a] for a in atks if ctx_of[a]}
+        if not atks or len(named) > 1:
+            candidates = atks or pool
+            chosen = choose_ctx(wep, skill_id, {ctx_of[a] for a in candidates})
+            if chosen is None:
+                return set()
+            atks = {a for a in candidates if ctx_of[a] == chosen}
+        return atks
+
+    # ---- TAE 核实（v3 第二部分）：行为表解出的段，还要被该战技的动画事件真正调用才留在 variants 里 ----
+    # 判定逻辑在同目录的 verify_skill_hits.py（TaeVerifier，车道 B 的规律 1–10），这里逐 (战技, 武器) 调用，
+    # 两边同一套 TAE 索引、三级回退与互斥动画套规则。invoked.json 缺失（或 --no-tae）时保持 A 阶段口径。
+    tae = None
+    vsh = None
+    tae_skip_reason = ""
+    if args.no_tae:
+        tae_skip_reason = "--no-tae"
+    elif not args.invoked.exists():
+        tae_skip_reason = f"找不到 {args.invoked}（先跑 extract_tae.py）"
+    else:
+        sys.path.insert(0, str(HERE))
+        import verify_skill_hits as vsh  # noqa: E402  同目录脚本，只用标准库
+        tae = vsh.TaeVerifier(args.invoked, args.params, args.sp_enum)
+    # 行为表层（TAE 核实前）每个 (战技, 武器) 解出的段；self_check 与「构成变化」统计都要用
+    pre_sel: dict[tuple[int, int], frozenset[str]] = {}
+    tae_removed: dict[int, dict[str, dict[str, list[int]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    tae_kept_special: dict[int, dict[str, dict[str, list[int]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    tae_detail: dict[tuple[int, str, str], str] = {}        # (战技, atkId, status) → 中文说明（取第一次遇到的）
+    tae_blocks: dict[int, Counter] = defaultdict(Counter)   # 战技 → {"选中的套（依据）": 武器数}
+    tae_unmatched: list[str] = []
+    tae_empty: list[str] = []
+    tae_checks = 0
+    # (战技, atkId) → {"fp" / "noFp" / "neutral": {战技 TAE 动画号}}：这段在「留下它的武器」上由哪一侧的动画调用
+    # （verify_skill_hits 规律 8：4xxxx 个位 0–4 带 FP、5–9 无 FP）。用来补标行名没写 "No FP" 的无 FP 段。
+    tae_fp: dict[tuple[int, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    skill_tae_of: dict[int, str] = {}
+
     for skill in skills:
         if not skill["hits"] or not skill["weaponIds"]:
             continue
         pool = {str(h["atkId"]) for h in skill["hits"]}
         ctx_of = {str(h["atkId"]): h.get("ctx", "") for h in skill["hits"]}
+        chr_ctx = frozenset(h["ctx"] for h in skill["hits"] if h.get("ctxKind") == "chr")
         judges: set[tuple[int, int]] = set()
         for aid in pool:
             judges |= judges_by_atk.get(aid, set())
         groups: dict[frozenset[str], dict] = {}
+        selections: list[tuple[int, str, int, set[str]]] = []   # (武器, via, behaviorVariationId, 行为表解出的段)
         for wid in skill["weaponIds"]:
             wep = weapon_by_id.get(str(wid))
             if not wep:
                 continue
             var = to_int(wep.get("_behaviorVariationId", "0"))
-            atks = resolve_by_behavior(var, judges, pool) if judges else set()
+            atks, prov = resolve_by_behavior(var, judges, pool) if judges else (set(), {})
             via = "behavior"
             named = {ctx_of[a] for a in atks if ctx_of[a]}
+            own_bases = {b for got in prov.values() for b, own in got if own}
+            if len(named) > 1 and own_bases:
+                # 同一批段被不止一个行为组（base）引用时，只看「这把武器在其中有专属行」的那些组：
+                # 1200 风暴管束者的 Default 套除了 base 400000000，还在 500000000 挂了一份 0 号行
+                # （judge 200/220/230/240），女爵的短剑（variationId 117 → 100）只在 400000000 有专属行，
+                # 500000000 的 0 号行不该把追踪者的 Default 套也算进来。
+                # 只在「具名套 > 1」时才介入，所以不歧义的 (战技, 武器) 对不受影响。
+                narrowed = {a for a in atks if any(b in own_bases for b, _own in prov[a])}
+                narrowed_named = {ctx_of[a] for a in narrowed if ctx_of[a]}
+                if narrowed and len(narrowed_named) == 1:
+                    atks, named = narrowed, narrowed_named
+                    variant_stats["behavior:narrowedToOwnBase"] += 1
             if not atks or len(named) > 1:
                 # 行为表分不出来（103 回旋斩的 4 套动作全挂在 variationId=0 上），
                 # 或者这把武器压根没接上行为表：退回按 ctx 单选一套。
                 candidates = atks or pool
-                chosen = choose_ctx(wep, skill["id"], {ctx_of[a] for a in candidates})
+                chosen = choose_ctx(wep, skill["id"], {ctx_of[a] for a in candidates}, chr_ctx)
+                if chosen and chosen in chr_ctx:
+                    # 角色套整套取：铁之眼的弓（variationId 4100）的 No FP 段挂在 4100 上，
+                    # 带 FP 的四段却挂在 variationId 5000（= 铁之眼箭矢 50030000 的 5050 取整）上，
+                    # 弓的子弹行为按箭矢的 variationId 解——所以按弓自己的 4100 解会落到 Default 套。
+                    candidates = {a for a in pool if ctx_of[a] == chosen}
                 if chosen is None:
                     variant_gaps.append(
                         f'{wid} {wep["nameZh"]} ← {skill["id"]} {skill["nameZh"]}')
@@ -1248,14 +1642,82 @@ def main() -> None:
             if not atks:
                 variant_gaps.append(f'{wid} {wep["nameZh"]} ← {skill["id"]} {skill["nameZh"]}')
                 continue
-            key = frozenset(atks)
+            legacy_atks = legacy_pick(wep, skill["id"], var, judges, pool, ctx_of)
+            legacy_sel[(skill["id"], wid)] = frozenset(legacy_atks)
+            if legacy_atks != atks:
+                def set_ctx(ids: set[str]) -> str:
+                    names = sorted({ctx_of[a] for a in ids if ctx_of[a]})
+                    return "/".join(names) if names else ("默认套" if ids else "解不出")
+                legacy_changed.append((skill["id"], wid, wep["swordArtsParamId"] == skill["id"],
+                                       set_ctx(legacy_atks), set_ctx(atks)))
+            selections.append((wid, via, var, atks))
+            pre_sel[(skill["id"], wid)] = frozenset(atks)
+            variant_stats[via] += 1
+            is_fixed = wep["swordArtsParamId"] == skill["id"]
+            variant_stats[f'{via}:{"fixed" if is_fixed else "poolOnly"}'] += 1
+        if not selections:
+            continue
+        skill["_preCovered"] = {int(a) for _w, _v, _var, atks in selections for a in atks}
+
+        # TAE 核实：逐武器判定（同 var / 动作组 / 类别 / 段集合的武器共用一次结果）
+        final: dict[int, set[str]] = {wid: atks for wid, _v, _var, atks in selections}
+        if tae is not None:
+            sctx = tae.skill_context(skill["id"], pool)
+            skill_tae_of[skill["id"]] = f'a{sctx["skillTae"]}' if sctx["skillTae"] is not None else None
+            checked: dict[int, tuple[dict, dict | None]] = {}
+            cache: dict[tuple, tuple[dict, dict | None]] = {}
+            for wid, _via, var, atks in selections:
+                wrow = tae.wep(wid)
+                wtype = weapon_by_id[str(wid)]["wepType"]
+                key = (var, frozenset(tae.weapon_taes([wid])),
+                       to_int(wrow["wepmotionCategory"]) if wrow else -1, wtype, frozenset(atks))
+                if key not in cache:
+                    cache[key] = tae.check(sctx, atks, var, [wid], {wtype})
+                    tae_checks += 1
+                checked[wid] = cache[key]
+            matched = sctx["taeFound"] and any(
+                r["status"] in vsh.MATCHED_STATUSES for res, _i in checked.values() for r in res.values())
+            if not matched:
+                # 战技动画匹配不到（弓系战技只有锚点段、或战技 TAE 缺失）：hits 与 variants 一律不动，只打标记
+                skill["taeUnmatched"] = True
+                statuses = Counter(r["status"] for res, _i in checked.values() for r in res.values())
+                tae_unmatched.append(
+                    f'{skill["id"]} {skill["nameZh"]}（战技 TAE a{sctx["skillTae"]}'
+                    f'{"" if sctx["taeFound"] else " 缺失"}；各段判定 {dict(statuses)}）')
+            else:
+                for wid, _via, var, atks in selections:
+                    res, info = checked[wid]
+                    kept = {a for a in atks if res[a]["status"] in vsh.KEEP_STATUSES}
+                    if not kept:
+                        # 这把武器一段都留不下：不敢断定它打不出这个战技，保持行为表口径并记下来
+                        tae_empty.append(f'{wid} {weapon_by_id[str(wid)]["nameZh"]} ← {skill["id"]} {skill["nameZh"]}'
+                                         f'（{dict(Counter(r["status"] for r in res.values()))}）')
+                        continue
+                    final[wid] = kept
+                    if info:
+                        tae_blocks[skill["id"]][f'{info["chosenBlock"]}（{info["blockChoice"].split("（")[0]}）'] += 1
+                    for a in kept:
+                        for branch, anims in vsh.fp_evidence(res[a], sctx["roar"],
+                                                             info["chosenBlock"] if info else None).items():
+                            tae_fp[(skill["id"], a)][branch] |= anims
+                    for a in atks:
+                        st = res[a]["status"]
+                        if a not in kept:
+                            tae_removed[skill["id"]][a][st].append(wid)
+                            tae_detail.setdefault((skill["id"], a, st), vsh.reason_text(res[a]))
+                        elif st not in vsh.MATCHED_STATUSES:
+                            tae_kept_special[skill["id"]][a][st].append(wid)
+                            tae_detail.setdefault((skill["id"], a, st), (
+                                "；".join(res[a].get("gates") or []) if st == "conditional"
+                                else "SpEffect " + "、".join(f'{x["spEffectId"]} {x["name"]}' for x in res[a].get("spEffects", []))
+                                if st == "spEffect" else "；".join(res[a].get("noJudgeReason") or []) or st))
+
+        for wid, via, _var, _atks in selections:
+            key = frozenset(final[wid])
             group = groups.setdefault(key, {"weaponIds": [], "via": via})
             group["weaponIds"].append(wid)
             if via == "ctx":
                 group["via"] = "ctx"
-            variant_stats[via] += 1
-        if not groups:
-            continue
         variants = []
         for key, group in sorted(groups.items(), key=lambda kv: min(int(a) for a in kv[0])):
             named = sorted({ctx_of[a] for a in key if ctx_of[a]})
@@ -1272,12 +1734,40 @@ def main() -> None:
             entry["weaponIds"] = sorted(group["weaponIds"])
             index = len(variants)
             for wid in group["weaponIds"]:
-                weapon_by_id[str(wid)]["skillVariant"] = index
+                wep = weapon_by_id[str(wid)]
+                # skillVariants 覆盖该武器可能出现的每个战技；skillVariant 仍只给固定战技（v2 语义）
+                wep.setdefault("skillVariants", {})[str(skill["id"])] = index
+                if wep["swordArtsParamId"] == skill["id"]:
+                    wep["skillVariant"] = index
             variants.append(entry)
         skill["variants"] = variants
 
     for wep in weapons:
         wep.pop("_behaviorVariationId", None)
+
+    # ---- 武器侧：skillIds / skillVariants / customWeapons（v3） ---------------
+    skill_ids_known = {s["id"] for s in skills}
+    for i, wep in enumerate(weapons):
+        wid = str(wep["id"])
+        ids = set(weapon_pool_skills.get(wid, set()))
+        if wep["swordArtsParamId"] in skill_ids_known:
+            ids.add(wep["swordArtsParamId"])
+        ordered: dict = {}
+        for key, value in wep.items():
+            if key in ("skillVariant", "skillVariants"):
+                continue
+            ordered[key] = value
+            if key == "swordArtsParamId":
+                ordered["skillIds"] = sorted(ids)
+        if "skillVariant" in wep:
+            ordered["skillVariant"] = wep["skillVariant"]
+        if wep.get("skillVariants"):
+            ordered["skillVariants"] = {k: wep["skillVariants"][k]
+                                        for k in sorted(wep["skillVariants"], key=int)}
+        if custom_by_weapon.get(wid):
+            ordered["customWeapons"] = [[c, t] for c, t in sorted(custom_by_weapon[wid])]
+        weapons[i] = ordered
+    weapon_by_id = {str(w["id"]): w for w in weapons}
 
     # ---- 标记「本作没有任何武器会打出」的动作套 ------------------------------
     # 参数表里一个通用战技往往存着比本作实际用得到的更多的动作套
@@ -1285,20 +1775,110 @@ def main() -> None:
     # 但本作没有任何直剑把 650 配为战技）。这些段行名确实点名了本战技，数据没错，
     # 但按 usage 的选段算法（variants → atkIds）永远取不到。
     # 给它们打上 noVariant=true，方便页面/体积裁剪时区分，不改变既有字段语义。
+    # noVariant 看的是「行为表层」的覆盖（TAE 核实之前）：TAE 核实移除的段另标 notInvoked，两者互斥。
     no_variant_hits = 0
     no_variant_damaging = 0
     for skill in skills:
+        covered: set[int] = skill.pop("_preCovered", set())
         if not skill.get("variants"):
             continue
-        covered: set[int] = set()
-        for v in skill["variants"]:
-            covered |= set(v["atkIds"])
         for hit in skill["hits"]:
             if hit["atkId"] not in covered:
                 hit["noVariant"] = True
                 no_variant_hits += 1
-                if hit.get("motion") or hit.get("flat"):
+                if hit_has_damage(hit):
                     no_variant_damaging += 1
+
+    # ---- TAE 核实的标记与清单 -------------------------------------------------------
+    # hits[].notInvoked：行为表给至少一把武器解出了这段，但 TAE 核实后在**所有**这些武器上都被移除；
+    # 只在部分武器上被移除的段不标，逐武器结论看 variants，清单见 diagnostics.taeVerification.partiallyRemoved。
+    # 本版本这类段全部来自互斥动画套，例：二连斩 Large Weapon 套 300000185–196 只留给大剑 / 大曲剑，
+    # 在其余武器上记 exclusiveBlock 移除。（野蛮咆哮 300000957/959/967/969 不是这种：三级回退下锤族 var 1100
+    # 解到自己的 301100957，没有任何武器会打 var 0 的这 4 行，所以它们在全部 141 把武器上都被移除、标 notInvoked。）
+    reason_order = list(vsh.STATUS_ORDER) if vsh else []
+    removed_list: list[dict] = []
+    partial_list: list[dict] = []
+    kept_special_list: list[dict] = []
+    hits_not_invoked = 0
+    hits_not_invoked_damaging = 0
+    weapon_hits_removed = 0
+    skills_by_id_tmp = {s["id"]: s for s in skills}
+    for sid, per_atk in sorted(tae_removed.items()):
+        skill = skills_by_id_tmp[sid]
+        kept_any = {a for v in skill.get("variants", ()) for a in v["atkIds"]}
+        by_atk = {h["atkId"]: h for h in skill["hits"]}
+        for a, by_status in sorted(per_atk.items(), key=lambda kv: int(kv[0])):
+            hit = by_atk[int(a)]
+            reason = min(by_status, key=reason_order.index)
+            wids = sorted({w for ws in by_status.values() for w in ws})
+            weapon_hits_removed += len(wids)
+            rec = {"skillId": sid, "nameZh": skill["nameZh"], "atkId": int(a)}
+            if hit.get("label"):
+                rec["label"] = hit["label"]
+            if hit.get("ctx"):
+                rec["ctx"] = hit["ctx"]
+            rec["damaging"] = hit_has_damage(hit)
+            rec["reasons"] = {st: len(ws) for st, ws in sorted(by_status.items(), key=lambda kv: reason_order.index(kv[0]))}
+            rec["reasonZh"] = tae_detail[(sid, a, reason)]
+            if int(a) in kept_any:
+                rec["keptOnWeapons"] = sum(len(v["weaponIds"]) for v in skill["variants"] if int(a) in v["atkIds"])
+                rec["removedOnWeapons"] = len(wids)
+                rec["removedWeaponSample"] = wids[:5]
+                partial_list.append(rec)
+            else:
+                hit["notInvoked"] = True
+                hit["notInvokedReason"] = reason
+                hits_not_invoked += 1
+                if rec["damaging"]:
+                    hits_not_invoked_damaging += 1
+                rec["notInvokedReason"] = reason
+                rec["weapons"] = len(wids)
+                rec["weaponSample"] = wids[:5]
+                removed_list.append(rec)
+    for sid, per_atk in sorted(tae_kept_special.items()):
+        skill = skills_by_id_tmp[sid]
+        for a, by_status in sorted(per_atk.items(), key=lambda kv: int(kv[0])):
+            for st, ws in by_status.items():
+                kept_special_list.append({"skillId": sid, "nameZh": skill["nameZh"], "atkId": int(a), "status": st,
+                                          "weapons": len(ws), "detail": tae_detail[(sid, a, st)]})
+
+    # ---- TAE 核实：带 FP / 无 FP 分支（verify_skill_hits 规律 8） ---------------------------
+    # hits[].noFp 原先只看行名里的 "No FP"。很多战技的无 FP 段行名没写（风暴刃 300000411–413 = a659 的
+    # 40005/40015/40025，狩猎巨人 301700915 = a616 的 40005），于是和带 FP 段一起被默认勾选、相加。
+    # 这里按「留下这段的武器上，调用它的战技 TAE 动画在哪一侧」补标：
+    #   只被无 FP 版动画（4xxxx 个位 5–9）调用 → noFp=true + noFpSource="tae"，labelZh 前补「无FP版」；
+    #   带 FP 版（或不分 FP 的 3xxxx / 吼叫 R2）动画与无 FP 版动画都调用 → fpBoth=true（两侧共用，无论开关在哪侧都该计入）；
+    #   行名写了 "No FP" 却被带 FP 版动画调用 → 记进 noFpConflicts（规律 8 的反例；本版本为空，self_check 断言）。
+    # 没有动画依据的段（spEffect / noJudge）与 taeUnmatched 的战技保持行名口径。
+    no_fp_tae: list[dict] = []
+    fp_both_list: list[dict] = []
+    no_fp_conflicts: list[str] = []
+    for skill in skills:
+        if tae is None or skill.get("taeUnmatched"):
+            continue
+        for hit in skill["hits"]:
+            ev = tae_fp.get((skill["id"], str(hit["atkId"])))
+            if not ev:
+                continue
+            branches = set(ev)
+            anims = {b: sorted(ev[b]) for b in ("fp", "noFp", "neutral") if ev.get(b)}
+            rec = {"skillId": skill["id"], "nameZh": skill["nameZh"], "skillTae": skill_tae_of.get(skill["id"]),
+                   "atkId": hit["atkId"], "damaging": hit_has_damage(hit), "anims": anims}
+            if branches == {"noFp"}:
+                if not hit.get("noFp"):
+                    label_zh = hit.get("labelZh", "")
+                    set_hit_fields(hit, noFp=True, noFpSource="tae",
+                                   labelZh=f"{NO_FP_LABEL_PREFIX} {label_zh}" if label_zh else NO_FP_LABEL_PREFIX)
+                    no_fp_tae.append(rec)
+            elif "noFp" in branches:
+                if hit.get("noFp"):
+                    no_fp_conflicts.append(f'{skill["id"]} {skill["nameZh"]} {hit["atkId"]}（行名 No FP，动画 {anims}）')
+                else:
+                    set_hit_fields(hit, fpBoth=True)
+                    fp_both_list.append(rec)
+            elif hit.get("noFp") and "fp" in branches:
+                no_fp_conflicts.append(f'{skill["id"]} {skill["nameZh"]} {hit["atkId"]}（行名 No FP，动画 {anims}）')
+    no_fp_tae_damaging = sum(1 for r in no_fp_tae if r["damaging"])
 
     skills.sort(key=lambda e: e["id"])
     spells.sort(key=lambda e: e["id"])
@@ -1334,18 +1914,172 @@ def main() -> None:
     wep_attr_hits = sum(1 for e in skills + spells for h in e["hits"]
                         if h["attribute"] in ("WeaponAtkAttribute", "WeaponAtkAttribute2"))
 
+    # ---- 选段口径变化（v3 三级回退等）的实测 ----------------------------------------
+    # 「同一战技里同一武器类别被拆进不同动作套」的战技：v3 口径应为 0（self_check 断言），
+    # v2 口径（两级回退）分别按「只看固定武器」与「v3 的全部武器」统计。
+    wep_type_of = {w["id"]: w["wepType"] for w in weapons}
+    fixed_pair_set = {(sk["id"], src["id"]) for sk in skills for src in sk["weaponSources"] if src.get("fixed")}
+
+    def split_skills(selection: dict[tuple[int, int], frozenset], only: set | None = None) -> list[int]:
+        seen: dict[tuple[int, int], set[frozenset]] = defaultdict(set)
+        for (sid, wid), atks in selection.items():
+            if only is not None and (sid, wid) not in only:
+                continue
+            seen[(sid, wep_type_of[wid])].add(atks)
+        return sorted({sid for (sid, _t), sets in seen.items() if len(sets) > 1})
+
+    v3_sel: dict[tuple[int, int], frozenset] = {}
+    for sk in skills:
+        for v in sk.get("variants", ()):
+            for wid in v["weaponIds"]:
+                v3_sel[(sk["id"], wid)] = frozenset(str(a) for a in v["atkIds"])
+    # 「同一武器类别只落进一套动作」是行为表层的规律，按 TAE 核实前的选段统计；
+    # TAE 核实后同一类别可以因动作组 TAE / 互斥动画套不同而分到不同 variant（另计，写进 diagnostics）
+    split_v3 = split_skills(pre_sel)
+    split_after_tae = split_skills(v3_sel)
+    split_legacy_fixed = split_skills(legacy_sel, fixed_pair_set)
+    split_legacy_all = split_skills(legacy_sel)
+    legacy_changed_fixed = [c for c in legacy_changed if c[2]]
+    legacy_changed_fixed_by_skill = Counter(c[0] for c in legacy_changed_fixed)
+    legacy_changed_fixed_text = "、".join(
+        f'{sid} {skills_by_id[sid]["nameZh"]} {n} 把' for sid, n in sorted(legacy_changed_fixed_by_skill.items()))
+
+    # ---- v3 战技池统计 ---------------------------------------------------------
+    def skill_label(skill: dict) -> str:
+        return f'{skill["id"]} {skill["nameZh"]}／{skill["nameEn"]}'
+
+    pair_fixed = sum(1 for sk in skills for src in sk["weaponSources"] if src.get("fixed"))
+    pair_pool = sum(1 for sk in skills for src in sk["weaponSources"] if src.get("pool"))
+    pair_both = sum(1 for sk in skills for src in sk["weaponSources"]
+                    if src.get("fixed") and src.get("pool"))
+    skills_without_weapons = [skill_label(sk) for sk in skills if not sk["weaponIds"]]
+    skills_without_fixed = [skill_label(sk) for sk in skills
+                            if not any(src.get("fixed") for src in sk["weaponSources"])]
+    skills_pool_only = [f'{skill_label(sk)}（{len(sk["weaponIds"])} 把）' for sk in skills
+                        if sk["weaponIds"] and not any(src.get("fixed") for src in sk["weaponSources"])]
+    skills_pool_only_with_hits = sum(1 for sk in skills if sk["hits"] and sk["weaponIds"]
+                                     and not any(src.get("fixed") for src in sk["weaponSources"]))
+    weapons_with_pool = sum(1 for w in weapons if str(w["id"]) in weapon_pool_skills)
+    weapons_with_skill_variants = sum(1 for w in weapons if w.get("skillVariants"))
+    pool_payload = {str(t): [[a, w] for a, w in pool_entries[t]] for t in sorted(used_pools, key=int)}
+    pool_entry_count = sum(len(v) for v in pool_payload.values())
+    all_pairs = {(sk["id"], wid) for sk in skills for wid in sk["weaponIds"]}
+    epw_extra_pairs = {pr for pr in epw_table_pairs if pr not in all_pairs and pr[0] in skill_ids_known}
+    epw_extra_skills = {a for a, _w in epw_extra_pairs} - {sk["id"] for sk in skills if sk["weaponIds"]}
+    no_variant_by_skill: Counter = Counter()
+    no_variant_example: dict[int, str] = {}
+    for sk in skills:
+        for hit in sk["hits"]:
+            if hit.get("noVariant"):
+                no_variant_by_skill[sk["id"]] += 1
+                no_variant_example.setdefault(sk["id"], hit.get("ctx", ""))
+    no_variant_top = "、".join(
+        f'{sid} {skills_by_id[sid]["nameZh"]} {n} 段'
+        + (f'（ctx "{no_variant_example[sid]}"）' if no_variant_example[sid] else "（默认套）")
+        for sid, n in no_variant_by_skill.most_common(4))
+
+    # ---- TAE 核实统计 ------------------------------------------------------------
+    tae_verified = tae is not None
+    # fieldNotes.notInvoked 里「只在部分武器上打不出」的例子按数据现算（self_check 另断言它成立）：
+    # 二连斩的 Large Weapon 套只留给它自己那一套的武器，其余武器按互斥动画套移除。
+    partial_example = ""
+    ex_rows = [r for r in partial_list if r["skillId"] == 112 and r.get("ctx") == "Large Weapon"]
+    if ex_rows:
+        ex_first = ex_rows[0]
+        ex_types = sorted({weapon_by_id[str(w)]["wepType"] for v in skills_by_id[112].get("variants", ())
+                           if ex_first["atkId"] in v["atkIds"] for w in v["weaponIds"]})
+        partial_example = (
+            f'例：{skills_by_id[112]["nameZh"]} {ex_rows[0]["atkId"]}–{ex_rows[-1]["atkId"]}（Large Weapon 套 {len(ex_rows)} 段）'
+            f'只留给 {" / ".join(WEP_TYPE_ZH[t][1] for t in ex_types)}（{ex_first["keptOnWeapons"]} 把），'
+            f'在另 {ex_first["removedOnWeapons"]} 把武器上按互斥动画套（exclusiveBlock）移除；'
+            "野蛮咆哮 300000957/959/967/969 不属于这种——三级回退下没有任何武器会解到这 4 行 var 0 的通用行，"
+            "它们在全部选到它们的武器上都被移除、标了 notInvoked")
+    hits_self_or_ally = sum(1 for e in skills + spells for h in e["hits"] if h.get("selfOrAllyOnly"))
+    hits_self_or_ally_with_values = sum(1 for e in skills + spells for h in e["hits"]
+                                        if h.get("selfOrAllyOnly") and (h.get("motion") or h.get("flat")))
+    tae_skill_weapon_pairs = sum(1 for (sid, wid), atks in pre_sel.items()
+                                 if not skills_by_id[sid].get("taeUnmatched")) if tae_verified else 0
+    tae_pairs_changed = sum(1 for (sid, wid), atks in pre_sel.items()
+                            if v3_sel.get((sid, wid)) is not None and v3_sel[(sid, wid)] != atks)
+    tae_skills_changed = sorted({sid for (sid, wid), atks in pre_sel.items()
+                                 if v3_sel.get((sid, wid)) is not None and v3_sel[(sid, wid)] != atks})
+    tae_unmatched_ids = [sk["id"] for sk in skills if sk.get("taeUnmatched")]
+    removed_reason_counts = Counter(r["notInvokedReason"] for r in removed_list)
+    weapon_hits_removed_by_status: Counter = Counter()
+    for per_atk in tae_removed.values():
+        for by_status in per_atk.values():
+            for st, ws in by_status.items():
+                weapon_hits_removed_by_status[st] += len(ws)
+    tae_meta = {}
+    if tae_verified:
+        im = tae.invoked_meta
+        tae_meta = {"file": "raw/tae/invoked.json（extract_tae.py 生成，不入库）",
+                    "source": im.get("source"), "packs": im.get("packs"), "stats": im.get("stats")}
+    tae_diagnostics = {
+        "verified": tae_verified,
+        "skippedReason": tae_skip_reason or None,
+        "invoked": tae_meta or None,
+        "rules": ("战技 TAE = a(600 + SwordArtsParam.swordArtsType)；事件 judgeId = judge（base 1 亿）或 base/1 亿*1000 + judge；"
+                  "BehaviorParam_PC 按三级回退（武器 var → 取整到百位 → 0）解行；吼叫类（650/651/1015）的 R2 段在武器动作组 "
+                  "a(wepmotionCategory) 的 30600–30635 / 32600–32635 动画里；stateInfo≠0 是前置条件，187 玩家拿不到；"
+                  "由 SpEffectParam.behaviorId 触发的行按 SpEffect 来源判；战技 TAE 的 4xxxx 动画按百位分套，一把武器只播一套。"
+                  "详见 PROVENANCE「TAE 动画事件与命中核实」规律 1–10 与「命中段 TAE 核实（v3）」。"),
+        "keepStatuses": list(vsh.KEEP_STATUSES) if vsh else [],
+        "counts": {
+            "skillWeaponPairsChecked": tae_skill_weapon_pairs,
+            "distinctChecks": tae_checks,
+            "skillWeaponPairsChanged": tae_pairs_changed,
+            "skillsChanged": len(tae_skills_changed),
+            "weaponHitsRemoved": weapon_hits_removed,
+            "weaponHitsRemovedByStatus": dict(sorted(weapon_hits_removed_by_status.items(),
+                                                     key=lambda kv: (vsh.STATUS_ORDER.index(kv[0]) if vsh else 0))),
+            "hitsNotInvoked": hits_not_invoked,
+            "hitsNotInvokedByReason": dict(removed_reason_counts),
+            "hitsPartiallyRemoved": len(partial_list),
+            "skillsTaeUnmatched": len(tae_unmatched_ids),
+            "weaponsKeptUnfiltered": len(tae_empty),
+            "hitsNoFpByTae": len(no_fp_tae),
+            "hitsNoFpByTaeDamaging": no_fp_tae_damaging,
+            "skillsNoFpByTae": len({r["skillId"] for r in no_fp_tae}),
+            "hitsFpBoth": len(fp_both_list),
+            "noFpConflicts": len(no_fp_conflicts),
+        },
+        "skillsChanged": [f'{sid} {skills_by_id[sid]["nameZh"]}' for sid in tae_skills_changed],
+        "removedHits": removed_list,
+        "partiallyRemoved": partial_list,
+        "keptNonAnimation": kept_special_list,
+        "exclusiveBlocks": [{"skillId": sid, "nameZh": skills_by_id[sid]["nameZh"],
+                             "chosenBlockWeapons": dict(sorted(c.items()))}
+                            for sid, c in sorted(tae_blocks.items())],
+        "taeUnmatchedSkills": tae_unmatched,
+        "weaponsKeptUnfiltered": tae_empty,
+        "sameWeaponTypeSplitAfterTae": [f'{sid} {skills_by_id[sid]["nameZh"]}' for sid in split_after_tae],
+        "noFpRule": ("战技 TAE 的 4xxxx 动画个位 0–4 = 带 FP 版、5–9 = 无 FP 版（带 FP 版动画号 + 5；本机全部战技 TAE 里个位 ≥ 5 的 "
+                     "4xxxx 动画都有对应的带 FP 版）。一段在留下它的武器上只被无 FP 版动画调用 → hits[].noFp=true、"
+                     "noFpSource=\"tae\"（下面 noFpFromTae，行名没写 No FP 的才列）；两侧（或不分 FP 的 3xxxx / 吼叫 R2 动画）"
+                     "都调用 → fpBoth=true（fpBoth）。anims 按侧列出调用它的动画号：fp / noFp 在战技 TAE（skillTae）里，"
+                     "neutral 是 3xxxx 或吼叫类战技在武器动作组 TAE 里的 R2 动画。行名写 No FP 却被带 FP 版动画调用的段列在 "
+                     "noFpConflicts（本版本应为空）。"),
+        "noFpFromTae": no_fp_tae,
+        "fpBoth": fp_both_list,
+        "noFpConflicts": no_fp_conflicts,
+    }
+
     payload = {
         "schemaVersion": SCHEMA_VERSION,
         "gameVersion": GAME_VERSION,
         "dataVersion": DATA_VERSION,
         "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "schemaChangelog": SCHEMA_CHANGELOG,
         "sources": [
             {
                 "name": "Elden Ring Nightreign regulation.bin",
                 "detail": "本机 CrossOver Steam 安装，exe 1.3.3.0，容器版本号 10350000（1.03.5）；"
                           "由 dump_regulation.py 解出 raw/params/*.csv",
                 "license": "游戏数据，版权归 FromSoftware / Bandai Namco",
-                "use": "EquipParamWeapon / SwordArtsParam / Magic / AtkParam_Pc / Bullet / BehaviorParam_PC",
+                "use": "EquipParamWeapon / SwordArtsParam / Magic / AtkParam_Pc / Bullet / BehaviorParam_PC；"
+                       "v3 起另读 EquipParamCustomWeapon / SwordArtsTableParam（局内战技池）与 "
+                       "ItemTableParam / ItemLotParam_map / ItemLotParam_enemy / ShopLineupParam（只判 custom 行是否可达）",
             },
             {
                 "name": "Elden Ring Nightreign 游戏内文本（FMG）",
@@ -1375,6 +2109,37 @@ def main() -> None:
             "weaponsWithVariant": weapons_with_variant,
             "hitsWithoutVariant": no_variant_hits,
             "hitsWithoutVariantDamaging": no_variant_damaging,
+            # v3：战技池
+            "skillsWithWeapons": sum(1 for sk in skills if sk["weaponIds"]),
+            "skillsWithFixedWeapons": len(skills) - len(skills_without_fixed),
+            "skillsPoolOnly": len(skills_pool_only),
+            "skillsPoolOnlyWithHits": skills_pool_only_with_hits,
+            "weaponSkillPairs": len(all_pairs),
+            "weaponSkillPairsFixed": pair_fixed,
+            "weaponSkillPairsPool": pair_pool,
+            "weaponSkillPairsBoth": pair_both,
+            "weaponsWithPool": weapons_with_pool,
+            "weaponsWithSkillVariants": weapons_with_skill_variants,
+            "customWeaponRows": custom_stats["reachable"],
+            "customWeaponRowsFixedOnly": custom_stats["reachableFixedOnly"],
+            "customWeaponRowsUnreachable": custom_stats["unreachable"],
+            "swordArtsPools": len(pool_payload),
+            "swordArtsPoolEntries": pool_entry_count,
+            # v3 第二部分：TAE 核实
+            "taeVerified": tae_verified,
+            "hitsNotInvoked": hits_not_invoked,
+            "hitsNotInvokedDamaging": hits_not_invoked_damaging,
+            "hitsPartiallyRemovedByTae": len(partial_list),
+            "weaponHitsRemovedByTae": weapon_hits_removed,
+            "skillWeaponPairsChangedByTae": tae_pairs_changed,
+            "skillsChangedByTae": len(tae_skills_changed),
+            "skillsTaeUnmatched": len(tae_unmatched_ids),
+            # v3 审查修正：TAE 补标的无 FP 段、两侧共用段、只打自己 / 队友的段
+            "hitsNoFpByTae": len(no_fp_tae),
+            "hitsNoFpByTaeDamaging": no_fp_tae_damaging,
+            "hitsFpBoth": len(fp_both_list),
+            "hitsSelfOrAllyOnly": hits_self_or_ally,
+            "hitsSelfOrAllyOnlyWithValues": hits_self_or_ally_with_values,
         },
         "coverage": {
             "note": "下面这些战技 / 法术在参数里找不到任何带数值的攻击行，"
@@ -1386,12 +2151,46 @@ def main() -> None:
                 f"其中只有 variants 覆盖到的那些才会被本作的武器真正打出。"
                 f"本版本有 {no_variant_hits} 段（其中 {no_variant_damaging} 段带 motion / flat）"
                 f"不属于该战技的任何一个 variant，已逐段标 noVariant=true——"
-                f"多为「参数表里存着某个武器类别的动作套，但本作没有任何该类别的武器配了这个战技」"
-                f"（例 650 野蛮咆哮的 '[AoW Straight Sword] Barbaric Roar'、"
-                f"108 鲜血征收的 '[AoW Dagger] Blood Tax'）。"
+                f"多为「参数表里存着某一套动作，但本作没有任何武器会用到它」"
+                f"（通用战技的默认套在每个武器类别都有专属套时就用不到；"
+                f"或者行名点名的武器在本作并不带这个战技，例如 120 转啊转的 'Carian Regal Scepter' 套——"
+                f"33090000 卡利亚权杖在本作的战技是 10 无战技，也不在任何战技池里）。"
+                f"（v2 只按固定引用算武器，曾把 650 野蛮咆哮的 '[AoW Straight Sword]' 套等也标成不可达，"
+                f"v3 加上战技池与三级回退后它们都有武器打得出。）"
                 f"这些段数据本身没错，但按 usage 的选段算法取不到；"
                 f"想裁体积或只看「本作打得出的段」时按 noVariant 过滤即可。"
-                f"注意：没有 variants 的战技（没有武器引用它）其 hits 不会被标记。",
+                f"注意：没有 variants 的战技（没有武器引用它）其 hits 不会被标记。"
+                f"v3 按「固定 + 战技池」的武器重算后，剩下的大头是：{no_variant_top}。",
+            "hitsNotInvokedNote": (
+                f"（v3 TAE 核实）{hits_not_invoked} 段（其中带 motion / flat 的 {hits_not_invoked_damaging} 段）行为表给武器解得到、"
+                f"但所有这些武器的动画都不调用，已从 variants 移除并标 notInvoked："
+                + "；".join(f'{sid} {skills_by_id[sid]["nameZh"]} ' + "、".join(
+                    f'{r["atkId"]}（{r["notInvokedReason"]}）' for r in removed_list if r["skillId"] == sid)
+                    for sid in sorted({r["skillId"] for r in removed_list}))
+                + f"。另有 {len(partial_list)} 段只在部分武器上打不出（"
+                + "、".join(f'{sid} {skills_by_id[sid]["nameZh"]}' for sid in sorted({r["skillId"] for r in partial_list}))
+                + "，都是互斥动画套），不标 notInvoked，逐武器以 variants 为准；"
+                  f"战技动画匹配不到、未做过滤的 {len(tae_unmatched_ids)} 个战技标 taeUnmatched。"
+                  "原因的中文说明与涉及武器见 diagnostics.taeVerification。"
+                if tae_verified else "（v3 TAE 核实）本文件生成时没有做 TAE 核实（counts.taeVerified=false）。"),
+            "skillsWithoutWeapons": skills_without_weapons,
+            "skillsWithoutFixedWeapons": skills_without_fixed,
+            "skillsPoolOnly": skills_pool_only,
+            "weaponSourcesNote":
+                f"skills[].weaponIds（v3）= EquipParamWeapon.swordArtsParamId 固定引用 ∪ 局内战技池。"
+                f"skillsWithoutWeapons 是 v3 口径下仍然没有任何武器的战技（{len(skills_without_weapons)} 个，"
+                f"都是占位条目）；skillsWithoutFixedWeapons 是 v2 口径（只看固定引用）下没有武器的战技"
+                f"（{len(skills_without_fixed)} 个）；二者之差 skillsPoolOnly（{len(skills_pool_only)} 个，"
+                f"其中 {skills_pool_only_with_hits} 个有命中段）就是 v2 里「选不到」、v3 起只经由局内战技池出现的战技，"
+                f"括号里是能带它的基础武器数。"
+                f"只算可达的 custom 行（被 ItemTableParam / ItemLotParam / ShopLineupParam 引用，"
+                f"本版本 {custom_stats['reachable']} 行，另有 {custom_stats['unreachable']} 行无人引用不算来源）："
+                + ("未可达行独有的 (战技, 武器) 对共 " + str(len(unreachable_only_pairs)) + " 个（"
+                   + "、".join(f"{a}→{w}" for a, w in unreachable_only_pairs[:10]) + "），不计入。"
+                   if unreachable_only_pairs else "未可达行没有带来任何额外的 (战技, 武器) 对。")
+                + f"EquipParamWeapon 自己的 swordArtsTableId 列（指向未被任何 custom 行引用的 xx10 池）不作为来源："
+                  f"算上它会多出 {len(epw_extra_pairs)} 个 (战技, 武器) 对（绝大多数落在属性变体武器行上），"
+                  f"但新增战技 {len(epw_extra_skills)} 个——参数表里看不出它在本作何时生效，见 caveats。",
         },
         "fieldNotes": {
             "省略即默认值": "为控制体积，所有等于默认值的字段都被省略。"
@@ -1401,7 +2200,53 @@ def main() -> None:
                         "weapons.atkAttribute / atkAttribute2（及其 ...Zh）是例外，四项恒存在；"
                         "weapons.attackBase / weapons.correct 同理（缺失的键 = 0）；"
                         "weapons.skillVariant 缺失表示这把武器的战技没有命中段；"
-                        "skills.variants 缺失表示没有武器引用这个战技（或它没有命中段）。",
+                        "skills.variants 缺失表示没有武器引用这个战技（或它没有命中段）；"
+                        "（v3）weaponSources[].fixed 缺失 = false、pool 缺失 = 不经由战技池；"
+                        "weapons.skillVariants 缺失 = 该武器的战技都没有命中段，"
+                        "weapons.customWeapons 缺失 = 没有可达的 custom 行以它为基础武器；"
+                        "（v3 TAE 核实）hits.notInvoked 缺失 = false（此时也没有 notInvokedReason），"
+                        "skills.taeUnmatched 缺失 = false；"
+                        "（v3 审查修正）hits.noFpSource 缺失 = noFp 来自行名（或 noFp=false），hits.fpBoth 缺失 = false，"
+                        "hits.selfOrAllyOnly 缺失 = false。",
+            "weaponIds": "（v3 取值扩大）skills[].weaponIds = 能带这个战技的全部武器 ="
+                         "EquipParamWeapon.swordArtsParamId 固定引用 ∪ 局内战技池"
+                         "（可达的 EquipParamCustomWeapon 行，其 swordArtsTableId 指向的池里含该战技且 chanceWeight>0，"
+                         "取该行的 targetWeaponId）。v2 只有前一半，所以风暴刃（210）、狩猎巨人（116）等只在池里出现的战技"
+                         "没有武器。每把武器的来源见 weaponSources；逐个战技的变化见 coverage.skillsPoolOnly。",
+            "weaponSources": "skills[].weaponSources（v3）与 weaponIds 一一对应（同序），每项 {id, fixed?, pool?}："
+                             "fixed=true 表示 EquipParamWeapon.swordArtsParamId 就是这个战技；"
+                             "pool 是 [[swordArtsTableId, chanceWeight, customRows], ...]（按池 ID 升序）："
+                             "该武器的可达 custom 行里，有 customRows 行指向池 swordArtsTableId，"
+                             "池里这个战技的权重是 chanceWeight（同池其它条目见顶层 swordArtsPools[池 ID]，"
+                             "该行抽到本战技的概率 = chanceWeight / 池内权重之和）。"
+                             "要回溯到具体行：weapons[该武器].customWeapons 里 swordArtsTableId 相同的那些 customId。"
+                             "两者可以同时存在（固定战技也在池里）。",
+            "skillIds": "weapons[].skillIds（v3）= 该武器局内可能出现的全部战技 ID（固定的 swordArtsParamId + "
+                        "它所有可达 custom 行的池成员），升序；与 skills[].weaponIds 互为反向索引。"
+                        "swordArtsParamId 指向不收录的战技行（没有 ArtsName）时不计入。",
+            "skillVariants": "weapons[].skillVariants（v3）= {战技 ID（字符串）: 该战技 variants 数组的下标}，"
+                             "覆盖 skillIds 里每个有命中段、且能解出动作套的战技。"
+                             "取段：skills[战技].variants[weapon.skillVariants[str(战技 ID)]].atkIds。"
+                             "固定战技那一项与 skillVariant 相同。",
+            "customWeapons": "weapons[].customWeapons（v3）= [[customId, swordArtsTableId], ...]：以这把武器为 "
+                             "targetWeaponId 的**可达** EquipParamCustomWeapon 行（被 ItemTableParam itemCategory=6、"
+                             "ItemLotParam lotItemCategory0N=6 或 ShopLineupParam equipType=6 引用）。"
+                             "swordArtsTableId = -1 表示该行不抽池（推断：沿用武器自带的 swordArtsParamId）。"
+                             "只收 targetWeaponId 是有名武器的行。",
+            "swordArtsPools": "顶层 swordArtsPools（v3）= {SwordArtsTableParam 池 ID: [[战技 ID, chanceWeight], ...]}，"
+                              "只收被可达 custom 行引用的池、且只收 chanceWeight>0 的条目；"
+                              f"同一池里同一战技写了两行的（本版本 {pool_dup_rows} 行，例 50000000 刺剑池的 850 白影诱惑）"
+                              "按抽取效果把权重相加合并成一项。"
+                              "**分组规则：同一个 ID 的全部行 = 一个池**（SwordArtsTableParam 11896 行只有 841 个不同 ID，"
+                              "与 AttachEffectTableParam 同一惯例）。Paramdex 行名前缀里的 \"<Dagger>\" / "
+                              "\"<Untyped Straight Sword>\" 等与引用它的 custom 行的武器类别逐一吻合；"
+                              "行名本身（包括 custom 行与商店行的名字）不可靠，归属一律以 targetWeaponId 为准。",
+            "unnamedWeapons": "没有 WeaponName 文本的 EquipParamWeapon 行不收录（本版本 "
+                              f"{unnamed_rows} 行）。其中 100000–101000 这批 wepType 3、rarity 0、Paramdex 行名为空的"
+                              "测试行把 swordArtsParamId 指到 210 风暴刃（" + str(unnamed_skill_refs.get(210, 0)) + " 行）——"
+                              "这就是 v2 里「210 看着有武器引用、weaponIds 却为空」的原因；v3 里 210 的武器全部来自战技池。"
+                              "custom 行的 targetWeaponId 指向无名行的同样不收（可达行里本版本 "
+                              f"{custom_stats['reachableUnnamedTarget']} 行）。",
             "motion": "AtkParam_Pc 的 atkPhysCorrection / atkMagCorrection / atkFireCorrection / "
                       "atkThunCorrection / atkDarkCorrection，单位是百分比，"
                       "乘以武器对应属性的攻击力（含强化与词条加成后的值）。",
@@ -1447,21 +2292,52 @@ def main() -> None:
                    "请改用 skills[].variants + weapons[].skillVariant。",
             "variants": "skills[].variants 给出「每把武器实际会打出哪些段」，由 BehaviorParam_PC "
                         "实解得到（ID = base + behaviorVariationId*1000 + behaviorJudgeId，"
-                        "武器自己的 variationId 优先、缺则落到 variationId=0 的通用行）。"
+                        "三级回退：武器自己的 variationId → 取整到百位的族 variationId（v3 补上）"
+                        "→ variationId=0 的通用行）。v3 起 weaponIds 含战技池里的武器，"
+                        "variants[].weaponIds 相应扩展。"
                         "每个元素：atkIds=这一套包含的段（对应 hits[].atkId）、weaponIds=用这一套的武器、"
                         "ctx/ctxZh/ctxKind=这一套的动作归属（整套 ctx 不一致时省略）、"
-                        "via=\"behavior\"（行为表实解）或 \"ctx\"（行为表分不出来，按 ctx 单选，"
-                        "目前只有 103 回旋斩走这条）。一套里可能混入少量 ctx 缺失的共用段"
+                        "via=\"behavior\"（行为表实解）或 \"ctx\"（行为表分不出来，按 ctx 单选：本版本是 "
+                        + "、".join(f'{sk["id"]} {sk["nameZh"]}' for sk in skills
+                                   if any(v["via"] == "ctx" for v in sk.get("variants", ())))
+                        + "，原因见 caveats）。一套里可能混入少量 ctx 缺失的共用段"
                         "（例如战吼在 Axe 上是 14 段 ctx=\"Axe\" + 2 段共用的 ctx 缺失段），这是正确的。",
             "skillVariant": "weapons[].skillVariant 是该武器在「它的 swordArtsParamId 指向的战技」的 "
                             "variants 数组里的下标。缺失表示这把武器的战技没有任何命中段。"
-                            "取段就是 skills[i].variants[skillVariant].atkIds。",
-            "noDamage": "该 AtkParam 行确实属于这个战技 / 法术（行名点名），但 motion / flat / poise / "
+                            "取段就是 skills[i].variants[skillVariant].atkIds。"
+                            "（v3 语义不变，只指固定战技；池里其它战技的下标见 skillVariants。）",
+            "noDamage": "noDamage=true = 这一段不产生对敌伤害，构成与排名都不算它。两种来源："
+                        "(a) 该 AtkParam 行确实属于这个战技 / 法术（行名点名），但 motion / flat / poise / "
                         "poiseMv / stamina / staminaMv 六项全为 0，只用来挂异常状态或减益"
-                        "（例如百智的世界、催眠火焰）。这类行**保留**并标 noDamage=true；"
+                        "（例如百智的世界、催眠火焰）；"
+                        "(b)（v3 审查修正）行只打自己 / 队友（同时标 selfOrAllyOnly=true，见该条），"
+                        "它的 motion / flat 是回血等效果的倍率，保留原值但不是伤害。"
+                        "这类行**保留**并标 noDamage=true；"
                         "只有「行名没点名、纯靠子弹链或锚点顺带捞到的全零辅助行」"
                         "（Blank / No Target / Spell Helper 之类）才被剔除。"
                         "想只看有伤害的段时按 noDamage 过滤。",
+            "selfOrAllyOnly": "hits[].selfOrAllyOnly=true（v3 审查修正）：AtkParam_Pc.opposeTarget=0 且 selfTarget=1 或 "
+                              "friendlyTarget=1——这一段只打自己 / 队友，不打敌人（例：208 祈祷一击的回血子弹 1202100 "
+                              "\"Heal Self\"、1202110 \"Heal Others\"，各带圣 motion 100，那是回血量的倍率）。"
+                              "一律同时标 noDamage=true，所以三端不会把它算进伤害构成。它照样可以在 variants[].atkIds 里"
+                              "（动画 / SpEffect 确实会触发它）。opposeTarget=0 但三项全 0 的行（如神圣光环的光环子弹）"
+                              "靠子弹自己的判定命中敌人，不标。"
+                              + f"本版本 {hits_self_or_ally} 段（其中 {hits_self_or_ally_with_values} 段带 motion / flat）。",
+            "noFp": "hits[].noFp=true：专注值（FP）不足时打出的弱化版分支。同一次战技只打带 FP 版或无 FP 版其中一侧，"
+                    "两侧互为替代，**不要相加**：按「noFp 与当前开关同侧」取段。"
+                    "来源：行名带 \"No FP\"（noFpSource 缺失），或（v3 审查修正，需 counts.taeVerified=true）"
+                    "noFpSource=\"tae\"——行名没写，但在留下它的武器上只被战技 TAE 里的无 FP 版动画调用"
+                    "（4xxxx 个位 5–9，= 带 FP 版动画号 + 5；例：210 风暴刃 300000411–413 = a659 的 40005/40015/40025，"
+                    "116 狩猎巨人 301700915 = a616 的 40005）。TAE 补标的段 labelZh 前加了「无FP版」，"
+                    "与行名带 No FP 的段写法一致。"
+                    + (f"本版本 TAE 补标 {len(no_fp_tae)} 段（{len({r['skillId'] for r in no_fp_tae})} 个战技，"
+                       f"其中带伤害 {no_fp_tae_damaging} 段），清单见 diagnostics.taeVerification.noFpFromTae。"
+                       if tae_verified else "本文件没有做 TAE 核实，noFp 只来自行名。"),
+            "noFpSource": "只在 noFp=true 且由 TAE 判出时出现，取值 \"tae\"；缺失表示 noFp 来自行名里的 \"No FP\"。",
+            "fpBoth": "hits[].fpBoth=true（v3 审查修正，需 counts.taeVerified=true）：带 FP 版与无 FP 版动画（或不分 FP 的 "
+                      "3xxxx / 吼叫 R2 动画）都会调用这一段——两侧共用，无论「专注值不足」开关在哪一侧都应计入。"
+                      "fpBoth 段的 noFp 一定是 false。"
+                      + (f"本版本 {len(fp_both_list)} 段，清单见 diagnostics.taeVerification.fpBoth。" if tae_verified else ""),
             "correct": "weapons[].correct 是能力值补正（EquipParamWeapon 的 correctStrength / "
                        "correctAgility / correctMagic / correctFaith / correctLuck），键名依次为 "
                        "strength / dexterity / intelligence / faith / arcane，只保留非 0 项。"
@@ -1473,10 +2349,35 @@ def main() -> None:
                          "该战技有 variants，而这个 atkId 不在其中任何一个的 atkIds 里。"
                          "按 usage 的选段算法它永远取不到，只在「显示该战技的全部段」时才会出现。"
                          "缺失表示可达，或该战技根本没有 variants（没有武器引用它，无从判断）。"
+                         "v3 起「武器」含战技池来源，所以标记范围与 v2 不同。"
+                         "（v3 TAE 核实后）判定基于 TAE 核实**之前**的行为表选段，与 notInvoked 互斥。"
                          "详见 coverage.hitsWithoutVariantNote。",
+            "notInvoked": "hits[].notInvoked=true（v3 TAE 核实）：行为表（BehaviorParam_PC）给至少一把武器解出了这段，"
+                          "但逐武器核对动画事件（TAE）后，它在所有这些武器上都不会被该战技的动画调用，"
+                          "已从 variants[].atkIds 移除；hits[] 里保留，只在「显示该战技的全部段」时出现。"
+                          "notInvokedReason 给原因，取值见 enums.notInvokedReason；不同武器原因不同时取 enums 里靠前的那个，"
+                          "完整分布见 diagnostics.taeVerification.removedHits[].reasons。"
+                          "只在**部分**武器上打不出的段不标（" + (partial_example or "本版本没有这种段")
+                          + "），逐武器结论一律看 variants，清单见 diagnostics.taeVerification.partiallyRemoved。"
+                          "与 noVariant 互斥（noVariant = 行为表层就没有武器用到）。",
+            "notInvokedReason": "与 notInvoked 同时出现，取值是 enums.notInvokedReason 的键。",
+            "taeUnmatched": "skills[].taeUnmatched=true（v3 TAE 核实）：该战技的动画匹配不到——战技 TAE a(600+swordArtsType) "
+                            "缺失，或它的段在任何武器上都没有事件调用（本版本："
+                            + ("、".join(f'{sid} {skills_by_id[sid]["nameZh"]}' for sid in tae_unmatched_ids) or "无")
+                            + "；弓系战技的段只有 SwordArtsParam.atkParamId 锚点、伤害走箭矢，不经 BehaviorParam_PC）。"
+                            "这类战技的 hits 与 variants 不做 TAE 过滤，与 TAE 核实前相同，页面照旧。缺失 = false。",
+            "taeVerified": "counts.taeVerified=true 表示本文件的 variants[].atkIds 已按 TAE 核实"
+                           "（生成时 raw/tae/invoked.json 存在，由 extract_tae.py 从本机 c0000 动画包解出）；"
+                           "false 表示生成时没有 TAE 数据，variants 是行为表口径，notInvoked / taeUnmatched 一律不出现，"
+                           "diagnostics.taeVerification.skippedReason 说明原因。",
+            "法术与 TAE": "spells[] 不做 TAE 过滤：法术的子弹 / 攻击行由 Magic.refId1–10 决定，施法动画 a(400+Magic.refType) "
+                         "的事件 64 只带 refSlot，没有逐段的 judgeId 可核；按「段所在的 refId 槽是否被施法动画用到」的核实结果"
+                         "（raw/tae/hit-invocation-report.json 的 spells[]）绝大多数段都在被用到的槽里，其余是锚点、触发型 SpEffect "
+                         "发射的子弹或未用槽，与本数据集对法术段的用法（只看 flat 做相对排名）不冲突，所以本版不改 spells。",
         },
         "usage": {
-            "选段（必读）": "先确定这把武器用哪一套：v = skills[i].variants[weapon.skillVariant]，"
+            "选段（必读）": "先确定这把武器用哪一套：v = skills[i].variants[weapon.skillVariants[str(skills[i].id)]]"
+                       "（固定战技也可用 weapon.skillVariant），"
                        "段 = hits 中 atkId ∈ v.atkIds 的那些。**不要**按 ctx 字符串取并集——"
                        f"默认套与动作组套是互斥变体，取并集会让 {ctx_union_dup} 把武器的段数与伤害翻倍，"
                        f"而 {ctx_pick_miss} 把斧 / 镰 / 戟类武器因为动作组名"
@@ -1520,6 +2421,43 @@ def main() -> None:
                         "(b) 按伤害类型加权的属性配比排名，"
                         "(c) 削韧 / 精力削减的绝对值（这两项不走上面那几张表）。"
                         "要算绝对值，请由调用方提供游戏内显示的最终分属性攻击力。",
+            "战技来源（v3）": "「这把武器能带哪些战技」读 weapons[].skillIds，「这个战技能用哪些武器」读 "
+                         "skills[].weaponIds；要区分固定 / 随机池、或给出池内概率，读 skills[].weaponSources"
+                         "（pool 项的权重配合 swordArtsPools 求概率）。不要再用 swordArtsParamId 反查——"
+                         f"那样会漏掉 {len(skills_pool_only)} 个只在局内战技池里出现的战技（coverage.skillsPoolOnly）。",
+            "命中段已按 TAE 核实（v3）": (
+                ("counts.taeVerified=true：skills[].variants[].atkIds 在行为表选段之上又逐武器核对了动画事件（TAE），"
+                 "只留下这把武器用这个战技时动画真会打出的段，取段写法不变（仍是 variants[下标].atkIds）。留下的状态："
+                 "invoked（战技 TAE a(600+swordArtsType) 里有无门控事件调用它）、weaponTae（野蛮咆哮 / 战吼 / 灭洛斯的狂嚎"
+                 "改写 R2 后，段在武器动作组 TAE 的 30600 系动画里）、spEffect（由本战技的 SpEffect 触发，如祈祷一击的回血子弹、"
+                 "卡利亚式奉还的反击；回血子弹只打自己 / 队友，标了 noDamage + selfOrAllyOnly，不算伤害）、"
+                 "conditional（带玩家拿得到的 stateInfo 门控，本版本只有 1196 黄金式奉还格挡成功后的两段）、"
+                 "noJudge（锚点 / 弹药行，无法经 TAE 判定，保守保留）。子弹链上的段按发射它的 BehaviorParam_PC 行被"
+                 "InvokeBulletBehavior（事件 2）以对应 judgeId 调用与否判定；战技 TAE 的 4xxxx 动画按百位分套，一把武器只播一套，"
+                 "几套 judge 不同的（二连斩 / 剑舞 / 鲜血斩击等）只留这把武器那一套，不再相加。"
+                 f"本版本移除 {weapon_hits_removed} 个武器×段（{len(tae_skills_changed)} 个战技、"
+                 f"{tae_pairs_changed} 个 (战技, 武器) 对的段有变化），其中 {hits_not_invoked} 段在所有武器上都打不出、"
+                 f"已标 hits[].notInvoked，{len(partial_list)} 段只在部分武器上打不出；清单见 diagnostics.taeVerification。"
+                 "局限：(1) TAE 只回答「动画会不会调用这段」，不回答一次战技里会命中几次（持续判定 / 多次 Hit 仍按一段算）；"
+                 "(2) 互斥动画套由 HKS 的 GetSwordArtsDiffCategory 选，c0000.hks 是字节码读不出，本版按 wepmotionCategory "
+                 "专属套 → 本 var 专属行 → 类别归组（103 回旋斩手工表有证据；某套的 AtkParam 行名点名类别时也算证据，"
+                 "记 classGroupNamed，如 204 鲜血斩击 402 套的 \"Slash (Greatsword)\" → 大剑；其余大剑 / 特大剑 / 大斧 / 大锤 / "
+                 "特大武器 → 402、矛 / 大矛 → 403 是体型类比推断）→ 默认套 400 选，选套依据见 diagnostics.taeVerification.exclusiveBlocks；"
+                 "(3) stateInfo 187「玩家拿不到」只查了参数表（EMEVD 未查）；「成功格挡 / 弹反之后才打出」的段按可达保留、"
+                 "默认计入排名：1196 黄金式奉还的两段是 conditional（stateInfo 469），305 卡利亚式奉还的 300000682/683"
+                 "（魔力 flat 270）是弹反法术成功后由 SpEffect 1515 触发的 spEffect 段，性质相同；"
+                 f"(4) 带 FP / 无 FP 两个分支都在 atkIds 里，靠 hits[].noFp 区分、按与开关同侧取段，不要相加。"
+                 f"行名没写 \"No FP\" 的无 FP 段原先没有标记、会和带 FP 段一起被默认计入；核实后按战技 TAE 的动画号"
+                 f"（4xxxx 个位 5–9 = 无 FP 版）补标了 {len(no_fp_tae)} 段（noFpSource=\"tae\"，{len({r['skillId'] for r in no_fp_tae})} 个战技，"
+                 "例：风暴刃 300000411–413、狩猎巨人 301700915），"
+                 f"两侧动画都调用的 {len(fp_both_list)} 段标 fpBoth（两侧都该计入），见 fieldNotes.noFp / fpBoth；"
+                 "(5) skills[].taeUnmatched=true 的战技不过滤；(6) 法术不过滤（fieldNotes.法术与 TAE）；"
+                 "(7) 结论以本机 1.03.5 的 c0000 动画包为准，游戏更新后要重跑 extract_tae.py 再重生成。")
+                if tae_verified else
+                ("counts.taeVerified=false：生成时没有 raw/tae/invoked.json（" + tae_skip_reason + "），"
+                 "variants[].atkIds 是行为表口径，可能包含本作动画并不调用的段（例：狩猎大蛇的 Beam of Light），"
+                 "也可能把几套互斥动画的段相加；hits[].noFp 只来自行名，行名没写 No FP 的无 FP 段（风暴刃 300000411–413 等）"
+                 "没有标记。先跑 extract_tae.py 再重生成即可得到核实过的版本。")),
         },
         "caveats": [
             "103 回旋斩是唯一一个 BehaviorParam_PC 分不出来的战技：它的 4 套动作"
@@ -1534,10 +2472,36 @@ def main() -> None:
             "400 贯穿射击 / 401 连续射击 / 1169 拉塔恩的骤雨 这 3 个弓系战技的 AtkParam 行名"
             "没有方括号，BehaviorParam_PC 里也没有对应的战技槽（弓的伤害走箭矢），"
             "只能靠 atkParamId 锚点拿到 1 段，variants[].via = \"ctx\"。",
-            "Small Weapon / Large Weapon / Polearm 这些动作组名不能映射成 wepType："
-            "实测 110 盲击里 behaviorVariationId=1400 的斧走 Small Weapon、"
-            "1406/1407 的斧走 Large Weapon，同一个 wepType=17 被拆进了两组。"
-            "所以本数据集不提供「别名 → wepType」映射表，归属一律以 variants 为准。",
+            "Small Weapon / Large Weapon / Polearm 这些动作组名没有全局的 wepType 对应："
+            "它们是逐个战技的动作族（110 盲击：Small Weapon = 曲剑 / 锤 / 连枷 / 斧，"
+            "Large Weapon = 大剑 / 大曲剑 / 大锤 / 大斧），哪一族挂在 variationId=0 上当默认套也因战技而异。"
+            "所以本数据集不提供「别名 → wepType」映射表，归属一律以 variants 为准。"
+            "（v2 曾写「1400 的斧走 Small Weapon、1406/1407 的斧走 Large Weapon」，那是解析时漏了"
+            "「variationId 取整到百位」这一级回退；v3 补上后，同一战技里同一武器类别只落进一套动作。）",
+            "（v3）BehaviorParam_PC 三级回退：武器 behaviorVariationId → 取整到百位 → 0。"
+            "证据：1200 风暴管束者的 10 套角色动作挂在 variationId 0/100/500/900/1100/1102/1800/2100/2300/4100 上，"
+            "正好是各渡夜者专属武器 behaviorVariationId（117/503/900/1100/1102/1800/2151/2304/4100；"
+            "追踪者 300 无专属行 → 0 = Default 套）取整到百位的结果，与 Paramdex 行名的角色名逐一吻合；"
+            f"且补上这一级后，每个战技里同一武器类别只落进一套动作（本版本 {len(split_v3)} 个例外；"
+            f"两级回退口径下，只看固定武器有 {len(split_legacy_fixed)} 个战技"
+            f"（{'、'.join(str(x) for x in split_legacy_fixed) or '无'}）、"
+            f"按 v3 的全部武器有 {len(split_legacy_all)} 个战技"
+            f"（{'、'.join(str(x) for x in split_legacy_all) or '无'}）出现同类别武器被拆到两套）。"
+            f"这一变化也改了 {len(legacy_changed_fixed)} 个**固定**武器 (战技, 武器) 对的选段"
+            f"（{legacy_changed_fixed_text or '无'}），hits 本身不变；"
+            f"连同战技池新增的对，与两级回退口径不同的共 {len(legacy_changed)} 对。",
+            "（v3）1200 风暴管束者：Default 套在行为组 base 400000000 与 500000000 各挂了一份 0 号行，"
+            "只看「武器在其中有专属行」的行为组才能把女爵 / 学者 / 执行者 / 送葬者 / 隐士 / 守护者 / 复仇者 / 无赖"
+            "各自的角色套单独解出来（只在具名套 > 1 时介入，其它战技不受影响）；铁之眼的弓（variationId 4100）"
+            "只有 No FP 四段挂在 4100 上，带 FP 的四段挂在 variationId 5000（= 铁之眼箭矢 50030000 的 5050 取整，"
+            "弓的子弹行为按箭矢解），所以按武器名里的角色名整套选 Ironeye，variants[].via = \"ctx\"。",
+            "（v3）103 回旋斩经局内战技池还能出现在短剑 / 大剑 / 刀 / 斧 / 大斧 / 矛上，行为表同样分不出来，"
+            "按动作族补齐手工表：大剑、大斧 → Large Weapon，矛 → Polearm，短剑、刀、斧 → 默认套"
+            "（推断，依据是 110 盲击与 118 罗蕾塔的斩击能实解出来的动作族；Large Weapon 与 Polearm 数值完全相同）。",
+            "（v3）EquipParamWeapon 也有一个 swordArtsTableId 列，指向不被任何 custom 行引用的 xx10 池"
+            "（内容 = 同类别 xx00 全池，或「属性池 ∪ Untyped 池」，如 10000510 = 10000500 火焰短剑池 ∪ 10000050）。"
+            "局内掉落走 EquipParamCustomWeapon，参数表里看不出这一列在本作何时生效，所以**不**作为 weaponIds 来源；"
+            f"若算上它，会多出 {len(epw_extra_pairs)} 个 (战技, 武器) 对，但不会让任何战技从「无武器」变为「有武器」。",
             "9040000 尸山血海 / 1177 尸横遍野：血刀气没有独立的 Bullet 行。"
             "该武器 behaviorVariationId=906 在战技槽（base 300000000，judge 900-915）上"
             "全部是 refType=0 的直接 AtkParam 引用，12 段（6 段带 FP + 6 段 No FP）就是全部；"
@@ -1556,6 +2520,13 @@ def main() -> None:
                + "，来自 1001 火焰唾球）" if aec_dangling else "（本版本无）")
             + "。这类值不会写成 hits[].overrideAecId，以免消费方照 usage 去查表拿到空值；"
             "写出的 overrideAecId 保证在 AttackElementCorrectParam 里存在。",
+            "（v3 TAE 核实）1188 狩猎大蛇在本体里是带光波的远程战技，本作不是：参数里 301703900 / 301703901 "
+            "「L2 #1/#2 Beam of Light」（超长胶囊判定）仍在，但战技 TAE a788 的 L2 动画调用它们的事件都带 stateInfo 187 门控，"
+            "187 在本作玩家拿不到；301703905 / 301703975 没有任何动画调用，301703955 只在大枪动作组的吼叫 R2 动画里。"
+            + (f"本版本 variants 只剩 {'/'.join(str(a) for a in skills_by_id[1188]['variants'][0]['atkIds'])}"
+               "（两段近战 L2 #1 / #2 与各自的无 FP 版）。"
+               if tae_verified and skills_by_id.get(1188, {}).get("variants")
+               else "本版本没有做 TAE 核实，这些段仍在 variants 里。"),
         ],
         "enums": {
             "wepType": {str(k): {"en": v[0], "zh": v[1]} for k, v in sorted(WEP_TYPE_ZH.items())},
@@ -1574,11 +2545,17 @@ def main() -> None:
                 for en, zh in sorted(CTX_ALIAS_ZH.values())
                 if norm_key(en) not in {norm_key(v[0]) for v in WEP_TYPE_ZH.values()}
             },
+            "notInvokedReason": NOT_INVOKED_REASON_ZH,
         },
+        "diagnostics": {"taeVerification": tae_diagnostics},
+        "swordArtsPools": pool_payload,
         "weapons": weapons,
         "skills": skills,
         "spells": spells,
     }
+
+    self_check(payload, {row["ID"]: row for row in custom_raw}, reachable_custom, pre_sel)
+    print("self_check 通过")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     if args.pretty:
@@ -1598,9 +2575,28 @@ def main() -> None:
           f"（按 via：{dict(variant_stats)}）")
     print(f"不属于任何 variant 的段（已标 noVariant）{no_variant_hits}，"
           f"其中带 motion/flat 的 {no_variant_damaging}")
+    print(f"战技池（v3）：可达 custom 行 {custom_stats['reachable']}（其中不抽池 {custom_stats['reachableFixedOnly']}），"
+          f"不可达 {custom_stats['unreachable']}；用到的池 {len(pool_payload)} 个 / 条目 {pool_entry_count}；"
+          f"(战技, 武器) 对 {len(all_pairs)}（固定 {pair_fixed}、池 {pair_pool}、两者皆是 {pair_both}）；"
+          f"池内重复条目 {pool_dup_rows} 行（已按权重相加合并）")
+    print(f"有武器的战技 {sum(1 for sk in skills if sk['weaponIds'])}（v2 口径 {len(skills) - len(skills_without_fixed)}），"
+          f"只经由战技池出现的 {len(skills_pool_only)}：")
+    for line in skills_pool_only:
+        print(f"  + {line}")
+    print(f"仍然没有武器的战技：{skills_without_weapons}")
+    print(f"选段与两级回退口径不同的 (战技, 武器) 对 {len(legacy_changed)}（固定 {len(legacy_changed_fixed)}："
+          f"{legacy_changed_fixed_text or '无'}）；同类别拆两套的战技：v3 {split_v3}，"
+          f"两级回退只看固定 {split_legacy_fixed}、全部武器 {split_legacy_all}")
+    if unreachable_only_pairs:
+        print(f"只在不可达 custom 行里出现的 (战技, 武器) 对（不计入）：{unreachable_only_pairs}")
+    print(f"EquipParamWeapon.swordArtsTableId（不作为来源）若计入会多 {len(epw_extra_pairs)} 对、"
+          f"新增有武器的战技 {len(epw_extra_skills)} 个")
     print(f"ctx 并集会翻倍的武器 {ctx_union_dup} 把；ctx 单选取不到段的武器 {ctx_pick_miss} 把"
           f"（两数已写进 usage.选段）")
     print(f"伤害类型需回武器上取（attribute=253/252）的段 {wep_attr_hits}")
+    print(f"只打自己 / 队友的段（selfOrAllyOnly，已标 noDamage）{hits_self_or_ally}，其中带 motion/flat 的 {hits_self_or_ally_with_values}："
+          + "、".join(f'{e["id"]} {e["nameZh"]} {h["atkId"]}' for e in skills + spells for h in e["hits"]
+                     if h.get("selfOrAllyOnly") and (h.get("motion") or h.get("flat"))))
     if aec_dangling:
         print(f"⚠ overrideAecId 悬空（已不写出）：{dict(aec_dangling)}")
     if foreign_drops:
@@ -1609,6 +2605,31 @@ def main() -> None:
             print(f"  - {line}")
     if variant_gaps:
         print(f"⚠ 有战技命中但选不出动作套的武器 {len(variant_gaps)}：{variant_gaps[:10]}")
+    if tae_verified:
+        tc = tae_diagnostics["counts"]
+        print(f"TAE 核实：检查 (战技, 武器) 对 {tc['skillWeaponPairsChecked']}（去重判定 {tc['distinctChecks']} 次），"
+              f"段有变化的对 {tc['skillWeaponPairsChanged']}、战技 {tc['skillsChanged']}；"
+              f"移除武器×段 {tc['weaponHitsRemoved']} {tc['weaponHitsRemovedByStatus']}")
+        print(f"  所有武器上都打不出、已标 notInvoked 的段 {hits_not_invoked}（带伤害 {hits_not_invoked_damaging}）"
+              f"{tc['hitsNotInvokedByReason']}；只在部分武器上打不出的段 {len(partial_list)}")
+        for r in removed_list:
+            print(f"  - {r['skillId']} {r['nameZh']} {r['atkId']} {r.get('label', '')} → {r['notInvokedReason']}"
+                  f"（{r['weapons']} 把）{r['reasonZh']}")
+        for r in partial_list:
+            print(f"  ~ {r['skillId']} {r['nameZh']} {r['atkId']} {r.get('label', '')}：保留 {r['keptOnWeapons']} 把、"
+                  f"移除 {r['removedOnWeapons']} 把 {r['reasons']}")
+        for b in tae_diagnostics["exclusiveBlocks"]:
+            print(f"  互斥动画套 {b['skillId']} {b['nameZh']}：{b['chosenBlockWeapons']}")
+        print(f"  动画匹配不到、不过滤的战技 {len(tae_unmatched)}：{tae_unmatched}")
+        if tae_empty:
+            print(f"⚠ TAE 后一段都不剩、保持行为表口径的 (战技, 武器) {len(tae_empty)}：{tae_empty[:10]}")
+        if split_after_tae:
+            print(f"  TAE 核实后同类别武器分到不同 variant 的战技：{split_after_tae}")
+        print(f"  带 FP / 无 FP 分支（4xxxx 个位 5–9 = 无 FP 版）：TAE 补标 noFp {len(no_fp_tae)} 段"
+              f"（带伤害 {no_fp_tae_damaging}，{len({r['skillId'] for r in no_fp_tae})} 个战技），"
+              f"两侧共用标 fpBoth {len(fp_both_list)} 段，行名 No FP 与 TAE 冲突 {len(no_fp_conflicts)} 段")
+    else:
+        print(f"⚠ 未做 TAE 核实：{tae_skip_reason}（counts.taeVerified=false）")
     print(f"AtkParam 行名匹配 {stats['atkRowsMatched']}，未匹配 {stats['atkRowsUnmatched']}；"
           f"Bullet 行名匹配 {stats['bulletRowsMatched']}")
     if unnamed_weapon_type:
@@ -1623,6 +2644,209 @@ def main() -> None:
         print(f"没有任何命中的法术 {len(spells_missing)}：")
         for name in spells_missing:
             print(f"  - {name}")
+
+
+# ------------------------------------------------------------------ self_check
+def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str],
+               pre_sel: dict[tuple[int, int], frozenset[str]]) -> None:
+    """生成后立刻校验 v3 的战技池字段与 TAE 核实结果（任何一条不成立都直接中止，不写文件）。
+    pre_sel：行为表层（TAE 核实前）每个 (战技, 武器) 解出的段。"""
+    assert payload["schemaVersion"] == SCHEMA_VERSION == 3, payload["schemaVersion"]
+    assert [c["version"] for c in payload["schemaChangelog"]] == [1, 2, 3]
+    weapons = {w["id"]: w for w in payload["weapons"]}
+    skills = {s["id"]: s for s in payload["skills"]}
+    pools = payload["swordArtsPools"]
+
+    # 无名测试行（100000–101000，wepType 3、rarity 0、没有 WeaponName）不收录
+    assert not any(100000 <= wid <= 101999 for wid in weapons), "无名测试武器行混进了 weapons[]"
+    assert all(w["nameZh"] and w["nameEn"] for w in weapons.values())
+
+    # 池：条目权重 > 0，每个池都被某把武器的 customWeapons 引用
+    referenced_tables = {t for w in weapons.values() for _c, t in w.get("customWeapons", ())}
+    for pid, entries in pools.items():
+        assert entries and all(wt > 0 for _a, wt in entries), pid
+        assert int(pid) in referenced_tables, f"池 {pid} 没有可达 custom 行引用"
+        assert len({a for a, _w in entries}) == len(entries), f"池 {pid} 有重复战技"
+
+    # customWeapons 能逐行回溯到原始参数表，且都可达
+    for wid, w in weapons.items():
+        rows = w.get("customWeapons", [])
+        assert rows == sorted(rows), wid
+        for cid, table in rows:
+            raw = custom_by_id.get(str(cid))
+            assert raw is not None, (wid, cid)
+            assert str(cid) in reachable, (wid, cid)
+            assert int(raw["targetWeaponId"]) == wid, (wid, cid)
+            assert int(raw["swordArtsTableId"]) == table, (wid, cid)
+            assert table == -1 or str(table) in pools, (wid, cid, table)
+
+    pairs_from_skills: set[tuple[int, int]] = set()
+    for sid, sk in skills.items():
+        srcs = sk["weaponSources"]
+        assert [src["id"] for src in srcs] == sk["weaponIds"] == sorted(set(sk["weaponIds"])), sid
+        for src in srcs:
+            wid = src["id"]
+            w = weapons[wid]
+            pairs_from_skills.add((sid, wid))
+            assert src.get("fixed") or src.get("pool"), (sid, wid)
+            assert bool(src.get("fixed")) == (w["swordArtsParamId"] == sid), (sid, wid)
+            for table, weight, n_rows in src.get("pool", ()):
+                assert [sid, weight] in pools[str(table)], (sid, wid, table, weight)
+                backing = [cid for cid, t in w.get("customWeapons", ()) if t == table]
+                # pool 项必须回溯到具体的可达 custom 行，行数一致
+                assert n_rows >= 1 and n_rows == len(backing), (sid, wid, table, n_rows, backing)
+        # variants：武器分组不重不漏（只含 weaponIds 里的武器），段都在 hits 里，下标与武器侧一致
+        hit_ids = {h["atkId"] for h in sk["hits"]}
+        seen: set[int] = set()
+        for idx, v in enumerate(sk.get("variants", ())):
+            assert set(v["atkIds"]) <= hit_ids, (sid, idx)
+            for wid in v["weaponIds"]:
+                assert wid in sk["weaponIds"] and wid not in seen, (sid, wid)
+                seen.add(wid)
+                assert weapons[wid]["skillVariants"][str(sid)] == idx, (sid, wid, idx)
+        # 同一战技里同一武器类别只落进一套动作（三级回退后的实测规律，行为表层；TAE 核实后可因动作组 TAE 再细分）
+        by_type: dict[int, set[frozenset]] = defaultdict(set)
+        for idx, v in enumerate(sk.get("variants", ())):
+            for wid in v["weaponIds"]:
+                by_type[weapons[wid]["wepType"]].add(pre_sel[(sid, wid)])
+        assert all(len(ix) == 1 for ix in by_type.values()), (sid, {t: len(x) for t, x in by_type.items()})
+
+    pairs_from_weapons = {(sid, wid) for wid, w in weapons.items() for sid in w["skillIds"]}
+    assert pairs_from_skills == pairs_from_weapons, (
+        sorted(pairs_from_skills ^ pairs_from_weapons)[:10])
+    for wid, w in weapons.items():
+        assert w["skillIds"] == sorted(set(w["skillIds"])), wid
+        for key, idx in w.get("skillVariants", {}).items():
+            assert int(key) in w["skillIds"], (wid, key)
+            assert wid in skills[int(key)]["variants"][idx]["weaponIds"], (wid, key)
+        if "skillVariant" in w:
+            assert w["skillVariants"][str(w["swordArtsParamId"])] == w["skillVariant"], wid
+
+    # 这次修的两个热门战技：v2 没有任何武器，v3 全部来自战技池
+    for sid in (210, 116):
+        sk = skills[sid]
+        assert sk["weaponIds"], f"{sid} 仍然没有武器"
+        assert all(src.get("pool") and not src.get("fixed") for src in sk["weaponSources"]), sid
+        assert sk.get("variants"), f"{sid} 没有解出动作套"
+    assert skills[100]["weaponIds"]
+    storm_ruler = skills[1200]
+    assert len(storm_ruler.get("variants", ())) == len(storm_ruler["weaponIds"]) == 10, "风暴管束者应每个角色一套"
+
+    # ---- TAE 核实 ---------------------------------------------------------------
+    counts = payload["counts"]
+    verified = counts["taeVerified"]
+    diag = payload["diagnostics"]["taeVerification"]
+    assert diag["verified"] == verified
+    reasons = payload["enums"]["notInvokedReason"]
+    n_not_invoked = n_unmatched = 0
+    for sid, sk in skills.items():
+        variants = sk.get("variants", ())
+        in_variants = {a for v in variants for a in v["atkIds"]}
+        pre_cov = {int(a) for (s_, w), atks in pre_sel.items() if s_ == sid for a in atks}
+        if sk.get("taeUnmatched"):
+            assert verified and sk["taeUnmatched"] is True, sid
+            n_unmatched += 1
+        for idx, v in enumerate(variants):
+            assert v["atkIds"], (sid, idx, "空 variant")
+            for wid in v["weaponIds"]:
+                pre = {int(a) for a in pre_sel[(sid, wid)]}
+                post = set(v["atkIds"])
+                assert post <= pre, (sid, wid, sorted(post - pre))   # TAE 只删不增
+                if not verified or sk.get("taeUnmatched"):
+                    assert post == pre, (sid, wid)                    # 没核实 / 匹配不到时不动
+        for h in sk["hits"]:
+            a = h["atkId"]
+            if h.get("notInvoked"):
+                n_not_invoked += 1
+                assert verified and not sk.get("taeUnmatched"), (sid, a)
+                assert h["notInvokedReason"] in reasons, (sid, a, h.get("notInvokedReason"))
+                assert a not in in_variants and a in pre_cov, (sid, a)
+                assert not h.get("noVariant"), (sid, a, "noVariant 与 notInvoked 互斥")
+            else:
+                assert "notInvokedReason" not in h, (sid, a)
+                if variants:
+                    # 行为表选到过、TAE 后哪都没留下的段必须标 notInvoked；行为表就没选到的必须标 noVariant
+                    assert (a in in_variants) or (a not in pre_cov and h.get("noVariant")), (sid, a)
+    assert n_not_invoked == counts["hitsNotInvoked"] == len(diag["removedHits"]), (n_not_invoked, counts["hitsNotInvoked"])
+    assert n_unmatched == counts["skillsTaeUnmatched"]
+    if verified:
+        # 用户点名的狩猎大蛇：本作只打出两段近战与各自的无 FP 版，Beam of Light 两段是 187 门控
+        serpent = skills[1188]
+        assert [v["atkIds"] for v in serpent["variants"]] == [[301703950, 301703951, 301703970, 301703971]], serpent["variants"]
+        by_atk = {h["atkId"]: h for h in serpent["hits"]}
+        assert by_atk[301703900].get("notInvokedReason") == by_atk[301703901].get("notInvokedReason") == "gated"
+        assert by_atk[301703955].get("notInvokedReason") == "roarR2Only"
+        assert all(by_atk[a].get("notInvoked") for a in (301703905, 301703975))
+        # 互斥动画套：二连斩的默认套（3170 系）与 Large Weapon 套（3185 系）不再出现在同一个 variant 里
+        for v in skills[112].get("variants", ()):
+            assert not ({300000170, 300000185} <= set(v["atkIds"])), v["atkIds"]
+        assert not any(sk.get("taeUnmatched") for sk in skills.values() if sk["id"] in (210, 116, 1188))
+
+        # ---- 审查修正：带 FP / 无 FP 分支按 TAE 补标 ----
+        # 用户点名的风暴刃：a659 的 40000/40010/40020 打 407/408/409 + 飞刃 410，40005/40015/40025 打 411/412/413；
+        # 狩猎巨人：a616 的 40000 打 301700910，40005 打 301700915。无 FP 段必须标 noFp，带 FP 段不能标。
+        def hit_of(sid: int, atk: int) -> dict:
+            return next(h for h in skills[sid]["hits"] if h["atkId"] == atk)
+        for sid, no_fp_atks, fp_atks in ((210, (300000411, 300000412, 300000413), (300000407, 300000408, 300000409, 300000410)),
+                                         (116, (301700915,), (301700910,))):
+            for a in no_fp_atks:
+                h = hit_of(sid, a)
+                assert h.get("noFp") and h.get("noFpSource") == "tae", (sid, a, h)
+                assert h["labelZh"].startswith("无FP版"), (sid, a, h.get("labelZh"))
+            for a in fp_atks:
+                h = hit_of(sid, a)
+                assert not h.get("noFp") and not h.get("fpBoth"), (sid, a, h)
+            # 默认（带 FP 侧）取段不再混进无 FP 段
+            for v in skills[sid]["variants"]:
+                fp_side = [a for a in v["atkIds"] if not hit_of(sid, a).get("noFp")]
+                assert not set(fp_side) & set(no_fp_atks), (sid, v["atkIds"])
+        assert not diag["noFpConflicts"], diag["noFpConflicts"]
+        assert counts["hitsNoFpByTae"] == diag["counts"]["hitsNoFpByTae"] == len(diag["noFpFromTae"])
+        assert counts["hitsFpBoth"] == diag["counts"]["hitsFpBoth"] == len(diag["fpBoth"])
+
+        # fieldNotes.notInvoked 的「只在部分武器上打不出」例子必须与数据一致：二连斩 Large Weapon 套 300000185–196
+        # 只留给大剑 / 大曲剑，其余武器按 exclusiveBlock 移除；野蛮咆哮的 4 段 var 0 行在全部武器上都被移除。
+        partial = {(r["skillId"], r["atkId"]): r for r in diag["partiallyRemoved"]}
+        for a in range(300000185, 300000197):
+            r = partial[(112, a)]
+            assert set(r["reasons"]) == {"exclusiveBlock"}, r
+            kept_types = {weapons[w]["wepType"] for v in skills[112]["variants"] if a in v["atkIds"] for w in v["weaponIds"]}
+            assert kept_types == {5, 11}, (a, kept_types)
+        roar = {h["atkId"]: h for h in skills[650]["hits"]}
+        for a in (300000957, 300000959, 300000967, 300000969):
+            assert roar[a].get("notInvoked") and (650, a) not in partial, (a, roar[a])
+        assert "300000185–300000196" in payload["fieldNotes"]["notInvoked"], payload["fieldNotes"]["notInvoked"]
+    else:
+        assert not diag["removedHits"] and not diag["partiallyRemoved"]
+
+    # ---- 审查修正：带 FP / 无 FP 标记与只打自己 / 队友的行（与是否做 TAE 核实无关的不变式）----
+    for entry in list(skills.values()) + payload["spells"]:
+        for h in entry["hits"]:
+            if h.get("noFp"):
+                # 三端测试依赖：数据集原文里 noFp 段的 labelZh 一律以「无FP版」开头
+                assert h.get("labelZh", "").startswith("无FP版"), (entry["id"], h["atkId"], h.get("labelZh"))
+            if "noFpSource" in h:
+                assert verified and h["noFp"] and h["noFpSource"] == "tae", (entry["id"], h["atkId"])
+            if h.get("fpBoth"):
+                assert verified and not h.get("noFp"), (entry["id"], h["atkId"])
+            if h.get("selfOrAllyOnly"):
+                assert h.get("noDamage"), (entry["id"], h["atkId"])
+    # 祈祷一击：回血子弹 1202100（Heal Self）/ 1202110（Heal Others）只打自己 / 队友，不算伤害；主段照常算
+    prayer = {h["atkId"]: h for h in skills[208]["hits"]}
+    for a in (1202100, 1202110, 1202105):
+        assert prayer[a].get("selfOrAllyOnly") and prayer[a].get("noDamage"), (a, prayer[a])
+    assert any(not h.get("noDamage") and (h.get("motion") or h.get("flat")) for h in prayer.values()), prayer
+    removed_damaging = sum(1 for r in diag["removedHits"] if r["damaging"])
+    assert removed_damaging == counts["hitsNotInvokedDamaging"], (removed_damaging, counts["hitsNotInvokedDamaging"])
+    assert not any(r["damaging"] for r in diag["removedHits"] if r["skillId"] == 208 and r["atkId"] == 1202105)
+
+    assert counts["weaponSkillPairs"] == len(pairs_from_skills)
+    assert counts["skillsWithWeapons"] == sum(1 for sk in skills.values() if sk["weaponIds"])
+    assert counts["swordArtsPools"] == len(pools)
+    cov = payload["coverage"]
+    assert len(cov["skillsWithoutWeapons"]) == sum(1 for sk in skills.values() if not sk["weaponIds"])
+    assert (len(cov["skillsWithoutFixedWeapons"]) - len(cov["skillsWithoutWeapons"])
+            == len(cov["skillsPoolOnly"]) == counts["skillsPoolOnly"])
 
 
 if __name__ == "__main__":

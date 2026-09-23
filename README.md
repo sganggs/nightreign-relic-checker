@@ -112,7 +112,7 @@
 | [`macos/`](macos/) | macOS 版：Swift / SwiftUI（`RelicCore` 纯逻辑 + `NightreignRelicChecker` 界面 + `RelicCoreChecks` 自检） |
 | [`macos/DataSources/`](macos/DataSources/PROVENANCE.md) | 数据导出与生成管线：`dump_regulation.py`（regulation.bin → 每表一个 CSV）、`extract_msg.py`（游戏归档 → 每个 FMG 一个 JSON）、`extract_msb.py`（游戏归档 → 地图 MSB 的敌人放置，首领数据按出场场合分组的依据）、`tools/oodledec`（借游戏自带 Oodle DLL 解 KRAK 压缩）、六个 `generate_*.py`（含角色属性的 `generate_heroes.py`）；**需要本机已安装的游戏本体与 CrossOver / Wine**，产物 `raw/` 不入库。来源、字段映射与已知局限见 `PROVENANCE.md` |
 | [`android/`](android/) | Android 手机版：Kotlin / Jetpack Compose / Material 3，`:rules` / `:catalog` / `:gamedata` / `:app` 四模块；三词条检查、词条库，以及移植自桌面端的词条反查、首领数据、角色属性、增伤排名、存档检查五页（纯逻辑在 `:gamedata`，移植约定见 [`android/PAGES.md`](android/PAGES.md)）。直接读根 `data/`，不经 `sync-data.sh` |
-| [`data/`](data/) | 各端共用的权威数据集：词条库 `nightreign-affixes-v1.03.4.json`、遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用）、首领数据 `nightreign-bosses-v1.03.5.json`（`bossesSchemaVersion` 4）、战技/法术/武器 `nightreign-skills-v1.03.5.json`（`schemaVersion` 2）、增伤手段 `nightreign-buffs-v1.03.5.json`（`schemaVersion` 6）、角色属性 `nightreign-heroes-v1.03.5.json`（`schemaVersion` 1） |
+| [`data/`](data/) | 各端共用的权威数据集：词条库 `nightreign-affixes-v1.03.4.json`、遗物物品表 `nightreign-relics-v1.03.4.json`（存档检查用）、首领数据 `nightreign-bosses-v1.03.5.json`（`bossesSchemaVersion` 4）、战技/法术/武器 `nightreign-skills-v1.03.5.json`（`schemaVersion` 3，含局内战技池）、增伤手段 `nightreign-buffs-v1.03.5.json`（`schemaVersion` 6）、角色属性 `nightreign-heroes-v1.03.5.json`（`schemaVersion` 1） |
 | [`scripts/`](scripts/) | 跨端脚本；[`sync-data.sh`](scripts/sync-data.sh) 把 `data/` 下的权威 JSON 同步到两端的内置资源目录 |
 | [`testdata/`](testdata/) | 两端校验器共用的对拍用例 |
 

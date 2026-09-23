@@ -114,7 +114,7 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 | 数据集 | 生成器 | 当前 schemaVersion | 供哪一页使用 |
 | --- | --- | --- | --- |
 | `data/nightreign-bosses-v1.03.5.json` | `generate_bosses.py` | `bossesSchemaVersion` 4 | 首领数据 |
-| `data/nightreign-skills-v1.03.5.json` | `generate_skills.py` | 2 | 增伤排名（选段与伤害构成） |
+| `data/nightreign-skills-v1.03.5.json` | `generate_skills.py` | 3（v3 起含局内战技池，命中段按 TAE 核实，无 FP 段与只打自己 / 队友的段按审查意见补标；三端界面仍按 2 读取，待界面车道跟进） | 增伤排名（选段与伤害构成） |
 | `data/nightreign-buffs-v1.03.5.json` | `generate_buffs.py` | 6 | 增伤排名（倍率、叠加与配置槽位） |
 | `data/nightreign-heroes-v1.03.5.json` | `generate_heroes.py` | 1 | 角色属性 |
 
@@ -179,7 +179,8 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 `schemaVersion 1` / `gameVersion "v1.03.5 + DLC1"` / `dataVersion "regulation 10350000"`。
 （**勘误**：上面的体积与 schemaVersion 是初版数据的口径；经后续两轮修复，当前文件为
 `schemaVersion 2`、1,559,196 B ≈ 1.49 MiB，见本节末尾的第二轮补充与上方
-「游戏数据集」总览表。原文保留不删。）
+「游戏数据集」总览表。原文保留不删。**再勘误**：2026-09-24 起为 `schemaVersion 3`、2,474,443 B ≈ 2.36 MiB，
+见本节末尾「战技池（v3）」。）
 
 #### 来源表
 
@@ -200,7 +201,7 @@ Paramdex 文件为本次临时 `curl` 到 `/private/tmp` 查阅，未写入仓�
   `saWeaponDamage`→poiseDamageBase，`swordArtsParamId` / `attackElementCorrectId` /
   `reinforceTypeId` 原样保留。
 - 战技：`SwordArtsParam.textId`→`ArtsName`，`enableSparringGrounds`→sparring，
-  weaponIds 由 `EquipParamWeapon.swordArtsParamId` 反查。
+  weaponIds 由 `EquipParamWeapon.swordArtsParamId` 反查（v3 起再并上局内战技池，见「战技池（v3）」）。
 - 法术：`Magic.ID`→`MagicName`，`mp`→mp，
   **kind 的依据是 `Magic.ezStateBehaviorType`**——Paramdex `Param Meta/Magic.xml` 对该字段标注
   `Enum="MAGIC_CATEGORY"`，枚举为 0=Sorcery / 1=Incantation / 2=Pyromancy；
@@ -293,6 +294,152 @@ Paramdex 文件为本次临时 `curl` 到 `/private/tmp` 查阅，未写入仓�
 5. **usage 里的统计数字改为生成时实测**，不再写死：按 ctx 取并集会翻倍的武器 173 把（原文案写 175）、旧 ctx 单选口径取不到段的武器 52 把（原文案写 51，漏算 1166 那把）。
 
 本轮产物实测：紧凑 1,559,196 字节（1.49 MiB），--pretty 2,146,116 字节（2.05 MiB，仅人读、不入包）。counts：weapons 1793、skills 187（有命中 166）、spells 160（有命中 139）、hits 2201、uniqueAtkIds 2191、sharedAtkRows 9、variants 130、weaponsWithVariant 1150。（上一版自述中的 1,180,059 字节 / 2200 段为笔误；另回归说明里把 14010000 称作「高地斧」有误，该 ID 是分岔手斧 / Forked Hatchet，14080000 才是冻壳斧 / Icerind Hatchet。）
+
+#### 战技池（v3，schemaVersion 3，2026-09-24）
+
+**起因**：增伤排名页只列「有武器引用」的战技，v2 的武器引用只取 `EquipParamWeapon.swordArtsParamId`。
+但本作局内拿到的武器几乎都是 `EquipParamCustomWeapon`（成品武器）行：`targetWeaponId` → 基础武器，
+`swordArtsTableId` → `SwordArtsTableParam` 战技池，战技在池里按 `chanceWeight` 随机抽。
+所以风暴刃（210）、狩猎巨人（116）这类只在池里出现的战技，v2 里一把武器都没有，页面上选不到。
+`EquipParamWeapon` 里引用 210 的只有 9 行没有 WeaponName 的测试行（100000–101000，wepType 3、rarity 0），
+引用 116 的一行都没有。
+
+**新读入的表**：`EquipParamCustomWeapon`（5148 行）、`SwordArtsTableParam`（11896 行），
+以及只用来判「custom 行会不会真的给到玩家」的 `ItemTableParam`、`ItemLotParam_map`、`ItemLotParam_enemy`、
+`ShopLineupParam`。
+
+**池的分组规则：同一个 ID 的全部行是一个池。** 证据：
+
+1. `SwordArtsTableParam` 的 11896 行只有 841 个不同 ID（例：ID 10000000 有 44 行，每行一个不同的
+   `swordArtsId`），ID 升序排列。`generate_buffs.py` 的 `pool_members` 对 `AttachEffectTableParam`
+   用的是同一个惯例（22088 行、1081 个不同 ID），那边已经对上词条库 2200000 池的 283 个成员。
+2. custom 行的 `swordArtsTableId` 去掉 -1 后有 497 个不同取值，**每一个**都正好是某个池 ID。
+3. 带类别前缀的池（Paramdex 行名 `<Dagger>` / `<Untyped Straight Sword>` / `<Fire Katana>` …，
+   池 ID = 类别序号 × 10⁷ + 变体 00 / 50 / 100 / 500–1200）只被「targetWeaponId 属于该类别」的 custom 行
+   引用，按「同 ID」分组后类别和武器对不上的情况一例都没有。`<Table>` 前缀的是单把武器的专用池
+   （例 11140000 只被 1140000 染血短刀引用）；ID < 1000 与 1000–1200 的都是单一战技池
+   （116 = `[Standard] Giant Hunt` 权重 100，1200 = `[Legendary] Storm Ruler`）。
+4. 行里的 `unknown_0` 全部是 1，不能用来分段。
+
+**否决的候选规则**：
+
+- 「从 tableId 那一行起，连续取到下一个被引用的起点」：这样 10000000 会把紧随其后的 10000010 也吞进来。
+  10000010 这批 xx10 池没有行名，内容是同类别 xx00 池的全集，或「属性池 ∪ Untyped 池」
+  （例 10000510 = 10000500 火焰短剑池 ∪ 10000050）。它们不被任何 custom 行引用，却被
+  `EquipParamWeapon.swordArtsTableId` 引用（224 个不同值），说明它们本身就是独立的池。
+  连续行分组会让同一战技的权重翻倍，和 xx10 被单独引用的事实矛盾。
+- 「按 ID 区间分组」：单一战技池（100、116、503 …）夹在类别池之间，区间分组解释不了 custom 行直接引用
+  单个小 ID 的写法。
+- 任务说明里有一条线索：「长剑 custom 10 的 tableId=100 指向 10000000 起的 `<Dagger>` 池」。实测不是这样：
+  custom 10 `[Common] Longsword` 的 tableId 是 100，而 100 号池只有一行 `[Standard] Lion's Claw`。
+  另外这一行不可达，没有任何 ItemTable、ItemLot 或 Shop 引用它，所以不计入来源。
+
+**行名不可靠**：custom 行和商店行的 Paramdex 行名常常和实际武器对不上。例如商店行
+`[Rare Merchant - Set 0] Hand Ballista` 卖的是 custom 551004 `[Uncommon] Hand Ballista`，
+但这一行的 targetWeaponId 是 3180000「大剑」，池 116 狩猎巨人。所以武器归属一律按 targetWeaponId 判。
+
+**同池重复条目**：6 个池里有同一战技写了两遍，例如 50000000 刺剑池里 850 白影诱惑出现两次，
+120000110 整池 20 个战技各重复一次。抽取时重复行等于权重相加，生成器按首次出现的顺序合并成一项。
+
+**可达性**：只有被 `ItemTableParam`（itemCategory=6）、`ItemLotParam_map/_enemy`（lotItemCategory0N=6）
+或 `ShopLineupParam`（equipType=6）引用的 custom 行才算来源。三处的引用分别是 4165、453、1554 条，
+全部指向 `EquipParamCustomWeapon`，所以 6 就是 custom weapon。
+
+- 可达的 custom 行 3860 行，其中 151 行的 tableId=-1，不抽池。按推断，这些行沿用基础武器自带的战技。
+- 不可达的 1288 行里，1220 行本来就不抽池。
+- 不可达行带来的唯一额外 (战技, 武器) 对是 300 盾牌冲击 → 32750000 守护者的大盾，来自 custom 320304。
+  这一行只被 CharaInitParam 7509 引用，看起来是 NPC 的初始装备，不计入。
+- 可达行的 targetWeaponId 全部是 10000 的整数倍（基础武器），而且都是有名武器。
+
+**不作为来源的 `EquipParamWeapon.swordArtsTableId`**：这一列指向上面说的 xx10 池。局内掉落走的是
+custom 行，参数表里看不出这一列在本作什么时候生效。如果把它也算进来，会多出 26419 个 (战技, 武器) 对，
+绝大多数落在「毒长剑」这类属性变体武器行上，但不会让任何战技从「无武器」变成「有武器」。
+所以没有收录，写在 caveats 里。
+
+**字段**（详细定义见数据集 `fieldNotes` / `schemaChangelog`）：
+
+- `skills[].weaponIds` 改为「固定引用 ∪ 战技池」，是取值范围扩大，字段含义不变。
+- 新增 `skills[].weaponSources`：`{id, fixed?, pool?: [[池 ID, 权重, 可达 custom 行数], ...]}`。
+- 新增 `weapons[].skillIds`、`weapons[].skillVariants`（`{战技 ID: variants 下标}`）和
+  `weapons[].customWeapons`（`[[customId, 池 ID], ...]`）。
+- 新增顶层 `swordArtsPools`（`{池 ID: [[战技, 权重], ...]}`）。
+- 新增 `coverage.skillsWithoutWeapons`、`coverage.skillsWithoutFixedWeapons`、`coverage.skillsPoolOnly`，
+  以及 counts 里 `skillsWithWeapons` 等 15 个计数。
+- `weapons[].skillVariant` 语义不变，仍只指固定战技。
+- `self_check` 新增断言：
+  - 210 与 116 有武器，且全部来自战技池；
+  - 每个 pool 项的行数都等于 `customWeapons` 里同池的行数，并能逐行回溯到原始 custom 行
+    （target、tableId、可达性都要对上）；
+  - skills 与 weapons 两侧的反向索引完全一致；
+  - 同一战技里同一武器类别只落进一套动作；
+  - 无名测试行不收录。
+
+**选段（variants）口径的三处修正**。新增的 (战技, 武器) 对要逐一用 BehaviorParam_PC 实解。
+这个过程中发现 v2 的实解缺了一级回退：
+
+1. **三级回退**：先取武器自己的 behaviorVariationId，找不到时取整到百位（例 1406 → 1400、117 → 100），
+   再找不到才用 0 号通用行。v2 只有「自己 → 0」两级。证据有两条：
+   - 1200 风暴管束者的 10 套角色动作挂在 variationId 0/100/500/900/1100/1102/1800/2100/2300/4100 上。
+     这些值正好是各渡夜者专属武器的 behaviorVariationId（117/503/900/1100/1102/1800/2151/2304/4100）
+     取整到百位的结果；追踪者的 300 没有专属行，落到 0 = Default 套。取整结果与 Paramdex 行名里的
+     角色名逐一对上。
+   - 补上这一级后，每个战技里同一武器类别只落进一套动作，没有例外。只用两级回退时，只看固定武器
+     就有 110、650、651 三个战技出现同类别拆成两套；按 v3 的全部武器看，108、109、110、118、120、124、
+     650、651 共 8 个战技出现这种拆分。v2 caveats 里「1400 的斧走 Small Weapon、1406/1407 的斧走
+     Large Weapon」就是这一级缺失造成的；补上后 110 盲击的 Small Weapon = 曲剑、锤、连枷、斧，
+     Large Weapon = 大剑、大曲剑、大锤、大斧。
+2. **只看有专属行的行为组**：1200 的 Default 套除了 base 400000000，在 base 500000000 还挂了一份 0 号行。
+   解析时只看「这把武器在其中有专属行」的那个组，女爵、学者、执行者、送葬者、隐士、守护者、复仇者、无赖
+   才能各自解出自己的角色套。这条规则只在解出的具名套多于一个时才介入。
+   铁之眼的弓（variationId 4100）只有 No FP 四段挂在 4100 上，带 FP 的四段挂在 5000 上；5000 是
+   铁之眼箭矢 50030000 的 5050 取整后的值，弓的子弹行为按箭矢的 variationId 解。所以这把弓按
+   武器名里的角色名整套选 Ironeye，`via = "ctx"`。
+3. **103 回旋斩的手工表补齐**：103 经战技池还能出现在短剑、大剑、刀、斧、大斧、矛上，行为表同样分不出来，
+   按动作族补齐：大剑、大斧 → Large Weapon；矛 → Polearm；短剑、刀、斧 → 默认套。这是推断，
+   依据是 110 盲击与 118 罗蕾塔的斩击实解出来的动作族。Large Weapon 与 Polearm 两套数值完全相同。
+
+**变化统计（对比 v2，regulation 10350000 不变）**：
+
+- **hits 不变**：2201 段逐段一致，唯一例外是派生标记 `noVariant`，从 550 段降到 59 段
+  （其中带 motion / flat 的从 441 段降到 44 段）。
+- spells 完全一致；weapons 的旧字段（skillVariant 除外）完全一致；带 skillVariant 的武器仍是 1150 把。
+- variants 从 130 组增加到 223 组。
+- 因为 variants 重新排序，164 把武器的 skillVariant 下标变了，但它们实际选出的段只有 58 把不同。
+  这 58 把都来自三级回退：109 连击 1 把、110 盲击 17 把（Large Weapon → Small Weapon）、
+  650 野蛮咆哮 24 把（默认套 → 锤 / 大斧类别套）、651 战吼 16 把（默认套 → 斧 / 大斧类别套）。
+- 有武器的战技从 133 个增加到 185 个。仍然没有武器的只剩 1 无战技、9999 ？？？ 两个占位条目。
+- (战技, 武器) 对共 8817 个：固定 1793、池 7376，两者都有 352。有池来源的武器 360 把。
+  用到的池 496 个、3764 个条目。
+- **由「无武器」变为「有武器」的 52 个战技**（箭头后是基础武器数）：
+  102 突刺 0→63、107 箭步（回旋斩） 0→63、111 回旋击 0→29、116 狩猎巨人 0→50、118 罗蕾塔的斩击 0→29、
+  119 双吻毒蛾 0→38、120 转啊转 0→91、122 风暴袭击 0→34、123 唤起风暴 0→88、124 剑舞 0→85、
+  200 辉剑圆阵 0→72、202 冰枪 0→24、204 鲜血斩击 0→40、207 熔岩火浆 0→44、210 风暴刃 0→64、
+  212 撼地 0→34、214 炎击 0→117、216 落雷 0→144、217 雷击斩 0→85、219 卡利亚大剑 0→50、
+  222 神圣光环 0→24、224 血刃 0→25、225 幻影共击 0→32、226 幻影枪 0→20、227 寒气冻雾 0→130、
+  228 毒雾 0→129、305 卡利亚式奉还 0→42、306 风暴障壁 0→43、307 黄金格挡 0→40、308 突进冲击 0→63、
+  309 托普斯的力场 0→42、404 宿灵射击 0→13、405 对空射击 0→13、406 箭雨 0→16、502 风暴足 0→172、
+  504 雷电羊球 0→143、505 红狮子火焰 0→145、506 坠落震击 0→172、507 黄金坠落震击 0→148、
+  508 黑暗波动 0→29、509 荷莱·露的撼地 0→115、600 决心 0→172、601 侍王骑士的决心 0→172、
+  602 暗杀办法 0→23、605 共享圣律 0→148、606 切腹 0→70、607 岩石剑 0→168、652 野兽咆哮 0→115、
+  701 无敌 0→60、702 圣域 0→60、802 潜雾猛禽 0→172、1200 风暴管束者 0→10。
+  其中 600、601、602、606、701、802 这 6 个没有命中段（纯增益或位移），另外 46 个能进增伤排名。
+- **武器数变多的其余 40 个战技**：10 无战技 232→272、100 狮子斩 8→76、101 贯穿 116→184、
+  103 回旋斩 233→309、105 突击 62→87、106 箭步（上砍） 75→127、108 鲜血征收 1→64、109 连击 13→92、
+  110 盲击 49→112、112 二连斩 8→82、113 主教冲锋 8→31、114 居合 17→19、115 准备架式 48→54、
+  201 神圣刀刃 3→136、203 辉石魔砾 2→85、205 夺命拳 1→11、208 祈祷一击 1→37、209 重力 3→131、
+  213 黄金大地 1→31、218 伟哉卡利亚 2→52、220 真空斩 8→102、221 黑焰漩涡 8→35、300 盾牌冲击 76→127、
+  301 铁壁盾防 8→70、302 格挡 184→244、303 小圆盾格挡 9→24、401 连续射击 5→13、402 拉满弓 8→13、
+  501 冻霜踏地 2→145、503 踢击 99→260、603 黄金树立誓 1→148、604 圣律 8→155、650 野蛮咆哮 96→230、
+  651 战吼 50→189、653 山妖咆哮 18→64、654 夸耀咆哮 16→113、700 忍耐 83→243、800 碎步 99→256、
+  801 猎犬步法 8→179、850 白影诱惑 1→122。其余 93 个有武器的战技数量不变（多为传说武器的专属战技）。
+- 体积：紧凑 JSON 从 1,559,309 字节（1.49 MiB）增加到 2,474,443 字节（2.36 MiB）。
+  大头是 weaponSources，约 526 KB。连续生成两次，除 `generatedAt` 外逐字节一致。
+
+**三端现状**：本车道不改界面代码。三端目前都按 schemaVersion 2 读数据，也都只认 `skillVariant`。
+Android 的 `GameDataKey.SKILLS` 要求 schemaVersion 必须等于 2；Windows / macOS 的测试断言
+「variants 里的每把武器都用 skillVariant 指向这一套」。这些都需要后续车道改用 `skillVariants`
+并提升版本号，失败清单见本次提交说明。上表里的 skills schemaVersion 已改成 3；
+`windows/renderer/pages/README.md` 描述的是页面代码现状，仍写 2，等界面车道一起改。
 
 ### 增伤手段数据集 `nightreign-buffs-v1.03.5.json`
 
@@ -915,3 +1062,219 @@ generate_buffs.py（schemaVersion 6，复核三轮）补充：
 - self_check 新增 self_check_v6_round3，另做 10 种篡改的反例测试，全部被拦下。
 - 连续生成两次，除 generatedAt 外完全一致。
 - macOS RelicCoreChecks 12697 项全过；Windows ranker.test.mjs 与 ranker_crosscheck.test.mjs 共 107 项全过。
+
+## TAE 动画事件与命中核实（extract_tae.py / verify_skill_hits.py，2026-09-24）
+
+背景：战技数据集（generate_skills.py）的 hits 只沿参数链（SwordArtsParam → BehaviorParam_PC → AtkParam_Pc / Bullet）和 Paramdex 行名找，参数里存着的行不一定被本作动画调用——用户指出「狩猎大蛇」（17030000，behaviorVariationId 1703）在本作不是远程，而数据集里有 301703900/901/905 三段 "Beam of Light"。要判定哪些 judge 真的会打出，只能读玩家的动画事件表 TAE。
+
+### 来源文件
+- /chr/c0000.anibnd.dcx（data1 归档，KRAK 压缩，BND4 解出 57.6 MB）里的 523 个 *.tae（文件名 aN.tae，不补零，a37 即 TAE 37；共 11606 个动画、513165 个事件）。
+- /chr/c0000_a0x…a6x、a9x.anibnd.dcx 只有 HKX 动作数据，没有 TAE（已实测，脚本默认只取 c0000）。
+- /action/script/c0000.hks 是 HavokScript 字节码（\x1bLuaQ），只能看字符串（SwordArts_Activate、GetSwordArtsDiffCategory…），动画号规律用 TAE 数据反推。
+- 本机命令（exe 1.3.3.0 / regulation 1.03.5）：`uv run extract_tae.py --game "<Game>" --krak-batch-cmd "'<CrossOver wine>' --bottle Steam --no-gui 'Z:\…\tools\oodledec\oodledec.exe' 'Z:\…\Game\oo2core_9_win64.dll' --batch {win_manifest}"`，约 40 秒；`--parse-only` 只重解已取出的 .tae（系统 python3 即可）；`--template raw/TAE.Template.NR.xml --full raw/tae/full` 另外按模板解全部事件（95 MB）。
+- 产物（raw/tae/，不入 git）：c0000/aN.tae、invoked.json（只收带 judgeId 的事件 1/2/5/304/307、施法事件 64 与给自己上 SpEffect 的事件 66/67/302/331/401——模板里带 SpEffect ID 字段的全部 5 种；302「Dragon Form」29 个、401「Multiplayer [401]」286 个，a774 死亡闪光 1790/1792、a786 雷暴 1510/1512、a834 血祭仪式 1626/1628 走的是 302——外加每个动画的事件类型清单、ImportOtherAnim 导入关系、动作文件名）、hit-invocation-report.json / .md（verify_skill_hits.py 生成）。
+
+### 格式依据
+- TAE 二进制布局对照 SoulsFormatsNEXT（SoulsFormats/Formats/TAE/TAE.cs、Animation.cs、Event.cs）：本作与艾尔登法环同为 64 位、版本 0x1000D 的 SDT/ER 格式。文件头 0x50 TAE ID、0x54 动画数、0x58 动画表；动画表每项 ID(i64)+偏移(i64)；动画体 = 事件表 / 事件组 / 时间表 / 动画文件头四个偏移 + 事件数等；事件头每项三个 i64（起止时间偏移、事件数据偏移），事件数据 = type(i32)+unk(i32)+参数偏移(i64)+参数；动画文件头区分 Standard（importsHKX / importHKXSourceAnimID）与 ImportOtherAnim（整段动画含事件从别的动画导入，598 个，导入号 = TAE 号×1000000+动画号，脚本跟随）。
+- 事件参数字段依据 Smithbox 的 src/Smithbox.Data/Assets/TAE/TAE.Template.NR.xml（与 DSAnimStudio 的 TAE.Template.ERNR.xml 一致，后者把 source 枚举补到了 3 技能武器 / 4 绝招武器 / 5 额外武器 / 6 灵鹰）：
+  - 1 Attack Behavior：attackType(s32) attackIndex(s32) **judgeId(s32)** dirType(u8) source(u8) stateInfo(s16)
+  - 2 Bullet Behavior：dummyPolyId(s32) attackIndex(s32) **judgeId(s32)** attachType(u8) enable(b) stateInfo(s16) offset(s16) u8 source(u8) 0
+  - 5 Common Behavior：attackIndex judgeId；304 Throw Attack Behavior：u16 source judgeId；307 Invoke PC Behavior：condition(u16) offset(u16) pcBehaviorType(s32) judgeId(s32)
+  - 64 Cast Selected Magic：… refSlot(u8)，0–9 对应 Magic.refId1–10
+  - 66 / 67 / 401 Add SpEffect (- Multiplayer / - Multiplayer [401])：spEffectId(s32) 0；302 Add SpEffect - Dragon Form：spEffectId(s32) 0 0 0；331 Add SpEffect - Weapon Skill：spEffectIdFp(s32) spEffectIdNoFp(s32) 0 0（战技动画给自己上的 buff）
+- SP_EFFECT_TYPE 名称取自 Smithbox src/Smithbox.Data/Assets/PARAM/NR/Param Enums/SP_EFFECT_TYPE.json（复制到 raw/paramdex/）。
+
+### 实测出的规律
+1. **judgeId ↔ BehaviorParam_PC**：行 ID = base + behaviorVariationId×1000 + judge（generate_skills.py 已用）；TAE 事件的 judgeId = judge（base 100000000 的普通攻击）或 base/100000000×1000 + judge（3xxx 战技、4xxx 战技通用行 / 角色变体行、5xxx 另一组（大枪 / 大蛇狩猎矛普通攻击上带 stateInfo 187 门控的延长命中行等）、8xxx/9xxx 词条子弹、6xxx/7xxx 渡夜者技能）。武器有专属行取专属行，否则落到 variationId=0。自检：战技 TAE（a600–a899）里 1115 个 judgeId 有 1114 个能找到行。两个例外：
+   - **base 400000000 的行按行自己的 variationId 解，不按武器**：风暴管束者 1200 的 80 段 = var 0 的 8 行 + 8 组（var 100 / 500 / 900 / 1100 / 1102 / 1800 / 2100 / 2300）× 8 + var 4100 与 5000 各 4；武器 3980000 自己的 behaviorVariationId 是 300、不在其中。这些 var 值与武器类别的 var 完全重合（100 匕首、900 打刀、1800 戟、2300 特大武器…），而 Paramdex 的 AtkParam 行名按渡夜者标（"[AoW - Duchess] Storm Ruler"…）——**「按角色选行」是从行名推断的**，运行时的选行键没有实证；两种读法下结论相同：这些行 code 相同（4200–4250 共 11 个），a860（40100–40117）把 11 个 code 全部调用，80 段全 invoked。verify_skill_hits.py 对这种 base 按行自己的 variationId 解并附 characterVariationId（原先按武器 var 解，72 段被误记 noJudge）。
+   - **base 不是 1 亿整数倍的行（242 行：ID 10/11/100/400…、2120/2121/2140/2141…）不走 TAE judgeId**：其中 162 行被 SpEffectParam.behaviorId 引用、由 SpEffect 触发（SpEffect 1630/1635 "[AoW] Prayerful Strike - Heal Bullet Spawn" → 2120/2121 → 子弹 2150/2155 → 祈祷一击的回血段 1202100/1202105；1515 "[AoW] Carian Retaliation" → 2140 → 2652 → 300000682/683），其余 80 行（10/11/100/400–513…）没有任何 SpEffect 引用，数据集也没有段落在它们上。原先 judge_code 把它们压成 code 0，与所有武器 R1 的 judge 0 撞号，祈祷一击 3 段与卡利亚式奉还 2 段因此被误记成 weaponTae（证据竟是 a33_30000 普通 R1）。现在这种行记 spEffect，并列出 SpEffect 名、stateInfo 与来源——来源扫全部 253 个参数表里名字含 spEffect / doping 的列（29 个表；消息 / 文本 / 开关 / 倍率 / 子弹号列除外）与全部 TAE 的事件 66/67/302/331/401：1630 由祈祷一击自己的落地段 AtkParam_Pc 301200820.spEffectId1 上；1515 由卡利亚式奉还的弹反子弹 Bullet 2651.spEffectId0 上；1635（无 FP 回血）在全部参数列与全部 TAE 事件里都没有来源（无 FP 落地段 301200821 只带 6906），记 spEffectNoSource、计入永远打不出。
+2. **战技动画 = TAE a(600 + SwordArtsParam.swordArtsType)**，动画号 4xxxx：40000 = L2 第一段、40005 = 同段无 FP 版、40010/40020 = 后续段、40200/40300/42400… = 其它动作组变体（回旋斩 a603 正好 4 套×2 段）。狩猎大蛇 188 → a788；狮子斩 0 → a600；风暴刃 59 → a659；狩猎巨人 16 → a616；回旋斩 3 → a603；尸横遍野 177 → a777；野蛮咆哮 140 → a740；战吼 141 → a741。数据集 187 个战技里除两个「无战技」（swordArtsType 255）外 185 个都有对应 TAE。
+3. **战吼 / 野蛮咆哮 / 灭洛斯的狂嚎的 R2 段**不在自己的 TAE 里，而在武器动作组 TAE a(EquipParamWeapon.wepmotionCategory) 的 30600–30635 / 32600–32635 动画（每组 8 个：30600/05/10/15/20/25/30/35 与 32600–32635；judgeId 3950–3969 野蛮咆哮 / 灭洛斯，3980–3997 战吼；这些 code 在别的动画里一次都没出现），所以核实时除战技 TAE 还查武器的 wepmotionCategory / spAtkcategory TAE。选 30600 系动画的开关是这三个战技 TAE 用事件 331 给自己上的 buff：a740 上 1680/1682（无 FP 1685/1687，"[AoW] Barbaric/Milos Roar"）、a741 上 1810/1812/1815/1817（"[AoW] War Cry"）、a815 上 840/842/845/847（无名，结构与前者相同）。HKS 是字节码读不出判断，verify_skill_hits.py 把这三个战技显式列为 ROAR_R2_SKILLS，**只有它们的段允许 weaponTae**；别的战技若只落在这些动画上记 roarR2Only（不属于该战技）——狩猎大蛇 301703955 就是这种：只在大枪动作组的吼叫 R2 a37_030605 里，大蛇狩猎矛的战技固定、拿不到吼叫 buff。夸耀咆哮 654（a744 上 1860/1862）与王者嘶吼 1031（a831 上 890/892）也有同结构的 331 buff，但数据集没有把 R2 行挂给它们，本次不动。
+4. **stateInfo 是前置条件**：事件 stateInfo≠0 时只有角色带对应 SP_EFFECT_TYPE 的 SpEffect 才触发。证据：每个蓄力攻击动画都挂着一串 stateInfo=2211（Ice Storm upon Charged Attacks）/2213（Black Flames…）/2214/2216/2218/2221/2224/2228 的子弹事件，正是局内武器词条；609（Cursed Sword Active）门控执行者的诅咒剑段。**stateInfo 187 是本体《艾尔登法环》打拉卡德（神皮吞食者大蛇）时大蛇狩猎矛「光波延长命中」的门控**，不是通用的 NPC 同伴行：它只出现在 6 个 TAE 里——a37（大枪 wepmotionCategory 37，74 个事件）、a207（大蛇狩猎矛专属 spAtkcategory 207，99 个）、a788（狩猎大蛇战技，2 个：3900/3901）与 a26（大剑组，4 个 8000 系子弹）/ a31（决斗大斧组，12 个）/ a271（1 个）；带命中事件的 R1 动画（30000–30099）224 个里只有 a37 / a207 的 30000/30010/30020 这 6 个挂着它（5000 系 judge = base 500000000 的延长命中行）。本作全部参数表里只有 SpEffect 1908 带 stateInfo 187（NR 枚举里也没名字），而 1908 只被 BuddyStoneParam 16000114（m16 的 NPC 召唤石，eliminateTargetEntityId 16005800）的 dopingSpEffectId 引用——玩家拿不到，所以本作玩家永远打不出光波。EMEVD 事件脚本没有查。
+5. **事件 307（Invoke PC Behavior）pcBehaviorType=8 时 judgeId 与事件 1 同义**：踢击（3085/3086）、无 FP 版冻霜踏地 / 风暴足（3056/3051）都是这样触发的；type 4 的 500–561 是翻滚 / 跳跃类，不查 BehaviorParam_PC。
+6. **法术**：施法动画在 TAE a(400 + Magic.refType) 里（160 个法术全部命中），事件 64 只带 refSlot；子弹 / 攻击行由 Magic.refIdN 决定，所以法术段只需确认它所在的 refId 槽被施法动画用到。
+7. 本作武器的战技是从 **SwordArtsTableParam** 抽的（EquipParamWeapon.swordArtsTableId → 同 ID 多行，每行 swordArtsId + chanceWeight），generate_skills.py 只看 swordArtsParamId，所以风暴刃 210、狩猎巨人 116 等只出现在抽取表里的战技 weaponIds 为空（下一阶段处理）；verify_skill_hits.py 用抽取表补上武器（via="table"）。
+8. **法术里的触发型 SpEffect**：Magic 的 refCategory 2 槽若带 stateInfo（因果性原理 6760 的槽 1 = SpEffect 1676000，stateInfo 170 "Karmic Justice Counter"；贵族气场 6270 的槽 2 = 1624000，stateInfo 443），施法动画只上这个 SpEffect，它触发时发射的是同一 Magic 里施法动画不用的子弹槽（因果性原理槽 0 = 子弹 10676000 → 67601）。这种段记 spEffectDerived，不再和卡利亚大剑 / 亚杜拉的月光剑 / 卡利亚迅剑的槽 4–5（本体骑乘版残留，真的没用）混在 slotUnused 里。行名点名但不在任何槽里、由 SpEffect.behaviorId 触发的段（卡利亚式奉还 4640 的 6 段、因果性原理 67600、火焰重罪 79005）记 spEffect。
+9. **战技 TAE 的 4xxxx 动画按百位分「套」，一把武器只播一套**：400xx 默认套、402xx 大型武器套、403xx 长柄套、4XXxx（XX ≥ 20）= wepmotionCategory XX 的专属套（424 双头剑、442 拳、445 大弓、447 / 448 大盾 / 小盾、420 匕首、428 曲剑；a691 大盾战技另有 404–409）。证据：103 回旋斩 Paramdex 标 Twinblade 的 250–257 只在 42400 系（双头剑 wepmotionCategory 24），Large Weapon 230s 在 40200 系、Polearm 240s 在 40300 系；124 剑舞 var 1000（双头剑）的专属行只配给 42400 / 40300 系的 490s；406 箭雨的 44560 系发的是大箭 var 5100 的行。选套的是 HKS 的 GetSwordArtsDiffCategory（c0000.hks 是字节码，映射读不出）。185 个战技 TAE 里各套 judge 不同的只有 a603 回旋斩（四套）、a612 二连斩（400/403 用 3170–3181，402 用 3185–3196）、a624 剑舞（400 用 3470s、402 用 3480s、403/424 用 3490s）、a654 鲜血斩击（400/424 用 3023/3024，402 用 3020/3022），其余多套 TAE 各套 judge 相同、不受影响。verify_skill_hits.py 对每个 variant × var 取各段所在的套，交集为空时按 motion 专属套 → 只有一套配了本 var 的专属行（varRows）→ 类别归组（classGroup：103 的手工归组，直剑 / 曲剑默认、大曲剑 402、戟 / 镰 403；classGroupInferred：大剑 / 特大剑 / 大斧 / 大锤 / 特大武器 402、矛 / 大矛 403，体型类比、未证实）→ 默认套 400 选一套，其余套的段记 exclusiveBlock，另列一桶、不与 invoked 相加。3xxxx（改写普攻的战技的 R1 / R2，a830–a852）是不同输入、不算套。
+10. **codes 为空（BehaviorParam_PC 解不到行）的段再分三种**：产出它的行存在但都属于别的 behaviorVariationId → rowForOtherWeapon（转啊转 120 的 303309900/901/902/905/906/907：行只有 var 3309 = 卡利亚王笏 33090000 / 35090000，而那把武器的战技是 10，不是 120）；全部参数表里名字为 atkId / atkParamId 的列（Bullet.atkId_Bullet、Magic.atkParamId、SwordArtsParam.atkParamId、PlayerCommonParam.markingAtkParamId）与 BehaviorParam_PC.refId、Magic.refIdN 都不引用它 → unreferenced（12 段：突击 301600901/902、落雷 301600843、信仰喷发 301217914、掠夺火焰 300314903/904、毁灭灵火 303401401、催眠烟雾 300208911、萨米尔冰风暴 303401602/603、隙间月影 303400102/107）；只是 SwordArtsParam.atkParamId 锚点，或产出它的行都是弹药 var（5000–5399，箭 / 大箭 / 弩箭 / 弩炮弹）→ noJudge（弓系战技 400/401/404/405/406 的锚点由弹药的行打出，如 a705 箭雨 40060 的 judge 641 发的是箭 var 5000 的 105000641，本报告不按弹药 var 解）。前两种计入永远打不出。
+
+### 核实结果（hit-invocation-report.md，重跑于修正 judge_code / 吼叫判定 / 角色变体行 / 按 var 取武器 TAE / 互斥动画套 / noJudge 细分之后）
+- 战技 187 个：有 TAE 185、有命中段 166、至少一段被动画调用 160（未匹配的 6 个：5 个弓系射击战技与拉塔恩的骤雨——只有锚点段，伤害走箭矢 / 子弹，status=noJudge）。
+- 报告分两层：**战技层**每段取所有武器里最好的状态（只用于概览），**variant × behaviorVariationId 层**才是每把武器实际解到的行（武器动作组 TAE 也按 var 分别取：同一 variant 里锤的 a33 不能给肢解菜刀 a32 作证据）——同一段在不同武器上状态可能不同，逐武器结论以后者为准。
+- 战技层 1782 段（带伤害 1534）：invoked 1051 / weaponTae 660 / spEffect 4 / conditional 2 / roarR2Only 1 / gated 2 / elsewhere 1 / notInvoked 25 / spEffectNoSource 1 / rowForOtherWeapon 6 / unreferenced 19 / noJudge 10；带伤害段里 invoked 941、weaponTae 540、spEffect 4、conditional 2、roarR2Only 1、gated 2、elsewhere 1、notInvoked 16、spEffectNoSource 1、rowForOtherWeapon 6、unreferenced 12、noJudge 8（原先的 noJudge 26 拆成 unreferenced 12 + rowForOtherWeapon 6 + noJudge 8；spEffect 5 拆成 4 + spEffectNoSource 1）。
+- variant × var 层带伤害：数据集 variant（via=behavior）invoked 781 / weaponTae 172 / spEffect 2 / conditional 2 / exclusiveBlock 12 / roarR2Only 1 / gated 2 / elsewhere 16 / notInvoked 15 / spEffectNoSource 1；抽取表补的 variant（via=table）invoked 8989 / weaponTae 1652 / spEffect 36 / exclusiveBlock 1540 / elsewhere 198 / notInvoked 28 / spEffectNoSource 16；没挂武器的（via=none）invoked 182 / noJudge 3；不属于任何 variant 的 32 段：rowForOtherWeapon 6 / unreferenced 19 / noJudge 7。
+- **从未被玩家动画调用的带伤害段：295 个 variant 段（去重后 43 个战技段，涉及 21 个战技、2878 个武器×段）**，按状态 elsewhere 214 / notInvoked 43 / spEffectNoSource 17 / unreferenced 12 / rowForOtherWeapon 6 / gated 2 / roarR2Only 1，按来源 数据集 variant 35 / 抽取表 variant 242 / 不属于任何 variant 18：
+  - **野蛮咆哮 300000957/959/967/969（1H R2 #2-2 及其蓄力版）在大锤 / 大斧 / 矛 / 肢解菜刀上打不出**：这些武器组没有专属行，数据集给它们落到了 var 0 的通用行，但它们的动作组 TAE a35 / a32 / a36 在 30610/30615/32610/32615 里只发 3956/3958/3966/3968，3957/3959/3967/3969 只在锤 / var 0 武器的 a33 等 TAE 里出现（大棍棒 12000000 逐行解过）。数据集 variant 里 4 组（var 1200 大锤 40 把、1500 大斧 16 把、1600 矛 8 把、1501 肢解菜刀 15120000–15121100 8 把——最后一组原先被同一 variant 里锤的 a33 盖成了 weaponTae，现在武器 TAE 按 var 取）× 4 段 = 16 个 variant 段、72 把武器；抽取表补的 variant 再加 31 组 124 个 variant 段、1780 个武器×段。
+  - **狩猎大蛇 301703955**：只在大枪动作组的吼叫 R2 a37_030605 里出现，而 1188 不是吼叫战技，记 roarR2Only。
+  - **祈祷一击 1202105（无 FP 回血）**：由 SpEffect 1635 触发，1635 在全部参数列与 TAE 事件里没有来源，记 spEffectNoSource（1 个数据集 variant 段 + 16 个抽取表 variant 段）。
+  - **转啊转 6 段**（303309900/901/902/905/906/907）：行只属于卡利亚王笏 var 3309（那把武器的战技是 10），rowForOtherWeapon；**12 段完全无引用**（unreferenced，清单见规律 10）。
+  - 其余与原先一致：狩猎大蛇 900/901（gated 187）、905/975（notInvoked）、撼地 300000327、黄金大地 300000557、黄金坠落震击 300000801（[UNUSED] 行只被黄金波动 a820 用，抽取表 74 个 variant 段）、信仰喷发 3 段、唤矛仪式 2 段、王者嘶吼 1 段、旋转刺轮 2 段、弹指 2 段、女王黑焰 1 段、风暴踢击 1 段（专属行在自己武器 / 战技的 TAE 里都没有对应 code）。
+- **互斥动画套里的带伤害段：1552 个 variant 段（去重 70 个战技段，4 个战技、20320 个武器×段）**：回旋斩 103 35 组、二连斩 112 36 组、剑舞 124 37 组、鲜血斩击 204 23 组。数据集 variant 只有二连斩 蛇骨刀 9080000 ×8（var 901）的 12 段：generate_skills.py 把默认套 170–181 与 Large Weapon 套 185–196 一起给了它（ctx 缺失的默认套 + 唯一具名套没有触发它的 ctx 单选），本报告按默认套 400 保留 170–181；其余 1540 段都在抽取表补的 variant 里（原先的表 variant 合成把各套并集全部记成 invoked，回旋斩会多算 3 套）。选套依据 default 538 / classGroup 522 / classGroupInferred 446 / motion 46（variant 段数）。这些段在战技 TAE 里被调用，只是不在这把武器播的那套里，**下一阶段合并时不能与同一武器的 invoked 段相加**。
+- 有条件触发 2 段：黄金式奉还 303208905/906（stateInfo 469，吸收法术成功后才有）。SpEffect 触发（不经动画事件）且有来源的带伤害段 4 个战技段 / 38 个 variant 段：祈祷一击 1202100/1202110（来源 AtkParam_Pc 301200820.spEffectId1）与卡利亚式奉还 300000682/683（来源弹反子弹 Bullet 2651.spEffectId0），全部出自本战技自己的段。
+- 狩猎大蛇结论：a788 的 40000（L2 第 1 段）同时挂 3900（Beam of Light，stateInfo 187）与 3950（L2 #1，无门控），40010 同理挂 3901/3951，40005/40015 是无 FP 版 3970/3971；所以玩家每段只打出 950/951（无 FP 时 970/971）。光波 900/901 是本体打拉卡德的延长命中（规律 4），本作只有 m16 残留的 NPC 召唤石 doping 能给出 187 这个状态，玩家永远触发不了；905/975 没有任何动画调用，955 只在吼叫 R2 动画里（roarR2Only）。本作里这招就是 2 段近战，参数里的三段 Beam of Light 不是远程。
+- 法术 419 段：invoked 377、spEffect 8（卡利亚式奉还 6、因果性原理 67600、火焰重罪 79005，由 SpEffect.behaviorId 触发，8 个 SpEffect 都有来源）、spEffectDerived 1（因果性原理 67601，槽 0 子弹由 stateInfo 170 触发发射）、noSlot 21（行名点名但不在任何 refId 槽里也找不到 SpEffect 来源）、anchorOnly 6（Magic.atkParamId 锚点）、slotUnused 6（卡利亚大剑 / 亚杜拉的月光剑 / 卡利亚迅剑各 2，槽 4–5 施法动画不用）。
+### 局限
+- 只读了玩家 c0000 的 TAE；HKS 是字节码：哪把武器播 4xxxx 的哪一套（GetSwordArtsDiffCategory）、哪些 buff 让 R2 切到 30600 系动画都由它决定。互斥套只能从 TAE 判「有几套、各套 judge 是否不同」，选哪一套是本报告的规则（motion / varRows 有数据证据，classGroup 来自 103 的手工归组，classGroupInferred 与 default 是推断），每个 exclusiveBlock 段都带 blockChoice 说明依据；吼叫战技用显式清单（ROAR_R2_SKILLS）并在报告里列出 331 buff 作证据。
+- stateInfo 门控只判断「是否可达」两档（187 不可达，其余可达），没有追溯每个状态怎么获得；EMEVD 事件脚本本脚本没有查（187 的结论只基于参数表与 TAE）。
+- spEffect 状态只说明「由哪个 SpEffect 触发、这个 SpEffect 在哪个参数列 / 哪个 TAE 事件上」，没有再往下追 SpEffect 的触发条件（stateInfo 275 等）；来源扫描按列名（含 spEffect / doping）取列，靠列名判断。
+- noJudge 只剩两种：SwordArtsParam.atkParamId 锚点，以及只由弹药 var（5000–5399）的行打出的弓系段——后者其实能按弹药 var 解（a705 40060 的 judge 641 → 105000641），本报告没做。
+- 报告基于 1.03.5 的 regulation 与本机归档；数据集尚未据此修改（下一阶段合并时按 variant × var 层的结论处理：野蛮咆哮的 4 段 var 0 通用行、狩猎大蛇的 5 段、祈祷一击 1202105、互斥套的 1552 段，以及 generate_skills.py 给二连斩 蛇骨刀 同时挂两套的问题）。
+
+## 命中段 TAE 核实（v3，schemaVersion 3 第二部分，2026-09-24）
+
+把上一节（车道 B）的 TAE 核实结论并进战技数据集。数据集仍是 schemaVersion 3（`schemaChangelog` 的 version 3 条目已补上这一部分），产物 `data/nightreign-skills-v1.03.5.json` 紧凑 2,522,743 字节，三份副本（data/、windows/resources/、macos/…/Resources/）sha256 一致。（审查修正后为 2,568,862 字节，见本节末「审查修正」。）
+
+### 做法
+- `generate_skills.py` 生成时读 `raw/tae/invoked.json`（extract_tae.py 的产物），调用同目录 `verify_skill_hits.py` 新增的 `TaeVerifier`：先照旧用 BehaviorParam_PC 三级回退解出每个 (战技, 武器) 的段（行为表层，记为 pre），再逐武器判定每段的状态。同 behaviorVariationId、同动作组 TAE、同 wepType、同段集合的武器共用一次判定（6508 个 (战技, 武器) 对，实际判定 2635 次）。两个脚本共用一套 TAE 索引、judgeId 换算、三级回退与互斥动画套规则。
+- `variants[].atkIds` 只保留下面五种状态的段：invoked（战技 TAE 里有无门控事件）、weaponTae（吼叫类战技的 R2 段在武器动作组 TAE 的 30600 系动画里）、spEffect（由本战技的 SpEffect 触发，本版本是祈祷一击的回血子弹与卡利亚式奉还的反击）、conditional（带玩家拿得到的 stateInfo 门控，本版本只有 1196 黄金式奉还格挡成功后的两段）、noJudge（锚点或弹药行，TAE 判不了，不删）。子弹链上的段看发射它的 BehaviorParam_PC 行：InvokeBulletBehavior（事件 2）用对应的 judgeId 调了就算调用。
+- 其余状态都从 atkIds 移除：exclusiveBlock（在另一套互斥的 4xxxx 动画里）、roarR2Only、gated、elsewhere、notInvoked、spEffectNoSource、rowForOtherWeapon、unreferenced。同一行为表选段的武器按核实结果重新分组，所以 variants 可能拆开：112 二连斩从 1 组变 2 组，124 剑舞从 2 组变 4 组，204 鲜血斩击从 1 组变 2 组，总数从 223 变成 227。固定战技的 `weapons[].skillVariant` 下标一个都没变；`skillVariants` 里有 98 项下标变了，都已和本文件的 variants 对齐。
+- `hits[]` 一段都不删：
+  - 行为表给至少一把武器选过、但在所有这些武器上都被移除的段，标 `notInvoked: true` 加 `notInvokedReason`（取值见 `enums.notInvokedReason`；不同武器原因不同时，取 enums 顺序里靠前的那个）。
+  - 只在部分武器上被移除的段不标，逐武器结论看 variants。
+  - `noVariant` 改为按 pre 判定，所以它和 notInvoked 互斥，59 段的数量不变。
+- 动画完全匹配不到的战技标 `taeUnmatched: true`，hits 和 variants 都不过滤。这类战技要么战技 TAE 缺失，要么没有一段在任何武器上是 invoked 或 weaponTae。本版本是 400 贯穿射击、401 连续射击、404 宿灵射击、405 对空射击、406 箭雨、1169 拉塔恩的骤雨，共 6 个弓系战技，段全是 noJudge，涉及 59 个 (战技, 武器) 对。
+- 法术不做 TAE 过滤，原因写在 `fieldNotes.法术与 TAE`：施法动画只按 refId 槽发射，没有逐段的 judgeId 可核。
+- `invoked.json` 缺失或传 `--no-tae` 时保持行为表口径，`counts.taeVerified=false`。这时 weapons / skills / spells / swordArtsPools 与 A 阶段产物逐项相同（已实测），只多出新的计数、说明文字和 `diagnostics`。
+- 新字段：`hits[].notInvoked` / `notInvokedReason`、`skills[].taeUnmatched`、`counts.taeVerified` 加 7 个计数（hitsNotInvoked 34、hitsNotInvokedDamaging 25、hitsPartiallyRemovedByTae 46、weaponHitsRemovedByTae 2924、skillWeaponPairsChangedByTae 611、skillsChangedByTae 21、skillsTaeUnmatched 6）、`enums.notInvokedReason`、`coverage.hitsNotInvokedNote`、`usage.命中段已按 TAE 核实（v3）`（含局限）、`fieldNotes` 的 notInvoked / notInvokedReason / taeUnmatched / taeVerified / 法术与 TAE，以及顶层 `diagnostics.taeVerification`。最后这个对象约 31 KB，包括移除清单、部分武器移除清单、互斥动画套的选套分布、保留的非动画段、未匹配战技和 TAE 来源摘要。
+
+### 对车道 B 结论的更正
+1. **B 的判定脚本原本只有两级回退**：`verify_skill_hits.py` 的 `resolve_row` 是「武器自己的 variationId → 0」，现在改成与 generate_skills.py 相同的三级回退「自己 → 取整到百位 → 0」，互斥动画套的 varRows 规则也按族 var 认专属行。
+   - 两级回退用在 v3 数据集上，会把 1539 个带伤害的 variant 段误记成 rowForOtherWeapon（修正前的试跑）。
+   - 用在 v2 数据集上，锤（var 1101/1107）会落到 var 0 的 300000957/959/967/969，所以 B 报告写了「在锤 / var 0 武器上由 a33 打出」。实际上锤族 var 1100 有自己的 301100957/959，a33 的 30610 系动画调用的是那两行。
+   - 结论：300000957/959/967/969 这 4 段在本作**没有任何武器能打出**，在全部 141 把选到它们的武器上都被移除，记为 elsewhere。B 在「实测出的规律」第 1 条写的「否则落到 variationId=0」应读作三级回退。
+2. **规律 7 的抽取表补武器不再用于 v3**：v3 数据集的 weaponIds 已含局内战技池（可达 custom 行）。`verify_skill_hits.py` 对 schemaVersion ≥ 3 的数据集不再用 `EquipParamWeapon.swordArtsTableId` 补武器，因为「战技池（v3）」一节论证了那一列不是来源。另外，variant × var 计数原先把 via=ctx 的 variant 记成 none，现在记成 dataset。
+3. 报告文件的去向（都在 raw/tae/，不入库）：
+   - `laneB-v2-dataset/`：B 的原报告（v2 数据集加抽取表）。
+   - `stageA-baseline/`：A 阶段 v3 数据集（核实前）用修正后的脚本重跑的结果。
+   - `hit-invocation-report.*`：核实后的数据集重跑一遍，作为自洽检查。其中数据集 variant × var 层带伤害的段只剩 invoked 9905 / weaponTae 1756 / spEffect 36 / conditional 2 / noJudge 7。核实前还有 exclusiveBlock 922、elsewhere 199、notInvoked 43、spEffectNoSource 16、gated 2、roarR2Only 1；exclusiveBlock 与各种「永远打不出」的段全部清零。
+
+### 结果（regulation 10350000，本机 1.03.5 c0000 动画包）
+- 21 个战技、611 个 (战技, 武器) 对的段有变化，一共移除 2924 个武器×段。按原因分：exclusiveBlock 2084、elsewhere 712、notInvoked 88、spEffectNoSource 37、gated 2、roarR2Only 1。只删不增。
+- **所有武器上都打不出、标 notInvoked 的 34 段（带伤害 25 段）**：
+  - 1188 狩猎大蛇：301703900 / 301703901「L2 #1/#2 Beam of Light」（gated，stateInfo 187）；301703905 与 301703975（notInvoked）；301703955（roarR2Only，只在大枪动作组的吼叫 R2 a37_030605 里）。
+  - 650 野蛮咆哮：300000957 / 959 / 967 / 969，即 1H/2H R2 #2-2 及其蓄力版（elsewhere，141 把）。
+  - 507 黄金坠落震击：300000801 [UNUSED]（elsewhere，只被黄金波动 a820 调用，148 把）。
+  - 208 祈祷一击：1202105，无 FP 回血（spEffectNoSource，37 把）。
+  - 212 撼地：300000327（notInvoked，34 把）。
+  - 213 黄金大地：300000557（notInvoked，31 把）。
+  - 单武器专属战技：
+    - 1000 信仰喷发：301217901 / 902 / 925。
+    - 1015 灭洛斯的狂嚎：303401102。
+    - 1019 夜与火的架式：300214900。
+    - 1020 黄金波动：300310900 [UNUSED] Swing。
+    - 1024 唤矛仪式：301612900 Thrust、301612915 No FP Thrust。
+    - 1031 王者嘶吼：302305900。
+    - 1034 授血仪式：301711900 / 910 / 920 [UNUSED] Thrust。
+    - 1039 旋转刺轮：302309905 / 908。
+    - 1046 弹指：301113905 / 906。
+    - 1170 女王黑焰：300800311。
+    - 1190 风暴踢击：302112918。
+    - 1194 重力雷电：302308900 / 906 / 920。
+  - 以上除 1015、1019、1020、1034、1194 那 9 段（只有削韧 / 无伤害）外都带伤害。
+- **只在部分武器上打不出的 46 段，全部来自互斥动画套**：112 二连斩 24 段、124 剑舞 18 段、204 鲜血斩击 4 段。每把武器只留它播的那一套。
+  - 112 二连斩：默认套 170–181 给短剑、直剑、曲剑、刀、双头剑、戟、镰；Large Weapon 套 185–196 给大剑、大曲剑。
+  - 124 剑舞：3470 系给短剑、直剑、刀；3480 系给大剑、大曲剑、大斧；3490 系给矛、戟、镰；双头剑用自己的 301000490 系。
+  - 204 鲜血斩击：「Slash (Greatsword)」55/56 给大剑、大曲剑；「Slash」57/58 给短剑、直剑、重刺剑、刀、双头剑。
+  - 选套依据（按武器计）：
+    - 112：400 classGroup 23、400 default 28、402 classGroup 4、402 classGroupInferred 11、403 classGroup 16。
+    - 124：400 classGroup 12、400 default 16、402 classGroup 4、402 classGroupInferred 20、403 classGroup 15、403 classGroupInferred 13、424 motion 5。
+    - 204：400 classGroup 8、400 default 14、402 classGroup 4、402 classGroupInferred 10、424 motion 4。
+  - 核实后同一战技里同一武器类别仍只落进一个 variant，没有因为 TAE 再拆开。
+  - 103 回旋斩在行为表层已经按手工表单选一套，TAE 核实全部 invoked，不受影响。
+- **按非动画路径保留的段**：
+  - 祈祷一击 1202100 / 1202110：spEffect，SpEffect 1630，37 把。
+  - 卡利亚式奉还 300000682 / 683：spEffect，SpEffect 1515，42 把。
+  - 黄金式奉还 303208905 / 906：conditional，stateInfo 469，1 把。
+- 用户点名的几个战技：
+  - 210 风暴刃、116 狩猎巨人、100 狮子斩：全部 invoked，不受影响。
+  - 1200 风暴管束者：10 套 80 段全部 invoked。
+  - 1188 狩猎大蛇：variants 从 9 段变成 `[301703950, 301703951, 301703970, 301703971]`，也就是 L2 #1 / #2 两段近战加各自的无 FP 版。本作里这招没有光波，不是远程（依据见上一节规律 4）。
+
+### 与 A 阶段产物的对比（raw/skills_v3/stageA_vs_tae.json，脚本 raw/skills_v3/compare_stageA_vs_tae.py）
+6567 个带 variants 的 (战技, 武器) 对里 611 个的段有变化，一共移除 2924 个武器×段，新增 0 个。下表按「每把武器被移除段占 pre 伤害（motion 合计，无 motion 时用 flat）的比例」取该战技全部武器的平均值排序，列出构成变化最大的 10 个战技：
+
+| 战技 | 武器数（受影响） | 每把武器的段数 | 平均移除的伤害占比 | 移除武器×段 |
+| --- | --- | --- | --- | --- |
+| 1024 唤矛仪式 | 1（1） | 9 → 7 | 78.8% | 2 |
+| 124 剑舞 | 85（85） | 18 → 6 | 66.7% | 1020 |
+| 1188 狩猎大蛇 | 1（1） | 9 → 4 | 54.4% | 5 |
+| 204 鲜血斩击 | 40（40） | 4 → 2 | 50.2% | 80 |
+| 112 二连斩 | 82（82） | 24 → 12 | 50.0% | 984 |
+| 1046 弹指 | 1（1） | 4 → 2 | 41.9% | 2 |
+| 1000 信仰喷发 | 1（1） | 13 → 10 | 20.8% | 3 |
+| 507 黄金坠落震击 | 148（148） | 5 → 4 | 17.4% | 148 |
+| 1039 旋转刺轮 | 1（1） | 8 → 6 | 13.9% | 2 |
+| 650 野蛮咆哮 | 230（141） | 22 → 18（141 把） | 13.7% | 564 |
+
+按移除的武器×段数排序，前 10 名是 124、112、650、507、204、208 祈祷一击（37）、212 撼地（34）、213 黄金大地（31）、1188、1000。
+
+### 验证
+- `self_check` 新增的断言：
+  - TAE 只删不增：每个 (战技, 武器) 核实后的段 ⊆ pre。
+  - 没核实，或战技是 taeUnmatched 时，段与 pre 相同。
+  - 没有空 variant。
+  - notInvoked 段不在任何 variant 里，但在 pre 里；它的 notInvokedReason 在枚举里，而且不和 noVariant 同时出现。
+  - 反过来，pre 选过、核实后哪都没留下的段必须标 notInvoked；pre 就没选到的段必须标 noVariant。
+  - `counts.hitsNotInvoked` 等于标记数，也等于 `diagnostics.removedHits` 的条数；`skillsTaeUnmatched` 等于标记数；`diagnostics.verified` 等于 `counts.taeVerified`。
+  - 狩猎大蛇 variants 恰好是 950/951/970/971，900/901 的原因是 gated，955 是 roarR2Only，905/975 是 notInvoked。
+  - 二连斩的默认套和 Large Weapon 套不在同一个 variant 里。
+  - 210、116、1188 都不是 taeUnmatched。
+  - 「同一战技里同一武器类别只落进一套动作」改为在 pre 上断言。
+- 另做 10 种篡改，全部被拦下：光波段放回 variants、notInvoked 段加 noVariant、原因不在枚举、移除段丢标记、variant 多出 pre 没有的段、二连斩两套合并、计数不符、taeUnmatched 战技被过滤、空 variant、diagnostics 与 counts 不符。
+- 连续生成两次，除 generatedAt 外完全一致。`--no-tae` 与 invoked.json 缺失两种情况下，weapons / skills / spells / swordArtsPools 与 A 阶段产物逐项相同。
+
+### 局限
+- TAE 只回答「动画会不会调用这段」，不回答一次战技里命中几次：持续判定和多次 Hit 仍按一段算。
+- 互斥动画套由 HKS 的 GetSwordArtsDiffCategory 选，c0000.hks 是字节码，读不出映射。选套依据分三档：
+  - motion 与 varRows 有数据证据。
+  - classGroup 来自 103 回旋斩的手工归组。
+  - classGroupInferred（大剑 / 特大剑 / 大斧 / 大锤 / 特大武器 → 402，矛 / 大矛 → 403）和 default（其余类别 → 400）是推断。
+  - 这三个战技共有 2084 个武器×段按这套规则移除，每把武器的依据写在 `diagnostics.taeVerification.exclusiveBlocks`。
+- 狩猎大蛇光波的「stateInfo 187 玩家拿不到」只查了参数表和 TAE，EMEVD 没查。conditional 段（黄金式奉还）按可达保留，排名会算上它们。
+- 带 FP 和无 FP 两个分支都在 atkIds 里，靠 `hits[].noFp` 区分。原先这里写「TAE 核实不改变这一点」，但行名没写 "No FP" 的无 FP 段并没有 noFp，会和带 FP 段一起被默认计入——已在下文「审查修正」第 2 条按 TAE 补标。
+- 弓系 6 个战技是 taeUnmatched，没有过滤；它们的段由弹药 var 的行打出，本版没有按弹药 var 解。法术不过滤。
+- 三端界面代码未改，仍按 schemaVersion 2 读取，所以测试的失败与 A 阶段完全相同：
+  - Windows：376 过 / 3 败（196 数据集版本、202 selectHits、223 buildMeansItems）。
+  - macOS：RelicCoreChecks 在「多套动作的战技两边都应选出段」处中止。
+  - Android：`:gamedata:test` 408 项里 84 项失败。
+  - 把数据换回 A 阶段产物重跑，三端的失败清单逐项相同，本阶段没有新增失败。
+- 游戏更新后，要先重跑 extract_tae.py，再重生成本数据集。
+
+### 审查修正（2026-09-24，schemaVersion 仍为 3）
+
+审查指出 5 条问题（2 条 medium 关于数据、1 条 medium 关于文档、2 条 low）。逐条处理如下，产物重新生成并同步三份副本：紧凑 2,568,862 字节，sha256 `1637e6adda0f6503ae2df4f74a639e695834c0bad2921d42ffdef0564db65b83`。
+
+1. **fieldNotes.notInvoked 的例子写反了（medium）**。原文举「野蛮咆哮 300000957 在锤上由 a33 的 R2 动画打出、在大锤 / 大斧 / 矛上不打」作为「只在部分武器上打不出」的例子，与数据矛盾：三级回退下锤族（var 1101/1102/1107 → 1100）解到自己的 301100957，没有任何武器会打 var 0 的 300000957/959/967/969，这 4 段在全部 141 把武器上都被移除、标了 notInvoked（上文「对车道 B 结论的更正」第 1 条）。
+   - 现在的例子按数据现算：二连斩 300000185–300000196（Large Weapon 套 12 段）只留给大剑 / 大曲剑（15 把），在另 67 把武器上按互斥动画套（exclusiveBlock）移除；并注明野蛮咆哮那 4 段不属于这种情况。`generate_skills.py` 里同一处注释一并改掉。
+   - `self_check` 断言这个例子成立：112 的 185–196 都在 partiallyRemoved 里、原因只有 exclusiveBlock、保留它们的武器类别恰好是 {大剑, 大曲剑}；650 的 4 段标 notInvoked、不在 partiallyRemoved 里；fieldNotes 文本里含 "300000185–300000196"。
+   - `verify_skill_hits.py` 文档字符串规律 2 原写「没有该武器专属行时落到 variationId=0」，改为三级回退的完整说明（自己的 var → 取整到百位的族 var → 0，并举锤 1101/1107 → 1100 → 301100957 为例）。
+
+2. **带 FP 与无 FP 分支仍然相加（medium）**。`hits[].noFp` 原先只看 AtkParam 行名里的 "No FP"，很多战技的无 FP 段行名没写，于是和带 FP 段一起被默认勾选（Windows 默认 `Boolean(hit.noFp) === Boolean(state.noFp)`，三端同口径）。用户点名的两个都中招：风暴刃 210 的 300000411/412/413（a659 的 40005/40015/40025，motion 105–107）与带 FP 的 407–409 加飞刃 410 相加；狩猎巨人 116 的 301700915（a616 的 40005）与 301700910 相加。
+   - **规则（`verify_skill_hits.py` 规律 8）**：战技 TAE 的 4xxxx 动画个位 0–4 是带 FP 版，5–9 是无 FP 版，无 FP 版动画号 = 带 FP 版 + 5。证据：本机全部战技 TAE 里个位 ≥ 5 的 4xxxx 动画 436 个，每一个都有 −5 的带 FP 版（0 个例外）；数据集里行名带 "No FP" 且有 TAE 依据的 158 段全部只被个位 ≥ 5 的动画调用，没有一段落在个位 0–4 上。
+   - 审查意见给的是「个位 = 5」。个位 6–9 的无 FP 动画也存在，例如 113 主教冲锋 40000/40003/40004 ↔ 40005/40008/40009、1200 风暴管束者 40110–40112 ↔ 40115–40117、110 盲击 40060/40062/40063 ↔ 40065/40067/40068。若只认个位 5，会有 28 段行名写着 "No FP" 的段被判成带 FP 侧，所以按「个位 ≥ 5」。
+   - **做法**：`generate_skills.py` 在逐武器核实时，对每把武器**留下**的段收集调用它的动画（`verify_skill_hits.fp_evidence`）：只看战技 TAE 的事件（stateInfo 187 这种玩家拿不到的门控不算），有互斥动画套时只看这把武器播的那一套；吼叫类战技在武器动作组 TAE 的 R2 动画、以及 3xxxx 动画不分 FP，记 neutral。汇总全部武器后：
+     - 只被无 FP 版动画调用、行名没写 No FP 的段 → `noFp: true` + `noFpSource: "tae"`，`labelZh` 前补「无FP版」（与行名带 No FP 的段写法一致；Windows / Android 的测试要求数据集里 noFp 段的 labelZh 以它开头）。本版本 **213 段（带伤害 206 段），84 个战技**，清单在 `diagnostics.taeVerification.noFpFromTae`（附调用它的动画号）。除上面两个外还有：103 回旋斩 12 段、124 剑舞 475–477 / 485–487 / 495–497 与双头剑套 301000495–497、1045 火焰舞 302006910–914、208 祈祷一击 301200821（无 FP 落地段）、1190 风暴踢击 9 段、1179 血刃乱舞 7 段等。
+     - 带 FP 版与无 FP 版（或 neutral）动画都调用的段 → `fpBoth: true`（两侧共用，开关在哪一侧都应计入）。本版本 19 段，例：221 黑焰漩涡 300000305（40000/40001 与 40005）、118 罗蕾塔的斩击 300000440、223 喷火 300000595。清单在 `diagnostics.taeVerification.fpBoth`。三端目前的默认勾选在无 FP 侧会漏掉它们（界面车道可改成 `hit.fpBoth || noFp 同侧`）。
+     - 行名写 No FP 却被带 FP 版动画调用的段记进 `noFpConflicts`：本版本 0 段，`self_check` 断言为空。
+     - 没有动画依据的段（spEffect / noJudge）和 taeUnmatched 的弓系战技保持行名口径；`--no-tae` 时 noFp 只来自行名，`noFpSource` / `fpBoth` 一律不出现。
+   - 新增 `counts.hitsNoFpByTae`（213）/ `hitsNoFpByTaeDamaging`（206）/ `hitsFpBoth`（19），`diagnostics.taeVerification` 加 `noFpRule` / `noFpFromTae` / `fpBoth` / `noFpConflicts` 与对应计数；`fieldNotes` 新增 noFp / noFpSource / fpBoth，`usage` 的局限 (4) 改写为实际做法，`schemaChangelog` v3 条目补 added / changed。
+   - `self_check`：210 的 411–413 与 116 的 301700915 必须 `noFp` 且 `noFpSource="tae"`、labelZh 以「无FP版」开头；210 的 407–410 与 116 的 301700910 不能标 noFp / fpBoth；这两个战技每个 variant 的带 FP 侧不含无 FP 段；任何 noFp 段的 labelZh 以「无FP版」开头；noFpSource / fpBoth 只在 TAE 核实时出现，fpBoth 与 noFp 互斥。
+   - variants / weapons / swordArtsPools 不变（逐项比对），只改 hits 上的标记。
+
+3. **祈祷一击的回血子弹被当成伤害（medium）**。208 的 1202100 "Heal Self"（AtkParam selfTarget=1）与 1202110 "Heal Others"（friendlyTarget=1）opposeTarget 都是 0，各带圣 motion 100（那是回血量的倍率），却按 spEffect 留在 37 把武器的 atkIds 里，让祈祷一击的构成凭空多出 2×圣 100。
+   - **做法**：`build_hit` 对 opposeTarget=0 且 selfTarget 或 friendlyTarget=1 的 AtkParam 行标 `noDamage: true` + `selfOrAllyOnly: true`，motion / flat 原值保留。三端都已把 noDamage 段排除在构成之外（Windows `hitEnabled`、macOS `SkillData` 与 `BuffRankerModel`、Android 同口径），所以界面不用改。opposeTarget=0 但三项全 0 的行（如 222 神圣光环、1051 米凯拉的光环的光环子弹）靠子弹自己的判定命中敌人，不标。
+   - 没有改成「从 atkIds 移除」：这两段确实由动画 → SpEffect 1630 触发（回血真的会发生），留在 atkIds 里、靠 noDamage 不计入，和其它挂状态段的处理一致；而且这条判据只看 AtkParam，与 TAE 无关，法术也适用（法术不走 variants）。
+   - 本版本 36 段 selfOrAllyOnly（战技 13、法术 23），其中带 motion / flat 的 5 段：208 的 1202100 / 1202105 / 1202110、6760 因果性原理 67601（Law of Causality，selfTarget）、7900 火焰重罪 79009（Self Target）；其余 31 段本来就是六项全 0 的 noDamage 段。审查意见说「全表扫描没有别的」，指的是战技；法术里这 2 段是新发现，一并处理。
+   - `*Damaging` 计数统一按「motion / flat 非空且不是 noDamage」：`counts.hitsNotInvokedDamaging` 25 → 24（1202105 无 FP 回血不再算带伤害），`hitsWithoutVariantDamaging` 44 不变。新增 `counts.hitsSelfOrAllyOnly`（36）/ `hitsSelfOrAllyOnlyWithValues`（5）、`fieldNotes.selfOrAllyOnly`，`fieldNotes.noDamage` 补上这种来源。`verify_skill_hits.hit_damaging()` 也不算 selfOrAllyOnly。
+   - `self_check`：208 的三段都是 selfOrAllyOnly + noDamage，主段 301200820（motion 235）照常算伤害；任何 selfOrAllyOnly 段必有 noDamage；removedHits 里 damaging 的条数等于 `hitsNotInvokedDamaging`。
+   - 这一条不依赖 TAE，所以 `--no-tae` 的产物与 A 阶段产物不再逐项相同：weapons / swordArtsPools 仍相同，skills / spells 只差这 36 段的 `selfOrAllyOnly`（其中 5 段另加 `noDamage`）。
+
+4. **204 鲜血斩击的选套依据（low，可选）**：402 套两段的 AtkParam 行名是 "Slash (Greatsword)" / "No FP Slash (Greatsword)"，这是「大剑播 402」的直接证据。`choose_block` 在「类别归组（有证据）」之后、「类别归组（推断）」之前加一级 classGroupNamed：某套的行名里写着 "(该 wepType 的英文名)" 时选它（只匹配带括号的整词，"(Curved Greatsword)" 不会误中大剑）。选套结果不变，只是 204 的 10 把大剑从 classGroupInferred 改记 classGroupNamed；112 / 124 的行名没有点名类别（"[AoW Large Weapon]" 只说明是大型武器套，不说明哪些类别算大型），仍按推断。HKS 的真实映射仍待游戏内确认。
+
+5. **卡利亚式奉还的弹反段没有说明（low）**：305 的 300000682/683（魔力 flat 270）只在弹反法术成功后由 SpEffect 1515 触发，与 1196 黄金式奉还的 conditional 段同属「成功格挡 / 弹反后才打出」，按 spEffect 保留、默认计入排名。`usage` 的局限 (3) 已把 305 与 1196 并列写明；没有新增字段。
+
+**验证**
+- `python3 generate_skills.py`：self_check 通过；连续两次生成除 generatedAt 外一致；`--no-tae` 也通过 self_check。新增断言另做 11 种篡改，全部被拦下：411 / 301700915 去掉 noFp、407 误标 noFp、labelZh 缺「无FP版」前缀、回血段去掉 noDamage 或 selfOrAllyOnly、fpBoth 段同时标 noFp、noFpConflicts 非空、fieldNotes 换回野蛮咆哮的旧例子、hitsNotInvokedDamaging 与清单不符、hitsNoFpByTae 与清单不符。与上一版产物比对：weapons、swordArtsPools、全部 variants 不变；hits 上的变化只有 noFp / noFpSource / labelZh（213 段）、fpBoth（19 段）、selfOrAllyOnly（36 段）与 noDamage（5 段）。
+- `python3 verify_skill_hits.py --out raw/tae/v3-review-fix`（新报告，不入库；原 raw/tae/hit-invocation-report.* 保留作对照）：数据集 variant × var 层带伤害只剩 invoked 9905 / weaponTae 1756 / spEffect 4 / conditional 2 / noJudge 7，spEffect 从 36 降到 4（剩下的是卡利亚式奉还 682/683），其余不变。
+- 三端测试与改动前逐项相同：Windows 376 过 / 3 败（196、202、223；361 是 TODO），失败输出逐字相同；macOS RelicCoreChecks 仍在「多套动作的战技两边都应选出段」处中止；Android `:gamedata:test` 408 项 84 项失败，失败清单与换回上一版数据时逐项相同。
+- 未处理：`data/nightreign-buffs-v1.03.5.json` 的 attackIndex 是从 v2 的战技数据算的（A 阶段起就没有重生成），本次的 noDamage 变化只影响其中 208 / 6760 / 7900 三项的段数；buffs 由别的车道重生成。
