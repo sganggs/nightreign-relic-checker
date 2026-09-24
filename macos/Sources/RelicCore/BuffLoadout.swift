@@ -986,6 +986,18 @@ public struct BuffLoadoutIndex: Sendable {
 
     public func item(id: String) -> LoadoutItem? { itemsByID[id] }
 
+    /// 「道具」栏里这一项要道具升到几级（学者能力「携物知识」，notes.goodsLevel）：只有 goodsLevel ≥ 2 的行才有，
+    /// 1 级行与其它栏一律为 nil。页面在名字旁标「携物知识 N 级」，悬停看 goodsLevel.hint。
+    public func goodsLevel(of item: LoadoutItem) -> Int? {
+        guard item.column == .consumable else { return nil }
+        return item.buffIndices.compactMap { dataset.buffs[$0].goodsLevel }.filter { $0 >= 2 }.min()
+    }
+
+    /// 「道具」栏里有没有要「携物知识」的等级行（有的话分栏说明区加一句 goodsLevel.note）。
+    public var hasGoodsLevelItems: Bool {
+        (slotlessItems[.consumable] ?? []).contains { goodsLevel(of: $0) != nil }
+    }
+
     public func weaponAffixItem(_ attachEffectId: Int) -> LoadoutItem? { itemsByID["wa-\(attachEffectId)"] }
     public func relicAffixItem(_ effectID: Int) -> LoadoutItem? { itemsByID["ra-\(effectID)"] }
     public func accessoryItem(_ id: Int) -> LoadoutItem? { itemsByID["ac-\(id)"] }
@@ -2593,6 +2605,9 @@ public enum LoadoutText {
         "fillNothing": "没有可填的空槽或可用条目",
         "flatInline": "攻击力 {0}",
         "goodsFallback": "道具 #{0}",
+        "goodsLevel.hint": "学者的能力「携物知识」把道具提升到这一级后才有这条效果；其它角色只有 1 级。",
+        "goodsLevel.note": "道具的 2／3 级效果来自学者的能力「携物知识」，未升级的道具只有 1 级效果。",
+        "goodsLevel.tag": "携物知识 {0} 级",
         "groupAutoInnate": "当前武器自带（自动列入）",
         "groupOtherInnate": "其它武器的固有效果（手动勾选）",
         "groupUnknownSkill": "未标明战技",
@@ -2886,6 +2901,12 @@ public enum LoadoutText {
     /// 「连刺破露滴（第1层）」→「连刺破露滴」。
     public static func stripTierSuffix(_ name: String) -> String {
         name.replacingOccurrences(of: #"（第\d+[层档]）$"#, with: "", options: .regularExpression)
+    }
+
+    /// 道具等级标记「携物知识 N 级」：只给 goodsLevel ≥ 2 的行（1 级行不写 goodsLevel，为 nil）。
+    public static func goodsLevelTag(_ level: Int?) -> String? {
+        guard let level, level >= 2 else { return nil }
+        return f("goodsLevel.tag", level)
     }
 
     /// 一条增益的徽标（条件型 / 发动型 / 叠层 / 累积阶梯 / 多档 / 来源为推断 / 队友）。

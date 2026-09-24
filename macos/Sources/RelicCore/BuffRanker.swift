@@ -521,6 +521,18 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
     /// 同一战技成对的 Self／Allies 两行（复核三轮；算施放者自己只计 Self 那一行，notes.selfAllyPair）。
     public let selfAllyPair: BuffSelfAllyPair?
 
+    // MARK: v6 修订：道具等级（学者能力「携物知识」，notes.goodsLevel）
+
+    /// 这一行只在道具升到 2／3 级（EquipParamGoods level2RefId／level3RefId）时才有；1 级行不写（nil）。
+    /// 被 2、3 级共用的行写最低那一级。
+    public let goodsLevel: Int?
+    /// 等级从哪来：固定为「学者能力「携物知识」（CL_MenuText 20020）」。
+    public let goodsLevelSource: String?
+    /// 同一道具、同一只手、同一条路径形状上的 1 级行（可缺；同 exclusiveKey，换等级只是换一行）。
+    public let goodsBaseSpEffectId: Int?
+    /// 这一行被道具的哪几级共用（只在多于一级时出现，如 [2, 3] 或 1 级行的 [1, 2, 3]）。
+    public let goodsLevels: [Int]
+
     public var id: Int { spEffectId }
 
     public var displayName: String {
@@ -597,6 +609,10 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         requiresGoodsIds = container.buffIntArray(.requiresGoodsIds)
         affixVariant = (try? container.decodeIfPresent(BuffAffixVariant.self, forKey: .affixVariant)).flatMap { $0 }
         selfAllyPair = (try? container.decodeIfPresent(BuffSelfAllyPair.self, forKey: .selfAllyPair)).flatMap { $0 }
+        goodsLevel = container.buffOptionalInt(.goodsLevel)
+        goodsLevelSource = container.buffOptionalString(.goodsLevelSource)
+        goodsBaseSpEffectId = container.buffOptionalInt(.goodsBaseSpEffectId)
+        goodsLevels = container.buffIntArray(.goodsLevels)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -609,6 +625,7 @@ public struct BuffEntry: Sendable, Hashable, Decodable, Identifiable {
         case weaponAffixIds, weaponAffixRoles, weaponAffixDeepOnly, weaponAffixDeepOnlyPositive
         case relicAffixes, weaponInnate, stackInput, accumulatorLadder, requiresGoodsIds
         case affixVariant, selfAllyPair
+        case goodsLevel, goodsLevelSource, goodsBaseSpEffectId, goodsLevels
     }
 
     /// 同族＝Paramdex 行名去掉档位后缀后相同（`[Item - Level 3] X` → `[Item] X`、

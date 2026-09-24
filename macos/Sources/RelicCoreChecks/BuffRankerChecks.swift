@@ -1683,8 +1683,8 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
         dataset.skills.count == 187 && counted("skills") == 187
             && dataset.skills.filter { !$0.hits.isEmpty }.count == 166 && counted("skillsWithHits") == 166
             && dataset.skills.filter { !$0.weaponIds.isEmpty }.count == 185 && counted("skillsWithWeapons") == 185
-            && allHits.count == 2201 && counted("hits") == 2201,
-        "v3 计数：skills 187 / skillsWithHits 166 / skillsWithWeapons 185 / hits 2201",
+            && allHits.count == 2197 && counted("hits") == 2197,
+        "v3 计数：skills 187 / skillsWithHits 166 / skillsWithWeapons 185 / hits 2197（法术可施放口径去掉 8100 / 8101 的 4 段）",
         counter: &count
     )
     try rankerExpect(
@@ -1709,9 +1709,9 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
     try rankerExpect(allHits.filter(\.fpBoth).allSatisfy { !$0.noFp }, "fpBoth 段的 noFp 一定是 false", counter: &count)
     try rankerExpect(allHits.filter(\.selfOrAllyOnly).allSatisfy(\.noDamage), "selfOrAllyOnly 段一律带 noDamage", counter: &count)
     try rankerExpect(
-        dataset.usage.count == 8 && dataset.usage["战技来源（v3）"] != nil && dataset.usage["命中段已按 TAE 核实（v3）"] != nil
-            && dataset.caveats.count == 11,
-        "usage 8 个键（新增「战技来源（v3）」「命中段已按 TAE 核实（v3）」）、caveats 11 条，"
+        dataset.usage.count == 9 && dataset.usage["战技来源（v3）"] != nil && dataset.usage["命中段已按 TAE 核实（v3）"] != nil
+            && dataset.usage["法术来源（v3）"] != nil && dataset.caveats.count == 11,
+        "usage 9 个键（新增「战技来源（v3）」「法术来源（v3）」「命中段已按 TAE 核实（v3）」）、caveats 11 条，"
             + "实际 \(dataset.usage.count) / \(dataset.caveats.count)",
         counter: &count
     )
@@ -1933,6 +1933,116 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
         }
     }
     try rankerExpect(fpBothPairs > 0 && fpBothDropped == 0, "fpBoth 段在两侧勾选里都在（\(fpBothPairs) 对里 \(fpBothDropped) 对丢了）", counter: &count)
+
+    try checkSpellCasters(index, counter: &count)
+}
+
+// MARK: - 战技数据 v3 修订：法术只收可施放的（施法器 / 法术池）
+
+/// spells[] = 可达施法器 custom 行的法术槽 → MagicTableParam 池（chanceWeight>0）里的 magicId；
+/// 风暴管束者 8100 / 8101 是本体遗留的 Magic 行、没有任何池引用（本作是战技 1200），不在 spells 里。
+private func checkSpellCasters(_ index: SkillDataIndex, counter count: inout Int) throws {
+    let dataset = index.dataset
+    func counted(_ key: String) -> Int { Int(dataset.counts[key] ?? -1) }
+
+    // ① 计数与死行
+    try rankerExpect(
+        dataset.spells.count == 158 && counted("spells") == 158 && counted("spellsCastable") == 158
+            && counted("spellsNamed") == 160 && counted("spellsDropped") == 2,
+        "法术可施放口径：spells 158（Magic 有名字的 160 行去掉 2 行残留），实际 \(dataset.spells.count)",
+        counter: &count
+    )
+    try rankerExpect(
+        index.spellsByID[8100] == nil && index.spellsByID[8101] == nil && index.skillsByID[1200] != nil,
+        "风暴管束者 8100 / 8101 不在 spells（没有施法器能带），同名战技 1200 仍在 skills",
+        counter: &count
+    )
+    try rankerExpect(
+        !index.outputs.contains { $0.kind == .spell && ($0.entryID == 8100 || $0.entryID == 8101) }
+            && index.outputs.filter { $0.kind == .spell }.count == 119,
+        "输出手段里没有 8100 / 8101，能算构成的法术 119 个（原 121），实际 \(index.outputs.filter { $0.kind == .spell }.count)",
+        counter: &count
+    )
+
+    // ② 每个法术至少一把施法器；casterSources 与 casterWeaponIds 同序；每项的池都能回溯到这把武器的 custom 行
+    var noCaster = 0
+    var orderBad = 0
+    var unknownWeapon = 0
+    var notCaster = 0
+    var drawBad = 0
+    var chanceBad = 0
+    var casterIDs: Set<Int> = []
+    var pairs = 0
+    for spell in dataset.spells {
+        if spell.casterWeaponIds.isEmpty { noCaster += 1 }
+        if spell.casterSources.map(\.weaponId) != spell.casterWeaponIds || spell.casterWeaponIds != spell.casterWeaponIds.sorted() {
+            orderBad += 1
+        }
+        if index.casters(for: spell).count != spell.casterWeaponIds.count { unknownWeapon += 1 }
+        pairs += spell.casterWeaponIds.count
+        for source in spell.casterSources {
+            casterIDs.insert(source.weaponId)
+            guard let weapon = index.weaponsByID[source.weaponId] else { continue }
+            // 魔法由手杖（57）、祷告由圣印记（61）施放；数据里施法器只有这两类。
+            if weapon.wepType != 57 && weapon.wepType != 61 { notCaster += 1 }
+            if source.pool.isEmpty { drawBad += 1 }
+            for draw in source.pool {
+                let rows = weapon.customMagicTables.filter { $0.magicTableIds.contains(draw.poolId) }.count
+                let entry = dataset.magicPools[draw.poolId]?.first { $0.skillId == spell.id }
+                if rows == 0 || rows != draw.customRows || entry?.weight != draw.weight || draw.weight <= 0 { drawBad += 1 }
+                if (dataset.magicPoolChance(poolId: draw.poolId, spellId: spell.id) ?? 0) <= 0 { chanceBad += 1 }
+            }
+        }
+    }
+    try rankerExpect(noCaster == 0, "每个法术都至少有一把施法器（casterWeaponIds），\(noCaster) 个没有", counter: &count)
+    try rankerExpect(orderBad == 0, "casterSources 与 casterWeaponIds 一一对应、同序且升序，\(orderBad) 个不符", counter: &count)
+    try rankerExpect(unknownWeapon == 0, "casterWeaponIds 都能在 weapons[] 里找到，\(unknownWeapon) 个法术有找不到的", counter: &count)
+    try rankerExpect(notCaster == 0, "施法器只有辉石魔杖（57）与圣印记（61），\(notCaster) 项不是", counter: &count)
+    try rankerExpect(
+        drawBad == 0,
+        "casterSources[].pool 每项 [池, 权重, 行数] 都能回溯：池在这把武器的 customMagicTables 里、行数一致、权重同 magicPools，"
+            + "\(drawBad) 项不符",
+        counter: &count
+    )
+    try rankerExpect(chanceBad == 0, "每个来源池抽到这个法术的概率都 > 0，\(chanceBad) 项不符", counter: &count)
+    let casterWeapons = casterIDs.compactMap { index.weaponsByID[$0] }
+    try rankerExpect(
+        casterIDs.count == 28 && counted("casterWeapons") == 28
+            && casterWeapons.filter { $0.wepType == 57 }.count == 19 && casterWeapons.filter { $0.wepType == 61 }.count == 9
+            && pairs == counted("spellWeaponPairs"),
+        "施法器 28 把（辉石魔杖 19、圣印记 9），(法术, 施法器) 对数与 counts.spellWeaponPairs 一致（\(pairs)）",
+        counter: &count
+    )
+
+    // ③ 顶层 magicPools：与 counts 一致；就是施法器 custom 行法术槽引用到的那些池
+    let referenced = Set(dataset.weapons.flatMap { $0.customMagicTables.flatMap(\.magicTableIds) }.filter { $0 != -1 })
+    try rankerExpect(
+        dataset.magicPools.count == counted("magicPools") && dataset.magicPools.count == 122
+            && dataset.magicPools.values.reduce(0) { $0 + $1.count } == counted("magicPoolEntries")
+            && dataset.magicPools.values.allSatisfy { $0.allSatisfy { $0.weight > 0 } }
+            && Set(dataset.magicPools.keys) == referenced,
+        "magicPools 122 个池、条目数同 counts、只收正权重、正好是施法器法术槽引用的池",
+        counter: &count
+    )
+    try rankerExpect(
+        dataset.weapons.filter { !$0.customMagicTables.isEmpty }.count == 28
+            && dataset.weapons.reduce(0) { $0 + $1.customMagicTables.count } == counted("casterCustomRows")
+            && dataset.weapons.allSatisfy { $0.customMagicTables.allSatisfy { $0.magicTableIds.count == 2 } },
+        "weapons[].customMagicTables：28 把施法器、行数同 counts.casterCustomRows、每行两个法术槽",
+        counter: &count
+    )
+
+    // ④ 具体例子：4000 辉石魔砾 × 33000000 辉石杖 = 池 3300000 里的唯一一项（权重 100、1 行），概率 100%
+    guard let pebble = index.spellsByID[4000], let staff = pebble.casterSources.first(where: { $0.weaponId == 33000000 }) else {
+        throw CheckFailure(description: "增伤排名：4000 辉石魔砾 / 辉石杖 33000000 不在法术来源里")
+    }
+    try rankerExpect(
+        staff.pool == [SkillPoolDraw(poolId: 3300000, weight: 100, customRows: 1)]
+            && dataset.magicPoolChance(poolId: 3300000, spellId: 4000) == 1
+            && pebble.casterWeaponIds.count == 19 && index.casters(for: pebble).allSatisfy { $0.wepType == 57 },
+        "4000 辉石魔砾：19 把辉石魔杖能带；辉石杖从池 3300000 必定抽到（实际 \(staff.pool)）",
+        counter: &count
+    )
 }
 
 /// 分段芯片的展示口径：只列「对当前武器真正有贡献」的通道（两端同文同序）。
@@ -3816,10 +3926,159 @@ private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex
     try rankerExpect(deepLegal.status == .valid && deepLegal.warnings.map(\.kind) == ["cursePairing"],
                      "深夜三条 + 诅咒应合法（\(deepLegal.issues.map(\.detail))）", counter: &count)
 
+    // ⑤b 道具等级（学者「携物知识」）与「只说物理」的名字
+    try checkGoodsLevel(skills: skills, index: index, counter: &count)
+
     // ⑥ 三组双端对照配置 + 与参考实现逐项一致（见 checkLoadoutParity）
     try checkLoadoutParity(skills: skills, index: index, catalog: catalog.affixes, counter: &count)
     // ⑦ 文案常量表与说明区（两端逐字一致的锚点）
     try checkLoadoutTexts(index: index, counter: &count)
+}
+
+// MARK: - 配置页：道具等级（学者「携物知识」，notes.goodsLevel）
+
+/// 勇者肉块：1 级 3950 只提高物理 ×1.2、2 级 708420 物理 ×1.3、3 级 708421 物理 ×1.3 之外魔力／火／雷／圣 ×1.2。
+/// 用户问「提升物理攻击力的勇者肉块还能对魔法增伤？」——只有 3 级（学者携物知识 3 级）能，名字已写成「物理与属性」。
+private func checkGoodsLevel(skills: SkillDataIndex, index: BuffLoadoutIndex, counter count: inout Int) throws {
+    let dataset = index.dataset
+    func offset(_ id: Int) throws -> Int {
+        guard let value = index.indexByID[id] else { throw CheckFailure(description: "增伤排名：buffs 里找不到 #\(id)") }
+        return value
+    }
+
+    // ① 字段：72 条等级行（2 级 45、3 级 27），来源都是学者「携物知识」，名字不再写「档位」
+    let levelRows = dataset.buffs.filter { $0.goodsLevel != nil }
+    try rankerExpect(
+        levelRows.count == 72 && levelRows.filter { $0.goodsLevel == 2 }.count == 45
+            && levelRows.filter { $0.goodsLevel == 3 }.count == 27,
+        "goodsLevel 72 条（2 级 45、3 级 27），实际 \(levelRows.count)",
+        counter: &count
+    )
+    try rankerExpect(
+        levelRows.allSatisfy { ($0.goodsLevelSource ?? "").contains("携物知识") && $0.sourceSlot == "consumable" },
+        "等级行的 goodsLevelSource 都是学者能力「携物知识」、都在「道具」栏",
+        counter: &count
+    )
+    try rankerExpect(
+        levelRows.allSatisfy { buff in
+            let name = buff.displayNameZh ?? ""
+            return !name.contains("档位")
+                && (name.contains("携物知识\(buff.goodsLevel ?? 0)级") || (buff.goodsLevels == [2, 3] && name.contains("携物知识2–3级")))
+        },
+        "等级行的显示名写「携物知识N级」（2、3 级共用写「携物知识2–3级」），不再写「档位N」",
+        counter: &count
+    )
+    try rankerExpect(
+        levelRows.allSatisfy { buff in
+            guard let base = buff.goodsBaseSpEffectId, let baseOffset = index.indexByID[base] else { return true }
+            let baseRow = dataset.buffs[baseOffset]
+            return baseRow.goodsLevel == nil && baseRow.stacking.exclusiveKey == buff.stacking.exclusiveKey
+        },
+        "goodsBaseSpEffectId 指向的 1 级行不带 goodsLevel、与等级行同一个 exclusiveKey（换等级只是换一行）",
+        counter: &count
+    )
+
+    // ② 勇者肉块三级
+    let flesh1 = dataset.buffs[try offset(3950)]
+    let flesh2 = dataset.buffs[try offset(708420)]
+    let flesh3 = dataset.buffs[try offset(708421)]
+    try rankerExpect(
+        flesh1.goodsLevel == nil && flesh2.goodsLevel == 2 && flesh3.goodsLevel == 3
+            && flesh2.goodsBaseSpEffectId == 3950 && flesh3.goodsBaseSpEffectId == 3950,
+        "勇者肉块：3950 是 1 级行、708420 是 2 级、708421 是 3 级，都以 3950 为 1 级行",
+        counter: &count
+    )
+    try rankerExpect(
+        flesh3.displayName.contains("属性") && flesh3.displayName.contains("携物知识3级")
+            && !flesh1.displayName.contains("属性") && !flesh2.displayName.contains("属性"),
+        "只有 708421 的名字写「物理与属性」（实际「\(flesh3.displayName)」）；1、2 级只提高物理",
+        counter: &count
+    )
+
+    // ③ 纯魔法输出（4000 辉石魔砾：唯一一段只有魔力 flat）：3 级 ×1.2，1、2 级无增益
+    let magicOutput = try loadoutOutput(skills: skills, spellID: 4000)
+    try rankerExpect(
+        magicOutput.outputClass == .sorcery && abs(magicOutput.shares[SkillDamageChannel.magic.rawValue] - 1) < 1e-12,
+        "4000 辉石魔砾是纯魔力输出", counter: &count
+    )
+    let magicEvaluator = LoadoutEvaluator(index: index, output: magicOutput)
+    let overview = Dictionary(magicEvaluator.overview().map { ($0.spEffectId, $0) }, uniquingKeysWith: { first, _ in first })
+    guard let row3 = overview[708421] else {
+        throw CheckFailure(description: "增伤排名：纯魔法输出的一览里没有 708421")
+    }
+    try rankerExpect(row3.isApplicable, "708421 对魔法生效（appliesTo.sorcery=yes）", counter: &count)
+    try rankerExpectClose(row3.multiplier, 1.2, "708421 在纯魔法输出上 ×1.2", tolerance: 1e-9, counter: &count)
+    for id in [3950, 708420] {
+        let multiplier = overview[id].map { $0.isApplicable ? $0.multiplier : 1 } ?? 1
+        try rankerExpectClose(multiplier, 1, "#\(id)（勇者肉块 1／2 级）在纯魔法输出上无增益", tolerance: 1e-12, counter: &count)
+    }
+    var flesh = BuffLoadout(mode: .normal, rules: index.slotRules)
+    flesh.selectedBuffs = [3950]
+    try rankerExpectClose(magicEvaluator.evaluate(flesh).total, 1, "只吃 1 级勇者肉块，纯魔法总倍率 ×1", tolerance: 1e-12, counter: &count)
+    flesh.selectedBuffs = [708421]
+    try rankerExpectClose(magicEvaluator.evaluate(flesh).total, 1.2, "吃 3 级勇者肉块，纯魔法总倍率 ×1.2", tolerance: 1e-9, counter: &count)
+    flesh.selectedBuffs = [3950, 708421]
+    let both = magicEvaluator.evaluate(flesh)
+    try rankerExpect(
+        both.countedLines.map(\.spEffectId) == [708421] && abs(both.total - 1.2) < 1e-9,
+        "1 级与 3 级同为 sp151，同时勾只计 3 级那一行（实际 \(both.countedLines.map(\.spEffectId))）",
+        counter: &count
+    )
+
+    // ④ 名字只说「提升物理攻击力」的条目，在纯魔法输出上一律没有增益（前缀写真，notes.displayName）
+    let physicalOnly = dataset.buffs.filter { $0.displayName.hasPrefix("提升物理攻击力") }
+    let leaking = physicalOnly.filter { buff in
+        guard let row = overview[buff.spEffectId], row.isApplicable else { return false }
+        return row.multiplier > 1.0000001
+    }
+    try rankerExpect(
+        !physicalOnly.isEmpty && leaking.isEmpty,
+        "名字只说物理的 \(physicalOnly.count) 条在纯魔法输出上都不增伤，实际有 \(leaking.map(\.spEffectId))",
+        counter: &count
+    )
+    let renamed = [708421, 1605000, 99565, 7031202, 7031302, 7032202, 7032704, 7032706, 7032903, 7260803]
+    try rankerExpect(
+        try renamed.allSatisfy { dataset.buffs[try offset($0)].displayName.hasPrefix("提升物理与") }
+            && dataset.buffs[try offset(1605000)].displayName.hasPrefix("提升物理与火属性攻击力"),
+        "游戏文本只说「提升物理攻击力」、实际也加属性的 10 条，显示名前缀已改为「提升物理与…」",
+        counter: &count
+    )
+
+    // ⑤ 页面：「道具」栏 goodsLevel ≥ 2 的项标「携物知识 N 级」，其余不标；分栏说明加 goodsLevel.note
+    let consumables = index.slotlessItems[.consumable] ?? []
+    guard let item3 = consumables.first(where: { $0.buffIndices.contains(index.indexByID[708421] ?? -1) }),
+          let item1 = consumables.first(where: { $0.buffIndices.contains(index.indexByID[3950] ?? -1) }) else {
+        throw CheckFailure(description: "增伤排名：「道具」栏里找不到勇者肉块 1 / 3 级")
+    }
+    try rankerExpect(
+        index.goodsLevel(of: item3) == 3 && LoadoutText.goodsLevelTag(index.goodsLevel(of: item3)) == "携物知识 3 级"
+            && index.goodsLevel(of: item1) == nil && LoadoutText.goodsLevelTag(index.goodsLevel(of: item1)) == nil,
+        "勇者肉块 3 级标「携物知识 3 级」，1 级不标",
+        counter: &count
+    )
+    try rankerExpect(
+        LoadoutText.goodsLevelTag(1) == nil && LoadoutText.goodsLevelTag(nil) == nil
+            && LoadoutText.goodsLevelTag(2) == "携物知识 2 级",
+        "goodsLevel.tag 只给 2／3 级", counter: &count
+    )
+    let tagged = consumables.filter { index.goodsLevel(of: $0) != nil }
+    let expectedTagged = consumables.filter { item in
+        item.buffIndices.contains { (dataset.buffs[$0].goodsLevel ?? 0) >= 2 }
+    }
+    try rankerExpect(
+        index.hasGoodsLevelItems && !tagged.isEmpty && tagged.map(\.id) == expectedTagged.map(\.id),
+        "「道具」栏里要标等级的项正好是带 goodsLevel ≥ 2 的项（\(tagged.count) 项）",
+        counter: &count
+    )
+    let otherColumns = index.slotlessItems.filter { $0.key != .consumable }.values.flatMap { $0 }
+    try rankerExpect(
+        otherColumns.allSatisfy { index.goodsLevel(of: $0) == nil },
+        "只有「道具」栏标道具等级", counter: &count
+    )
+    try rankerExpect(
+        LoadoutText.t("goodsLevel.note").contains("携物知识") && LoadoutText.t("goodsLevel.hint").contains("携物知识"),
+        "goodsLevel.note / hint 都点名学者的能力「携物知识」", counter: &count
+    )
 }
 
 // MARK: - 配置页：双端对照（与 windows/tests/ranker_crosscheck.test.mjs 同一组输入、同一种对拍行）
@@ -4344,8 +4603,9 @@ private func loadoutBriefDigest(_ notes: [String]) -> String {
 }
 
 /// 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新（Windows 端 TEXT_TABLE_DIGEST / BRIEF_DIGEST）。
-private let loadoutTextTableCount = 336
-private let loadoutTextTableDigest = "07a69c5e"
+/// 道具等级（学者「携物知识」）新增 goodsLevel.tag / hint / note 三个键：336 → 339 条，07a69c5e → 41e2ae25。
+private let loadoutTextTableCount = 339
+private let loadoutTextTableDigest = "41e2ae25"
 private let loadoutBriefNotesDigest = "ad04314d"
 
 private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {

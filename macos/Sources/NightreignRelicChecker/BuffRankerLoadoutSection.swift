@@ -534,6 +534,11 @@ struct LoadoutCandidateRow<Leading: View>: View {
                         ForEach(badges, id: \.self) { badge in
                             Pill(text: badge, color: LoadoutPalette.badge(badge))
                         }
+                        // 道具 2／3 级行（学者「携物知识」）：名字旁标等级，悬停说明只有学者能把道具升上去。
+                        if let tag = goodsLevelTag {
+                            Pill(text: tag, color: AppTheme.amber)
+                                .help(LoadoutText.t("goodsLevel.hint"))
+                        }
                     }
                     Text(summary)
                         .font(.system(size: 10))
@@ -610,6 +615,11 @@ struct LoadoutCandidateRow<Leading: View>: View {
             }
             return !line.needs.isEmpty && !line.autoConfirm
         }
+    }
+
+    /// 「道具」栏 goodsLevel ≥ 2 的行：「携物知识 N 级」；其余为 nil。
+    private var goodsLevelTag: String? {
+        LoadoutText.goodsLevelTag(model.loadoutIndex?.goodsLevel(of: candidate.item))
     }
 
     private var badges: [String] {
@@ -924,7 +934,7 @@ struct BuffRankerOtherSection: View {
                     .frame(maxWidth: 360)
                 Spacer(minLength: 0)
             }
-            if let note = columnNote {
+            ForEach(columnNotes, id: \.self) { note in
                 Text(note)
                     .font(.system(size: 11))
                     .foregroundStyle(AppTheme.tertiaryText)
@@ -947,14 +957,19 @@ struct BuffRankerOtherSection: View {
         .appCard()
     }
 
-    private var columnNote: String? {
+    /// 分栏说明区：slotRules 的栏目说明；「道具」栏另加一句道具等级（学者「携物知识」）的说明。
+    private var columnNotes: [String] {
         if model.otherColumn == .weaponInnate {
-            if model.skill == nil { return LoadoutText.t("otherInnateNoWeapon") }
+            if model.skill == nil { return [LoadoutText.t("otherInnateNoWeapon")] }
             if (model.otherCandidates[.weaponInnate] ?? []).contains(where: \.item.isAutoInnate) {
-                return LoadoutText.t("otherInnateHint")
+                return [LoadoutText.t("otherInnateHint")]
             }
         }
-        return model.slotRules.slotlessZh[model.otherColumn.sourceSlotKey]
+        var notes = model.slotRules.slotlessZh[model.otherColumn.sourceSlotKey].map { [$0] } ?? []
+        if model.otherColumn == .consumable, model.loadoutIndex?.hasGoodsLevelItems == true {
+            notes.append(LoadoutText.t("goodsLevel.note"))
+        }
+        return notes
     }
 
     private func groupedList(_ rows: [LoadoutCandidate]) -> some View {

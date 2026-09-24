@@ -196,7 +196,7 @@ struct BuffRankerNotesSection: View {
                         RankerDetailRow(
                             label: "可选法术",
                             value: "\(skills.outputs.filter { $0.kind == .spell }.count) 个"
-                                + "（另有 \(skills.spellsWithoutHits) 个法术是附魔 / 防护 / 回复类没有命中段、"
+                                + "（法术只收施法器能带的，见 usage.法术来源（v3）；另有 \(skills.spellsWithoutHits) 个法术是附魔 / 防护 / 回复类没有命中段、"
                                 + "\(skills.spellsWithoutDamage) 个法术有命中段但一个固定值都没有，未列入）",
                             tint: AppTheme.secondaryText
                         )
@@ -262,10 +262,10 @@ struct BuffRankerNotesSection: View {
         return existing + rest
     }
 
-    /// usage 的展示顺序：选段在前，紧跟 v3 的两条（战技来源、命中段已按 TAE 核实），再是算法与边界，其余按键名。
+    /// usage 的展示顺序：选段在前，紧跟 v3 的三条（战技来源、法术来源、命中段已按 TAE 核实），再是算法与边界，其余按键名。
     private func usageKeys(_ skills: SkillDataIndex) -> [String] {
         let preferred = [
-            "选段（必读）", "战技来源（v3）", "命中段已按 TAE 核实（v3）",
+            "选段（必读）", "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）",
             "近战武器段", "法术 / 子弹段", "伤害类型（斩 / 打 / 突）", "削韧", "本数据集的边界"
         ]
         let existing = preferred.filter { skills.dataset.usage[$0] != nil }

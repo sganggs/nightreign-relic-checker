@@ -16,6 +16,8 @@ import Foundation
 //     skillVariants 缺这个战技时，只有「它就是武器的 swordArtsParamId」才回退 weapons[].skillVariant
 //     （v3 起 skillVariant 只对固定战技有效，池里抽到的战技一律看 skillVariants）；
 //   * 武器来源（v3）：skills[].weaponIds = 固定引用 ∪ 局内战技池；逐把来源看 skills[].weaponSources；
+//   * 法术来源（v3 修订）：spells[] 只收施法器能带的法术（风暴管束者 8100 / 8101 这类 Magic 残留行不在里面，
+//     见 coverage.spellsNotCastable）；能带它的施法器看 spells[].casterWeaponIds / casterSources，池看顶层 magicPools；
 //   * 正常版 / 专注值不足版：取段规则是 `hit.fpBoth || hit.noFp == 开关`（fpBoth 段两侧都计）；
 //   * 页面只从 variants 取段；任何直接回到 hits[] 的路径都过滤 notInvoked 与 noDamage；
 //   * 近战武器段：该属性伤害 ≈ 武器该属性攻击力 × motion/100 + flat（addBaseAtk 再加一份基础攻击力）；
@@ -315,6 +317,8 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
     public let skillVariants: [Int: Int]
     /// v3：以这把武器为 targetWeaponId 的可达 EquipParamCustomWeapon 行。
     public let customWeapons: [SkillCustomWeapon]
+    /// v3 修订（施法器）：可达 custom 行里至少一个法术槽不是 -1 的那些行，两个槽各从自己的池里抽一个法术。
+    public let customMagicTables: [SkillCustomMagicTable]
 
     public var displayName: String { nameZh.isEmpty ? nameEn : nameZh }
 
@@ -359,13 +363,16 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         customWeapons = container.skillIntTuples(.customWeapons).compactMap { row in
             row.count >= 2 ? SkillCustomWeapon(customId: row[0], swordArtsTableId: row[1]) : nil
         }
+        customMagicTables = container.skillIntTuples(.customMagicTables).compactMap { row in
+            row.count >= 3 ? SkillCustomMagicTable(customId: row[0], magicTableIds: [row[1], row[2]]) : nil
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, nameZh, nameEn, wepType, wepTypeZh, wepTypeEn, rarityZh
         case attackBase, staminaBase, poiseDamageBase, swordArtsParamId
         case atkAttribute, atkAttributeZh, atkAttribute2, atkAttribute2Zh, skillVariant
-        case skillIds, skillVariants, customWeapons
+        case skillIds, skillVariants, customWeapons, customMagicTables
     }
 
     /// 自检 / 预览用的直接构造。
@@ -377,7 +384,7 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         atkAttribute: Int = 3, atkAttributeZh: String = "标准",
         atkAttribute2: Int = 3, atkAttribute2Zh: String = "标准",
         skillVariant: Int? = nil, skillIds: [Int] = [], skillVariants: [Int: Int] = [:],
-        customWeapons: [SkillCustomWeapon] = []
+        customWeapons: [SkillCustomWeapon] = [], customMagicTables: [SkillCustomMagicTable] = []
     ) {
         self.id = id
         self.nameZh = nameZh
@@ -398,6 +405,19 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         self.skillIds = skillIds
         self.skillVariants = skillVariants
         self.customWeapons = customWeapons
+        self.customMagicTables = customMagicTables
+    }
+}
+
+/// weapons[].customMagicTables 的一项：[customId, magicTableId_1, magicTableId_2]（-1 = 这个槽不抽法术）。
+public struct SkillCustomMagicTable: Sendable, Hashable {
+    public let customId: Int
+    /// 两个法术槽各自的 MagicTableParam 池 ID（同一行两个槽要分开算）。
+    public let magicTableIds: [Int]
+
+    public init(customId: Int, magicTableIds: [Int]) {
+        self.customId = customId
+        self.magicTableIds = magicTableIds
     }
 }
 
@@ -479,6 +499,30 @@ struct SkillCountFlags: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case taeVerified
+    }
+}
+
+/// spells[].casterSources 的一项（与 casterWeaponIds 同序）：{id, pool}。法术没有「固定」来源，全部来自施法器
+/// custom 行的法术槽；pool 的每项是 [magicTableId, chanceWeight, customRows]，结构同 weaponSources[].pool。
+public struct SpellCasterSource: Sendable, Hashable, Decodable {
+    public let weaponId: Int
+    public let pool: [SkillPoolDraw]
+
+    public init(weaponId: Int, pool: [SkillPoolDraw] = []) {
+        self.weaponId = weaponId
+        self.pool = pool
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        weaponId = container.skillInt(.id, default: -1)
+        pool = container.skillIntTuples(.pool).compactMap { row in
+            row.count >= 2 ? SkillPoolDraw(poolId: row[0], weight: row[1], customRows: row.count >= 3 ? row[2] : 0) : nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, pool
     }
 }
 
@@ -659,6 +703,10 @@ public struct SpellEntry: Sendable, Hashable, Identifiable, Decodable {
     public let kindZh: String
     public let mp: Int
     public let hits: [SkillHit]
+    /// v3 修订：能带这个法术的施法器（基础武器 ID，升序）；来源逐把见 `casterSources`。
+    public let casterWeaponIds: [Int]
+    /// v3 修订：与 casterWeaponIds 同序的来源（哪些池、池内权重、几行 custom 行）。
+    public let casterSources: [SpellCasterSource]
 
     public var displayName: String { nameZh.isEmpty ? nameEn : nameZh }
     public var isSorcery: Bool { kind == "sorcery" }
@@ -673,10 +721,12 @@ public struct SpellEntry: Sendable, Hashable, Identifiable, Decodable {
         kindZh = container.skillString(.kindZh)
         mp = container.skillInt(.mp, default: 0)
         hits = container.skillArray(.hits)
+        casterWeaponIds = container.skillIntArray(.casterWeaponIds)
+        casterSources = container.skillArray(.casterSources)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, nameZh, nameEn, kind, kindZh, mp, hits
+        case id, nameZh, nameEn, kind, kindZh, mp, hits, casterWeaponIds, casterSources
     }
 }
 
@@ -700,6 +750,9 @@ public struct SkillDataset: Sendable {
     public let spells: [SpellEntry]
     /// v3 顶层 swordArtsPools：{池 ID: [[战技 ID, chanceWeight], ...]}（只收被可达 custom 行引用的池）。
     public let swordArtsPools: [Int: [SkillPoolEntry]]
+    /// v3 修订顶层 magicPools：{MagicTableParam 池 ID: [[法术 ID, chanceWeight], ...]}（只收被可达施法器 custom 行
+    /// 引用的池、chanceWeight>0 的条目）。`SkillPoolEntry.skillId` 在这里是法术（Magic）ID。
+    public let magicPools: [Int: [SkillPoolEntry]]
 
     public static func decode(from data: Data) throws -> SkillDataset {
         guard let object = try? JSONSerialization.jsonObject(with: data),
@@ -721,8 +774,16 @@ public struct SkillDataset: Sendable {
 
     /// 某个池里某个战技的抽取概率（chanceWeight / 池内权重之和）；池或战技不在表里时为 nil。
     public func poolChance(poolId: Int, skillId: Int) -> Double? {
-        guard let entries = swordArtsPools[poolId],
-              let entry = entries.first(where: { $0.skillId == skillId }) else { return nil }
+        Self.chance(in: swordArtsPools[poolId], id: skillId)
+    }
+
+    /// 某个法术池（magicPools）的一个槽抽到这个法术的概率；池或法术不在表里时为 nil。
+    public func magicPoolChance(poolId: Int, spellId: Int) -> Double? {
+        Self.chance(in: magicPools[poolId], id: spellId)
+    }
+
+    private static func chance(in entries: [SkillPoolEntry]?, id: Int) -> Double? {
+        guard let entries, let entry = entries.first(where: { $0.skillId == id }) else { return nil }
         let total = entries.reduce(0) { $0 + max(0, $1.weight) }
         return total > 0 ? Double(entry.weight) / Double(total) : nil
     }
@@ -746,13 +807,16 @@ extension SkillDataset: Decodable {
         weapons = container.skillArray(.weapons)
         skills = container.skillArray(.skills)
         spells = container.skillArray(.spells)
-        swordArtsPools = SkillDataset.decodePools(container)
+        swordArtsPools = SkillDataset.decodePools(container, forKey: .swordArtsPools)
+        magicPools = SkillDataset.decodePools(container, forKey: .magicPools)
     }
 
-    /// swordArtsPools：键不是整数的池、坏条目一律跳过（宽容解码）。
-    private static func decodePools(_ container: KeyedDecodingContainer<CodingKeys>) -> [Int: [SkillPoolEntry]] {
+    /// swordArtsPools / magicPools：键不是整数的池、坏条目一律跳过（宽容解码）。
+    private static func decodePools(
+        _ container: KeyedDecodingContainer<CodingKeys>, forKey key: CodingKeys
+    ) -> [Int: [SkillPoolEntry]] {
         guard let raw = try? container.decodeIfPresent(
-            [String: SkillFailable<[SkillFailable<[SkillFailable<Double>]>]>].self, forKey: .swordArtsPools
+            [String: SkillFailable<[SkillFailable<[SkillFailable<Double>]>]>].self, forKey: key
         ) else { return [:] }
         var pools: [Int: [SkillPoolEntry]] = [:]
         for (key, value) in raw {
@@ -768,7 +832,7 @@ extension SkillDataset: Decodable {
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, gameVersion, dataVersion, generatedAt, sources
-        case counts, usage, caveats, weapons, skills, spells, swordArtsPools
+        case counts, usage, caveats, weapons, skills, spells, swordArtsPools, magicPools
     }
 }
 
@@ -1316,6 +1380,12 @@ public struct SkillDataIndex: Sendable {
     public func segments(for spell: SpellEntry) -> [SkillSegment] {
         // 法术目前没有 TAE 核实（fieldNotes 说明），但与 Windows / Android 同口径：notInvoked 段不进计算。
         spell.hits.filter { !$0.notInvoked }.map { SkillDamageMath.segment(for: $0, weapon: nil) }
+    }
+
+    /// 能带这个法术的施法器（spells[].casterWeaponIds 按 weapons[] 取到的那些，同序）。
+    /// 伤害构成不用它们——法术段只用 flat（usage.法术 / 子弹段）；这里只供展示与自检。
+    public func casters(for spell: SpellEntry) -> [SkillWeapon] {
+        spell.casterWeaponIds.compactMap { weaponsByID[$0] }
     }
 
     public var summary: String {
