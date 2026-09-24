@@ -30,7 +30,8 @@ import org.junit.Test
 //   · 汇总清单与评估结果一致，推荐填满、切模式、换输出手段的提示与桌面端同一口径；
 //   · rememberSaveable 的存取往返不丢状态；
 //   · 页面用到的 RankerText 键都在文案表里（缺键时 RankerText.t 会原样显示键名）；
-//   · skills schemaVersion 3：武器抽屉每行带「固定战技 / 局内可抽到」标记与说明，底部说明引用 usage 的两节新原文。
+//   · skills schemaVersion 3：武器抽屉每行带「固定战技 / 局内可抽到」标记与说明，底部说明引用 usage 的两节新原文；
+//   · buffs v6 修订的道具等级：「道具」分栏里携物知识 2／3 级的行标等级，分栏说明区给出等级来源。
 class RankerPageStateTest {
     private object Data {
         private fun read(name: String): String {
@@ -346,6 +347,36 @@ class RankerPageStateTest {
         val version = bodies.single { it.title == "skills" }
         assertTrue(version.text, version.text.startsWith("schemaVersion 3 · "))
         assertTrue(version.text, version.text.endsWith("命中段已按 TAE 核实（打不出的 34 段不列出）"))
+    }
+
+    @Test
+    fun consumableSlotTagsBagcraftLevelsAndExplainsThem() {
+        val state = newState()
+        state.updateShowInactive(true)
+        // 分栏说明：只有「道具」栏给携物知识的说明（buffs v6 修订的 goodsLevel），排在 enums.sourceSlot 的分栏说明之后。
+        val note = RankerText.t("goodsLevel.note")
+        LoadoutIndex.OTHER_SLOTS.forEach { slot ->
+            assertEquals(slot, slot == "consumable", note in otherSlotNotes(state, slot))
+        }
+        val consumableNotes = otherSlotNotes(state, "consumable")
+        assertEquals(note, consumableNotes.last())
+        assertTrue("分栏说明在前", consumableNotes.size == 2)
+
+        // 行：携物知识 2／3 级的道具行名字旁标「携物知识 N 级」，1 级不标（显示不生效项时全栏列出）。
+        val open = setOf(RankerKeys.otherSlot("consumable"))
+        val rows = items(state, open = open).filterIsInstance<RankerItem.OtherRow>().associate { it.row.row.key to it.row.row }
+        assertEquals("", rows.getValue(3950).goodsLevelTag)
+        assertEquals("携物知识 2 级", rows.getValue(708420).goodsLevelTag)
+        assertEquals("携物知识 3 级", rows.getValue(708421).goodsLevelTag)
+        assertTrue(rows.values.filter { it.goodsLevelTag.isNotEmpty() }.all { it.goodsLevel >= 2 })
+
+        // 换成纯魔法（帚星）、只看有收益的：勇者肉块 1、2 级只加物理＝对当前构成无增益，隐藏；3 级加属性，照常列出。
+        state.updateShowInactive(false)
+        state.selectOutput(requireNotNull(Data.skills.output("sorcery-4021")))
+        val magic = items(state, open = open).filterIsInstance<RankerItem.OtherRow>().map { it.row.row.key }.toSet()
+        assertTrue(708421 in magic)
+        assertFalse(3950 in magic)
+        assertFalse(708420 in magic)
     }
 
     @Test

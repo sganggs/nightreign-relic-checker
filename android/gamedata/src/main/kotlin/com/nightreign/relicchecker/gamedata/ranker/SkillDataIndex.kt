@@ -229,7 +229,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
     fun segments(spell: SpellEntry): List<SkillSegment> =
         spellHits(spell).map { SkillDamageMath.segment(it, null, isSpell = true) }
 
-    /** 「1793 把武器 · 187 个战技 · 160 个法术」。 */
+    /** 「1793 把武器 · 187 个战技 · 158 个法术」（v3 修订：spells[] 只收可施放的法术）。 */
     val summary: String
         get() = "${dataset.weapons.size} 把武器 · ${dataset.skills.size} 个战技 · ${dataset.spells.size} 个法术"
 

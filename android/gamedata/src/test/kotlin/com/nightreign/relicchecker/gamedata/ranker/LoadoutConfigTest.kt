@@ -1009,4 +1009,86 @@ class LoadoutConfigTest {
         assertNull(LoadoutConfig.decode("{broken"))
         assertNull(LoadoutConfig.decode(null))
     }
+
+    // ------------------------------------------------------------------ 道具等级（携物知识）与纯魔法输出
+
+    @Test
+    fun `勇者肉块对纯魔法输出：1、2 级只加物理＝对当前构成无增益（默认隐藏），3 级（携物知识 3 级）按魔力倍率计入，名字写明物理与属性`() {
+        assertClose(1.0, comet.shares[DamageType.MAGIC.ordinal], 1e-9, "帚星是纯魔法输出")
+        val raw = dataset.buffs.associateBy { it.spEffectId }
+        val rows = ev(comet).otherRowsFor(LoadoutConfig(), "consumable").associateBy { it.row.key }
+        val shown = ev(comet).shownOtherRows(LoadoutConfig(), "consumable").map { it.row.key }.toSet()
+
+        // 1 级 3950（物理 ×1.2）、2 级 708420（物理 ×1.3）：rates 只有物理，对纯魔法 ×1。
+        listOf(3950, 708420).forEach { id ->
+            assertEquals(listOf("physicsAttackRate"), raw.getValue(id).rates.keys.toList(), "$id 只提高物理")
+            val row = assertNotNull(rows[id], "$id 应在「道具」栏")
+            assertEquals(EntryState.NEUTRAL, row.score.state)
+            assertEquals("对当前构成无增益", row.score.state.label)
+            assertClose(1.0, row.score.score, 1e-9, "$id 当前倍率")
+            assertClose(1.0, row.score.potential, 1e-9, "$id 条件成立时倍率")
+            assertFalse(row.score.isUseful(comet.hasComposition), "$id 默认隐藏（打开「显示不生效项」才看得到）")
+            assertFalse(id in shown, "$id 默认不列出")
+        }
+        assertEquals("", rows.getValue(3950).row.goodsLevelTag, "1 级不标等级")
+        assertEquals("携物知识 2 级", rows.getValue(708420).row.goodsLevelTag)
+
+        // 3 级 708421：物理 ×1.3 之外魔力／火／雷／圣 ×1.2，纯魔法上按魔力那一项计入。
+        val top = rows.getValue(708421)
+        val magicRate = assertNotNull(raw.getValue(708421).rates["magicAttackRate"])
+        assertClose(1.2, magicRate, 1e-12, "3 级的魔力倍率")
+        assertEquals(EntryState.COUNTED, top.score.state)
+        assertClose(magicRate, top.score.score, 1e-9, "纯魔法输出上按魔力倍率计入")
+        assertTrue(top.score.isUseful(comet.hasComposition))
+        assertTrue(708421 in shown, "默认列出")
+        assertTrue(top.row.name.contains("属性"), "名字写明也加属性：${top.row.name}")
+        assertFalse(top.row.name.contains("提升物理攻击力"), "不再只说物理：${top.row.name}")
+        assertEquals("提升物理攻击力", raw.getValue(708421).nameZh, "游戏文本 nameZh 原样保留，页面显示的是 displayNameZh")
+        assertEquals(3, top.row.goodsLevel)
+        assertEquals("携物知识 3 级", top.row.goodsLevelTag)
+        assertEquals(RankerText.t("goodsLevel.note"), index.goodsLevelNote("consumable"), "「道具」分栏说明区给出等级来源")
+
+        // 放进配置：总倍率就是 ×1.2；1 级与 3 级同互斥键（同一道具换等级只是换一行），同时勾只算 3 级那一份。
+        var config = ev(comet).toggleOtherRow(LoadoutConfig(), 708421, true)
+        var result = evaluate(comet, config)
+        assertClose(magicRate, result.totalMultiplier, 1e-9, "只勾 3 级")
+        assertEquals(listOf(708421), result.counted.map { it.id })
+        config = ev(comet).toggleOtherRow(config, 3950, true)
+        result = evaluate(comet, config)
+        assertEquals(ranker.byId.getValue(3950).key, ranker.byId.getValue(708421).key, "各级同一个互斥键")
+        assertClose(magicRate, result.totalMultiplier, 1e-9, "1 级与 3 级同时勾，仍是 ×1.2")
+        assertEquals(listOf(708421), result.counted.map { it.id })
+    }
+
+    @Test
+    fun `道具等级：其它增益各栏按数据的 goodsLevel 标「携物知识 N 级」，只有「道具」栏有等级行、也只有它给说明`() {
+        var tagged = 0
+        LoadoutIndex.OTHER_SLOTS.forEach { slot ->
+            index.otherRows[slot].orEmpty().forEach { row ->
+                val level = row.first.buff.goodsLevel
+                val expected = if (level != null && level >= 2) "携物知识 $level 级" else ""
+                assertEquals(expected, row.goodsLevelTag, "${row.key} 的等级标记")
+                if (expected.isNotEmpty()) {
+                    tagged += 1
+                    assertEquals("consumable", slot, "${row.key} 是道具等级行，应在「道具」栏")
+                    assertTrue(row.name.contains("携物知识$level"), "${row.key} 的显示名应写明同一等级：${row.name}")
+                }
+            }
+            val expectedNote = if (slot == "consumable") RankerText.t("goodsLevel.note") else null
+            assertEquals(expectedNote, index.goodsLevelNote(slot), "$slot 的等级说明")
+        }
+        val listableLevelRows = ranker.entries.count { it.listable && it.goodsLevel >= 2 && it.accLadder == null }
+        assertTrue(tagged > 0 && tagged == listableLevelRows, "能进配置页的等级行都标上了（$tagged 行）")
+        assertNull(index.goodsLevelNote("missing"), "没有的分栏不给说明")
+
+        // 旧数据没有 goodsLevel：一行都不标，也不给说明；合成一条 2 级行就给。
+        val plain = LoadoutIndex(RankerTestData.miniIndex(listOf(RankerTestData.synthBuff(-93) { it.copy(sourceSlot = "consumable") })))
+        assertEquals("", plain.otherRows.getValue("consumable").single().goodsLevelTag)
+        assertNull(plain.goodsLevelNote("consumable"))
+        val leveled = LoadoutIndex(
+            RankerTestData.miniIndex(listOf(RankerTestData.synthBuff(-94) { it.copy(sourceSlot = "consumable", goodsLevel = 2) })),
+        )
+        assertEquals("携物知识 2 级", leveled.otherRows.getValue("consumable").single().goodsLevelTag)
+        assertEquals(RankerText.t("goodsLevel.note"), leveled.goodsLevelNote("consumable"))
+    }
 }

@@ -4,11 +4,13 @@ package com.nightreign.relicchecker.gamedata.ranker
 //
 // 与 Windows 端 windows/renderer/pages/ranker.js 的 TEXT（按点号路径展开，flattenText）、macOS 端
 // RelicCore/BuffLoadout.swift 的 LoadoutText.table **逐键逐字相同**（本表由 ranker.js 的 TEXT 原样导出，按键排序）。
-// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 07a69c5e，共 336 条
+// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 41e2ae25，共 339 条
 // （:gamedata 测试 RankerTextTest 断言；两端的常量见 ranker_crosscheck.test.mjs 的 TEXT_TABLE_DIGEST）。
 // 改任何一句文案都必须三端同时改、同时更新摘要。带 {0} {1} 的是格式串，由 RankerText.fmt 按位置替换。
 // skills schemaVersion 3 起多了武器来源标记 weaponSource.*（fixed / pool / poolHint / note，332 → 336 条）：
 // 它们属于上半部分的武器选择器，但三端同名同值，也放在这张表里。
+// buffs v6 修订的道具等级又多了 goodsLevel.*（tag / hint / note，336 → 339 条，07a69c5e → 41e2ae25）：「道具」分栏里
+// 携物知识 2／3 级的行在名字旁标 tag（长按看 hint），分栏说明区给 note。
 
 internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "accEffectCount" to "{0} 条效果",
@@ -117,6 +119,9 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "fillNothing" to "没有可填的空槽或可用条目",
     "flatInline" to "攻击力 {0}",
     "goodsFallback" to "道具 #{0}",
+    "goodsLevel.hint" to "学者的能力「携物知识」把道具提升到这一级后才有这条效果；其它角色只有 1 级。",
+    "goodsLevel.note" to "道具的 2／3 级效果来自学者的能力「携物知识」，未升级的道具只有 1 级效果。",
+    "goodsLevel.tag" to "携物知识 {0} 级",
     "groupAutoInnate" to "当前武器自带（自动列入）",
     "groupOtherInnate" to "其它武器的固有效果（手动勾选）",
     "groupUnknownSkill" to "未标明战技",

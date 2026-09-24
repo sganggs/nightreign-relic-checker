@@ -175,6 +175,12 @@ class OtherRow internal constructor(
 ) {
     val first: BuffRankerEntry get() = entries.first()
 
+    /** 道具等级（取第一条；累积阶梯各层同一道具。Windows otherRows 行的 goodsLevel）：缺省＝1 级。 */
+    val goodsLevel: Int get() = first.goodsLevel
+
+    /** 名字旁的等级标记「携物知识 N 级」；1 级为空串（[LoadoutText.goodsLevelTag]）。 */
+    val goodsLevelTag: String get() = LoadoutText.goodsLevelTag(goodsLevel)
+
     fun matches(foldedQuery: String): Boolean = foldedQuery.isEmpty() || entries.any { it.matches(foldedQuery) }
 
     override fun toString(): String = "OtherRow($slot:$key $name)"
@@ -391,6 +397,13 @@ class LoadoutIndex(val ranker: BuffRankerIndex, catalog: List<Affix> = emptyList
     fun caps(mode: RunMode): SlotCaps = SlotCaps.of(slotRules, mode)
 
     fun otherRow(key: Int): OtherRow? = otherRowByKey[key]
+
+    /**
+     * 「其它增益」某个分栏的道具等级说明（Windows goodsLevelNoteFor）：这一栏里有携物知识 2／3 级的行才给
+     * goodsLevel.note（本版本只有「道具」栏），否则为 null。
+     */
+    fun goodsLevelNote(slot: String): String? =
+        if (otherRows[slot].orEmpty().any { it.goodsLevelTag.isNotEmpty() }) RankerText.t("goodsLevel.note") else null
 
     /** 这条累积阶梯实际收录的最高层（勾选预填与「条件成立时」都取它）。 */
     fun ladderTopTier(groupId: Int?): BuffRankerEntry? = ranker.ladderTopTier(groupId)

@@ -22,9 +22,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -33,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -402,16 +408,22 @@ internal fun OtherSlotHeader(
             NightPill(count, if (picked > 0) color else NightColors.TextMuted)
             if (!searching) Chevron(expanded, Modifier.padding(start = 8.dp))
         }
-        if (expanded) {
-            val innateNote = when {
-                slot != "weaponInnate" -> null
-                state.evaluator.currentInnateEntries.isNotEmpty() -> RankerText.t("otherInnateHint")
-                state.resolved.isSpell -> RankerText.t("otherInnateNoWeapon")
-                else -> null
-            }
-            listOfNotNull(slotNote(state, slot), innateNote).forEach { RankerNote(it) }
-        }
+        if (expanded) otherSlotNotes(state, slot).forEach { RankerNote(it) }
     }
+}
+
+/**
+ * 分栏展开后的说明（Windows othersHtml 的顺序）：分栏说明 → 道具等级说明（有携物知识 2／3 级行的分栏，
+ * 本版本只有「道具」；goodsLevelNoteFor）→ 武器固有的提示。
+ */
+internal fun otherSlotNotes(state: RankerPageState, slot: String): List<String> {
+    val innateNote = when {
+        slot != "weaponInnate" -> null
+        state.evaluator.currentInnateEntries.isNotEmpty() -> RankerText.t("otherInnateHint")
+        state.resolved.isSpell -> RankerText.t("otherInnateNoWeapon")
+        else -> null
+    }
+    return listOfNotNull(slotNote(state, slot), state.index.goodsLevelNote(slot), innateNote)
 }
 
 @Composable
@@ -442,14 +454,23 @@ internal fun OtherRowItem(state: RankerPageState, row: OtherRowScore) {
             RankerCheckMark(selected, Modifier.padding(top = 2.dp), color = color)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    row.row.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (score.applicable) NightColors.TextPrimary else NightColors.TextMuted,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(
+                        row.row.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (score.applicable) NightColors.TextPrimary else NightColors.TextMuted,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    // 携物知识 2／3 级的道具行：名字旁标等级，长按看说明（Windows goodsLevelTagHtml）；1 级不标。
+                    val goodsTag = row.row.goodsLevelTag
+                    if (goodsTag.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        GoodsLevelTag(goodsTag, Modifier.padding(top = 1.dp))
+                    }
+                }
                 if (row.row.subtitle.isNotEmpty()) RankerNote(row.row.subtitle)
                 RankerBadges(badges)
             }
@@ -466,6 +487,24 @@ internal fun OtherRowItem(state: RankerPageState, row: OtherRowScore) {
         ScoreReason(score)
         // 不占槽位的栏勾选即确认（autoConfirm），只有当前武器固有自动列入的条件型要单独勾「条件成立」。
         if (selected) ItemControlBlock(state, state.itemsForOtherRow(row))
+    }
+}
+
+/**
+ * 道具等级标记「携物知识 N 级」：蓝色小药丸（Windows .ranker-goods-level 同色），长按（有鼠标时悬停）弹出
+ * goodsLevel.hint；读屏直接读出标记与说明。轻点仍落到整行上（勾选 / 取消），长按手势由 TooltipBox 吃掉，不会误勾。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoodsLevelTag(tag: String, modifier: Modifier = Modifier) {
+    val hint = RankerText.t("goodsLevel.hint")
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(hint) } },
+        state = rememberTooltipState(),
+        modifier = modifier,
+    ) {
+        NightPill(tag, RankerPalette.Blue, modifier = Modifier.semantics { contentDescription = "$tag：$hint" })
     }
 }
 

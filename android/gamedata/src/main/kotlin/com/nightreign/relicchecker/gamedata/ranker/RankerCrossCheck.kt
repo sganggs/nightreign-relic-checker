@@ -208,7 +208,7 @@ object RankerCrossCheck {
 
     private val DIGITS = Regex("[0-9]+")
 
-    /** 「OUTPUTS skills=155 spells=121」：输出手段列表的条数（Windows 端 buildMeansItems；skills v3 含局内战技池）。 */
+    /** 「OUTPUTS skills=155 spells=119」：输出手段列表的条数（Windows 端 buildMeansItems；skills v3 含局内战技池，法术只收可施放的）。 */
     fun outputsDumpLine(skills: SkillDataIndex): String =
         "OUTPUTS skills=${skills.skillOutputCount} spells=${skills.spellOutputCount}"
 

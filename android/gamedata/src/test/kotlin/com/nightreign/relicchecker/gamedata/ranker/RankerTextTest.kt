@@ -9,17 +9,38 @@ import kotlin.test.assertTrue
 // ranker_crosscheck.test.mjs 的「两端逐字一致：文案常量表」）。
 class RankerTextTest {
     @Test
-    fun `text table is the same table as both desktop ends - 336 entries, digest 07a69c5e`() {
-        // skills schemaVersion 3 多了武器来源标记 weaponSource.*（332 → 336 条，854da404 → 07a69c5e）。
-        assertEquals(336, RankerText.table.size)
-        assertEquals("07a69c5e", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
+    fun `text table is the same table as both desktop ends - 339 entries, digest 41e2ae25`() {
+        // skills schemaVersion 3 多了武器来源标记 weaponSource.*（332 → 336 条，854da404 → 07a69c5e）；
+        // buffs v6 修订的道具等级再多 goodsLevel.*（336 → 339 条，07a69c5e → 41e2ae25）。
+        assertEquals(339, RankerText.table.size)
+        assertEquals("41e2ae25", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
         assertEquals(RankerText.table.keys.sorted(), RankerText.table.keys.toList(), "按点号路径排序存放")
         RankerText.table.forEach { (key, value) -> assertTrue(value.isNotEmpty(), "$key 应是非空文案") }
         // 任何一处改动都会让摘要分叉。
         val tampered = RankerText.table + ("reasonNeutral" to RankerText.t("reasonNeutral") + "。")
-        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "07a69c5e")
-        // 去掉新增的四条就回到 v2 时的那张表。
-        assertEquals("854da404", RankerCrossCheck.textTableDigest(RankerText.table.filterKeys { !it.startsWith("weaponSource.") }))
+        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "41e2ae25")
+        // 这一版只多了 goodsLevel.* 三个键：去掉它们回到上一版（其余文案一字未动）；再去掉 weaponSource.* 回到 v2 时的那张表。
+        val beforeGoodsLevel = RankerText.table.filterKeys { !it.startsWith("goodsLevel.") }
+        assertEquals(336, beforeGoodsLevel.size)
+        assertEquals("07a69c5e", RankerCrossCheck.textTableDigest(beforeGoodsLevel))
+        assertEquals("854da404", RankerCrossCheck.textTableDigest(beforeGoodsLevel.filterKeys { !it.startsWith("weaponSource.") }))
+    }
+
+    @Test
+    fun `goods level texts are word for word the same as the desktop TEXT goodsLevel`() {
+        assertEquals(
+            mapOf(
+                "goodsLevel.hint" to "学者的能力「携物知识」把道具提升到这一级后才有这条效果；其它角色只有 1 级。",
+                "goodsLevel.note" to "道具的 2／3 级效果来自学者的能力「携物知识」，未升级的道具只有 1 级效果。",
+                "goodsLevel.tag" to "携物知识 {0} 级",
+            ),
+            RankerText.table.filterKeys { it.startsWith("goodsLevel.") },
+        )
+        // 标记只给 2／3 级；1 级、缺省（0）与负数一律为空串。
+        assertEquals("携物知识 2 级", LoadoutText.goodsLevelTag(2))
+        assertEquals("携物知识 3 级", LoadoutText.goodsLevelTag(3))
+        listOf(1, 0, -1).forEach { assertEquals("", LoadoutText.goodsLevelTag(it), "$it 级不标") }
+        assertEquals("", LoadoutText.goodsLevelTag(null as BuffRankerEntry?))
     }
 
     @Test

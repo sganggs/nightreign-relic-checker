@@ -90,6 +90,12 @@ class BuffRankerEntry internal constructor(
     val pairRole: String? get() = buff.selfAllyPair?.role?.takeIf { it == "self" || it == "ally" }
     val goodsIds: List<Int> get() = buff.requiresGoodsIds
 
+    /**
+     * 道具等级（v6 goodsLevel，缺省＝1 级；Windows indexBuff 的 goodsLevel）：2／3 级只来自学者的能力「携物知识」，
+     * 只用来标「携物知识 N 级」（[LoadoutText.goodsLevelTag]），不参与计算。
+     */
+    val goodsLevel: Int get() = buff.goodsLevel ?: 1
+
     /** 「装备 N 把以上 X 类武器」（scope.weaponTypes.mode=equippedCount）。 */
     val equipped: BuffWeaponTypes? get() = buff.scope.weaponTypes?.takeIf { it.mode == "equippedCount" }
     val relicAttachIds: List<Int> get() = buff.relicAffixes.map { it.attachEffectId }

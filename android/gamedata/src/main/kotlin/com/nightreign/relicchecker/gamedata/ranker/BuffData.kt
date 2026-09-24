@@ -21,6 +21,9 @@ import kotlinx.serialization.json.doubleOrNull
 // conditionFields / chainFields / weaponAffixPools，以及 buffs[] 里的 rollableWeaponTypes、conditions、triggered、
 // statusLabelsEn、chainSpEffectId 之类一律不声明，解码时跳过（3 MB 的文件里它们占了一大半）。
 // appliesTo / appliesToDetail 只取本页三类输出（skill / sorcery / incantation），melee / ranged / throw 跳过。
+// v6 修订的道具等级字段（goodsLevel / goodsLevelSource / goodsBaseSpEffectId / goodsLevels）只用来标「携物知识 N 级」，
+// goodsLevelPaths 不声明。displayNameZh 的前缀按 rates 实际提高的攻击类型写（notes.displayName：如 708421
+// 「提升物理与属性攻击力（勇者肉块・携物知识3级）」），nameZh 仍是游戏文本。
 //
 // 字段含义见数据集 notes.sourceSlot / notes.appliesTo / notes.weaponAffix / notes.relicAffix / notes.stackInput /
 // notes.accumulatorLadder / notes.affixVariant / notes.selfAllyPair 与 slotRules.*.zh；
@@ -386,6 +389,18 @@ data class BuffEntry(
     val requiresGoodsIds: List<Int> = emptyList(),
     val affixVariant: BuffAffixVariant? = null,
     val selfAllyPair: BuffSelfAllyPair? = null,
+    /**
+     * 道具等级（v6 修订，notes.goodsLevel）：这一行要道具升到第几级才有（2／3，取最低那一级）；缺失＝1 级
+     * （含各级共用的 1 级行）。2／3 级只来自学者的能力「携物知识」（CL_MenuText 20020），页面只用它标
+     * 「携物知识 N 级」，不参与计算（同一道具的各级同 exclusiveKey，本来就只算一份）。
+     */
+    val goodsLevel: Int? = null,
+    /** 等级来源的说明（固定为「学者能力「携物知识」（CL_MenuText 20020）」）；只在等级行上出现。 */
+    val goodsLevelSource: String? = null,
+    /** 同一道具、同一只手、同一路径形状上的 1 级行（找到唯一一条时才有）。 */
+    val goodsBaseSpEffectId: Int? = null,
+    /** 这一行被道具的哪几级共用（只在多于一级时出现，如 500925 的 [1, 2, 3]）。 */
+    val goodsLevels: List<Int> = emptyList(),
 ) {
     /** 显示名：displayNameZh → nameZh → displayNameEn → nameEn → paramName → #id（两端 buffDisplayName 同一口径）。 */
     val displayName: String

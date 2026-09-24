@@ -2,6 +2,7 @@ package com.nightreign.relicchecker.gamedata.ranker
 
 // 配置页文案的常用组合（macOS 端 LoadoutText 的 columnTitle / relicCardTitle / fixedRelicSubtitle / familyName /
 // stripTierSuffix / entryBadges / heroGroup / stackHints / isGraceStack / skillOnlySubCategories / briefNotes，
+// 道具等级标记 goodsLevelTag，
 // Windows 端 ranker.js 的同名函数）。文案本身一律取自 RankerText（RANKER_TEXT_TABLE，三端同一张表）。
 
 object LoadoutText {
@@ -47,6 +48,14 @@ object LoadoutText {
             add(RankerText.t("badges.ally"))
         }
     }
+
+    /**
+     * 道具等级标记（Windows goodsLevelTag）：buffs v6 的 goodsLevel ≥ 2 标「携物知识 N 级」（goodsLevel.tag），
+     * 1 级（含缺省与各级共用的 1 级行）为空串。2／3 级只来自学者的能力「携物知识」（notes.goodsLevel）。
+     */
+    fun goodsLevelTag(level: Int): String = if (level >= 2) RankerText.f("goodsLevel.tag", level) else ""
+
+    fun goodsLevelTag(entry: BuffRankerEntry?): String = goodsLevelTag(entry?.goodsLevel ?: 0)
 
     /** 角色栏分组：Paramdex 行名 `[Skill - Revenant] …` →（复仇者, 技艺）；拿不到角色归「其他角色」。 */
     fun heroGroup(paramName: String?): Pair<String, String> {

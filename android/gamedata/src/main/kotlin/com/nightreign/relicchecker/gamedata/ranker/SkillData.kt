@@ -17,7 +17,11 @@ import kotlinx.serialization.json.doubleOrNull
 //     选段一律读 [SkillWeapon.variantIndex]；
 //   · variants[].atkIds 已剔除 TAE 判定打不出的段，hits[] 里这些段仍在、标 notInvoked——页面只从 variants 取段，
 //     任何直接读 hits[] 的路径都要过滤 notInvoked（与 noDamage）；
-//   · hits[].noFp 按 TAE 分侧，fpBoth 段两侧都计（[SkillHit.isOnSide]）；selfOrAllyOnly 段恒带 noDamage。
+//   · hits[].noFp 按 TAE 分侧，fpBoth 段两侧都计（[SkillHit.isOnSide]）；selfOrAllyOnly 段恒带 noDamage；
+//   · v3 修订（usage「法术来源（v3）」）：spells[] 只收可施放的法术——可达施法器 custom 行的 magicTableId_1/_2
+//     指向的 MagicTableParam 池里 chanceWeight>0 的 magicId；Magic 残留行 8100 / 8101「风暴管束者」（本作是战技 1200）
+//     移到 coverage.spellsNotCastable，不在 spells[]。每个法术带 casterWeaponIds / casterSources（结构仿
+//     weaponSources，没有 fixed），施法器的 custom 行见 weapons[].customMagicTables，池见顶层 magicPools。
 //
 // 权威实现：macOS RelicCore/SkillData.swift；Windows renderer/pages/ranker.js（variantIndexFor / selectHits /
 // hitOnSide / weaponSourceOf / hitContribution …）。
@@ -64,6 +68,11 @@ data class SkillWeapon(
     val skillVariants: Map<String, Int> = emptyMap(),
     /** 可达的 EquipParamCustomWeapon 行：[customId, swordArtsTableId]（v3；-1 = 该行不抽池）。 */
     val customWeapons: List<List<Int>> = emptyList(),
+    /**
+     * 施法器可达的 EquipParamCustomWeapon 行：[customId, magicTableId_1, magicTableId_2]（v3 修订；-1 = 该槽不抽法术）。
+     * 一局里拿到的施法器每个槽从对应的池（[SkillDataset.magicPools]）里各抽一个法术。
+     */
+    val customMagicTables: List<List<Int>> = emptyList(),
 ) {
     val displayName: String get() = nameZh.ifEmpty { nameEn }
 
@@ -191,6 +200,20 @@ data class SkillWeaponSource(
         }
 }
 
+/**
+ * spells[].casterSources 的一项（与 casterWeaponIds 一一对应、同序；v3 修订）：{id, pool}。结构仿 [SkillWeaponSource]，
+ * 但法术没有「固定」来源——施法器的每个法术槽都从 MagicTableParam 池里抽。
+ */
+@Serializable
+data class SpellCasterSource(
+    val id: Int = -1,
+    /** [[magicTableId, chanceWeight, customRows], …]（按池 ID 升序；chanceWeight 恒 > 0）。 */
+    val pool: List<List<Int>> = emptyList(),
+) {
+    val draws: List<SkillPoolDraw>
+        get() = pool.mapNotNull { row -> if (row.size >= 2) SkillPoolDraw(row[0], row[1], row.getOrElse(2) { 0 }) else null }
+}
+
 @Serializable
 data class SkillEntry(
     val id: Int = -1,
@@ -221,6 +244,13 @@ data class SpellEntry(
     val mp: Int = 0,
     val sparring: Boolean = false,
     val hits: List<SkillHit> = emptyList(),
+    /**
+     * 能携带这个法术的施法器（基础武器 ID，升序；v3 修订）：魔法全是手杖（wepType 57）、祷告全是圣印记（61），
+     * 与页面按施法器判定 requires.attackWeaponTypes 的口径（[OutputClass.casterWepType]）一致。
+     */
+    val casterWeaponIds: List<Int> = emptyList(),
+    /** 与 casterWeaponIds 一一对应的抽取来源（v3 修订）。 */
+    val casterSources: List<SpellCasterSource> = emptyList(),
 ) {
     val displayName: String get() = nameZh.ifEmpty { nameEn }
     val isSorcery: Boolean get() = kind == "sorcery"
@@ -246,14 +276,24 @@ data class SkillDataset(
      * 所以按原始 JSON 标量存，数值用 [count]、布尔用 [flag] 取。
      */
     val counts: Map<String, JsonPrimitive> = emptyMap(),
-    /** 数据集自带的算法说明（选段（必读）/ 近战武器段 / … / 战技来源（v3）/ 命中段已按 TAE 核实（v3）），键的顺序即数据顺序。 */
+    /**
+     * 数据集自带的算法说明（选段（必读）/ 近战武器段 / … / 战技来源（v3）/ 法术来源（v3）/ 命中段已按 TAE 核实（v3）），
+     * 键的顺序即数据顺序。
+     */
     val usage: Map<String, String> = emptyMap(),
     /** 已知取舍（展示前要过一遍 [SkillTextZh.fpText]）。 */
     val caveats: List<String> = emptyList(),
     /** 局内战技池：{SwordArtsTableParam 池 ID: [[战技 ID, chanceWeight], …]}（v3）。 */
     val swordArtsPools: Map<String, List<List<Int>>> = emptyMap(),
+    /**
+     * 施法器的法术池：{MagicTableParam 池 ID: [[magicId, chanceWeight], …]}（v3 修订；只收被可达施法器 custom 行引用的池、
+     * chanceWeight>0 的条目；同一个 ID 的全部行 = 一个池）。
+     */
+    val magicPools: Map<String, List<List<Int>>> = emptyMap(),
     val weapons: List<SkillWeapon> = emptyList(),
+    /** 全部战技（含没有武器的占位条目）。 */
     val skills: List<SkillEntry> = emptyList(),
+    /** 本作玩家能施放的全部法术（v3 修订后只收可施放的；不可施放的残留行在 coverage.spellsNotCastable，本模型不解码）。 */
     val spells: List<SpellEntry> = emptyList(),
 ) {
     fun count(key: String): Int = counts[key]?.doubleOrNull?.toInt() ?: 0
@@ -270,6 +310,13 @@ data class SkillDataset(
         return own to entries.sumOf { it.getOrElse(1) { 0 } }
     }
 
+    /** 法术池 [poolId] 里法术 [magicId] 的权重与池内权重之和（没有这个池 / 法术时 null）。 */
+    fun magicPoolWeight(poolId: Int, magicId: Int): Pair<Int, Int>? {
+        val entries = magicPools[poolId.toString()] ?: return null
+        val own = entries.firstOrNull { it.size >= 2 && it[0] == magicId }?.get(1) ?: return null
+        return own to entries.sumOf { it.getOrElse(1) { 0 } }
+    }
+
     companion object {
         /** usage 里「本数据集的边界」的键：页面要引用（绝对伤害不在范围内）。 */
         const val USAGE_BOUNDARY = "本数据集的边界"
@@ -279,6 +326,9 @@ data class SkillDataset(
 
         /** usage 里武器来源（固定 / 局内战技池）的读法（v3）。 */
         const val USAGE_WEAPON_SOURCES = "战技来源（v3）"
+
+        /** usage 里法术来源（可施放口径、施法器与法术池）的读法（v3 修订）。 */
+        const val USAGE_SPELL_SOURCES = "法术来源（v3）"
 
         /** usage 里「命中段已按 TAE 核实」一节（v3）：页面底部引用。 */
         const val USAGE_TAE = "命中段已按 TAE 核实（v3）"

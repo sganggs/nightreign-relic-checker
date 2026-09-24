@@ -2,6 +2,11 @@ package com.nightreign.relicchecker.gamedata.ranker
 
 import com.nightreign.relicchecker.gamedata.GameDataFormatException
 import com.nightreign.relicchecker.gamedata.ranker.RankerTestData.assertClose
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -18,6 +23,7 @@ import kotlin.test.assertTrue
 // 数据集 schemaVersion 3：weaponIds = 固定引用 ∪ 局内战技池；选段一律读 weapons[].skillVariants[战技 ID]
 // （缺失时只对固定战技回退 skillVariant）；variants[].atkIds 已按 TAE 核实，hits[] 里打不出的段标 notInvoked；
 // 取段规则是「hit.fpBoth 或 noFp 与开关同侧」；selfOrAllyOnly 段恒带 noDamage。
+// v3 修订：spells[] 只收可施放的法术（8100 / 8101「风暴管束者」移出），每个法术带 casterWeaponIds / casterSources。
 class SkillDataTest {
     private val skills get() = RankerTestData.skills
     private val dataset get() = skills.dataset
@@ -61,20 +67,22 @@ class SkillDataTest {
         assertEquals(
             listOf(
                 "选段（必读）", "近战武器段", "伤害类型（斩 / 打 / 突）", "法术 / 子弹段", "削韧", "本数据集的边界",
-                "战技来源（v3）", "命中段已按 TAE 核实（v3）",
+                "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）",
             ),
             dataset.usage.keys.toList(),
-            "usage 的键按数据顺序（v3 多了两个）",
+            "usage 的键按数据顺序（v3 多了三个：战技来源、法术来源（修订）、TAE 核实）",
         )
+        assertNotNull(dataset.usage[SkillDataset.USAGE_SPELL_SOURCES], "法术来源（可施放口径）的读法来自数据集")
         assertEquals(11, dataset.caveats.size)
         assertEquals(3, dataset.sources.size)
         // 固定事实（与数据集 counts 一致）
         assertEquals(1793, dataset.weapons.size)
         assertEquals(187, dataset.skills.size)
-        assertEquals(160, dataset.spells.size)
+        assertEquals(158, dataset.spells.size, "v3 修订：只收可施放的法术（去掉 8100 / 8101）")
+        assertEquals(158, dataset.count("spells"))
         assertEquals(1793, dataset.count("weapons"))
         assertEquals(187, dataset.count("skills"))
-        assertEquals(2201, dataset.count("hits"))
+        assertEquals(2197, dataset.count("hits"), "8100 / 8101 的 4 段随之移出")
         assertEquals(166, dataset.count("skillsWithHits"))
         assertEquals(166, dataset.skills.count { it.hits.isNotEmpty() })
         assertEquals(185, dataset.count("skillsWithWeapons"))
@@ -86,12 +94,13 @@ class SkillDataTest {
             dataset.skills.count { skill -> skill.weaponSources.isNotEmpty() && skill.weaponSources.none { it.fixed } },
             "只在局内战技池里出现的战技",
         )
-        assertEquals(139, dataset.spells.count { it.hits.isNotEmpty() })
-        assertEquals(67, dataset.spells.count { it.outputClass == OutputClass.SORCERY })
+        assertEquals(137, dataset.spells.count { it.hits.isNotEmpty() })
+        assertEquals(dataset.count("spellsWithHits"), dataset.spells.count { it.hits.isNotEmpty() })
+        assertEquals(65, dataset.spells.count { it.outputClass == OutputClass.SORCERY })
         assertEquals(93, dataset.spells.count { it.outputClass == OutputClass.INCANTATION })
         assertTrue(dataset.weapons.all { it.atkAttribute in 0..3 && it.atkAttribute2 in 0..3 })
         assertTrue(dataset.weapons.any { it.attackBase.isNotEmpty() })
-        assertEquals("1793 把武器 · 187 个战技 · 160 个法术", skills.summary)
+        assertEquals("1793 把武器 · 187 个战技 · 158 个法术", skills.summary)
 
         // v3：TAE 核实与分侧标记的计数（counts 里混着布尔值 taeVerified）。
         assertTrue(dataset.taeVerified, "本版本的 variants 已按 TAE 核实")
@@ -134,6 +143,62 @@ class SkillDataTest {
         assertTrue(v2.message!!.contains("只支持 3"), v2.message)
     }
 
+    @Test
+    fun `v3 revision - spells only lists castable spells, each with its caster weapons`() {
+        // Magic 残留行 8100 / 8101「风暴管束者」没有任何施法器池引用（本作是战技 1200）：不在 spells[]，也不进输出手段列表
+        // （修订前它们各带 2 段固定值，会被当成玩家法术参与排名）。
+        listOf(8100, 8101).forEach { id ->
+            assertNull(skills.spellsById[id], "$id 是 Magic 残留行，不在 spells[]")
+            assertTrue(skills.outputs.none { !it.isSkill && it.entryId == id }, "$id 不可施放，不得进输出手段列表")
+        }
+        val stormRuler = assertNotNull(skills.skillsById[1200], "同名战技 1200 仍在")
+        assertTrue(stormRuler.weaponIds.isNotEmpty(), "战技 1200 有武器")
+        // coverage 不进模型：直接读原始 JSON，核对不可施放的恰好是这两行、都指向同名战技 1200。
+        val coverage = Json.parseToJsonElement(RankerTestData.skillsText).jsonObject.getValue("coverage").jsonObject
+        val dropped = coverage.getValue("spellsNotCastable").jsonArray.map { it.jsonObject }
+        assertEquals(listOf(8100, 8101), dropped.map { it.getValue("id").jsonPrimitive.int })
+        dropped.forEach { one ->
+            assertEquals(listOf(1200), one.getValue("sameNameSkillIds").jsonArray.map { it.jsonPrimitive.int })
+        }
+        assertEquals(2, dataset.count("spellsDropped"))
+        assertEquals(dataset.count("spellsCastable"), dataset.spells.size)
+
+        // 每个法术都有施法器：魔法＝手杖（57）、祷告＝圣印记（61），与页面按施法器判定 attackWeaponTypes 的口径一致。
+        dataset.spells.forEach { spell ->
+            assertTrue(spell.casterWeaponIds.isNotEmpty(), "${spell.id} 缺 casterWeaponIds")
+            assertEquals(spell.casterWeaponIds.sorted(), spell.casterWeaponIds, "${spell.id} 的施法器按 ID 升序")
+            spell.casterWeaponIds.forEach { id ->
+                val weapon = assertNotNull(skills.weaponsById[id], "${spell.id} 的施法器 $id 不在 weapons[]")
+                assertEquals(spell.outputClass.casterWepType, weapon.wepType, "${spell.id} 的施法器 $id 类别不对")
+            }
+            // casterSources 与 casterWeaponIds 一一对应；每个池都真的含这个法术（权重相同、> 0），
+            // 而且是这把施法器某个可达 custom 行的法术槽（customMagicTables 的 _1 / _2）。
+            assertEquals(spell.casterWeaponIds, spell.casterSources.map { it.id }, "${spell.id} 的 casterSources 与 casterWeaponIds 一一对应")
+            spell.casterSources.forEach { source ->
+                assertTrue(source.draws.isNotEmpty(), "${spell.id} @ ${source.id} 没有池")
+                val slots = skills.weaponsById.getValue(source.id).customMagicTables.flatMap { it.drop(1) }.toSet()
+                source.draws.forEach { draw ->
+                    val (own, total) = assertNotNull(dataset.magicPoolWeight(draw.poolId, spell.id), "池 ${draw.poolId} 应含 ${spell.id}")
+                    assertEquals(draw.weight, own, "${spell.id} 在池 ${draw.poolId} 的权重")
+                    assertTrue(own in 1..total, "${spell.id} 在池 ${draw.poolId} 的权重应为正")
+                    assertTrue(draw.poolId in slots, "池 ${draw.poolId} 应是施法器 ${source.id} 某个 custom 行的法术槽")
+                    assertTrue(draw.customRows >= 1)
+                }
+            }
+        }
+        // 施法器 28 把（圣印记 9、手杖 19）；计数与数据集 counts 一致。
+        val casters = dataset.weapons.filter { it.customMagicTables.isNotEmpty() }
+        assertEquals(28, casters.size)
+        assertEquals(19, casters.count { it.wepType == OutputClass.SORCERY.casterWepType })
+        assertEquals(9, casters.count { it.wepType == OutputClass.INCANTATION.casterWepType })
+        assertEquals(dataset.count("casterWeapons"), dataset.spells.flatMap { it.casterWeaponIds }.toSet().size)
+        assertEquals(dataset.count("spellWeaponPairs"), dataset.spells.sumOf { it.casterWeaponIds.size })
+        assertEquals(dataset.count("magicPools"), dataset.magicPools.size)
+        assertEquals(dataset.count("magicPoolEntries"), dataset.magicPools.values.sumOf { it.size })
+        assertEquals(19, skills.spellsById.getValue(4021).casterWeaponIds.size, "帚星：19 把手杖都能带")
+        assertNull(dataset.magicPoolWeight(-1, 4021), "没有这个池")
+    }
+
     // ------------------------------------------------------------------ 输出手段列表
 
     /**
@@ -159,11 +224,12 @@ class SkillDataTest {
 
     @Test
     fun `output list only takes skills and spells that can compute a composition`() {
-        // 固定事实：战技 155 + 法术 121（魔法 60、祷告 61），与 Windows 对拍行 OUTPUTS 一致。
-        // v3 把局内战技池算进 weaponIds，v2 里没有武器的 41 个战技进了列表（114 → 155）。
+        // 固定事实：战技 155 + 法术 119（魔法 58、祷告 61），与 Windows 对拍行 OUTPUTS 一致。
+        // v3 把局内战技池算进 weaponIds，v2 里没有武器的 41 个战技进了列表（114 → 155）；
+        // v3 修订的 spells[] 只收可施放的，8100 / 8101「风暴管束者」（各 2 段固定值）不再进列表（121 → 119）。
         assertEquals(155, skills.skillOutputCount)
-        assertEquals(121, skills.spellOutputCount)
-        assertEquals(60, skills.outputs.count { it.outputClass == OutputClass.SORCERY })
+        assertEquals(119, skills.spellOutputCount)
+        assertEquals(58, skills.outputs.count { it.outputClass == OutputClass.SORCERY })
         assertEquals(61, skills.outputs.count { it.outputClass == OutputClass.INCANTATION })
         assertEquals(11, skills.skillsWithoutDamage, "纯增益 / 格挡类的战技")
         assertEquals(18, skills.spellsWithoutDamage, "恢复／庇佑类法术")

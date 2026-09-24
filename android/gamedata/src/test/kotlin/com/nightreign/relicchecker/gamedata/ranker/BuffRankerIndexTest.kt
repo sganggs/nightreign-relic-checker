@@ -267,6 +267,80 @@ class BuffRankerIndexTest {
         )
     }
 
+    // ------------------------------------------------------------------ 道具等级（v6 修订 goodsLevel，携物知识）
+
+    @Test
+    fun `goods level - Bagcraft level 2 and 3 rows carry goodsLevel and are tagged, level 1 rows are not`() {
+        // 勇者肉块三行：3950（1 级，物理 ×1.2）、708420（2 级，物理 ×1.3）、708421（3 级，物理 ×1.3 + 四属性 ×1.2）。
+        val base = buffs.byId.getValue(3950)
+        val level2 = buffs.byId.getValue(708420)
+        val level3 = buffs.byId.getValue(708421)
+        assertEquals(listOf(1, 2, 3), listOf(base, level2, level3).map { it.goodsLevel })
+        assertNull(base.buff.goodsLevel, "1 级行不写 goodsLevel（缺省＝1 级）")
+        assertEquals(listOf("", "携物知识 2 级", "携物知识 3 级"), listOf(base, level2, level3).map { LoadoutText.goodsLevelTag(it) })
+        listOf(level2, level3).forEach { entry ->
+            assertEquals(3950, entry.buff.goodsBaseSpEffectId, "${entry.id} 的 1 级行")
+            assertEquals("学者能力「携物知识」（CL_MenuText 20020）", entry.buff.goodsLevelSource)
+            assertEquals(base.key, entry.key, "同一道具各级同一个互斥键（换等级只是换一行）")
+        }
+        // 3 级比 1、2 级多出四属性：名字前缀写真（notes.displayName），nameZh 仍是游戏文本。
+        assertEquals(mapOf("physicsAttackRate" to 1.2), base.rates)
+        assertEquals(mapOf("physicsAttackRate" to 1.3), level2.rates)
+        listOf(DamageType.MAGIC, DamageType.FIRE, DamageType.LIGHTNING, DamageType.HOLY).forEach { type ->
+            assertClose(1.2, level3.multiplier[type.ordinal], 1e-12, "708421 的 ${type.key} 倍率")
+            assertClose(1.0, base.multiplier[type.ordinal], 1e-12, "3950 不提高 ${type.key}")
+        }
+        assertEquals("提升物理与属性攻击力（勇者肉块・携物知识3级）", level3.name)
+        assertEquals("提升物理攻击力", level3.buff.nameZh)
+        assertTrue(level2.name.contains("携物知识2级") && !level2.name.contains("属性"), level2.name)
+
+        // 全表：72 条等级行（2 级 45、3 级 27），都在「道具」栏；等级来源都是携物知识。
+        val levelRows = buffs.entries.filter { it.goodsLevel >= 2 }
+        assertEquals(72, levelRows.size)
+        assertEquals(45, levelRows.count { it.goodsLevel == 2 })
+        assertEquals(27, levelRows.count { it.goodsLevel == 3 })
+        levelRows.forEach { entry ->
+            assertEquals("consumable", entry.slot, "${entry.id} 是道具等级行")
+            assertTrue(entry.buff.goodsLevelSource.orEmpty().contains("携物知识"), "${entry.id} 的等级来源")
+            assertEquals("携物知识 ${entry.goodsLevel} 级", LoadoutText.goodsLevelTag(entry))
+        }
+        assertEquals(67, levelRows.count { it.buff.goodsBaseSpEffectId != null })
+        assertTrue(buffs.entries.filter { it.goodsLevel < 2 }.all { LoadoutText.goodsLevelTag(it).isEmpty() })
+
+        // 2、3 级共用的行按最低那一级标；各级共用的 1 级行（500925 粪便壶自身中毒 [1, 2, 3]）不标。
+        assertEquals(listOf(1, 2, 3), buffs.byId.getValue(500925).buff.goodsLevels)
+        assertEquals("", LoadoutText.goodsLevelTag(buffs.byId.getValue(500925)))
+        assertEquals("携物知识 2 级", LoadoutText.goodsLevelTag(synth(-90) { it.copy(goodsLevel = 2, goodsLevels = listOf(2, 3)) }))
+        assertEquals("", LoadoutText.goodsLevelTag(synth(-91) { it.copy(goodsLevels = listOf(1, 2, 3)) }))
+        assertEquals(1, synth(-92).goodsLevel, "旧数据没有 goodsLevel：一律按 1 级")
+    }
+
+    @Test
+    fun `names that only say physical attack up never raise an affinity`() {
+        // 名字只说「提升物理攻击力」的条目若也加属性，在法术上增伤会被误读成只加物理（数据车道已把这类名字改写）。
+        val affinities = listOf(DamageType.MAGIC, DamageType.FIRE, DamageType.LIGHTNING, DamageType.HOLY)
+        val physicalOnly = buffs.listableEntries.filter { it.name.startsWith("提升物理攻击力") }
+        assertTrue(physicalOnly.isNotEmpty(), "数据里仍有只加物理的条目")
+        physicalOnly.forEach { entry ->
+            affinities.forEach { type ->
+                assertFalse(
+                    entry.multiplier[type.ordinal] > 1.0 || entry.flat[type.ordinal] > 0.0,
+                    "${entry.id}「${entry.name}」名字只说物理，却提高 ${type.key}",
+                )
+            }
+        }
+        // 数据车道改过名、对法术适用的 9 条（nameZh 都是「提升物理攻击力」）：名字写明属性，确实提高属性，法术上照常判 yes。
+        listOf(708421, 1605000, 7031202, 7031302, 7032202, 7032704, 7032706, 7032903, 7260803).forEach { id ->
+            val entry = assertNotNull(buffs.byId[id], "$id 在数据里")
+            assertEquals("提升物理攻击力", entry.buff.nameZh, "$id 的游戏文本不变")
+            assertTrue(entry.name.contains("属性"), "$id「${entry.name}」")
+            assertFalse(entry.name.startsWith("提升物理攻击力"), "$id「${entry.name}」")
+            assertTrue(affinities.any { entry.multiplier[it.ordinal] > 1.0 }, "$id 确实提高属性")
+            assertEquals("yes", entry.buff.appliesTo?.sorcery, "$id 对魔法生效")
+            assertEquals("yes", entry.buff.appliesTo?.incantation, "$id 对祷告生效")
+        }
+    }
+
     // ------------------------------------------------------------------ 多档词条（affixVariant）
 
     @Test

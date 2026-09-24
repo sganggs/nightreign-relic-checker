@@ -14,7 +14,8 @@ import kotlin.test.assertTrue
 //   ③ 跨用例关系（构成相同 → 一览相同；换火属性武器只多出加火的条目；子弹段；法术只用 flat）。
 // CONFIG 行（整套配置）与说明区摘要见 LoadoutCrossCheckTest。
 // 战技数据集 schemaVersion 3：选段一律读 weapons[].skillVariants[战技 ID]，默认勾选按「hit.fpBoth || noFp 与开关同侧」；
-// 七组构成用例的战技都是所选武器的固定战技，输入与 CASE 行不变，OUTPUTS 因局内战技池 114 → 155。
+// 七组构成用例的战技都是所选武器的固定战技，输入与 CASE 行不变，OUTPUTS 因局内战技池 114 → 155；
+// v3 修订的 spells[] 只收可施放的法术，OUTPUTS 的法术 121 → 119（8100 / 8101「风暴管束者」移出）。
 class RankerCrossCheckTest {
     private val skills get() = RankerTestData.skills
     private val buffs get() = RankerTestData.buffs
