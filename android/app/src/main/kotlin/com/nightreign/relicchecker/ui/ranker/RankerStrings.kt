@@ -30,6 +30,9 @@ internal object RankerStrings {
     fun weaponCount(count: Int) = "$count 把武器"
     fun mpCost(mp: Int) = "专注值 $mp"
 
+    /** 武器抽屉的来源小计：「固定战技 8」「局内可抽到 68」（Windows weaponPickerHtml 的 pill 同一写法）。 */
+    fun sourceCount(title: String, count: Int) = "$title $count"
+
     /** macOS BuffRankerOutputSection.weaponPicker 的说明。 */
     const val WEAPON_NOTE = "基础攻击力取自 EquipParamWeapon，不含强化等级、亲和与词条加成；本页只做相对构成，绝对伤害不在范围内。"
 
@@ -42,7 +45,7 @@ internal object RankerStrings {
     // ---- 分段命中（Windows hitsHtml、macOS RankerSegmentRow）
     const val HITS_TITLE = "分段命中"
     const val HITS_SUBTITLE = "勾掉不打的段即可（例如只算刀气那一段）"
-    const val HITS_EMPTY_SKILL = "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariant 缺失）。"
+    const val HITS_EMPTY_SKILL = "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariants 里没有这个战技）。"
     const val HITS_EMPTY_SPELL = "这条法术没有带数值的命中段。"
     const val HITS_ALL = "全选（当前版本）"
     const val HITS_ALL_HELP = "只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍"
@@ -88,6 +91,22 @@ internal object RankerStrings {
     const val STACKING_TITLE = "叠加规则（buffs stackingRules）"
     const val VERSION_TITLE = "数据版本与来源"
     const val RAW = "原文"
+
+    /** 战技数据集 usage「战技来源（v3）」一节：武器抽屉的固定战技 / 局内可抽到标记的依据。 */
+    const val SOURCES_TITLE = "战技来源：固定战技与局内战技池"
+    const val SOURCES_NOTE = "武器抽屉列出能带这个战技的全部武器：固定带它的武器（EquipParamWeapon.swordArtsParamId）" +
+        "标「固定战技」，局内掉落时战技池能抽到它的武器标「局内可抽到」，两者都成立只标固定；动作套按所选那一把武器实解" +
+        "（weapons[].skillVariants）。来源：战技数据集 usage「战技来源（v3）」。"
+
+    /** 战技数据集 usage「命中段已按 TAE 核实（v3）」一节（Windows taeUsageHtml）。 */
+    const val TAE_TITLE = "命中段已按 TAE 核实"
+    const val TAE_VERIFIED = "已核实"
+    const val TAE_UNVERIFIED = "未核实"
+    const val TAE_NOTE = "分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
+        "hits[] 里保留的这类段标了 notInvoked，本页不列出。来源：战技数据集 usage「命中段已按 TAE 核实（v3）」。"
+
+    /** 「数据版本与来源」skills 一行的 TAE 注记（Windows versionHtml）。 */
+    fun taeVersion(notInvoked: Int) = " · 命中段已按 TAE 核实（打不出的 $notInvoked 段不列出）"
 
     fun countPill(count: Int) = "$count 条"
 

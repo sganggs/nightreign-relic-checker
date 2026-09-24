@@ -13,6 +13,8 @@ import kotlin.test.assertTrue
 //      逐条校对一览的生效判定与有效倍率（容差 1e-9）；
 //   ③ 跨用例关系（构成相同 → 一览相同；换火属性武器只多出加火的条目；子弹段；法术只用 flat）。
 // CONFIG 行（整套配置）与说明区摘要见 LoadoutCrossCheckTest。
+// 战技数据集 schemaVersion 3：选段一律读 weapons[].skillVariants[战技 ID]，默认勾选按「hit.fpBoth || noFp 与开关同侧」；
+// 七组构成用例的战技都是所选武器的固定战技，输入与 CASE 行不变，OUTPUTS 因局内战技池 114 → 155。
 class RankerCrossCheckTest {
     private val skills get() = RankerTestData.skills
     private val buffs get() = RankerTestData.buffs
@@ -280,7 +282,15 @@ class RankerCrossCheckTest {
             DamageType.entries.forEach { assertClose(amounts[it.ordinal] / total, run.composition.share(it), 1e-9, "$key：${it.key}") }
             assertClose(1.0, run.composition.shares.sum(), 1e-9, "$key：占比之和")
             assertTrue(run.selected.none { it.noDamage })
-            if (run.case.only == null) assertTrue(run.selected.none { it.noFp }, "默认勾选只取正常版这一侧")
+            if (run.case.only == null) {
+                assertTrue(run.selected.none { it.noFp }, "默认勾选只取正常版这一侧")
+                // 取段规则 hit.fpBoth || noFp 与开关同侧：正常版这一侧的带伤害段一个不漏（两侧共用的 fpBoth 段也算）。
+                assertEquals(
+                    run.hits.filter { !it.noDamage && (it.fpBoth || !it.noFp) }.map { it.atkId },
+                    run.selected.map { it.atkId },
+                    "$key：默认勾选",
+                )
+            }
         }
     }
 
@@ -347,6 +357,30 @@ class RankerCrossCheckTest {
         }
         skills.outputs.filter { !it.isSkill }.forEach { output ->
             assertTrue(SkillDamageMath.hasAnyDamage(skills.spellsById.getValue(output.entryId).hits, null, true))
+        }
+        // v3：局内战技池的武器也算，列表里的战技与参考实现逐个相同（本版本 155 个）。参考实现不经被测代码，
+        // 直接读 weapons[].skillVariants → variants[i].atkIds，任一把武器的任一段算得出非 0 相对值即可。
+        val reference = skills.dataset.skills.filter { skill ->
+            skill.hits.isNotEmpty() && skill.weaponIds.any { id ->
+                val weapon = skills.dataset.weapons.firstOrNull { it.id == id } ?: return@any false
+                val variant = weapon.skillVariants[skill.id.toString()]?.let { skill.variants.getOrNull(it) } ?: return@any false
+                skill.hits.any { hit ->
+                    hit.atkId in variant.atkIds && !hit.noDamage && SkillElement.entries.any { element ->
+                        val attack = weapon.attackBase[element.key] ?: 0.0
+                        attack * (hit.motion[element.key] ?: 0.0) / 100 + (hit.flat[element.key] ?: 0.0) +
+                            (if (hit.addBaseAtk) attack else 0.0) > 0
+                    }
+                }
+            }
+        }.map { it.id }
+        assertEquals(155, reference.size)
+        assertEquals(reference, skills.outputs.filter { it.isSkill }.map { it.entryId })
+        // 七组构成用例的战技都是所选武器的固定战技（v3 下输入不变，对拍行的 CASE / CONFIG 与 v2 相同）。
+        RankerCrossCheck.CASES.filter { it.outputClass == OutputClass.SKILL }.forEach { case ->
+            val weapon = skills.weaponsById.getValue(case.weaponId!!)
+            assertEquals(case.id, weapon.swordArtsParamId, case.key)
+            assertEquals(WeaponSourceKind.FIXED, skills.weaponSourceKind(skills.skillsById.getValue(case.id), weapon), case.key)
+            assertEquals(weapon.skillVariant, weapon.variantIndex(case.id), "${case.key}：固定战技的 skillVariant 与 skillVariants 一致")
         }
         assertEquals(7, RankerCrossCheck.CASES.size)
         assertEquals(setOf(OutputClass.SKILL, OutputClass.SORCERY, OutputClass.INCANTATION), RankerCrossCheck.CASES.map { it.outputClass }.toSet())

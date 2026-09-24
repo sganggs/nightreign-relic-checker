@@ -134,7 +134,7 @@ bosses、skills、buffs、heroes 六项）。源文件不存在时跳过并提�
 
 - **Windows 版**（Go 1.25+，纯 Go 构建）：`go build -trimpath -ldflags "-s -w -H windowsgui" -o 夜幕验物.exe`
 - **macOS 版**（macOS 13+，Swift）：`swift build && swift run RelicCoreChecks && zsh Scripts/build_app.sh`（`swift build` 不能省——应用资源包没构建过时，`GameDataLoader 能定位已构建的资源包` 那一组会跳过，自检总数少 4 项；顺序见 [`macos/README.md`](macos/README.md)）
-- **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`（四个模块共 449 个 JVM 测试；发布包用 `assembleRelease` 后以 `zipalign` + `apksigner` 签名，见 [`android/README.md`](android/README.md)）
+- **Android 版**（JDK 17 + Android SDK 36）：在 `android/` 运行 `./gradlew testDebugUnitTest assembleDebug`（四个模块共 463 个 JVM 测试；发布包用 `assembleRelease` 后以 `zipalign` + `apksigner` 签名，见 [`android/README.md`](android/README.md)）
 
 Android 版除三词条检查与词条库外，已移植词条反查、首领数据、角色属性、增伤排名与存档检查：内置数据与桌面端同一份，纯逻辑在 `:gamedata` 里逐条移植桌面端并用同一批对拍用例测试。手机上的取舍：存档只能经系统文件选择器只读打开（没有自动查找与拖拽），报告用「保存到文件」或分享导出；增伤排名暂无「全部增益一览」；设置页不能导入 / 导出自定义词条库；首领数据与增伤排名首次进入要在后台解析 1.5–3 MB 的 JSON，之后进程内缓存。详细边界见 [`android/README.md`](android/README.md)。
 

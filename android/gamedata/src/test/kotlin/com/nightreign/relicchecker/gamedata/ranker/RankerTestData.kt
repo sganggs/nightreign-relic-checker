@@ -44,8 +44,8 @@ internal object RankerTestData {
     val loadout: LoadoutIndex by lazy { LoadoutIndex(buffs, catalog.affixes) }
 
     /**
-     * 真实数据的输出手段（Windows ranker_config.test.mjs 的 outputFor）：选段后去掉 noDamage 与专注值不足版，
-     * 按构成建输出（默认右手、不勾攻击情境）。
+     * 真实数据的输出手段（Windows ranker_config.test.mjs 的 outputFor）：选段后去掉 noDamage，只留正常版这一侧
+     * （hit.fpBoth || noFp 与开关同侧，开关默认关），按构成建输出（默认右手、不勾攻击情境）。
      */
     fun output(
         outputClass: OutputClass,

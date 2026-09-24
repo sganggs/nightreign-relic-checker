@@ -9,14 +9,31 @@ import kotlin.test.assertTrue
 // ranker_crosscheck.test.mjs 的「两端逐字一致：文案常量表」）。
 class RankerTextTest {
     @Test
-    fun `text table is the same table as both desktop ends - 332 entries, digest 854da404`() {
-        assertEquals(332, RankerText.table.size)
-        assertEquals("854da404", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
+    fun `text table is the same table as both desktop ends - 336 entries, digest 07a69c5e`() {
+        // skills schemaVersion 3 多了武器来源标记 weaponSource.*（332 → 336 条，854da404 → 07a69c5e）。
+        assertEquals(336, RankerText.table.size)
+        assertEquals("07a69c5e", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
         assertEquals(RankerText.table.keys.sorted(), RankerText.table.keys.toList(), "按点号路径排序存放")
         RankerText.table.forEach { (key, value) -> assertTrue(value.isNotEmpty(), "$key 应是非空文案") }
         // 任何一处改动都会让摘要分叉。
         val tampered = RankerText.table + ("reasonNeutral" to RankerText.t("reasonNeutral") + "。")
-        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "854da404")
+        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "07a69c5e")
+        // 去掉新增的四条就回到 v2 时的那张表。
+        assertEquals("854da404", RankerCrossCheck.textTableDigest(RankerText.table.filterKeys { !it.startsWith("weaponSource.") }))
+    }
+
+    @Test
+    fun `weapon source texts are word for word the same as the desktop TEXT weaponSource`() {
+        assertEquals(
+            mapOf(
+                "weaponSource.fixed" to "固定战技",
+                "weaponSource.note" to "武器列表含固定带这个战技的武器与局内战技池能抽到它的武器；动作套按这一把武器实解。",
+                "weaponSource.pool" to "局内可抽到",
+                "weaponSource.poolHint" to "局内掉落的这把武器有机会抽到这个战技（按战技池权重）",
+            ),
+            RankerText.table.filterKeys { it.startsWith("weaponSource.") },
+        )
+        WeaponSourceKind.entries.forEach { assertEquals(RankerText.t(it.textKey), it.title) }
     }
 
     @Test

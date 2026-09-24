@@ -50,10 +50,13 @@ import com.nightreign.relicchecker.gamedata.ranker.BuffFormat
 import com.nightreign.relicchecker.gamedata.ranker.DamageComposition
 import com.nightreign.relicchecker.gamedata.ranker.HitAction
 import com.nightreign.relicchecker.gamedata.ranker.RankerText
+import com.nightreign.relicchecker.gamedata.ranker.ResolvedMeans
 import com.nightreign.relicchecker.gamedata.ranker.SkillElement
 import com.nightreign.relicchecker.gamedata.ranker.SkillHit
 import com.nightreign.relicchecker.gamedata.ranker.SkillSegment
 import com.nightreign.relicchecker.gamedata.ranker.SkillWeapon
+import com.nightreign.relicchecker.gamedata.ranker.SkillWeaponGroup
+import com.nightreign.relicchecker.gamedata.ranker.WeaponSourceKind
 import com.nightreign.relicchecker.rules.foldedForSearch
 import com.nightreign.relicchecker.ui.NightPanel
 import com.nightreign.relicchecker.ui.NightPill
@@ -487,18 +490,63 @@ internal fun OutputPickerSheet(state: RankerPageState, onDone: () -> Unit) {
     }
 }
 
+/**
+ * 武器抽屉里的一行（纯数据，页面测试直接校对）：名称（稀有度）、基础攻击力摘要、来源标记（固定战技 / 局内可抽到，
+ * 两者都成立只标固定）与局内可抽到的说明（weaponSource.poolHint；固定武器没有）。
+ */
+internal data class WeaponPickRowModel(
+    val weapon: SkillWeapon,
+    val title: String,
+    val subtitle: String,
+    val source: WeaponSourceKind?,
+    val mark: String?,
+    val hint: String?,
+)
+
+/** 抽屉的分组与每一行（组与组内的顺序沿用 ResolvedMeans.weaponGroups：固定武器排前、其余按 id）。 */
+internal fun weaponPickGroups(resolved: ResolvedMeans): List<Pair<SkillWeaponGroup, List<WeaponPickRowModel>>> =
+    resolved.weaponGroups.map { group ->
+        group to group.weapons.map { weapon ->
+            val source = resolved.weaponSource(weapon)
+            WeaponPickRowModel(
+                weapon = weapon,
+                title = weaponTitle(weapon),
+                subtitle = attackSummary(weapon),
+                source = source,
+                mark = source?.title,
+                hint = if (source == WeaponSourceKind.POOL) RankerText.t("weaponSource.poolHint") else null,
+            )
+        }
+    }
+
+/** 来源标记的颜色：固定＝绿，局内可抽到＝蓝（Windows weaponSourceBadgeHtml 同色）。 */
+private fun sourceColor(source: WeaponSourceKind): androidx.compose.ui.graphics.Color = when (source) {
+    WeaponSourceKind.FIXED -> NightColors.Green
+    WeaponSourceKind.POOL -> RankerPalette.Blue
+}
+
 @Composable
 internal fun WeaponPickerSheet(state: RankerPageState, onDone: () -> Unit) {
     val resolved = state.resolved
-    val groups = resolved.weaponGroups
+    val groups = remember(resolved) { weaponPickGroups(resolved) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         RankerSheetHeader(
             title = (resolved.output?.displayName ?: "") + " · " + RankerStrings.WEAPON_LABEL,
             subtitle = RankerStrings.WEAPON_NOTE,
-            count = RankerStrings.weaponCount(groups.sumOf { it.weapons.size }),
+            count = RankerStrings.weaponCount(groups.sumOf { it.second.size }),
         )
+        // 来源小计（固定战技 N · 局内可抽到 N）与说明：武器列表含局内战技池能抽到这个战技的武器。
+        val counts = resolved.weaponSourceCounts
+        if (counts.isNotEmpty()) {
+            RankerPills(
+                WeaponSourceKind.entries.mapNotNull { kind ->
+                    counts[kind]?.let { RankerStrings.sourceCount(kind.title, it) to sourceColor(kind) }
+                },
+            )
+            RankerNote(RankerText.t("weaponSource.note"))
+        }
         LazyColumn(Modifier.heightIn(min = 300.dp, max = 590.dp)) {
-            groups.forEach { group ->
+            groups.forEach { (group, rows) ->
                 stickyHeader(key = "type-${group.wepTypeZh}") {
                     Text(
                         "${group.wepTypeZh}（${group.weapons.size}）",
@@ -510,15 +558,17 @@ internal fun WeaponPickerSheet(state: RankerPageState, onDone: () -> Unit) {
                             .padding(vertical = 8.dp),
                     )
                 }
-                items(group.weapons, key = { "weapon-${it.id}" }) { weapon ->
+                items(rows, key = { "weapon-${it.weapon.id}" }) { row ->
                     RankerPickRow(
-                        title = weaponTitle(weapon),
-                        subtitle = attackSummary(weapon),
-                        selected = weapon.id == resolved.weapon?.id,
+                        title = row.title,
+                        subtitle = row.subtitle,
+                        note = row.hint,
+                        selected = row.weapon.id == resolved.weapon?.id,
                         onClick = {
-                            state.selectWeapon(weapon.id)
+                            state.selectWeapon(row.weapon.id)
                             onDone()
                         },
+                        trailing = { row.source?.let { source -> NightPill(source.title, sourceColor(source)) } },
                     )
                 }
             }

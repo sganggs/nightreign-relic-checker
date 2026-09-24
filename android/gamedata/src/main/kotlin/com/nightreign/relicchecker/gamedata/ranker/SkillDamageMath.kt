@@ -1,7 +1,8 @@
 package com.nightreign.relicchecker.gamedata.ranker
 
 // 选段、单段相对伤害、伤害构成、削韧／削精力与分段勾选（严格按 skills 数据集的 usage 块）：
-//   · 选段：weapons[].skillVariant → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
+//   · 选段：weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
+//   · 正常版 / 专注值不足版：取段规则是「hit.fpBoth 或 noFp 与开关同侧」（[SkillHit.isOnSide]，fpBoth 段两侧都计）；
 //   · 近战武器段（含战技的子弹段）：该属性伤害 ≈ 武器该属性攻击力 × motion/100 + flat（addBaseAtk 再加一份基础攻击力）；
 //   · 法术段：只用 flat（motion 的五属性同值 100 是占位写法）；
 //   · 伤害类型：attribute 为 WeaponAtkAttribute / WeaponAtkAttribute2 时回 weapons[] 取 atkAttribute / atkAttribute2。
@@ -232,16 +233,16 @@ object SkillDamageMath {
     // ---- 分段勾选 ----------------------------------------------------------
 
     /**
-     * 默认勾选：与「使用专注值不足版本」开关同侧、非 noDamage 的段。两侧互为替代，一起勾会把同一击算两遍；
-     * 数值为 0 但没标 noDamage 的段照样勾上（它对构成的贡献本来就是 0）。
+     * 默认勾选：与「使用专注值不足版本」开关同侧、非 noDamage 的段；两侧共用的 fpBoth 段恒勾（[SkillHit.isOnSide]）。
+     * 两侧互为替代，一起勾会把同一击算两遍；数值为 0 但没标 noDamage 的段照样勾上（它对构成的贡献本来就是 0）。
      */
     fun defaultSelection(hits: List<SkillHit>, useNoFp: Boolean = false): Set<Int> =
-        hits.filter { !it.noDamage && it.noFp == useNoFp }.mapTo(LinkedHashSet()) { it.atkId }
+        hits.filter { !it.noDamage && it.isOnSide(useNoFp) }.mapTo(LinkedHashSet()) { it.atkId }
 
     /** 用户手动勾选写进 overrides（atkId → 勾 / 不勾）；没写的按 [defaultSelection] 的规则。 */
     fun isHitEnabled(hit: SkillHit, overrides: Map<Int, Boolean>, useNoFp: Boolean): Boolean {
         if (hit.noDamage) return false
-        return overrides[hit.atkId] ?: (hit.noFp == useNoFp)
+        return overrides[hit.atkId] ?: hit.isOnSide(useNoFp)
     }
 
     /** 当前勾中的段（保持数据顺序）。 */
@@ -250,14 +251,15 @@ object SkillDamageMath {
 
     /**
      * 分段列表工具条的三个动作，返回完整的 override 表（[HitAction.RESET]＝清空，退回默认规则）。
-     * 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍。
+     * 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍；
+     * 两侧共用的 fpBoth 段在哪一侧都勾上。
      */
     fun hitOverridesFor(hits: List<SkillHit>, action: HitAction, useNoFp: Boolean): Map<Int, Boolean> {
         if (action == HitAction.RESET) return emptyMap()
         val overrides = LinkedHashMap<Int, Boolean>()
         for (hit in hits) {
             if (hit.noDamage) continue
-            overrides[hit.atkId] = action == HitAction.ALL && hit.noFp == useNoFp
+            overrides[hit.atkId] = action == HitAction.ALL && hit.isOnSide(useNoFp)
         }
         return overrides
     }

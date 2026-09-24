@@ -60,14 +60,17 @@ object RankerCrossCheck {
         val output: RankerOutput,
     )
 
-    /** 选段 → 默认勾选（正常版这一侧，[CompositionCase.only] 非空时只勾这些段）→ 构成 → 输出手段。找不到时抛 IllegalArgumentException。 */
+    /**
+     * 选段 → 默认勾选（正常版这一侧，两侧共用的 fpBoth 段也算；[CompositionCase.only] 非空时只勾这些段）→ 构成 →
+     * 输出手段。找不到时抛 IllegalArgumentException。
+     */
     fun compose(skills: SkillDataIndex, case: CompositionCase): Composed {
         val isSpell = case.outputClass != OutputClass.SKILL
         val weapon = case.weaponId?.let { requireNotNull(skills.weaponsById[it]) { "${case.key}：找不到武器 $it" } }
         val hits: List<SkillHit>
         if (isSpell) {
             val spell = requireNotNull(skills.spellsById[case.id]) { "${case.key}：找不到法术 ${case.id}" }
-            hits = spell.hits
+            hits = skills.spellHits(spell)
         } else {
             val skill = requireNotNull(skills.skillsById[case.id]) { "${case.key}：找不到战技 ${case.id}" }
             hits = skills.hits(skill, weapon)
@@ -76,7 +79,7 @@ object RankerCrossCheck {
             when {
                 hit.noDamage -> false
                 case.only != null -> hit.atkId in case.only
-                else -> !hit.noFp
+                else -> hit.isOnSide(useNoFp = false)
             }
         }
         val composition = SkillDamageMath.composition(selected, weapon, isSpell)
@@ -205,7 +208,7 @@ object RankerCrossCheck {
 
     private val DIGITS = Regex("[0-9]+")
 
-    /** 「OUTPUTS skills=114 spells=121」：输出手段列表的条数（Windows 端 buildMeansItems）。 */
+    /** 「OUTPUTS skills=155 spells=121」：输出手段列表的条数（Windows 端 buildMeansItems；skills v3 含局内战技池）。 */
     fun outputsDumpLine(skills: SkillDataIndex): String =
         "OUTPUTS skills=${skills.skillOutputCount} spells=${skills.spellOutputCount}"
 

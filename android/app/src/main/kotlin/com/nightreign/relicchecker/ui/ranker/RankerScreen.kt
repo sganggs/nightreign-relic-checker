@@ -26,6 +26,7 @@ import com.nightreign.relicchecker.gamedata.ranker.OtherRowScore
 import com.nightreign.relicchecker.gamedata.ranker.RankerParsers
 import com.nightreign.relicchecker.gamedata.ranker.RankerText
 import com.nightreign.relicchecker.gamedata.ranker.SkillDataIndex
+import com.nightreign.relicchecker.gamedata.ranker.SkillDataset
 import com.nightreign.relicchecker.gamedata.ranker.SkillTextZh
 import com.nightreign.relicchecker.gamedata.ranker.SummaryColumn
 import com.nightreign.relicchecker.gamedata.ranker.WeaponAffixRow
@@ -425,7 +426,10 @@ private fun MutableList<RankerItem>.addGrouped(prefix: String, list: List<Evalua
     }
 }
 
-/** 底部说明的各个折叠块（口径说明、问答、战技数据的已知取舍、notes 原文、叠加规则、数据版本）。 */
+/**
+ * 底部说明的各个折叠块（口径说明、问答、战技数据的已知取舍、战技来源与 TAE 核实（skills usage 原文）、notes 原文、
+ * 叠加规则、数据版本）。
+ */
 private fun MutableList<RankerItem>.addNotes(state: RankerPageState, open: RankerToggles) {
     val dataset = state.index.dataset
     val skills = state.skills.dataset
@@ -447,6 +451,23 @@ private fun MutableList<RankerItem>.addNotes(state: RankerPageState, open: Ranke
     block("caveats", RankerStrings.CAVEATS_TITLE, RankerStrings.countPill(skills.caveats.size)) {
         skills.caveats.mapIndexed { i, text ->
             RankerItem.NoteBody("note-caveat-$i", null, SkillTextZh.fpText(text), bullet = true)
+        }
+    }
+    // skills schemaVersion 3 的两节 usage 原文：武器来源（固定 / 局内战技池）与命中段的 TAE 核实。
+    skills.usage[SkillDataset.USAGE_WEAPON_SOURCES]?.let { text ->
+        block("weapon-sources", RankerStrings.SOURCES_TITLE, RankerStrings.RAW) {
+            listOf(
+                RankerItem.NoteBody("note-sources-intro", null, RankerStrings.SOURCES_NOTE, bullet = false),
+                RankerItem.NoteBody("note-sources-usage", SkillDataset.USAGE_WEAPON_SOURCES, SkillTextZh.fpText(text), bullet = false),
+            )
+        }
+    }
+    skills.usage[SkillDataset.USAGE_TAE]?.let { text ->
+        block("tae", RankerStrings.TAE_TITLE, if (skills.taeVerified) RankerStrings.TAE_VERIFIED else RankerStrings.TAE_UNVERIFIED) {
+            listOf(
+                RankerItem.NoteBody("note-tae-intro", null, RankerStrings.TAE_NOTE, bullet = false),
+                RankerItem.NoteBody("note-tae-usage", SkillDataset.USAGE_TAE, SkillTextZh.fpText(text), bullet = false),
+            )
         }
     }
     val keys = RankerStrings.NOTE_ORDER.map { it.first }.filter { it in dataset.notes } +
@@ -477,7 +498,8 @@ private fun versionLines(state: RankerPageState): List<Pair<String, String>> {
         "游戏版本" to skills.gameVersion.ifEmpty { "—" },
         "数据版本" to skills.dataVersion.ifEmpty { "—" },
         "skills" to "schemaVersion ${skills.schemaVersion} · 武器 ${skills.count("weapons")} · 战技 ${skills.count("skills")}" +
-            " · 法术 ${skills.count("spells")} · 分段 ${skills.count("hits")}",
+            " · 法术 ${skills.count("spells")} · 分段 ${skills.count("hits")}" +
+            (if (skills.taeVerified) RankerStrings.taeVersion(skills.count("hitsNotInvoked")) else ""),
         "buffs" to "schemaVersion ${buffs.schemaVersion} · 增益 ${counts.buffs} 条 · 倍率字段 ${buffs.rateFields.size} 个",
         "v6 字段" to "局内武器词条 ${counts.weaponAffixes} 条 · 固定遗物 ${counts.fixedRelics} 件 · 叠层输入 ${counts.buffsWithStackInput}" +
             " 条 · 互斥键 ${counts.exclusiveKeys} 个",

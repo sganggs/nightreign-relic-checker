@@ -41,7 +41,7 @@ class GameDataFilesTest {
     fun `every dataset parses and declares the expected schema version`() {
         val expected = mapOf(
             GameDataKey.BOSSES to ("bossesSchemaVersion" to 4),
-            GameDataKey.SKILLS to ("schemaVersion" to 2),
+            GameDataKey.SKILLS to ("schemaVersion" to 3),
             GameDataKey.BUFFS to ("schemaVersion" to 6),
             GameDataKey.HEROES to ("schemaVersion" to 1),
             GameDataKey.RELICS to ("relicsSchemaVersion" to 1),

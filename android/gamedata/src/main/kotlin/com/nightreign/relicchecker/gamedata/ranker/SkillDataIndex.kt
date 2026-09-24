@@ -32,24 +32,34 @@ data class SkillOutput(
     }
 }
 
-/** 战技的武器选择：按武器类别分组。 */
-data class SkillWeaponGroup(val wepTypeZh: String, val weapons: List<SkillWeapon>)
+/** 战技的武器选择：按武器类别分组；[fixedCount] 是组里固定带这个战技的武器数（它们排在组内最前）。 */
+data class SkillWeaponGroup(val wepTypeZh: String, val weapons: List<SkillWeapon>, val fixedCount: Int = 0)
 
 /**
- * skills 数据集的索引（一次建好、不可变）：按 id 查表、可选的输出手段列表、选段与分段换算。
+ * skills 数据集的索引（一次建好、不可变）：按 id 查表、可选的输出手段列表、武器来源、选段与分段换算。
  * 收录条件与 Windows 端 buildMeansItems、macOS 端 SkillDataIndex 一致：
- * 战技要有命中段 + 至少一把引用它的武器 + 至少一种选法算得出非 0 相对值；法术要有命中段且至少一段带固定值。
- * 顺序：战技（数据顺序）在前，法术（数据顺序）在后。
+ * 战技要有命中段 + 至少一把能带它的武器（v3：固定或局内战技池）+ 至少一种选法算得出非 0 相对值；
+ * 法术要有命中段且至少一段带固定值。顺序：战技（数据顺序）在前，法术（数据顺序）在后。
  */
 class SkillDataIndex(val dataset: SkillDataset) {
     val weaponsById: Map<Int, SkillWeapon> = dataset.weapons.associateByFirst { it.id }
     val skillsById: Map<Int, SkillEntry> = dataset.skills.associateByFirst { it.id }
     val spellsById: Map<Int, SpellEntry> = dataset.spells.associateByFirst { it.id }
 
+    /** 战技 ID → {武器 ID → 来源}（skills[].weaponSources；两者都成立时只记固定，Windows weaponSourceMap）。 */
+    private val sourceKinds: Map<Int, Map<Int, WeaponSourceKind>> = dataset.skills.associate { skill ->
+        val map = HashMap<Int, WeaponSourceKind>(skill.weaponSources.size * 2)
+        for (source in skill.weaponSources) {
+            val kind = source.kind ?: continue
+            if (map[source.id] != WeaponSourceKind.FIXED) map[source.id] = kind
+        }
+        skill.id to map
+    }
+
     val outputs: List<SkillOutput>
     private val outputsById: Map<String, SkillOutput>
 
-    /** 有命中段但本作没有任何武器引用的战技数。 */
+    /** 有命中段但本作没有任何武器能带的战技数（v3 把局内战技池算进 weaponIds 后为 0）。 */
     val skillsWithoutWeapons: Int
 
     /** 完全没有命中段的战技 / 法术数（纯增益、格挡、附魔一类）。 */
@@ -102,7 +112,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
                 continue
             }
             // 法术没有武器，构成只来自 flat；一个 flat 都没有的（冰雾、各种恢复／庇佑／防护）排除。
-            if (!SkillDamageMath.hasAnyDamage(spell.hits, null, isSpell = true)) {
+            if (!SkillDamageMath.hasAnyDamage(spellHits(spell), null, isSpell = true)) {
                 spellsNoDamage += 1
                 continue
             }
@@ -141,7 +151,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
         return outputs.filter { (outputClass == null || it.outputClass == outputClass) && it.matches(needle) }
     }
 
-    /** 至少有一把引用它的武器能打出非 0 相对值（Windows 端 skillHasDamage）。 */
+    /** 至少有一把能带它的武器（固定或局内战技池）能打出非 0 相对值（Windows 端 skillHasDamage）。 */
     fun skillHasDamage(skill: SkillEntry): Boolean = skill.weaponIds.any { id ->
         val weapon = weaponsById[id] ?: return@any false
         SkillDamageMath.hasAnyDamage(hits(skill, weapon), weapon, isSpell = false)
@@ -149,66 +159,108 @@ class SkillDataIndex(val dataset: SkillDataset) {
 
     // ---- 武器 --------------------------------------------------------------
 
-    /** 引用这个战技的武器（weaponIds 的数据顺序，查不到的跳过）。 */
-    fun weaponsFor(skill: SkillEntry): List<SkillWeapon> = skill.weaponIds.mapNotNull { weaponsById[it] }
+    /**
+     * 这把武器带这个战技的来源（usage「战技来源（v3）」读 skills[].weaponSources）：固定 / 局内可抽到，
+     * 两者都成立时只算固定。weaponSources 里没有这把武器（旧数据）时按 swordArtsParamId 判固定，判不出为 null
+     * （Windows weaponSourceOf）。
+     */
+    fun weaponSourceKind(skill: SkillEntry, weapon: SkillWeapon): WeaponSourceKind? =
+        sourceKinds[skill.id]?.get(weapon.id)
+            ?: if (weapon.swordArtsParamId == skill.id) WeaponSourceKind.FIXED else null
 
-    /** 按武器类别分组（类别内按武器 id 升序，类别按武器数量降序、同数按类别名；macOS 端 weaponGroups(for:)）。 */
+    /** 这把武器是这个战技的固定武器吗（排序用）。 */
+    private fun isFixed(skill: SkillEntry, weapon: SkillWeapon): Boolean =
+        weaponSourceKind(skill, weapon) == WeaponSourceKind.FIXED
+
+    /**
+     * 能带这个战技的武器（skills[].weaponIds = 固定引用 ∪ 局内战技池，查不到的跳过）：
+     * 固定带这个战技的武器排前，其余按武器 id 升序（Windows weaponsForSkill）。
+     */
+    fun weaponsFor(skill: SkillEntry): List<SkillWeapon> =
+        skill.weaponIds.mapNotNull { weaponsById[it] }
+            .sortedWith(compareBy<SkillWeapon> { if (isFixed(skill, it)) 0 else 1 }.thenBy { it.id })
+
+    /**
+     * 按武器类别分组（macOS 端 weaponGroups(for:)）：类别内固定武器排前、其余按武器 id 升序；
+     * 类别之间先排含固定武器的，再按武器数量降序、同数按类别名。默认武器因此总是固定武器（有的话）。
+     */
     fun weaponGroups(skill: SkillEntry): List<SkillWeaponGroup> {
         val grouped = LinkedHashMap<String, MutableList<SkillWeapon>>()
         for (weapon in weaponsFor(skill)) grouped.getOrPut(weapon.typeLabel) { ArrayList() } += weapon
-        return grouped.map { (label, weapons) -> SkillWeaponGroup(label, weapons.sortedBy { it.id }) }
-            .sortedWith(compareByDescending<SkillWeaponGroup> { it.weapons.size }.thenBy { it.wepTypeZh })
+        return grouped.map { (label, weapons) ->
+            SkillWeaponGroup(label, weapons, fixedCount = weapons.count { isFixed(skill, it) })
+        }.sortedWith(
+            compareBy<SkillWeaponGroup> { if (it.fixedCount > 0) 0 else 1 }
+                .thenByDescending { it.weapons.size }
+                .thenBy { it.wepTypeZh },
+        )
     }
 
-    /** 默认武器：分组后第一组的第一把。 */
+    /** 默认武器：分组后第一组的第一把（有固定武器时就是固定武器）。 */
     fun defaultWeapon(skill: SkillEntry): SkillWeapon? = weaponGroups(skill).firstOrNull()?.weapons?.firstOrNull()
 
     // ---- 选段 --------------------------------------------------------------
 
-    /** 武器在这个战技里用的那一套动作；缺 skillVariant / 越界 = 这把武器的战技没有命中段。 */
+    /**
+     * 武器在这个战技里用的那一套动作：下标读 weapons[].skillVariants[战技 ID]（缺失时只对固定战技回退
+     * skillVariant，见 [SkillWeapon.variantIndex]）；找不到 / 越界 = 这把武器用这个战技没有命中段。
+     */
     fun selectVariant(skill: SkillEntry, weapon: SkillWeapon?): SkillVariant? {
         if (skill.variants.isEmpty()) return null
-        val index = weapon?.skillVariant ?: return null
+        val index = weapon?.variantIndex(skill.id) ?: return null
         return skill.variants.getOrNull(index)
     }
 
     /**
-     * 这把武器实际会打出的段（usage.选段（必读））：variants 存在时一律走 `variants[weapon.skillVariant].atkIds`，
-     * 缺失 / 越界就是「打不出段」，不按 weaponIds 回查、也不退回 ctx 逻辑；variants 缺失时才退回 ctx 单选
-     * （武器名 → 武器类别 → ctx 缺失），任何情况下都不取并集。
+     * 这把武器实际会打出的段（usage.选段（必读））：variants 存在时一律走
+     * `variants[weapon.skillVariants[战技 ID]].atkIds`（已按 TAE 核实），缺失 / 越界就是「打不出段」，
+     * 不按 weaponIds 回查、也不退回 ctx 逻辑；variants 缺失时才退回 ctx 单选（武器名 → 武器类别 → ctx 缺失），
+     * 任何情况下都不取并集。
      */
     fun hits(skill: SkillEntry, weapon: SkillWeapon?): List<SkillHit> = selectHits(skill, weapon)
 
     fun segments(skill: SkillEntry, weapon: SkillWeapon?): List<SkillSegment> =
         hits(skill, weapon).map { SkillDamageMath.segment(it, weapon, isSpell = false) }
 
-    /** 法术：没有 variants，全部段都会打出；只用 flat 做配比。 */
+    /** 法术的段：没有 variants，全部段都会打出（法术不做 TAE 过滤，剔 notInvoked 只是防御）。 */
+    fun spellHits(spell: SpellEntry): List<SkillHit> = invokedHits(spell.hits)
+
+    /** 法术：只用 flat 做配比。 */
     fun segments(spell: SpellEntry): List<SkillSegment> =
-        spell.hits.map { SkillDamageMath.segment(it, null, isSpell = true) }
+        spellHits(spell).map { SkillDamageMath.segment(it, null, isSpell = true) }
 
     /** 「1793 把武器 · 187 个战技 · 160 个法术」。 */
     val summary: String
         get() = "${dataset.weapons.size} 把武器 · ${dataset.skills.size} 个战技 · ${dataset.spells.size} 个法术"
 
     companion object {
+        /**
+         * 直接从 hits[] 取段时先剔掉 TAE 判定为永远打不出的段（hits[].notInvoked，v3）：它们不在任何
+         * variants[].atkIds 里，只留在 hits[] 备查（Windows invokedHits）。
+         */
+        fun invokedHits(hits: List<SkillHit>): List<SkillHit> =
+            if (hits.none { it.notInvoked }) hits else hits.filter { !it.notInvoked }
+
         /** 与 [hits] 同一口径的纯函数（测试与合成数据用）。 */
         fun selectHits(skill: SkillEntry, weapon: SkillWeapon?): List<SkillHit> {
             if (skill.hits.isEmpty()) return emptyList()
             if (skill.variants.isNotEmpty()) {
-                val index = weapon?.skillVariant ?: return emptyList()
+                val index = weapon?.variantIndex(skill.id) ?: return emptyList()
                 val variant = skill.variants.getOrNull(index) ?: return emptyList()
                 val wanted = variant.atkIds.toHashSet()
                 return skill.hits.filter { it.atkId in wanted }
             }
+            // 退回路径直接读 hits[]：TAE 判为打不出的段（notInvoked）与不带伤害的段（noDamage）一律剔掉。
+            val pool = skill.hits.filter { !it.notInvoked && !it.noDamage }
             if (weapon != null && weapon.nameEn.isNotEmpty()) {
-                val byName = skill.hits.filter { it.ctx == weapon.nameEn }
+                val byName = pool.filter { it.ctx == weapon.nameEn }
                 if (byName.isNotEmpty()) return byName
             }
             if (weapon != null && weapon.wepTypeEn.isNotEmpty()) {
-                val byType = skill.hits.filter { it.ctx == weapon.wepTypeEn }
+                val byType = pool.filter { it.ctx == weapon.wepTypeEn }
                 if (byType.isNotEmpty()) return byType
             }
-            return skill.hits.filter { it.ctx.isNullOrEmpty() }
+            return pool.filter { it.ctx.isNullOrEmpty() }
         }
     }
 }

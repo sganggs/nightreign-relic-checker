@@ -485,13 +485,11 @@ class LoadoutConfigTest {
         assertEquals(VerdictState.YES, verdict(8980002, corpse), "提升魔力属性攻击力（右手武器・武器固有）")
         assertEquals(VerdictState.NO, verdict(8980002, RankerTestData.output(OutputClass.SKILL, 1177, 9040000, hand = 2)))
         assertEquals(VerdictState.NO, verdict(8160000, corpse), "刀不是短剑")
-        val daggerSkill = skills.dataset.skills.first { skill ->
-            skill.weaponIds.any { id ->
-                val weapon = skills.weaponsById[id]
-                weapon != null && weapon.wepType == 1 && weapon.skillVariant != null && skills.hits(skill, weapon).any { !it.noDamage }
-            }
-        }
-        val daggerWeapon = daggerSkill.weaponIds.mapNotNull { skills.weaponsById[it] }.first { it.wepType == 1 && it.skillVariant != null }
+        // 短剑 + 它能带的任一战技（skills v3：固定或局内战技池，动作套读 skillVariants[战技 ID]）。
+        fun daggerPlayable(skill: SkillEntry, weapon: SkillWeapon?): Boolean =
+            weapon != null && weapon.wepType == 1 && weapon.variantIndex(skill.id) != null && skills.hits(skill, weapon).any { !it.noDamage }
+        val daggerSkill = skills.dataset.skills.first { skill -> skill.weaponIds.any { daggerPlayable(skill, skills.weaponsById[it]) } }
+        val daggerWeapon = daggerSkill.weaponIds.mapNotNull { skills.weaponsById[it] }.first { daggerPlayable(daggerSkill, it) }
         assertEquals(VerdictState.YES, verdict(8160000, RankerTestData.output(OutputClass.SKILL, daggerSkill.id, daggerWeapon.id)))
         assertEquals(VerdictState.CONTEXT, verdict(320600, corpse), "矛护符：强化突刺反击")
         assertEquals(
@@ -721,7 +719,7 @@ class LoadoutConfigTest {
                 entry.buff.appliesTo?.skill != "no" && entry.stackInput == null
         }
         val weapon = assertNotNull(skills.weaponsById[innateEntry.innate!!.weaponIds[0]])
-        assertNotNull(weapon.skillVariant)
+        assertNotNull(weapon.variantIndex(weapon.swordArtsParamId), "固有效果的武器用它自己的固定战技")
         val skill = skills.skillsById.getValue(weapon.swordArtsParamId)
         val output = RankerTestData.output(OutputClass.SKILL, skill.id, weapon.id)
         assertTrue(innateEntry in index.currentInnateEntries(output))
@@ -769,7 +767,7 @@ class LoadoutConfigTest {
             assertEquals(0, LoadoutConfig().stacks(id))
         }
         val stackWeapon = skills.weaponsById[entry(8988200).innate!!.weaponIds[0]]
-        if (stackWeapon?.skillVariant != null && skills.skillsById[stackWeapon.swordArtsParamId] != null) {
+        if (stackWeapon?.variantIndex(stackWeapon.swordArtsParamId) != null && skills.skillsById[stackWeapon.swordArtsParamId] != null) {
             val output = RankerTestData.output(OutputClass.SKILL, stackWeapon.swordArtsParamId, stackWeapon.id)
             val stackItem = evaluate(output, LoadoutConfig()).items.first { it.id == 8988200 }
             assertNotEquals(EntryState.COUNTED, stackItem.state, "叠层固有效果默认 0 层、不计入")

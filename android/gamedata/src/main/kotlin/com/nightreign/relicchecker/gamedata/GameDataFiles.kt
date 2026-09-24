@@ -36,7 +36,7 @@ enum class GameDataKey(
     val expectedVersion: Int,
 ) {
     BOSSES(GameDataFiles.BOSSES, "bossesSchemaVersion", 4),
-    SKILLS(GameDataFiles.SKILLS, "schemaVersion", 2),
+    SKILLS(GameDataFiles.SKILLS, "schemaVersion", 3),
     BUFFS(GameDataFiles.BUFFS, "schemaVersion", 6),
     HEROES(GameDataFiles.HEROES, "schemaVersion", 1),
     RELICS(GameDataFiles.RELICS, "relicsSchemaVersion", 1),

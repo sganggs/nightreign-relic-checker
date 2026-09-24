@@ -13,6 +13,9 @@ import com.nightreign.relicchecker.gamedata.ranker.RankerText
 import com.nightreign.relicchecker.gamedata.ranker.RelicCardType
 import com.nightreign.relicchecker.gamedata.ranker.RunMode
 import com.nightreign.relicchecker.gamedata.ranker.SkillDataIndex
+import com.nightreign.relicchecker.gamedata.ranker.SkillDataset
+import com.nightreign.relicchecker.gamedata.ranker.SkillTextZh
+import com.nightreign.relicchecker.gamedata.ranker.WeaponSourceKind
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -26,7 +29,8 @@ import org.junit.Test
 //   · 各种开合 / 搜索 / 配置下，LazyColumn 的 key 一律唯一（重复 key 会让页面直接崩溃）；
 //   · 汇总清单与评估结果一致，推荐填满、切模式、换输出手段的提示与桌面端同一口径；
 //   · rememberSaveable 的存取往返不丢状态；
-//   · 页面用到的 RankerText 键都在文案表里（缺键时 RankerText.t 会原样显示键名）。
+//   · 页面用到的 RankerText 键都在文案表里（缺键时 RankerText.t 会原样显示键名）；
+//   · skills schemaVersion 3：武器抽屉每行带「固定战技 / 局内可抽到」标记与说明，底部说明引用 usage 的两节新原文。
 class RankerPageStateTest {
     private object Data {
         private fun read(name: String): String {
@@ -67,7 +71,7 @@ class RankerPageStateTest {
             LoadoutIndex.OTHER_SLOTS.forEach { add(RankerKeys.otherSlot(it)) }
             add(RankerKeys.SUM_UNCOUNTED)
             add(RankerKeys.HITS_DETAIL)
-            listOf("brief", "questions", "caveats", "stacking", "version").forEach { add(RankerKeys.note(it)) }
+            listOf("brief", "questions", "caveats", "weapon-sources", "tae", "stacking", "version").forEach { add(RankerKeys.note(it)) }
             add(RankerKeys.note("buffs-notes"))
         }
     }
@@ -251,6 +255,97 @@ class RankerPageStateTest {
         assertNull(RankerSheet.decode(null))
         assertNull(RankerSheet.decode("affix:1"))
         assertNull(RankerSheet.decode("nope"))
+    }
+
+    @Test
+    fun weaponPickerMarksEveryRowWithItsSource() {
+        val state = newState()
+        // 页面默认是第一条战技狮子斩：8 把大剑固定带它，68 把武器局内战技池能抽到。
+        assertEquals("skill-100", state.means.outputId)
+        val groups = weaponPickGroups(state.resolved)
+        val rows = groups.flatMap { it.second }
+        assertEquals(76, rows.size)
+        assertEquals(state.resolved.weaponGroups.flatMap { it.weapons }.map { it.id }, rows.map { it.weapon.id })
+        val fixed = RankerText.t("weaponSource.fixed")
+        val pool = RankerText.t("weaponSource.pool")
+        val hint = RankerText.t("weaponSource.poolHint")
+        assertEquals("固定战技", fixed)
+        assertEquals("局内可抽到", pool)
+        rows.forEach { row ->
+            when (row.source) {
+                WeaponSourceKind.FIXED -> {
+                    assertEquals(fixed, row.mark)
+                    assertNull("固定武器不带局内可抽到的说明", row.hint)
+                }
+                WeaponSourceKind.POOL -> {
+                    assertEquals(pool, row.mark)
+                    assertEquals(hint, row.hint)
+                }
+                null -> throw AssertionError("${row.weapon.id} 没有来源标记")
+            }
+        }
+        assertEquals(8, rows.count { it.source == WeaponSourceKind.FIXED })
+        assertEquals(68, rows.count { it.source == WeaponSourceKind.POOL })
+        // 固定武器排前：含固定武器的组排第一，组内固定在前、其余按 id；默认武器就是第一行（固定）。
+        groups.forEach { (_, list) ->
+            val firstPool = list.indexOfFirst { it.source == WeaponSourceKind.POOL }.let { if (it < 0) list.size else it }
+            assertTrue(list.take(firstPool).all { it.source == WeaponSourceKind.FIXED })
+            assertTrue(list.drop(firstPool).all { it.source == WeaponSourceKind.POOL })
+            assertEquals(list.drop(firstPool).map { it.weapon.id }.sorted(), list.drop(firstPool).map { it.weapon.id })
+        }
+        assertEquals(WeaponSourceKind.FIXED, rows.first().source)
+        assertEquals(rows.first().weapon.id, state.resolved.weapon?.id)
+        assertTrue(rows.first().title.startsWith(rows.first().weapon.displayName))
+        assertEquals(mapOf(WeaponSourceKind.FIXED to 8, WeaponSourceKind.POOL to 68), state.resolved.weaponSourceCounts)
+
+        // 固定战技且局内战技池也抽得到（大蛇狩猎矛 × 狩猎大蛇）：只标固定。
+        state.selectOutput(requireNotNull(Data.skills.output("skill-1188")))
+        val serpent = weaponPickGroups(state.resolved).flatMap { it.second }
+        assertEquals(listOf(17030000), serpent.map { it.weapon.id })
+        assertEquals(fixed, serpent.single().mark)
+        assertNull(serpent.single().hint)
+
+        // 只在局内战技池里出现的战技（风暴刃）：每一行都是局内可抽到。
+        state.selectOutput(requireNotNull(Data.skills.output("skill-210")))
+        val storm = weaponPickGroups(state.resolved).flatMap { it.second }
+        assertEquals(64, storm.size)
+        assertTrue(storm.all { it.mark == pool && it.hint == hint })
+
+        // 法术没有武器抽屉。
+        state.selectOutput(requireNotNull(Data.skills.output("sorcery-4021")))
+        assertTrue(weaponPickGroups(state.resolved).isEmpty())
+    }
+
+    @Test
+    fun footerQuotesTheV3UsageSections() {
+        val state = newState()
+        val skills = Data.skills.dataset
+        val folded = items(state)
+        val blocks = folded.filterIsInstance<RankerItem.NoteBlock>()
+        val sources = blocks.single { it.id == "weapon-sources" }
+        assertEquals(RankerStrings.RAW, sources.pill)
+        val tae = blocks.single { it.id == "tae" }
+        assertEquals(RankerStrings.TAE_TITLE, tae.title)
+        assertEquals(RankerStrings.TAE_VERIFIED, tae.pill)
+        assertFalse(sources.open || tae.open)
+        // 折叠块按顺序：已知取舍 → 战技来源 → TAE 核实 → 增益 notes。
+        val order = blocks.map { it.id }
+        assertTrue(order.indexOf("caveats") < order.indexOf("weapon-sources"))
+        assertTrue(order.indexOf("weapon-sources") < order.indexOf("tae"))
+
+        val bodies = items(state, open = everythingOpen).filterIsInstance<RankerItem.NoteBody>()
+        val sourcesUsage = bodies.single { it.key == "note-sources-usage" }
+        assertEquals(SkillDataset.USAGE_WEAPON_SOURCES, sourcesUsage.title)
+        assertEquals(SkillTextZh.fpText(skills.usage.getValue(SkillDataset.USAGE_WEAPON_SOURCES)), sourcesUsage.text)
+        val taeUsage = bodies.single { it.key == "note-tae-usage" }
+        assertEquals(SkillDataset.USAGE_TAE, taeUsage.title)
+        assertEquals(SkillTextZh.fpText(skills.usage.getValue(SkillDataset.USAGE_TAE)), taeUsage.text)
+        assertFalse("页面上不该再出现英文 FP", "FP" in taeUsage.text)
+        assertTrue(bodies.any { it.key == "note-sources-intro" && it.text.contains("战技来源（v3）") })
+        assertTrue(bodies.any { it.key == "note-tae-intro" && it.text.contains("notInvoked") })
+        val version = bodies.single { it.title == "skills" }
+        assertTrue(version.text, version.text.startsWith("schemaVersion 3 · "))
+        assertTrue(version.text, version.text.endsWith("命中段已按 TAE 核实（打不出的 34 段不列出）"))
     }
 
     @Test

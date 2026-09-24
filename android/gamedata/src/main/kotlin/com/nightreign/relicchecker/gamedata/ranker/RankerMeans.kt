@@ -9,11 +9,14 @@ import kotlinx.serialization.SerializationException
 // 与 Windows 端 ranker.js 的 state.selection / hand / noFp / hitOverrides / contexts 与 applySelection /
 // hitEnabled / currentComposition / currentOutput，macOS 端 BuffRankerModel 的 select(output:) / select(weapon:) /
 // toggleSegment / setUseNoFp / loadoutOutput 一一对应：
-//   · 换输出手段：战技默认选分组后第一组的第一把武器（SkillDataIndex.defaultWeapon），法术没有武器；分段勾选回到默认
-//     （正常版这一侧、非 noDamage），专注值不足版开关关掉；持武器的手与攻击情境保留；
+//   · 换输出手段：战技默认选分组后第一组的第一把武器（SkillDataIndex.defaultWeapon，有固定武器时就是固定武器），
+//     法术没有武器；分段勾选回到默认（正常版这一侧、非 noDamage），专注值不足版开关关掉；持武器的手与攻击情境保留；
 //   · 换武器：分段勾选回到默认、专注值不足版开关关掉（macOS 同法：新武器不一定有专注值不足版的段，
 //     保留开关会让默认勾选一段都不剩）；
-//   · 分段勾选：用户点过的段写进 hitOverrides，没点过的按「与专注值不足版开关同侧、非 noDamage」；noDamage 段不可勾；
+//   · 分段勾选：用户点过的段写进 hitOverrides，没点过的按「与专注值不足版开关同侧（fpBoth 段两侧都算）、
+//     非 noDamage」；noDamage 段不可勾；
+//   · 武器列表（skills schemaVersion 3）：skills[].weaponIds = 固定引用 ∪ 局内战技池，每把武器带来源标记
+//     （[ResolvedMeans.weaponSource]）；选段按这一把武器实解（weapons[].skillVariants[战技 ID]）；
 //   · 攻击情境：只把当前输出类别下数据里实际要求过的情境交给计算器（切到别的类别时不显示的勾选不影响结果）。
 // 本类是不可变值，修改一律返回新实例；页面用 [encode] / [decode] 存进 rememberSaveable。
 
@@ -111,19 +114,27 @@ class ResolvedMeans internal constructor(val skills: SkillDataIndex, val selecti
         selection.weaponId?.takeIf { it in entry.weaponIds }?.let { skills.weaponsById[it] }
     }
 
-    /** 这个战技可选的武器（按类别分组）；法术为空。 */
+    /** 这个战技可选的武器（固定 ∪ 局内战技池，按类别分组、固定武器排前）；法术为空。 */
     val weaponGroups: List<SkillWeaponGroup> = skill?.let { skills.weaponGroups(it) }.orEmpty()
 
-    /** 这把武器在战技里用的那一套动作（variants 缺失 / 越界时为 null）。 */
+    /** 各来源的武器数（武器选择器的小标签）：固定战技 N、局内可抽到 N。 */
+    val weaponSourceCounts: Map<WeaponSourceKind, Int> = skill?.let { entry ->
+        weaponGroups.flatMap { it.weapons }.mapNotNull { skills.weaponSourceKind(entry, it) }.groupingBy { it }.eachCount()
+    }.orEmpty()
+
+    /** 这把武器带当前战技的来源（固定战技 / 局内可抽到，两者都成立只算固定）；法术或判不出时为 null。 */
+    fun weaponSource(weapon: SkillWeapon): WeaponSourceKind? = skill?.let { skills.weaponSourceKind(it, weapon) }
+
+    /** 这把武器在战技里用的那一套动作（按 skillVariants[战技 ID] 实解；缺失 / 越界时为 null）。 */
     val variant: SkillVariant? = skill?.let { skills.selectVariant(it, weapon) }
 
     val outputClass: OutputClass = output?.outputClass ?: OutputClass.SKILL
     val isSpell: Boolean get() = outputClass.isSpell
 
-    /** 实际打出的段（战技按选段规则，法术全部段）。 */
+    /** 实际打出的段（战技按选段规则只从 variants 取，法术全部段——直接读 hits[] 的这条路径剔掉 notInvoked）。 */
     val hits: List<SkillHit> = when {
         skill != null -> skills.hits(skill, weapon)
-        spell != null -> spell.hits
+        spell != null -> skills.spellHits(spell)
         else -> emptyList()
     }
 

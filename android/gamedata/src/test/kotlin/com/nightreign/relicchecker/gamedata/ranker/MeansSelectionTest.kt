@@ -181,5 +181,83 @@ class MeansSelectionTest {
 
         val spellWithWeapon = MeansSelection(outputId = "sorcery-4021", weaponId = 9040000).sanitized(skills)
         assertNull(spellWithWeapon.weaponId)
+
+        // 局内战技池的武器同样属于这个战技（weaponIds = 固定 ∪ 战技池），读回时保留。
+        val lion = assertNotNull(skills.skillsById[100])
+        val poolWeapon = skills.weaponsFor(lion).first { skills.weaponSourceKind(lion, it) == WeaponSourceKind.POOL }
+        val kept = MeansSelection(outputId = "skill-100", weaponId = poolWeapon.id)
+        assertSame(kept, kept.sanitized(skills))
+    }
+
+    // ------------------------------------------------------------------ skills schemaVersion 3
+
+    @Test
+    fun `武器列表：固定战技与局内可抽到的武器都能选，固定武器排前、默认选固定武器`() {
+        val lion = select(RankerCrossCheck.CASES[2]).resolve(skills)
+        val weapons = lion.weaponGroups.flatMap { it.weapons }
+        assertEquals(76, weapons.size, "狮子斩：8 把固定 + 68 把局内战技池")
+        assertEquals(mapOf(WeaponSourceKind.FIXED to 8, WeaponSourceKind.POOL to 68), lion.weaponSourceCounts)
+        assertEquals(WeaponSourceKind.FIXED, lion.weaponSource(lion.weapon!!))
+        assertEquals(3180000, skills.defaultWeapon(lion.skill!!)?.id)
+        assertEquals(WeaponSourceKind.FIXED, lion.weaponSource(weapons.first()), "第一组的第一把是固定武器")
+
+        // 换成局内战技池的武器：动作套按这一把武器实解（skillVariants[战技 ID]），不借用它固定战技的 skillVariant。
+        val poolWeapon = weapons.first { lion.weaponSource(it) == WeaponSourceKind.POOL }
+        assertNotEquals(100, poolWeapon.swordArtsParamId)
+        val switched = select(RankerCrossCheck.CASES[2]).withWeapon(poolWeapon.id).resolve(skills)
+        assertEquals(poolWeapon.id, switched.weapon?.id)
+        val index = assertNotNull(poolWeapon.skillVariants["100"])
+        assertEquals(lion.skill!!.variants[index], switched.variant)
+        assertEquals(skills.hits(lion.skill!!, poolWeapon).map { it.atkId }, switched.hits.map { it.atkId })
+        assertTrue(switched.composition.hasDamage)
+        assertEquals(poolWeapon.wepType, switched.rankerOutput().attackWepType)
+
+        // 只来自局内战技池的战技（风暴刃 210）：默认武器就是池里的，照样算得出构成。
+        val storm = MeansSelection().select(skills, assertNotNull(skills.output("skill-210"))).resolve(skills)
+        val stormWeapon = assertNotNull(storm.weapon)
+        assertEquals(WeaponSourceKind.POOL, storm.weaponSource(stormWeapon))
+        assertEquals(mapOf(WeaponSourceKind.POOL to 64), storm.weaponSourceCounts)
+        assertTrue(storm.hasNoFpVariant)
+        assertEquals(4, storm.selectedHits.size, "正常侧 3 段近战 + 1 段飞刃")
+        assertEquals(3, MeansSelection().select(skills, skills.output("skill-210")!!).withNoFp(true).resolve(skills).selectedHits.size)
+
+        // 法术没有武器来源。
+        val comet = MeansSelection().select(skills, assertNotNull(skills.output("sorcery-4021"))).resolve(skills)
+        assertTrue(comet.weaponSourceCounts.isEmpty())
+        assertNull(comet.weaponSource(stormWeapon))
+    }
+
+    @Test
+    fun `专注值不足版：两侧共用的 fpBoth 段在哪一侧都勾上`() {
+        // 218 伟哉卡利亚：300200872 两侧共用；正常侧 870/871/872，专注值不足侧 872/875/876/877。
+        val base = MeansSelection().select(skills, assertNotNull(skills.output("skill-218")))
+        val normal = base.resolve(skills)
+        assertTrue(normal.hasNoFpVariant)
+        assertEquals(listOf(300200870, 300200871, 300200872), normal.selectedHits.map { it.atkId })
+        val lowFocus = base.withNoFp(true).resolve(skills)
+        assertEquals(listOf(300200872, 300200875, 300200876, 300200877), lowFocus.selectedHits.map { it.atkId })
+        val shared = normal.hits.first { it.atkId == 300200872 }
+        assertTrue(shared.fpBoth && normal.isEnabled(shared) && lowFocus.isEnabled(shared))
+        // 全选（当前这一侧）同样带上 fpBoth 段。
+        val all = base.withNoFp(true).let { it.withHitAction(it.resolve(skills).hits, HitAction.ALL) }.resolve(skills)
+        assertEquals(lowFocus.selectedIds, all.selectedIds)
+
+        // 1024 唤矛仪式：带伤害的两段都是 fpBoth 子弹，专注值不足侧也有构成（旧写法这里一段都不剩）。
+        val ritual = MeansSelection().select(skills, assertNotNull(skills.output("skill-1024")))
+        assertEquals(listOf(301612910, 301612911), ritual.resolve(skills).selectedHits.map { it.atkId })
+        val ritualLow = ritual.withNoFp(true).resolve(skills)
+        assertEquals(listOf(301612910, 301612911), ritualLow.selectedHits.map { it.atkId })
+        assertTrue(ritualLow.composition.hasDamage)
+    }
+
+    @Test
+    fun `狩猎大蛇：TAE 判为打不出的段不进分段列表`() {
+        val serpent = MeansSelection().select(skills, assertNotNull(skills.output("skill-1188"))).resolve(skills)
+        assertEquals(17030000, serpent.weapon?.id)
+        assertEquals(WeaponSourceKind.FIXED, serpent.weaponSource(serpent.weapon!!), "固定且在战技池里：只标固定")
+        assertEquals(listOf(301703950, 301703951, 301703970, 301703971), serpent.hits.map { it.atkId })
+        assertTrue(serpent.hits.none { it.notInvoked })
+        assertEquals(serpent.hits.size, serpent.segments.size)
+        assertEquals(listOf(301703950, 301703951), serpent.selectedHits.map { it.atkId })
     }
 }

@@ -712,7 +712,7 @@ internal fun RankerSheetHeader(title: String, subtitle: String? = null, count: S
     }
 }
 
-/** 抽屉列表里的一项：标题、副标题、红字原因、右侧倍率。 */
+/** 抽屉列表里的一项：标题、副标题、红字原因、灰字说明（[note]）、右侧倍率。 */
 @Composable
 internal fun RankerPickRow(
     title: String,
@@ -723,6 +723,7 @@ internal fun RankerPickRow(
     selected: Boolean = false,
     enabled: Boolean = true,
     dimmed: Boolean = false,
+    note: String? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
@@ -749,6 +750,16 @@ internal fun RankerPickRow(
                 Text(it, style = MaterialTheme.typography.labelSmall, color = NightColors.TextMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             warning?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = NightColors.Red, maxLines = 3, overflow = TextOverflow.Ellipsis) }
+            note?.takeIf { it.isNotEmpty() }?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = NightColors.TextMuted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.alpha(.78f),
+                )
+            }
         }
         trailing?.let {
             Spacer(Modifier.width(8.dp))

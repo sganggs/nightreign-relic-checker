@@ -16,7 +16,8 @@ import com.nightreign.relicchecker.gamedata.GameDataKey
  * DTO 结构变了就把 parserId 的版本号加一（进程级缓存按 parserId 取回后直接转型）。
  */
 object RankerParsers {
-    const val SKILLS_ID: String = "ranker.skills.v1"
+    /** v2：skills schemaVersion 3 的 DTO（weaponSources / skillVariants / notInvoked / fpBoth …）。 */
+    const val SKILLS_ID: String = "ranker.skills.v2"
     const val BUFFS_ID: String = "ranker.buffs.v1"
 
     /** skills 数据集 → [SkillDataIndex]（版本不符或读不出任何输出手段时抛 GameDataFormatException）。 */

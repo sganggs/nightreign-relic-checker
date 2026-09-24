@@ -1,12 +1,26 @@
 package com.nightreign.relicchecker.gamedata.ranker
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 
 // 「增伤排名」页上半部分的数据模型：武器 / 战技 / 法术与它们的分段命中（data/nightreign-skills-v1.03.5.json，
-// schemaVersion 2）。直接解码成下面这些不可变模型，只声明页面用到的字段：coverage / fieldNotes / enums
-// 等说明块不声明，解码时跳过。所有字段带默认值（配合 GameDataJson.lenient 的 coerceInputValues）。
+// schemaVersion 3）。直接解码成下面这些不可变模型，只声明页面用到的字段：coverage / fieldNotes / enums /
+// diagnostics 等说明块不声明，解码时跳过。所有字段带默认值（配合 GameDataJson.lenient 的 coerceInputValues；
+// 数据集按「省略即默认值」省掉等于默认值的字段）。
 //
-// 权威实现：macOS RelicCore/SkillData.swift；Windows renderer/pages/ranker.js（selectHits / hitContribution …）。
+// schemaVersion 3 的变化（见数据集 schemaChangelog、usage「战技来源（v3）」「命中段已按 TAE 核实（v3）」）：
+//   · skills[].weaponIds = 固定引用 ∪ 局内战技池能抽到的基础武器；skills[].weaponSources 逐把给来源（fixed / pool）；
+//   · weapons[].skillIds（该武器局内可能出现的全部战技）、skillVariants（{战技 ID: variants 下标}，逐 (战技, 武器)
+//     对实解）、customWeapons；旧的 skillVariant 只对武器的固定战技（swordArtsParamId）有效——
+//     选段一律读 [SkillWeapon.variantIndex]；
+//   · variants[].atkIds 已剔除 TAE 判定打不出的段，hits[] 里这些段仍在、标 notInvoked——页面只从 variants 取段，
+//     任何直接读 hits[] 的路径都要过滤 notInvoked（与 noDamage）；
+//   · hits[].noFp 按 TAE 分侧，fpBoth 段两侧都计（[SkillHit.isOnSide]）；selfOrAllyOnly 段恒带 noDamage。
+//
+// 权威实现：macOS RelicCore/SkillData.swift；Windows renderer/pages/ranker.js（variantIndexFor / selectHits /
+// hitOnSide / weaponSourceOf / hitContribution …）。
 // 本数据集不含强化倍率与能力值补正曲线，因此这里算出来的一律是**相对构成**，不是绝对伤害
 // （见 usage「本数据集的边界」）。
 
@@ -32,14 +46,24 @@ data class SkillWeapon(
     val attackBase: Map<String, Double> = emptyMap(),
     val staminaBase: Double = 0.0,
     val poiseDamageBase: Double = 0.0,
+    /** 固定战技（EquipParamWeapon.swordArtsParamId）。 */
     val swordArtsParamId: Int = -1,
+    /** 该武器局内可能出现的全部战技 ID（固定 + 可达 custom 行的战技池成员，升序；v3）。 */
+    val skillIds: List<Int> = emptyList(),
     /** EquipParamWeapon.atkAttribute / atkAttribute2（0 斩 / 1 打 / 2 突 / 3 标准）。 */
     val atkAttribute: Int = 3,
     val atkAttributeZh: String = "",
     val atkAttribute2: Int = 3,
     val atkAttribute2Zh: String = "",
-    /** 该武器在「它的战技」variants 数组里的下标；缺失表示这把武器的战技没有命中段。 */
+    /**
+     * 该武器在「它的固定战技」variants 数组里的下标；缺失表示固定战技没有命中段。
+     * **只对 swordArtsParamId 指向的战技有效**，拿去套局内战技池抽到的战技会选错套（见 [variantIndex]）。
+     */
     val skillVariant: Int? = null,
+    /** {战技 ID（字符串）: 该战技 variants 的下标}（v3，覆盖 skillIds 里每个有命中段、能解出动作套的战技）。 */
+    val skillVariants: Map<String, Int> = emptyMap(),
+    /** 可达的 EquipParamCustomWeapon 行：[customId, swordArtsTableId]（v3；-1 = 该行不抽池）。 */
+    val customWeapons: List<List<Int>> = emptyList(),
 ) {
     val displayName: String get() = nameZh.ifEmpty { nameEn }
 
@@ -49,6 +73,14 @@ data class SkillWeapon(
 
     /** 分组用的类别名（中文优先）。 */
     val typeLabel: String get() = wepTypeZh.ifEmpty { wepTypeEn }
+
+    /**
+     * 这把武器用战技 [skillId] 时的 variants 下标（usage「选段（必读）」）：一律读 skillVariants[战技 ID]；
+     * 缺这一项时才回退 skillVariant，而且只在 [skillId] 就是武器的固定战技时（Windows variantIndexFor）。
+     * null = 这把武器用这个战技打不出段。
+     */
+    fun variantIndex(skillId: Int): Int? =
+        skillVariants[skillId.toString()] ?: skillVariant?.takeIf { swordArtsParamId == skillId }
 }
 
 @Serializable
@@ -71,16 +103,33 @@ data class SkillHit(
     val attribute: String = "None",
     val attributeZh: String = "",
     val isBullet: Boolean = false,
+    /** 专注值不足时打出的弱化版分支（与带 FP 版互为替代，按开关同侧取段）。 */
     val noFp: Boolean = false,
+    /** "tae"＝noFp 由 TAE 动画号判出（行名没写 No FP，labelZh 前补了「无FP版」）；缺失＝来自行名（v3）。 */
+    val noFpSource: String? = null,
+    /** 带 FP 与无 FP 两侧动画都会打出这一段：开关在哪一侧都计入（noFp 恒为 false；v3）。 */
+    val fpBoth: Boolean = false,
     val noDamage: Boolean = false,
+    /** 只打自己 / 队友（如祈祷一击的自疗子弹），数据恒同时标 noDamage（v3）。 */
+    val selfOrAllyOnly: Boolean = false,
     /** 该段所属动作套在本作没有任何武器会用到，按选段算法永远取不到。 */
     val noVariant: Boolean = false,
+    /** TAE 判定在所有武器上都打不出（已从 variants 移除，只留在 hits[] 备查；v3）。 */
+    val notInvoked: Boolean = false,
+    /** notInvoked 的原因（enums.notInvokedReason：gated / notInvoked / elsewhere / roarR2Only …）。 */
+    val notInvokedReason: String? = null,
     val addBaseAtk: Boolean = false,
 ) {
     /** 数据里声明过的动作值（0 视为没声明，与 macOS 端 elementMap 同一口径）。 */
     fun motionOf(element: SkillElement): Double? = motion[element.key]?.takeIf { it.isFinite() && it != 0.0 }
 
     fun flatOf(element: SkillElement): Double? = flat[element.key]?.takeIf { it.isFinite() && it != 0.0 }
+
+    /**
+     * 这一段在「使用专注值不足版本」开关的这一侧吗（Windows hitOnSide）：fpBoth 段两侧都在，其余 noFp 与开关同侧。
+     * 只看 noFp 会在专注值不足侧丢掉两侧共用的段（如 1024 唤矛仪式、1021 毁灭灵火、218 伟哉卡利亚）。
+     */
+    fun isOnSide(useNoFp: Boolean): Boolean = fpBoth || noFp == useNoFp
 
     /** 段名：labelZh → label → 「单段」（数据集原文，未做 FP 替换）。 */
     val displayLabel: String
@@ -90,7 +139,7 @@ data class SkillHit(
     val displayLabelZh: String get() = SkillTextZh.fpText(displayLabel)
 }
 
-/** 一套实际会打出的段。`atkIds` 是本战技 hits 里的 atkId 子集。 */
+/** 一套实际会打出的段。`atkIds` 是本战技 hits 里的 atkId 子集（v3 起已按 TAE 核实）。 */
 @Serializable
 data class SkillVariant(
     val atkIds: List<Int> = emptyList(),
@@ -103,6 +152,45 @@ data class SkillVariant(
     val displayContext: String? get() = ctxZh?.takeIf { it.isNotEmpty() } ?: ctx?.takeIf { it.isNotEmpty() }
 }
 
+/** 这把武器带某个战技的来源（v3 skills[].weaponSources）。同一把武器两者都成立时只算固定。 */
+enum class WeaponSourceKind(val key: String) {
+    /** EquipParamWeapon.swordArtsParamId 就是这个战技。 */
+    FIXED("fixed"),
+
+    /** 只在局内战技池（EquipParamCustomWeapon → SwordArtsTableParam）里抽得到。 */
+    POOL("pool"),
+    ;
+
+    /** 文案键（RANKER_TEXT_TABLE：weaponSource.fixed / weaponSource.pool，三端同名同值）。 */
+    val textKey: String get() = "weaponSource.$key"
+
+    /** 页面上的标记：「固定战技」「局内可抽到」。 */
+    val title: String get() = RankerText.t(textKey)
+}
+
+/** skills[].weaponSources[].pool 的一项：[swordArtsTableId, chanceWeight, customRows]。 */
+data class SkillPoolDraw(val poolId: Int, val weight: Int, val customRows: Int)
+
+/** skills[].weaponSources 的一项（与 weaponIds 一一对应、同序）：{id, fixed?, pool?}。 */
+@Serializable
+data class SkillWeaponSource(
+    val id: Int = -1,
+    val fixed: Boolean = false,
+    /** [[swordArtsTableId, chanceWeight, customRows], …]（按池 ID 升序）；缺失 = 不经由战技池。 */
+    val pool: List<List<Int>> = emptyList(),
+) {
+    val draws: List<SkillPoolDraw>
+        get() = pool.mapNotNull { row -> if (row.size >= 2) SkillPoolDraw(row[0], row[1], row.getOrElse(2) { 0 }) else null }
+
+    /** 页面标记：fixed 优先；只有池来源时为 POOL；两者都没有（数据异常）为 null。 */
+    val kind: WeaponSourceKind?
+        get() = when {
+            fixed -> WeaponSourceKind.FIXED
+            pool.isNotEmpty() -> WeaponSourceKind.POOL
+            else -> null
+        }
+}
+
 @Serializable
 data class SkillEntry(
     val id: Int = -1,
@@ -110,9 +198,14 @@ data class SkillEntry(
     val nameEn: String = "",
     /** 训练场可用。 */
     val sparring: Boolean = false,
+    /** 能带这个战技的武器（v3：固定引用 ∪ 局内战技池）。 */
     val weaponIds: List<Int> = emptyList(),
+    /** 与 weaponIds 一一对应的来源（v3）。 */
+    val weaponSources: List<SkillWeaponSource> = emptyList(),
     val hits: List<SkillHit> = emptyList(),
     val variants: List<SkillVariant> = emptyList(),
+    /** 战技动画匹配不到（弓系战技）：hits / variants 没有经 TAE 过滤（v3）。 */
+    val taeUnmatched: Boolean = false,
 ) {
     val displayName: String get() = nameZh.ifEmpty { nameEn }
 }
@@ -148,17 +241,34 @@ data class SkillDataset(
     val dataVersion: String = "",
     val generatedAt: String = "",
     val sources: List<SkillSource> = emptyList(),
-    /** counts：weapons / skills / spells / hits … 页面底部「数据版本与来源」用。 */
-    val counts: Map<String, Double> = emptyMap(),
-    /** 数据集自带的算法说明（选段（必读）/ 近战武器段 / … / 本数据集的边界），键的顺序即数据顺序。 */
+    /**
+     * counts：weapons / skills / spells / hits … 页面底部「数据版本与来源」用。v3 起混有布尔值（taeVerified），
+     * 所以按原始 JSON 标量存，数值用 [count]、布尔用 [flag] 取。
+     */
+    val counts: Map<String, JsonPrimitive> = emptyMap(),
+    /** 数据集自带的算法说明（选段（必读）/ 近战武器段 / … / 战技来源（v3）/ 命中段已按 TAE 核实（v3）），键的顺序即数据顺序。 */
     val usage: Map<String, String> = emptyMap(),
     /** 已知取舍（展示前要过一遍 [SkillTextZh.fpText]）。 */
     val caveats: List<String> = emptyList(),
+    /** 局内战技池：{SwordArtsTableParam 池 ID: [[战技 ID, chanceWeight], …]}（v3）。 */
+    val swordArtsPools: Map<String, List<List<Int>>> = emptyMap(),
     val weapons: List<SkillWeapon> = emptyList(),
     val skills: List<SkillEntry> = emptyList(),
     val spells: List<SpellEntry> = emptyList(),
 ) {
-    fun count(key: String): Int = counts[key]?.toInt() ?: 0
+    fun count(key: String): Int = counts[key]?.doubleOrNull?.toInt() ?: 0
+
+    fun flag(key: String): Boolean = counts[key]?.booleanOrNull == true
+
+    /** variants 已按 TAE 动画事件核实（counts.taeVerified）。 */
+    val taeVerified: Boolean get() = flag("taeVerified")
+
+    /** 池 [poolId] 里战技 [skillId] 的权重与池内权重之和（没有这个池 / 战技时 null）。 */
+    fun poolWeight(poolId: Int, skillId: Int): Pair<Int, Int>? {
+        val entries = swordArtsPools[poolId.toString()] ?: return null
+        val own = entries.firstOrNull { it.size >= 2 && it[0] == skillId }?.get(1) ?: return null
+        return own to entries.sumOf { it.getOrElse(1) { 0 } }
+    }
 
     companion object {
         /** usage 里「本数据集的边界」的键：页面要引用（绝对伤害不在范围内）。 */
@@ -166,6 +276,12 @@ data class SkillDataset(
 
         /** usage 里选段规则的键。 */
         const val USAGE_SELECTION = "选段（必读）"
+
+        /** usage 里武器来源（固定 / 局内战技池）的读法（v3）。 */
+        const val USAGE_WEAPON_SOURCES = "战技来源（v3）"
+
+        /** usage 里「命中段已按 TAE 核实」一节（v3）：页面底部引用。 */
+        const val USAGE_TAE = "命中段已按 TAE 核实（v3）"
     }
 }
 

@@ -81,7 +81,7 @@ object GameDataFiles { BOSSES, SKILLS, BUFFS, HEROES, RELICS, all }   // 与 dat
 
 enum class GameDataKey(val fileName: String, val versionField: String, val expectedVersion: Int) {
     BOSSES("nightreign-bosses-v1.03.5.json", "bossesSchemaVersion", 4),
-    SKILLS("nightreign-skills-v1.03.5.json", "schemaVersion", 2),
+    SKILLS("nightreign-skills-v1.03.5.json", "schemaVersion", 3),
     BUFFS("nightreign-buffs-v1.03.5.json", "schemaVersion", 6),
     HEROES("nightreign-heroes-v1.03.5.json", "schemaVersion", 1),
     RELICS("nightreign-relics-v1.03.4.json", "relicsSchemaVersion", 1),
