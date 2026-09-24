@@ -333,6 +333,9 @@ struct RankerSegmentRow: View {
                         if segment.noFp {
                             Pill(text: "专注值不足版", color: AppTheme.amber)
                         }
+                        if segment.fpBoth {
+                            Pill(text: "两版共用", color: AppTheme.purpleSoft)
+                        }
                         if segment.noDamage {
                             Pill(text: "只挂状态", color: AppTheme.tertiaryText)
                         }

@@ -2932,17 +2932,35 @@
 
   // 按 wepTypeZh 分组，组与组内都保持传入顺序（weaponsForSkill 已按「固定在前、再按 id」排好）；
   // 用于武器下拉的 optgroup。
-  function groupWeapons(weapons) {
+  // 传了 skill 时按三端同一规则排组（macOS SkillDataIndex.weaponGroups / Android weaponGroups 同口径）：
+  // 含固定战技武器的组排前，其次按组内武器数降序，再按类别名升序；组内顺序沿用 weaponsForSkill
+  // （固定武器在前、再按 id）。默认武器 = 第一组的第一把。不传 skill 时保持首次出现顺序（旧行为）。
+  function groupWeapons(weapons, skill) {
     var order = [];
     var groups = {};
+    var sources = skill ? weaponSourceMap(skill) : null;
     (weapons || []).forEach(function (weapon) {
       var key = weapon.wepTypeZh || weapon.wepTypeEn || "未分类";
-      if (!groups[key]) { groups[key] = []; order.push(key); }
-      groups[key].push(weapon);
+      if (!groups[key]) { groups[key] = { label: key, weapons: [], fixedCount: 0 }; order.push(key); }
+      groups[key].weapons.push(weapon);
+      if (skill && weaponSourceOf(skill, weapon, sources) === "fixed") groups[key].fixedCount += 1;
     });
-    return order.map(function (key) {
-      return { label: key, weapons: groups[key] };
-    });
+    var list = order.map(function (key) { return groups[key]; });
+    if (skill) {
+      list.sort(function (a, b) {
+        var aFixed = a.fixedCount > 0, bFixed = b.fixedCount > 0;
+        if (aFixed !== bFixed) return aFixed ? -1 : 1;
+        if (a.weapons.length !== b.weapons.length) return b.weapons.length - a.weapons.length;
+        return a.label < b.label ? -1 : (a.label > b.label ? 1 : 0);
+      });
+    }
+    return list;
+  }
+
+  // 战技的默认武器：分组后第一组的第一把（含固定武器的组优先，组内固定武器优先）。
+  function defaultWeaponFor(skillsData, skill) {
+    var groups = groupWeapons(weaponsForSkill(skillsData, skill), skill);
+    return groups.length && groups[0].weapons.length ? groups[0].weapons[0] : null;
   }
 
   function foldText(value) {
@@ -3520,7 +3538,7 @@
     if (!skill) return "<p class='ranker-note'>找不到这个战技。</p>";
     var weapons = weaponsForSkill(state.skillsData, skill);
     var sources = weaponSourceMap(skill);
-    var groups = groupWeapons(weapons);
+    var groups = groupWeapons(weapons, skill);
     var options = groups.map(function (group) {
       return "<optgroup label='" + esc(group.label) + "'>" + group.weapons.map(function (weapon) {
         var selected = weapon.id === state.selection.weaponId ? " selected" : "";
@@ -4603,8 +4621,8 @@
     state.overviewLimit = PAGE_SIZE;
     if (kind === "skill") {
       var skill = (state.skillsData._skillById || {})[id];
-      var weapons = weaponsForSkill(state.skillsData, skill);
-      state.selection = { kind: "skill", id: id, weaponId: weapons.length ? weapons[0].id : null };
+      var weapon = defaultWeaponFor(state.skillsData, skill);
+      state.selection = { kind: "skill", id: id, weaponId: weapon ? weapon.id : null };
     } else {
       state.selection = { kind: kind, id: id, weaponId: null };
     }
@@ -5073,6 +5091,7 @@
       weaponOptionLabel: weaponOptionLabel,
       weaponsForSkill: weaponsForSkill,
       groupWeapons: groupWeapons,
+      defaultWeaponFor: defaultWeaponFor,
       hasAnyDamage: hasAnyDamage,
       skillHasDamage: skillHasDamage,
       buildMeansItems: buildMeansItems,

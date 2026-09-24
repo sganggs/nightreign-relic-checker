@@ -120,7 +120,7 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 
 > 表里的 schemaVersion 是写死的：重新生成任何一套数据集时，请同步更新本表与
 > [`windows/renderer/pages/README.md`](../../windows/renderer/pages/README.md) 的
-> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 2 / buffs 6 / heroes 1）。
+> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 3 / buffs 6 / heroes 1）。
 
 「词条反查」页不使用新数据集，只用既有的 `affixes.json` 与 `relics.json`。原计划里的
 「削韧」没有单独成集：削韧数值（`atkSuperArmor` / `atkSuperArmorCorrection` /
@@ -435,7 +435,7 @@ custom 行，参数表里看不出这一列在本作什么时候生效。如果�
 - 体积：紧凑 JSON 从 1,559,309 字节（1.49 MiB）增加到 2,474,443 字节（2.36 MiB）。
   大头是 weaponSources，约 526 KB。连续生成两次，除 `generatedAt` 外逐字节一致。
 
-**三端现状**：本车道不改界面代码。三端目前都按 schemaVersion 2 读数据，也都只认 `skillVariant`。
+**三端现状**：本车道不改界面代码。三端目前都按 schemaVersion 2 读数据，也都只认 `skillVariant`。（2026-09-24 后续：三端已改为读 schemaVersion 3、按 `weapons[].skillVariants[skillId]` 选段、取段规则 `fpBoth || noFp 同侧`、notInvoked 段不进计算；武器选择器标「固定战技 / 局内可抽到」。）
 Android 的 `GameDataKey.SKILLS` 要求 schemaVersion 必须等于 2；Windows / macOS 的测试断言
 「variants 里的每把武器都用 skillVariant 指向这一套」。这些都需要后续车道改用 `skillVariants`
 并提升版本号，失败清单见本次提交说明。上表里的 skills schemaVersion 已改成 3；

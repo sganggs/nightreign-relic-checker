@@ -54,6 +54,8 @@ internal object RankerStrings {
     const val NO_FP_SWITCH = "使用专注值不足版本"
     const val NO_FP_HELP = "没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换"
     const val MARK_NO_FP = "专注值不足版"
+    /** fpBoth 段：正常版与专注值不足版两侧都计（与 Windows 的行内标记同文）。 */
+    const val MARK_FP_BOTH = "两版共用"
     const val MARK_BULLET = "子弹"
     const val MARK_NO_DAMAGE = "只挂状态"
     const val MARK_ADD_BASE = "额外加一份攻击力"

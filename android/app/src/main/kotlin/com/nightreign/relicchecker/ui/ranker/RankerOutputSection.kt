@@ -279,6 +279,7 @@ private fun SegmentDetail(position: Int, segment: SkillSegment, hit: SkillHit, o
         }
         val marks = buildList {
             if (hit.noFp) add(RankerStrings.MARK_NO_FP to NightColors.Amber)
+            if (hit.fpBoth) add(RankerStrings.MARK_FP_BOTH to NightColors.PurpleSoft)
             if (hit.isBullet) add(RankerStrings.MARK_BULLET to RankerPalette.Blue)
             if (hit.noDamage) add(RankerStrings.MARK_NO_DAMAGE to NightColors.TextMuted)
             if (hit.addBaseAtk) add(RankerStrings.MARK_ADD_BASE to NightColors.PurpleSoft)

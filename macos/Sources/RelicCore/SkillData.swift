@@ -1314,7 +1314,8 @@ public struct SkillDataIndex: Sendable {
 
     /// 法术：没有 variants，全部段都会打出；只用 flat 做配比（见 usage.法术 / 子弹段）。
     public func segments(for spell: SpellEntry) -> [SkillSegment] {
-        spell.hits.map { SkillDamageMath.segment(for: $0, weapon: nil) }
+        // 法术目前没有 TAE 核实（fieldNotes 说明），但与 Windows / Android 同口径：notInvoked 段不进计算。
+        spell.hits.filter { !$0.notInvoked }.map { SkillDamageMath.segment(for: $0, weapon: nil) }
     }
 
     public var summary: String {

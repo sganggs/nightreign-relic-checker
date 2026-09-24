@@ -2301,7 +2301,8 @@ class AttackPopulations:
         def hit_sets(hits: list[dict[str, Any]], extra: frozenset[int]) -> Counter:
             sets: Counter = Counter()
             for hit in hits:
-                if hit.get("noDamage") or hit.get("noVariant"):
+                # v3：TAE 判定永远打不出的段（notInvoked）不进实测人口，与三端页面的取段口径一致
+                if hit.get("noDamage") or hit.get("noVariant") or hit.get("notInvoked"):
                     continue
                 atk = atk_pc.get(str(hit.get("atkId")))
                 if atk is None:

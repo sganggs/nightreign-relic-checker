@@ -99,7 +99,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
                 badgeZh = "战技",
                 subtitleZh = "战技 · $weapons 把武器",
                 weaponCount = weapons,
-                segmentCount = skill.hits.size,
+                segmentCount = skill.hits.count { !it.notInvoked },
                 mp = null,
                 searchKey = "${skill.nameZh} ${skill.nameEn} 战技".foldedForSearch(),
             )
@@ -125,7 +125,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
                 badgeZh = kindZh,
                 subtitleZh = "$kindZh · 专注值 ${spell.mp}",
                 weaponCount = 0,
-                segmentCount = spell.hits.size,
+                segmentCount = spell.hits.count { !it.notInvoked },
                 mp = spell.mp,
                 searchKey = "${spell.nameZh} ${spell.nameEn} $kindZh".foldedForSearch(),
             )

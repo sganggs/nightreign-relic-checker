@@ -1654,3 +1654,34 @@ test("strongHtml：数据集原文的 **粗体** 标记转成 <strong>，其余�
   const html = R.strongHtml(skills.usage["本数据集的边界"]);
   assert.ok(html.includes("<strong>") && !html.includes("**"));
 });
+
+test("groupWeapons(weapons, skill) / defaultWeaponFor：三端同一排组规则——含固定武器的组在前、组内武器数降序、类别名升序；默认武器是第一组第一把", () => {
+  const withBoth = skills.skills.filter((skill) => (skill.weaponSources || []).some((one) => one.fixed) && (skill.weaponSources || []).some((one) => one.pool && !one.fixed));
+  assert.ok(withBoth.length >= 10);
+  withBoth.forEach((skill) => {
+    const weapons = R.weaponsForSkill(skills, skill);
+    const groups = R.groupWeapons(weapons, skill);
+    const fixedIds = new Set(skill.weaponSources.filter((one) => one.fixed).map((one) => one.id));
+    const hasFixed = groups.map((group) => group.weapons.some((weapon) => fixedIds.has(weapon.id)));
+    // 含固定武器的组全部在前
+    const firstPoolOnly = hasFixed.indexOf(false);
+    assert.ok(firstPoolOnly === -1 || hasFixed.slice(firstPoolOnly).every((flag) => !flag), `${skill.id} 组序`);
+    // 同一侧内按武器数降序，数量相同按类别名升序
+    for (let i = 1; i < groups.length; i += 1) {
+      if (hasFixed[i - 1] !== hasFixed[i]) continue;
+      const a = groups[i - 1], b = groups[i];
+      assert.ok(a.weapons.length > b.weapons.length || (a.weapons.length === b.weapons.length && a.label < b.label), `${skill.id} ${a.label}/${b.label}`);
+    }
+    // 默认武器 = 第一组第一把，且是固定武器
+    const def = R.defaultWeaponFor(skills, skill);
+    assert.equal(def.id, groups[0].weapons[0].id);
+    assert.ok(fixedIds.has(def.id));
+  });
+  // 103 回旋斩：与 macOS / Android 一致，默认武器落在最大的固定组（曲剑）里的最小 id
+  const spin = skills.skills.find((skill) => skill.id === 103);
+  assert.equal(R.defaultWeaponFor(skills, spin).id, 7000000);
+  // 不传 skill 时保持首次出现顺序（旧行为）
+  const lion = skills.skills.find((skill) => skill.id === 100);
+  const flat = R.weaponsForSkill(skills, lion);
+  assert.equal(R.groupWeapons(flat)[0].weapons[0].id, flat[0].id);
+});

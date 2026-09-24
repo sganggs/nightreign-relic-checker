@@ -1865,7 +1865,7 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
         counter: &count
     )
 
-    // ⑤ 1188 狩猎大蛇：只有 17030000 大蛇猎刀（固定 + 池两者皆是 → 标固定）；只剩两段近战 L2 与各自的无 FP 版，
+    // ⑤ 1188 狩猎大蛇：只有 17030000 大蛇狩猎矛（固定 + 池两者皆是 → 标固定）；只剩两段近战 L2 与各自的无 FP 版，
     //    光之束 301703900/901（gated）、301703905/975（notInvoked）、301703955（roarR2Only）永远打不出。
     try rankerExpect(
         serpentHunt.weaponIds == [17030000] && serpentHunt.weaponSources.first?.fixed == true
