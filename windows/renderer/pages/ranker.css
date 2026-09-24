@@ -84,8 +84,9 @@
   gap: 12px;
 }
 
+/* 类型开关三档：战技 / 魔法 / 祷告 */
 .ranker-means-kind {
-  grid-template-columns: repeat(2, minmax(96px, auto));
+  grid-template-columns: repeat(3, minmax(72px, auto));
 }
 
 .ranker-means-search {

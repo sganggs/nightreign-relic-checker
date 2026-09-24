@@ -772,13 +772,123 @@ test("buildMeansItems / filterMeans：中英文都能搜到，且只收算得出
   const sample = items.find((item) => item.kind === "skill" && item.nameZh && item.nameEn);
   assert.ok(filterMeansHas(items, sample.nameZh, "skill", sample.id));
   assert.ok(filterMeansHas(items, sample.nameEn.toUpperCase(), "skill", sample.id), "英文搜索要忽略大小写");
-  assert.equal(R.filterMeans(items, "", "spell").every((item) => item.kind !== "skill"), true);
-  assert.equal(R.filterMeans(items, "", "skill").every((item) => item.kind === "skill"), true);
+  // 类型开关三档：每一档只出对应类别（游戏里魔法与祷告是两类）。
+  R.MEANS_KINDS.forEach((kind) => {
+    const listed = R.filterMeans(items, "", kind);
+    assert.ok(listed.length > 0, kind + " 一档应当有条目");
+    assert.equal(listed.every((item) => item.kind === kind), true, kind + " 一档只列同类");
+  });
 });
 
 function filterMeansHas(items, query, kind, id) {
   return R.filterMeans(items, query, kind).some((item) => item.id === id);
 }
+
+// ------------------------------------------------------------------ 输出手段类型开关（战技 / 魔法 / 祷告）
+
+test("类型开关三档：战技 / 魔法 / 祷告各自只列本类，三档合起来正好是整张列表", () => {
+  assert.deepEqual(R.MEANS_KINDS, ["skill", "sorcery", "incantation"], "展示顺序，默认第一档");
+  const items = R.buildMeansItems(skills);
+  const byKind = {};
+  R.MEANS_KINDS.forEach((kind) => { byKind[kind] = R.filterMeans(items, "", kind); });
+
+  assert.ok(byKind.skill.length > 0 && byKind.sorcery.length > 0 && byKind.incantation.length > 0);
+  assert.equal(byKind.skill.every((item) => item.kind === "skill"), true, "战技档只有战技");
+  // 魔法／祷告两档按 spells[].kind 分开，与数据集的 kindZh 一一对应。
+  byKind.sorcery.forEach((item) => {
+    const spell = skills._spellById[item.id];
+    assert.equal(spell.kind, "sorcery", item.nameZh + " 不该出现在魔法档");
+    assert.equal(item.spellKind, "sorcery");
+    assert.equal(item.badge, spell.kindZh || "魔法");
+  });
+  byKind.incantation.forEach((item) => {
+    const spell = skills._spellById[item.id];
+    assert.equal(spell.kind, "incantation", item.nameZh + " 不该出现在祷告档");
+    assert.equal(item.spellKind, "incantation");
+    assert.equal(item.badge, spell.kindZh || "祷告");
+  });
+  assert.equal(byKind.sorcery.some((item) => item.badge === "祷告"), false);
+  assert.equal(byKind.incantation.some((item) => item.badge === "魔法"), false);
+
+  // 三档不重不漏。
+  const ids = (list) => list.map((item) => item.kind + ":" + item.id);
+  const union = ids(byKind.skill).concat(ids(byKind.sorcery), ids(byKind.incantation));
+  assert.equal(new Set(union).size, union.length, "同一条不会出现在两档");
+  assert.deepEqual(union.slice().sort(), ids(items).sort(), "三档合起来是整张列表");
+
+  // 已知条目落在该落的档：帚星（魔法）、死亡雷击（祷告，对拍用例 5040）。
+  const comet = items.find((item) => item.nameZh === "帚星");
+  assert.ok(comet, "帚星应当在列表里");
+  assert.ok(filterMeansHas(items, "帚星", "sorcery", comet.id));
+  assert.equal(filterMeansHas(items, "帚星", "incantation", comet.id), false);
+  assert.equal(filterMeansHas(items, "帚星", "skill", comet.id), false);
+  assert.ok(filterMeansHas(items, "", "incantation", 5040), "死亡雷击在祷告档");
+  assert.equal(filterMeansHas(items, "", "sorcery", 5040), false, "死亡雷击不在魔法档");
+
+  // 搜索只在当前档里搜：拿一条祷告的英文名，在祷告档搜得到，在魔法／战技档搜不到。
+  const incant = byKind.incantation.find((item) => item.nameEn);
+  assert.ok(filterMeansHas(items, incant.nameEn.toLowerCase(), "incantation", incant.id));
+  assert.equal(R.filterMeans(items, incant.nameEn, "sorcery").some((item) => item.id === incant.id), false);
+  assert.equal(R.filterMeans(items, incant.nameEn, "skill").some((item) => item.id === incant.id), false);
+});
+
+test("类型开关：兼容旧的二档取值 spell（＝魔法＋祷告），认不出的取值不按类别过滤", () => {
+  const items = R.buildMeansItems(skills);
+  const spells = R.filterMeans(items, "", "spell");
+  assert.equal(spells.every((item) => item.kind !== "skill"), true);
+  assert.equal(spells.length, R.filterMeans(items, "", "sorcery").length + R.filterMeans(items, "", "incantation").length);
+  assert.equal(R.filterMeans(items, "", undefined).length, items.length);
+  assert.equal(R.filterMeans(items, "", "all").length, items.length);
+
+  // 条目按 spellKind 分档；没有 spellKind 的旧式条目（kind 仍写 spell）同样能分开。
+  const legacy = [
+    { kind: "skill", id: 1, search: "a" },
+    { kind: "spell", spellKind: "incantation", id: 2, search: "b" },
+    { kind: "spell", spellKind: "sorcery", id: 3, search: "c" },
+    { kind: "incantation", id: 4, search: "d" },
+    { kind: "sorcery", id: 5, search: "e" }
+  ];
+  const idsOf = (kind) => R.filterMeans(legacy, "", kind).map((item) => item.id);
+  assert.deepEqual(idsOf("skill"), [1]);
+  assert.deepEqual(idsOf("sorcery"), [3, 5]);
+  assert.deepEqual(idsOf("incantation"), [2, 4]);
+  assert.deepEqual(idsOf("spell"), [2, 3, 4, 5]);
+  assert.deepEqual(legacy.map(R.meansKindOf), ["skill", "incantation", "sorcery", "incantation", "sorcery"]);
+  assert.equal(R.spellKindOf({ kind: "incantation" }), "incantation");
+  assert.equal(R.spellKindOf({ kind: "sorcery" }), "sorcery");
+
+  // 状态里的档位只认三档，其余（含旧的 spell）回落到默认的战技。
+  assert.equal(R.normalizeMeansKind("sorcery"), "sorcery");
+  assert.equal(R.normalizeMeansKind("incantation"), "incantation");
+  assert.equal(R.normalizeMeansKind("skill"), "skill");
+  assert.equal(R.normalizeMeansKind("spell"), "skill");
+  assert.equal(R.normalizeMeansKind(undefined), "skill");
+});
+
+test("类型开关：三个按钮、文案读表、当前档高亮（data-ranker-means-kind）", () => {
+  const html = R.meansKindButtonsHtml("incantation");
+  const buttons = [...html.matchAll(/<button class='segment-button( is-active)?'[^>]*aria-checked='(true|false)' data-ranker-means-kind='([a-z]+)'>([^<]*)<\/button>/g)];
+  assert.equal(buttons.length, 3);
+  assert.deepEqual(buttons.map((m) => m[3]), ["skill", "sorcery", "incantation"]);
+  assert.deepEqual(buttons.map((m) => m[4]), ["战技", "魔法", "祷告"]);
+  assert.deepEqual(buttons.map((m) => Boolean(m[1])), [false, false, true], "只有当前档高亮");
+  assert.deepEqual(buttons.map((m) => m[2]), ["false", "false", "true"]);
+  assert.equal(html.indexOf("法术"), -1, "开关上不再出现「法术」");
+});
+
+test("输出手段文案（三端同名同值）", () => {
+  assert.deepEqual(R.TEXT.meansKind, { skill: "战技", sorcery: "魔法", incantation: "祷告" });
+  assert.deepEqual(R.TEXT.meansCard, { subtitle: "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器" });
+  assert.deepEqual(R.TEXT.meansSearch, { placeholder: "搜索战技 / 魔法 / 祷告名称", empty: "没有匹配的输出手段" });
+  assert.equal(R.TEXT.meansSpellFlatNote, "魔法／祷告的段只用固定值");
+  assert.equal(R.TEXT.pageSubtitle, "选一个战技、魔法或祷告，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤");
+  assert.equal(R.TEXT.otherInnateNoWeapon, "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果");
+  // 原来写死在渲染层的旧文案不能再出现。
+  const source = readFileSync(path.join(repoRoot, "windows", "renderer", "pages", "ranker.js"), "utf8");
+  ["法术（魔法／祷告）", "搜索战技或法术", "搜索战技 / 法术名称", "没有匹配的战技／法术", "法术段只用固定值"].forEach((text) => {
+    assert.equal(source.indexOf(text), -1, "「" + text + "」应改为读表");
+  });
+});
 
 test("groupWeapons：按武器类别中文名分组，组内保持原顺序", () => {
   const multi = skills.skills.find((skill) => (skill.weaponIds || []).length > 5);

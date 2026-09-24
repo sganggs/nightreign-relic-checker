@@ -11,7 +11,7 @@
 //       ctx.Core + ctx.catalog    → 遗物合法性（core.js 的 check / isEligible / canonicalOrder）
 //
 // 页面结构：「自己组一套配置」
-//   ① 输出手段：战技（+ 武器）或法术；分段勾选、伤害构成（与旧版相同，算法不变）。
+//   ① 输出手段：战技（+ 武器）、魔法或祷告（类型开关三档，只做界面层过滤）；分段勾选、伤害构成（与旧版相同，算法不变）。
 //   ② 常规 / 深夜开关（slotRules.modes）：决定武器词条上限、深夜专属上限、遗物格数。
 //   ③ 局内武器词条栏（weaponAffixes）：按对当前输出的有效倍率排序，数量步进，受上限约束。
 //   ④ 遗物栏：3 或 6 张卡，每张二选一——官方固定词条遗物（fixedRelics）或自组
@@ -37,7 +37,8 @@
 //     （同增幅取 ID 小的），不选条件型、叠层与累积阶梯。
 // 配置部分的文案串全部集中在下方 TEXT 常量表，与 macOS 端 LoadoutText.table 是同一张表（点号路径逐键对照，
 // 两端测试都校验同一个摘要）。原样保留的输出手段／分段命中／伤害构成／底部原文折叠沿用旧版的行内文案，不在此表；
-// 例外是 v3 新增的武器来源标记（weaponSource.*），三端同名同值，也放在表里。
+// 例外是 v3 新增的武器来源标记（weaponSource.*）与输出手段的类型开关／检索框文案（meansKind.* / meansCard.* /
+// meansSearch.* / meansSpellFlatNote），三端同名同值，也放在表里。
 // 本页只做「相对伤害构成」：没有强化等级、能力值补正与 AttackElementCorrectParam，绝对伤害不在范围内。
 (function (root) {
   "use strict";
@@ -94,6 +95,9 @@
   // 输出类别（appliesTo 的键）。战技的子弹段同样按 skill。
   var OUTPUT_CLASSES = ["skill", "sorcery", "incantation"];
 
+  // 输出手段类型开关的三档（展示顺序，默认第一档）。只做界面层过滤，文案取 TEXT.meansKind。
+  var MEANS_KINDS = ["skill", "sorcery", "incantation"];
+
   // 法术的「出手武器」：魔法由手杖（wepType 57）施放，祷告由圣印记（61）施放
   // （notes.userQuestions.Q2 的口径）。用于 requires.attackWeaponTypes 与武器词条栏的类别过滤。
   var CASTER_WEP_TYPE = { sorcery: 57, incantation: 61 };
@@ -133,10 +137,17 @@
   // 带 {0} {1} 的是格式串，由 fmt() 按位置替换；macOS 端 LoadoutText.table 按点号路径逐键同文。
   var TEXT = {
     pageTitle: "增伤排名",
-    pageSubtitle: "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
+    pageSubtitle: "选一个战技、魔法或祷告，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
     noData: "数据未内置",
     loadoutMissing: "增益数据缺少配置页需要的字段（slotRules／appliesTo，需 schemaVersion 6）",
     schemaTooOld: "增益数据是 schemaVersion {0}：本页按 v6 的 appliesTo / slotRules / exclusiveKey 组配置，旧数据缺这些字段，结果不可信",
+    // 输出手段 · 类型开关三档（战技 / 魔法 / 祷告，游戏里魔法与祷告是两类）、检索框与选中魔法／祷告时的标记。
+    // 只是界面层的过滤：输出手段条目与所选的 kind 不变，生效判定照旧按 appliesTo 的 skill / sorcery / incantation。
+    // 三端同名同值（macOS LoadoutText.table / 安卓文案表）。
+    meansKind: { skill: "战技", sorcery: "魔法", incantation: "祷告" },
+    meansCard: { subtitle: "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器" },
+    meansSearch: { placeholder: "搜索战技 / 魔法 / 祷告名称", empty: "没有匹配的输出手段" },
+    meansSpellFlatNote: "魔法／祷告的段只用固定值",
     // 输出手段 · 武器选择器（skills schemaVersion 3 的 weaponSources：固定战技 / 局内战技池）
     weaponSource: {
       fixed: "固定战技",
@@ -378,7 +389,7 @@
     otherIntro: "不占槽位，按需勾选；勾选即视为条件成立，叠层类勾选后先填一局实际上限、累积阶梯先选最高层（都可以改）",
     otherAutoInnate: "当前武器固有，自动列入",
     otherInnateHint: "当前武器的固有效果自动列入（取消勾选可排除）：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数",
-    otherInnateNoWeapon: "法术没有出手武器，这里只有需手动勾选的固有效果",
+    otherInnateNoWeapon: "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果",
     // 道具等级（buffs v6 的 goodsLevel）：「道具」分栏里 goodsLevel ≥ 2 的行在名字旁标 tag（悬停看 hint），
     // 分栏说明区给 note。三端同名同值（macOS LoadoutText.table / 安卓文案表）。
     goodsLevel: {
@@ -3045,7 +3056,7 @@
         id: skill.id,
         nameZh: skill.nameZh || "",
         nameEn: skill.nameEn || "",
-        badge: "战技",
+        badge: TEXT.meansKind.skill,
         badgeColor: "purple",
         weaponCount: Array.isArray(skill.weaponIds) ? skill.weaponIds.length : 0,
         search: foldText((skill.nameZh || "") + " " + (skill.nameEn || ""))
@@ -3054,13 +3065,15 @@
     ((skillsData && skillsData.spells) || []).forEach(function (spell) {
       if (!Array.isArray(spell.hits) || !spell.hits.length) return;
       if (!hasAnyDamage(spell.hits, null, true)) return;
+      var spellKind = spellKindOf(spell);
       items.push({
-        kind: spell.kind === "incantation" ? "incantation" : "sorcery",
+        kind: spellKind,
+        spellKind: spellKind,
         id: spell.id,
         nameZh: spell.nameZh || "",
         nameEn: spell.nameEn || "",
-        badge: spell.kindZh || (spell.kind === "incantation" ? "祷告" : "魔法"),
-        badgeColor: spell.kind === "incantation" ? "amber" : "blue",
+        badge: spell.kindZh || TEXT.meansKind[spellKind],
+        badgeColor: spellKind === "incantation" ? "amber" : "blue",
         mp: spell.mp,
         search: foldText((spell.nameZh || "") + " " + (spell.nameEn || ""))
       });
@@ -3068,11 +3081,34 @@
     return items;
   }
 
+  // 法术的类别：spells[].kind 只有 sorcery / incantation 两种，认不出的按魔法（与施法器口径一致）。
+  function spellKindOf(spell) {
+    return spell && spell.kind === "incantation" ? "incantation" : "sorcery";
+  }
+
+  // 一条输出手段落在类型开关的哪一档：战技 → skill；法术条目按 spellKind（没有就看条目自己的 kind，
+  // 即原始 spells[].kind）分成 sorcery / incantation。
+  function meansKindOf(item) {
+    if (!item || item.kind === "skill") return "skill";
+    return (item.spellKind || item.kind) === "incantation" ? "incantation" : "sorcery";
+  }
+
+  // 类型开关的取值规整：只认三档，其余（含旧的二档取值 spell）回落到默认的「战技」。
+  function normalizeMeansKind(kind) {
+    return MEANS_KINDS.indexOf(kind) !== -1 ? kind : "skill";
+  }
+
+  // kind：skill / sorcery / incantation 只出对应一档；兼容旧的二档取值 spell（＝魔法＋祷告）；
+  // 不给（或认不出）就不按类别过滤。
   function filterMeans(items, query, kind) {
     var folded = foldText(query).trim();
     return (items || []).filter(function (item) {
-      if (kind === "skill" && item.kind !== "skill") return false;
-      if (kind === "spell" && item.kind === "skill") return false;
+      var itemKind = meansKindOf(item);
+      if (kind === "spell") {
+        if (itemKind === "skill") return false;
+      } else if (MEANS_KINDS.indexOf(kind) !== -1 && itemKind !== kind) {
+        return false;
+      }
       if (!folded) return true;
       return item.search.indexOf(folded) !== -1;
     });
@@ -3284,7 +3320,7 @@
     cfgIndex: null,
     catalogRef: null,
     means: [],
-    meansKind: "skill",
+    meansKind: "skill",   // 类型开关当前档：skill / sorcery / incantation（MEANS_KINDS）
     meansQuery: "",
     selection: null,      // { kind, id, weaponId }
     hand: 1,
@@ -3484,28 +3520,31 @@
       ? "<p class='ranker-note'>共 " + list.length + " 条，先显示前 " + shown.length +
         " 条，请继续输入关键字缩小范围。</p>"
       : "";
-    return (rows || "<p class='ranker-empty'>没有匹配的战技／法术</p>") + more;
+    return (rows || "<p class='ranker-empty'>" + esc(TEXT.meansSearch.empty) + "</p>") + more;
+  }
+
+  // 类型开关三档（战技 / 魔法 / 祷告）的按钮，active 是当前档。
+  function meansKindButtonsHtml(active) {
+    return MEANS_KINDS.map(function (key) {
+      var on = active === key;
+      return "<button class='segment-button" + (on ? " is-active" : "") + "' type='button' role='radio' " +
+        "aria-checked='" + (on ? "true" : "false") + "' data-ranker-means-kind='" + key + "'>" +
+        esc(TEXT.meansKind[key]) + "</button>";
+    }).join("");
   }
 
   function pickerHtml() {
-    var kindButtons = [
-      { key: "skill", label: "战技" },
-      { key: "spell", label: "法术（魔法／祷告）" }
-    ].map(function (option) {
-      var active = state.meansKind === option.key ? " is-active" : "";
-      return "<button class='segment-button" + active + "' type='button' data-ranker-means-kind='" +
-        option.key + "'>" + esc(option.label) + "</button>";
-    }).join("");
+    var kindButtons = meansKindButtonsHtml(state.meansKind);
     // 战技数据 schemaVersion < 3：照样渲染，但选段缺局内战技池与 TAE 核实，明确提示结果不可信。
     var schemaWarn = skillsSchemaWarning(state.skillsData);
 
     return "<div class='section-heading'><div class='section-icon'>◎</div>" +
-      "<div><h2>输出手段</h2><p>搜索战技或法术（中文／英文名都可）；战技再选一把武器</p></div></div>" +
+      "<div><h2>输出手段</h2><p>" + esc(TEXT.meansCard.subtitle) + "</p></div></div>" +
       "<div class='ranker-picker-row'>" +
       "<div class='segmented-control ranker-means-kind' role='radiogroup' aria-label='输出手段类型' " +
       "data-testid='ranker-means-kind'>" + kindButtons + "</div>" +
       "<label class='search-field ranker-means-search'><span aria-hidden='true'>⌕</span>" +
-      "<input type='search' placeholder='搜索战技 / 法术名称' autocomplete='off' " +
+      "<input type='search' placeholder='" + esc(TEXT.meansSearch.placeholder) + "' autocomplete='off' " +
       "data-testid='ranker-means-search'></label>" +
       "</div>" +
       "<div class='ranker-means-list' data-testid='ranker-means-list'>" + meansListHtml() + "</div>" +
@@ -3556,8 +3595,9 @@
       return "<div class='ranker-selection' data-testid='ranker-selection'>" +
         "<div class='ranker-selection-name'>" + esc(spell.nameZh || spell.nameEn) +
         "<span class='ranker-means-en'>" + esc(spell.nameEn) + "</span></div>" +
-        "<div class='ranker-selection-pills'>" + pill(spell.kindZh || "法术", spell.kind === "incantation" ? "amber" : "blue") +
-        pill("专注值 " + spell.mp, "gray") + pill("法术段只用固定值", "gray") + "</div>" +
+        "<div class='ranker-selection-pills'>" +
+        pill(spell.kindZh || TEXT.meansKind[spellKindOf(spell)], spellKindOf(spell) === "incantation" ? "amber" : "blue") +
+        pill("专注值 " + spell.mp, "gray") + pill(TEXT.meansSpellFlatNote, "gray") + "</div>" +
         "<div class='ranker-picker-row'>" + handControlHtml() + "</div>" +
         "<p class='ranker-note'>法术没有武器动作套：按 usage「法术 / 子弹段」只取每段的固定伤害值（flat），" +
         "不把 motion 乘到施法器攻击力上。武器槽用于匹配 appliesTo 的 requires.hand——" +
@@ -3587,7 +3627,7 @@
     return "<div class='ranker-selection' data-testid='ranker-selection'>" +
       "<div class='ranker-selection-name'>" + esc(skill.nameZh || skill.nameEn) +
       "<span class='ranker-means-en'>" + esc(skill.nameEn) + "</span></div>" +
-      "<div class='ranker-selection-pills'>" + pill("战技", "purple") +
+      "<div class='ranker-selection-pills'>" + pill(TEXT.meansKind.skill, "purple") +
       pill(weapons.length + " 把武器可用", "gray") +
       (sourceCount.fixed ? pill(TEXT.weaponSource.fixed + " " + sourceCount.fixed, "gray") : "") +
       (sourceCount.pool ? pill(TEXT.weaponSource.pool + " " + sourceCount.pool, "gray") : "") +
@@ -4698,7 +4738,8 @@
     var target = event.target;
     var meansKind = target.closest("[data-ranker-means-kind]");
     if (meansKind) {
-      state.meansKind = meansKind.dataset.rankerMeansKind;
+      // 只换列表的档位，已选的输出手段（哪怕是另一档的）原样保留。
+      state.meansKind = normalizeMeansKind(meansKind.dataset.rankerMeansKind);
       renderPicker();
       return;
     }
@@ -5022,6 +5063,7 @@
       USEFUL_EPSILON: USEFUL_EPSILON,
       EPSILON: EPSILON,
       OUTPUT_CLASSES: OUTPUT_CLASSES,
+      MEANS_KINDS: MEANS_KINDS,
       CASTER_WEP_TYPE: CASTER_WEP_TYPE,
       COLUMN_ORDER: COLUMN_ORDER,
       OTHER_SLOTS: OTHER_SLOTS,
@@ -5140,6 +5182,10 @@
       buildMeansItems: buildMeansItems,
       meansWithoutDamage: meansWithoutDamage,
       filterMeans: filterMeans,
+      meansKindOf: meansKindOf,
+      spellKindOf: spellKindOf,
+      normalizeMeansKind: normalizeMeansKind,
+      meansKindButtonsHtml: meansKindButtonsHtml,
       fmtMultiplier: fmtMultiplier,
       fmtPercent: fmtPercent,
       fmtGain: fmtGain,

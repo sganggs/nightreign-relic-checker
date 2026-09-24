@@ -699,10 +699,12 @@ function fnv1a(text) {
   return hash.toString(16).padStart(8, "0");
 }
 
-// 文案常量表：点号路径排序后逐行「路径=文案」。skip＝要排除的路径前缀（只用于核对「只多了哪几个键」）。
-function textTableDigest(skip) {
-  const flat = R.flattenText(R.TEXT);
-  const keys = Object.keys(flat).filter((key) => !(skip && key.startsWith(skip)))
+// 文案常量表：点号路径排序后逐行「路径=文案」。只用于核对「这一版只动了哪几个键」：
+//   skip＝要排除的路径（以「.」结尾的按前缀排除，否则按整条路径）；restore＝把这些路径换回旧值。
+function textTableDigest(skip, restore) {
+  const flat = Object.assign({}, R.flattenText(R.TEXT), restore || {});
+  const skipped = (key) => (skip || []).some((one) => (one.endsWith(".") ? key.startsWith(one) : key === one));
+  const keys = Object.keys(flat).filter((key) => !skipped(key))
     .sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
   return { count: keys.length, digest: fnv1a(keys.map((key) => key + "=" + flat[key]).join("\n")) };
 }
@@ -715,19 +717,33 @@ function briefDigest(notes) {
 // 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新。
 // 摘要算法不变（FNV-1a 32 位，点号路径排序后逐行「路径=文案」）。
 //   skills v3：多了四个 weaponSource.* 键（fixed / pool / poolHint / note），332 → 336 条，854da404 → 07a69c5e；
-//   buffs v6 道具等级：再多三个 goodsLevel.* 键（tag / hint / note），336 → 339 条，07a69c5e → 41e2ae25。
-const TEXT_TABLE_DIGEST = "41e2ae25";
-const TEXT_TABLE_COUNT = 339;
+//   buffs v6 道具等级：再多三个 goodsLevel.* 键（tag / hint / note），336 → 339 条，07a69c5e → 41e2ae25；
+//   输出手段类型开关拆成三档（战技 / 魔法 / 祷告）：多七个键（meansKind.skill / sorcery / incantation、
+//   meansCard.subtitle、meansSearch.placeholder / empty、meansSpellFlatNote），pageSubtitle 与
+//   otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），339 → 346 条，41e2ae25 → 446c874b。
+const TEXT_TABLE_DIGEST = "446c874b";
+const TEXT_TABLE_COUNT = 346;
+const TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND = "41e2ae25";
 const TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL = "07a69c5e";
+// 三档那一版新增的键与改值键的旧值（去掉新增键、换回旧值，摘要应回到上一版）。
+const MEANS_KIND_ADDED = ["meansKind.", "meansCard.", "meansSearch.", "meansSpellFlatNote"];
+const MEANS_KIND_RESTORE = {
+  pageSubtitle: "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
+  otherInnateNoWeapon: "法术没有出手武器，这里只有需手动勾选的固有效果"
+};
 const BRIEF_DIGEST = "ad04314d";
 
 test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
   const { count, digest } = textTableDigest();
   assert.equal(count, TEXT_TABLE_COUNT, "文案条数");
   assert.equal(digest, TEXT_TABLE_DIGEST, "文案常量表摘要（macOS 端 checkLoadoutParity 断言同一个值）");
-  // 这一版只多了 goodsLevel.* 三个键：去掉它们，摘要回到上一版的值（其余文案一字未动）。
-  const before = textTableDigest("goodsLevel.");
-  assert.equal(before.count, TEXT_TABLE_COUNT - 3);
+  // 这一版只多了七个输出手段类型开关的键、改了两句「法术」：去掉新增键、换回旧值，摘要回到上一版（其余文案一字未动）。
+  const beforeMeans = textTableDigest(MEANS_KIND_ADDED, MEANS_KIND_RESTORE);
+  assert.equal(beforeMeans.count, TEXT_TABLE_COUNT - 7);
+  assert.equal(beforeMeans.digest, TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND, "除 meansKind.* 等七个新键与两句改值外文案不变");
+  // 再往前一版只多了 goodsLevel.* 三个键：再去掉它们，摘要回到那一版的值。
+  const before = textTableDigest(MEANS_KIND_ADDED.concat(["goodsLevel."]), MEANS_KIND_RESTORE);
+  assert.equal(before.count, TEXT_TABLE_COUNT - 7 - 3);
   assert.equal(before.digest, TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL, "除 goodsLevel.* 外文案不变");
 });
 
