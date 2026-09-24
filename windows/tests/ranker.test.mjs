@@ -963,6 +963,33 @@ test("v3：skills schemaVersion < 3 要提示结果不可信", () => {
   assert.ok(R.skillsSchemaWarning(null).indexOf("结果不可信") !== -1);
 });
 
+test("v3 修订：spells[] 只收可施放的法术——没有 8100 / 8101「风暴管束者」，每个法术都列出施法器", () => {
+  const ids = new Set(skills.spells.map((spell) => spell.id));
+  [8100, 8101].forEach((id) => {
+    assert.equal(ids.has(id), false, id + " 是 Magic 残留行（本作的风暴管束者是战技 1200），不在 spells[]");
+    assert.equal(skills._spellById[id], undefined);
+  });
+  const dropped = (skills.coverage && skills.coverage.spellsNotCastable) || [];
+  assert.deepEqual(dropped.map((one) => one.id), [8100, 8101], "不可施放的两行列在 coverage.spellsNotCastable");
+  dropped.forEach((one) => assert.deepEqual(one.sameNameSkillIds, [1200]));
+  assert.ok(skills._skillById[1200] && (skills._skillById[1200].weaponIds || []).length > 0, "同名战技 1200 仍在、且有武器");
+
+  // 每个法术都有施法器：魔法＝手杖（57）、祷告＝圣印记（61），与页面按施法器判定 attackWeaponTypes 的口径一致。
+  skills.spells.forEach((spell) => {
+    assert.ok(Array.isArray(spell.casterWeaponIds) && spell.casterWeaponIds.length > 0, spell.id + " 缺 casterWeaponIds");
+    spell.casterWeaponIds.forEach((id) => {
+      const weapon = skills._weaponById[id];
+      assert.ok(weapon, spell.id + " 的施法器 " + id + " 不在 weapons[]");
+      assert.equal(weapon.wepType, R.CASTER_WEP_TYPE[spell.kind], spell.id + " 的施法器 " + id + " 类别不对");
+    });
+  });
+
+  // 输出手段列表里自然也没有它们（它们修订前各带 2 段固定值，会被当成玩家法术参与排名）。
+  const listed = R.buildMeansItems(skills).filter((item) => item.kind !== "skill").map((item) => item.id);
+  assert.ok(listed.length > 0);
+  assert.equal(listed.some((id) => id === 8100 || id === 8101), false);
+});
+
 test("列表一律显示 displayNameZh（notes.displayName：nameZh 重名极多）", () => {
   const withDisplay = buffs.buffs.find((buff) => buff.displayNameZh);
   assert.equal(R.buffDisplayName(withDisplay), withDisplay.displayNameZh);
@@ -1009,6 +1036,49 @@ test("indexBuff：带出 v6 的来源槽位 / appliesTo / 互斥键 / 叠层输�
   assert.equal(byId[1877].pairRole, "ally");
   assert.equal(byId[1877].target, "ally");
   assert.deepEqual(byId[7050301].goodsIds, [1210], "requiresGoodsIds 原样带出");
+});
+
+// ------------------------------------------------------------------ 道具等级（v6 goodsLevel，携物知识）
+
+test("道具等级：goodsLevel ≥ 2 的行标「携物知识 N 级」、1 级不标；文案三端同名同值", () => {
+  // 三端同一组键与文案（macOS LoadoutText.table / 安卓文案表逐字相同）。
+  assert.deepEqual(R.TEXT.goodsLevel, {
+    tag: "携物知识 {0} 级",
+    hint: "学者的能力「携物知识」把道具提升到这一级后才有这条效果；其它角色只有 1 级。",
+    note: "道具的 2／3 级效果来自学者的能力「携物知识」，未升级的道具只有 1 级效果。"
+  });
+
+  // indexBuff 带出 goodsLevel（缺省＝1 级）；勇者肉块三行 3950 / 708420 / 708421。
+  assert.equal(index.byId[3950].goodsLevel, 1);
+  assert.equal(index.byId[708420].goodsLevel, 2);
+  assert.equal(index.byId[708421].goodsLevel, 3);
+  assert.equal(R.goodsLevelTag(index.byId[3950]), "");
+  assert.equal(R.goodsLevelTag(index.byId[708420]), "携物知识 2 级");
+  assert.equal(R.goodsLevelTag(index.byId[708421]), "携物知识 3 级");
+  assert.equal(R.goodsLevelTag(null), "");
+  assert.equal(R.goodsLevelTag(synth(-90, { goodsLevel: 2, goodsLevels: [2, 3] })), "携物知识 2 级", "2、3 级共用的行按最低那一级标");
+  assert.equal(R.goodsLevelTag(synth(-91, { goodsLevels: [1, 2, 3] })), "", "各级共用的 1 级行（如 500925）不标");
+
+  // 全表：「其它增益」各栏的每一行按数据的 goodsLevel 标；只有「道具」栏有等级行，也只有它给说明。
+  let tagged = 0;
+  R.OTHER_SLOTS.forEach((slot) => {
+    (cfgIndex.otherRows[slot] || []).forEach((row) => {
+      const level = row.entries[0].buff.goodsLevel;
+      const expected = typeof level === "number" && level >= 2 ? "携物知识 " + level + " 级" : "";
+      assert.equal(R.goodsLevelTag(row), expected, row.key + " 的等级标记");
+      if (!expected) return;
+      tagged += 1;
+      assert.equal(slot, "consumable", row.key + " 是道具等级行，应在「道具」栏");
+      assert.ok(row.name.indexOf("携物知识" + level) !== -1, row.key + " 的显示名应写明同一等级：" + row.name);
+    });
+    assert.equal(R.goodsLevelNoteFor(cfgIndex, slot), slot === "consumable" ? R.TEXT.goodsLevel.note : "", slot + " 的等级说明");
+  });
+  const listableLevelRows = index.entries.filter((entry) => entry.listable && entry.goodsLevel >= 2 && !entry.accLadder).length;
+  assert.ok(tagged > 0 && tagged === listableLevelRows, "能进配置页的等级行都标上了（" + tagged + " 行）");
+
+  // 旧数据没有 goodsLevel：一行都不标，也不给说明。
+  assert.equal(R.goodsLevelNoteFor({ otherRows: { consumable: [{ goodsLevel: 1 }, {}] } }, "consumable"), "");
+  assert.equal(R.goodsLevelNoteFor(null, "consumable"), "");
 });
 
 // ------------------------------------------------------------------ 多档词条（affixVariant）

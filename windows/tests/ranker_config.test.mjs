@@ -821,3 +821,68 @@ test("遗物格：切成「固定遗物／自组」但还没选东西的格不�
   const filled = R.recommendFill(cfgIndex, corpse, config, Core, corpse.weapon.wepType).config;
   assert.ok(R.relicCardFilled(filled.relics[0]) && R.relicCardFilled(filled.relics[1]));
 });
+
+// ------------------------------------------------------------------ 道具等级（携物知识）与纯魔法输出
+
+test("勇者肉块对纯魔法输出：1、2 级只加物理＝对当前构成无增益（默认隐藏），3 级（携物知识 3 级）按魔力 ×1.2 计入，名字写明物理与属性", () => {
+  close(comet.shares.magic, 1, "帚星是纯魔法输出");
+  const raw = new Map(buffs.buffs.map((buff) => [buff.spEffectId, buff]));
+  const rows = R.otherRowsFor(cfgIndex, comet, R.emptyConfig(), "consumable");
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+
+  // 1 级 3950（物理 ×1.2）、2 级 708420（物理 ×1.3）：rates 只有物理，对纯魔法 ×1。
+  [3950, 708420].forEach((id) => {
+    assert.deepEqual(Object.keys(raw.get(id).rates), ["physicsAttackRate"], id + " 只提高物理");
+    const row = byKey.get(id);
+    assert.ok(row, id + " 应在「道具」栏");
+    assert.equal(row.state, "neutral");
+    assert.equal(R.TEXT.states[row.state], "对当前构成无增益");
+    close(row.score, 1, id + " 当前倍率");
+    close(row.potential, 1, id + " 条件成立时倍率");
+    assert.equal(R.rowUseful(row, comet.hasComposition), false, id + " 默认隐藏（打开「显示不生效项」才看得到）");
+  });
+  assert.equal(R.goodsLevelTag(byKey.get(3950).row), "", "1 级不标等级");
+  assert.equal(R.goodsLevelTag(byKey.get(708420).row), "携物知识 2 级");
+
+  // 3 级 708421：物理 ×1.3 之外魔力／火／雷／圣 ×1.2，纯魔法上按魔力那一项计入。
+  const top = byKey.get(708421);
+  const rates = raw.get(708421).rates;
+  close(rates.magicAttackRate, 1.2, "3 级的魔力倍率");
+  assert.equal(top.state, "counted");
+  close(top.score, rates.magicAttackRate, "纯魔法输出上按 ×1.2 计入");
+  assert.ok(R.rowUseful(top, comet.hasComposition));
+  assert.ok(top.name.indexOf("属性") !== -1, "名字写明也加属性：" + top.name);
+  assert.equal(top.name.indexOf("提升物理攻击力"), -1, "不再只说物理：" + top.name);
+  assert.equal(raw.get(708421).nameZh, "提升物理攻击力", "游戏文本 nameZh 原样保留，页面显示的是 displayNameZh");
+  assert.equal(R.goodsLevelTag(top.row), "携物知识 3 级");
+  assert.equal(R.goodsLevelNoteFor(cfgIndex, "consumable"), R.TEXT.goodsLevel.note, "「道具」分栏说明区给出等级来源");
+
+  // 放进配置：总倍率就是 ×1.2；1 级与 3 级同互斥键（同一道具换等级只是换一行），同时勾只算 3 级那一份。
+  let config = R.toggleOtherRow(cfgIndex, comet, R.emptyConfig(), 708421, true);
+  let result = R.evaluateConfig(cfgIndex, comet, config, Core);
+  close(result.total.multiplier, rates.magicAttackRate, "只勾 3 级");
+  assert.deepEqual(result.counted.map((item) => item.entry.id), [708421]);
+  config = R.toggleOtherRow(cfgIndex, comet, config, 3950, true);
+  result = R.evaluateConfig(cfgIndex, comet, config, Core);
+  assert.equal(index.byId[3950].key, index.byId[708421].key, "各级同一个互斥键");
+  close(result.total.multiplier, rates.magicAttackRate, "1 级与 3 级同时勾，仍是 ×1.2");
+  assert.deepEqual(result.counted.map((item) => item.entry.id), [708421]);
+});
+
+test("名字只说「提升物理攻击力」的条目不提高任何属性（否则在法术上增伤会被误读成只加物理）", () => {
+  const physicalOnly = index.entries.filter((entry) => entry.listable && entry.name.indexOf("提升物理攻击力") === 0);
+  assert.ok(physicalOnly.length > 0, "数据里仍有只加物理的条目");
+  physicalOnly.forEach((entry) => {
+    ["magic", "fire", "lightning", "holy"].forEach((type) => {
+      assert.ok(!(entry.multiplier[type] > 1) && !(entry.flat[type] > 0),
+        entry.id + "「" + entry.name + "」名字只说物理，却提高 " + type);
+    });
+  });
+  // 数据车道改过名、对法术适用的 9 条（原名都以「提升物理攻击力」开头）：名字写明属性，纯魔法输出上照常计入。
+  [708421, 1605000, 7031202, 7031302, 7032202, 7032704, 7032706, 7032903, 7260803].forEach((id) => {
+    const entry = index.byId[id];
+    assert.ok(entry, id + " 在数据里");
+    assert.ok(entry.name.indexOf("属性") !== -1, id + "「" + entry.name + "」");
+    assert.ok(entry.multiplier.magic > 1 || entry.multiplier.fire > 1, id + " 确实提高属性");
+  });
+});

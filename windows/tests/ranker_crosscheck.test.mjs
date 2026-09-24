@@ -512,6 +512,13 @@ function referenceSkillListable(skill) {
   });
 }
 
+// 参考实现：一个法术能不能进列表——没有武器，只看 spells[] 里各段的固定值（按参考公式算得出非 0 即可）。
+function referenceSpellListable(spell) {
+  const hits = spell.hits || [];
+  if (!hits.length) return false;
+  return referenceShares(hits, null, new Set(hits.map((hit) => hit.atkId))).total > 0;
+}
+
 test("对照：输出手段列表只收「算得出非 0 相对值」的战技与法术", () => {
   const items = R.buildMeansItems(skills);
   const skillItems = items.filter((item) => item.kind === "skill");
@@ -530,6 +537,15 @@ test("对照：输出手段列表只收「算得出非 0 相对值」的战技�
   });
   spellItems.forEach((item) => {
     assert.ok(R.hasAnyDamage(skills._spellById[item.id].hits, null, true), "列表里的法术「" + item.nameZh + "」必须至少有一段带固定值");
+  });
+  // 法术同样与参考实现逐个相同：skills 的 spells[] 现在只收可施放的（可达施法器池里 chanceWeight>0），
+  // Magic 残留行 8100 / 8101「风暴管束者」（本作是战技 1200）不在 spells[]，也就不在列表里（本版本 119 个）。
+  assert.deepEqual(spellItems.map((item) => item.id).sort((a, b) => a - b),
+    skills.spells.filter(referenceSpellListable).map((spell) => spell.id).sort((a, b) => a - b));
+  const notCastable = ((skills.coverage || {}).spellsNotCastable || []).map((one) => one.id);
+  assert.deepEqual(notCastable, [8100, 8101], "不可施放的只有风暴管束者两行");
+  notCastable.forEach((id) => {
+    assert.ok(!spellItems.some((item) => item.id === id), id + " 不可施放，不得进输出手段列表");
   });
   if (DUMP) console.log("OUTPUTS skills=" + skillItems.length + " spells=" + spellItems.length);
 });
@@ -683,10 +699,11 @@ function fnv1a(text) {
   return hash.toString(16).padStart(8, "0");
 }
 
-// 文案常量表：点号路径排序后逐行「路径=文案」。
-function textTableDigest() {
+// 文案常量表：点号路径排序后逐行「路径=文案」。skip＝要排除的路径前缀（只用于核对「只多了哪几个键」）。
+function textTableDigest(skip) {
   const flat = R.flattenText(R.TEXT);
-  const keys = Object.keys(flat).sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
+  const keys = Object.keys(flat).filter((key) => !(skip && key.startsWith(skip)))
+    .sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)));
   return { count: keys.length, digest: fnv1a(keys.map((key) => key + "=" + flat[key]).join("\n")) };
 }
 
@@ -696,16 +713,22 @@ function briefDigest(notes) {
 }
 
 // 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新。
-// 摘要算法不变（FNV-1a 32 位，点号路径排序后逐行「路径=文案」）；这一版只多了 skills v3 的四个
-// weaponSource.* 键（fixed / pool / poolHint / note），332 → 336 条，854da404 → 07a69c5e。
-const TEXT_TABLE_DIGEST = "07a69c5e";
-const TEXT_TABLE_COUNT = 336;
+// 摘要算法不变（FNV-1a 32 位，点号路径排序后逐行「路径=文案」）。
+//   skills v3：多了四个 weaponSource.* 键（fixed / pool / poolHint / note），332 → 336 条，854da404 → 07a69c5e；
+//   buffs v6 道具等级：再多三个 goodsLevel.* 键（tag / hint / note），336 → 339 条，07a69c5e → 41e2ae25。
+const TEXT_TABLE_DIGEST = "41e2ae25";
+const TEXT_TABLE_COUNT = 339;
+const TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL = "07a69c5e";
 const BRIEF_DIGEST = "ad04314d";
 
 test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
   const { count, digest } = textTableDigest();
   assert.equal(count, TEXT_TABLE_COUNT, "文案条数");
   assert.equal(digest, TEXT_TABLE_DIGEST, "文案常量表摘要（macOS 端 checkLoadoutParity 断言同一个值）");
+  // 这一版只多了 goodsLevel.* 三个键：去掉它们，摘要回到上一版的值（其余文案一字未动）。
+  const before = textTableDigest("goodsLevel.");
+  assert.equal(before.count, TEXT_TABLE_COUNT - 3);
+  assert.equal(before.digest, TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL, "除 goodsLevel.* 外文案不变");
 });
 
 test("文案常量表：ranker.js 里引用到的每个 TEXT.路径 都真的存在（macOS 端 checkLoadoutTexts 同样扫源码）", () => {

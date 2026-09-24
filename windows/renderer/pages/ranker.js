@@ -3,10 +3,11 @@
 //
 // 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 3：局内战技池进 weaponIds / weaponSources，
 //                                   选段读 weapons[].skillVariants[战技 ID]，variants[].atkIds 已按 TAE 核实；
-//                                   hits[].notInvoked / fpBoth / selfOrAllyOnly 见数据集 fieldNotes）
+//                                   hits[].notInvoked / fpBoth / selfOrAllyOnly 见数据集 fieldNotes；
+//                                   spells[] 只收可施放的法术，每个都有 casterWeaponIds）
 //       ctx.getGameData("buffs")  → resources/buffs.json（schemaVersion 6：sourceSlot / appliesTo /
 //                                   slotRules / weaponAffixes / fixedRelics / stackInput / exclusiveKey /
-//                                   affixVariant / selfAllyPair / accumulatorLadder）
+//                                   affixVariant / selfAllyPair / accumulatorLadder / goodsLevel）
 //       ctx.Core + ctx.catalog    → 遗物合法性（core.js 的 check / isEligible / canonicalOrder）
 //
 // 页面结构：「自己组一套配置」
@@ -17,6 +18,7 @@
 //      （普通遗物走 Core.check("currentNormal")，深夜遗物走 Core.check("deepPositive") + 诅咒配对）。
 //   ⑤ 护符栏：2 个槽位（主槽位是 accessory 的条目按护符分组）。
 //   ⑥ 其它增益栏：道具 / 增益法术 / 战技自增益 / 武器固有 / 角色 / 永久强化 / 局内叠层 / 其它。
+//      「道具」里携物知识 2／3 级的行（goodsLevel ≥ 2）在名字旁标等级，分栏说明区说明等级来自学者的能力。
 //   ⑦ 汇总：总倍率、各栏小计、槽位用量、生效条目清单、「按推荐填满」。
 //
 // **两端同一口径**（macOS：RelicCore/BuffLoadout.swift；数据以 stackingRules / notes.ranking 为准）：
@@ -377,6 +379,13 @@
     otherAutoInnate: "当前武器固有，自动列入",
     otherInnateHint: "当前武器的固有效果自动列入（取消勾选可排除）：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数",
     otherInnateNoWeapon: "法术没有出手武器，这里只有需手动勾选的固有效果",
+    // 道具等级（buffs v6 的 goodsLevel）：「道具」分栏里 goodsLevel ≥ 2 的行在名字旁标 tag（悬停看 hint），
+    // 分栏说明区给 note。三端同名同值（macOS LoadoutText.table / 安卓文案表）。
+    goodsLevel: {
+      tag: "携物知识 {0} 级",
+      hint: "学者的能力「携物知识」把道具提升到这一级后才有这条效果；其它角色只有 1 级。",
+      note: "道具的 2／3 级效果来自学者的能力「携物知识」，未升级的道具只有 1 级效果。"
+    },
     otherSearch: "搜索增益名称、来源或 SpEffect 行号",
     otherEmpty: "这一组里没有能增伤的条目",
     selectUse: "选用",
@@ -797,6 +806,20 @@
       buff.paramName || ("#" + buff.spEffectId);
   }
 
+  // 道具等级标记（buffs v6 的 goodsLevel = 这一行要道具升到第几级才有，取最低那一级；缺省＝1 级）：
+  // 2／3 级只来自学者的能力「携物知识」（notes.goodsLevel），名字旁标「携物知识 N 级」；1 级不标。
+  // 参数可以是条目（indexBuff 的结果）或「其它增益」栏的一行（buildConfigIndex 的 otherRows）。
+  function goodsLevelTag(item) {
+    var level = item ? num(item.goodsLevel) : 0;
+    return level >= 2 ? fmt(TEXT.goodsLevel.tag, level) : "";
+  }
+
+  // 「其它增益」某个分栏的道具等级说明：这一栏里有 goodsLevel ≥ 2 的行才给（本版本只有「道具」栏）。
+  function goodsLevelNoteFor(cfgIndex, slot) {
+    var rows = ((cfgIndex && cfgIndex.otherRows) || {})[slot] || [];
+    return rows.some(function (row) { return goodsLevelTag(row) !== ""; }) ? TEXT.goodsLevel.note : "";
+  }
+
   // exclusiveKey 缺失（v5 之前的数据）时退回 stacking.group，再退回 sp<cat>#<id>。
   function exclusiveKeyOf(buff) {
     var stacking = (buff && buff.stacking) || {};
@@ -891,6 +914,8 @@
       variantMembers: null,
       pairRole: pair && (pair.role === "self" || pair.role === "ally") ? pair.role : null,
       goodsIds: Array.isArray(buff.requiresGoodsIds) ? buff.requiresGoodsIds.slice() : [],
+      // 道具等级（v6 的 goodsLevel，缺省＝1 级）：只用来标「携物知识 N 级」，不参与计算。
+      goodsLevel: numOr(buff.goodsLevel, 1),
       equipped: weaponTypes && weaponTypes.mode === "equippedCount" ? weaponTypes : null,
       relicAttachIds: relicLinks.map(function (link) { return link.attachEffectId; }),
       exclusivityIds: relicLinks.filter(function (link) {
@@ -1780,11 +1805,15 @@
         var members = ladders[entry.ladderGroup] || [entry];
         otherRows[entry.slot].push({
           key: members[0].id, entries: members, ladder: true,
-          name: members[0].name.replace(/（第\d+[层档]）$/, ""), character: entry.character
+          name: members[0].name.replace(/（第\d+[层档]）$/, ""), character: entry.character,
+          goodsLevel: members[0].goodsLevel
         });
         return;
       }
-      otherRows[entry.slot].push({ key: entry.id, entries: [entry], ladder: false, name: entry.name, character: entry.character });
+      otherRows[entry.slot].push({
+        key: entry.id, entries: [entry], ladder: false, name: entry.name, character: entry.character,
+        goodsLevel: entry.goodsLevel
+      });
     });
 
     return {
@@ -4254,7 +4283,7 @@
         "<label class='ranker-row-check' title='" + esc(row.auto ? (row.selected ? TEXT.innateRemove : TEXT.innateRestore) : TEXT.selectUse) + "'>" +
         "<input type='checkbox' data-ranker-other='" + row.key + "'" +
         (row.selected ? " checked" : "") + "><span class='sr-only'>" + esc(TEXT.selectUse) + "</span></label>" +
-        "<div class='ranker-row-main'><span class='ranker-row-name'>" + esc(row.name) + "</span>" +
+        "<div class='ranker-row-main'><span class='ranker-row-name'>" + esc(row.name) + goodsLevelTagHtml(row.row) + "</span>" +
         "<span class='ranker-row-badges'>" + (row.auto ? pill(TEXT.badges.autoInnate, "green") : "") + entryBadges(first) + "</span>" +
         (row.state !== "counted" ? reasonHtml(row.reasons) : "") + "</div>" +
         scoreHtml(row.score, row.state, out.hasComposition, row.flat, row.potential, row.assumesOneStack) +
@@ -4263,11 +4292,23 @@
     return html;
   }
 
+  // 道具等级标记：紧跟在名字后面的小标签，悬停给出说明（TEXT.goodsLevel.hint）；1 级的行不标。
+  function goodsLevelTagHtml(row) {
+    var tag = goodsLevelTag(row);
+    if (!tag) return "";
+    return "<span class='ranker-goods-level' data-testid='ranker-goods-level' title='" + esc(TEXT.goodsLevel.hint) + "'>" +
+      pill(tag, "blue") + "</span>";
+  }
+
   function othersHtml(out) {
     var innateHint = otherRowsFor(state.cfgIndex, out, state.config, state.otherTab).some(function (row) { return row.auto; })
       ? "<p class='ranker-note ranker-note--muted' data-testid='ranker-innate-hint'>" + esc(TEXT.otherInnateHint) + "</p>"
       : (state.otherTab === "weaponInnate" && out.mode !== "skill"
         ? "<p class='ranker-note ranker-note--muted'>" + esc(TEXT.otherInnateNoWeapon) + "</p>" : "");
+    // 分栏说明区：有携物知识 2／3 级行的分栏（「道具」）说明等级从哪来。
+    var goodsNote = goodsLevelNoteFor(state.cfgIndex, state.otherTab);
+    var goodsNoteHtml = goodsNote
+      ? "<p class='ranker-note ranker-note--muted' data-testid='ranker-goods-level-note'>" + esc(goodsNote) + "</p>" : "";
     var tabs = OTHER_SLOTS.map(function (slot) {
       var count = ((state.cfgIndex.otherRows || {})[slot] || []).length;
       var picked = ((state.cfgIndex.otherRows || {})[slot] || []).filter(function (row) {
@@ -4282,7 +4323,7 @@
       "<div class='ranker-tab-row' role='tablist' data-testid='ranker-other-tabs'>" + tabs + "</div>" +
       "<div class='ranker-filter-row'><label class='search-field ranker-list-search'><span aria-hidden='true'>⌕</span>" +
       "<input type='search' placeholder='" + esc(TEXT.otherSearch) + "' autocomplete='off' data-testid='ranker-other-search'></label>" +
-      "<span class='ranker-note ranker-note--inline'>" + esc(slotNoteFor(state.otherTab)) + "</span></div>" + innateHint +
+      "<span class='ranker-note ranker-note--inline'>" + esc(slotNoteFor(state.otherTab)) + "</span></div>" + goodsNoteHtml + innateHint +
       "<div class='ranker-list' data-testid='ranker-other-list'>" + otherListHtml(out) + "</div>";
   }
 
@@ -5011,6 +5052,8 @@
       familyKey: familyKey,
       familyName: familyName,
       buffDisplayName: buffDisplayName,
+      goodsLevelTag: goodsLevelTag,
+      goodsLevelNoteFor: goodsLevelNoteFor,
       exclusiveKeyOf: exclusiveKeyOf,
       characterKey: characterKey,
       characterLabel: characterLabel,
