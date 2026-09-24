@@ -43,7 +43,7 @@ internal object RankerStrings {
     const val HITS_TITLE = "分段命中"
     const val HITS_SUBTITLE = "勾掉不打的段即可（例如只算刀气那一段）"
     const val HITS_EMPTY_SKILL = "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariants 里没有这个战技）。"
-    const val HITS_EMPTY_SPELL = "这条法术没有带数值的命中段。"
+    const val HITS_EMPTY_SPELL = "这条魔法／祷告没有带数值的命中段。"
     const val HITS_ALL = "全选（当前版本）"
     const val HITS_ALL_HELP = "只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍"
     const val HITS_NONE = "全不选"

@@ -498,7 +498,7 @@ private fun versionLines(state: RankerPageState): List<Pair<String, String>> {
         "游戏版本" to skills.gameVersion.ifEmpty { "—" },
         "数据版本" to skills.dataVersion.ifEmpty { "—" },
         "skills" to "schemaVersion ${skills.schemaVersion} · 武器 ${skills.count("weapons")} · 战技 ${skills.count("skills")}" +
-            " · 法术 ${skills.count("spells")} · 分段 ${skills.count("hits")}" +
+            " · 魔法／祷告 ${skills.count("spells")} · 分段 ${skills.count("hits")}" +
             (if (skills.taeVerified) RankerStrings.taeVersion(skills.count("hitsNotInvoked")) else ""),
         "buffs" to "schemaVersion ${buffs.schemaVersion} · 增益 ${counts.buffs} 条 · 倍率字段 ${buffs.rateFields.size} 个",
         "v6 字段" to "局内武器词条 ${counts.weaponAffixes} 条 · 固定遗物 ${counts.fixedRelics} 件 · 叠层输入 ${counts.buffsWithStackInput}" +

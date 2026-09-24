@@ -134,7 +134,7 @@ struct BuffRankerView: View {
 
     private var footerLeading: String {
         guard case .ready = model.phase else { return "完全离线，数值取自游戏参数表" }
-        guard model.selectedOutput != nil else { return "请选择一个战技或法术" }
+        guard model.selectedOutput != nil else { return "请选择一个战技、魔法或祷告" }
         return "\(model.outputTitle) · 勾选 \(model.selectedSegmentIDs.count)/\(model.segments.count) 段 · "
             + "\(model.loadout.mode.title) · \(LoadoutText.t("summaryTotal")) \(BuffFormat.multiplier(model.evaluation.total))"
     }
@@ -262,7 +262,7 @@ struct BuffRankerOutputSection: View {
                         // 施法器同样占左右手之一，按 appliesToDetail.requires.hand 判定（与 Windows 端一致）。
                         handPicker
                     }
-                    Text("法术段只用固定伤害（flat）做配比：参数表里的 motion 是「照抄武器攻击力 100%」的占位写法，"
+                    Text("魔法／祷告的段只用固定伤害（flat）做配比：参数表里的 motion 是「照抄武器攻击力 100%」的占位写法，"
                          + "乘到辉石魔杖 / 圣印记的物理攻击力上会凭空造出物理伤害。"
                          + LoadoutText.t("spellHandNote"))
                         .font(.system(size: 11))
@@ -398,7 +398,7 @@ struct BuffRankerSegmentSection: View {
             SectionHeading(
                 title: "分段命中",
                 subtitle: model.skill == nil
-                    ? "法术的全部命中段；勾掉不想统计的段（例如只算爆发段）"
+                    ? "魔法／祷告的全部命中段；勾掉不想统计的段（例如只算爆发段）"
                     : "按 weapons[].skillVariants[战技] → skills[].variants[].atkIds 选出「这把武器会打出的段」（已按 TAE 核实）",
                 symbol: "list.bullet.rectangle"
             )

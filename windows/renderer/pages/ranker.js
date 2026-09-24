@@ -3591,7 +3591,7 @@
     var mode = currentMode();
     if (mode !== "skill") {
       var spell = currentSpell();
-      if (!spell) return "<p class='ranker-note'>找不到这条法术。</p>";
+      if (!spell) return "<p class='ranker-note'>找不到这条魔法／祷告。</p>";
       return "<div class='ranker-selection' data-testid='ranker-selection'>" +
         "<div class='ranker-selection-name'>" + esc(spell.nameZh || spell.nameEn) +
         "<span class='ranker-means-en'>" + esc(spell.nameEn) + "</span></div>" +
@@ -3701,7 +3701,7 @@
 
     if (!state.selection) {
       return "<div class='section-heading'><div class='section-icon'>≡</div>" +
-        "<div><h2>分段命中</h2><p>先在上面选一个战技或法术</p></div></div>" +
+        "<div><h2>分段命中</h2><p>先在上面选一个战技、魔法或祷告</p></div></div>" +
         "<p class='ranker-empty' data-testid='ranker-hits-empty'>尚未选择输出手段。</p>";
     }
     if (!hits.length) {
@@ -4548,7 +4548,7 @@
       "<div><dt>游戏版本</dt><dd>" + esc(skills.gameVersion || "—") + "</dd></div>" +
       "<div><dt>数据版本</dt><dd>" + esc(skills.dataVersion || "—") + "</dd></div>" +
       "<div><dt>skills</dt><dd>schemaVersion " + esc(skills.schemaVersion) + " · 武器 " +
-      esc(counts.weapons) + " · 战技 " + esc(counts.skills) + " · 法术 " + esc(counts.spells) +
+      esc(counts.weapons) + " · 战技 " + esc(counts.skills) + " · 魔法／祷告 " + esc(counts.spells) +
       " · 分段 " + esc(counts.hits) +
       (counts.taeVerified === true ? " · 命中段已按 TAE 核实（打不出的 " + esc(counts.hitsNotInvoked) + " 段不列出）" : "") +
       "</dd></div>" +
@@ -5024,7 +5024,7 @@
       var buffsData = results[1];
       if (!skillsData || !buffsData || typeof skillsData !== "object" || typeof buffsData !== "object") {
         state.loaded = false;
-        dom.innerHTML = unavailableShell("战技／法术与增益数据尚未内置，页面无法计算。");
+        dom.innerHTML = unavailableShell("战技、魔法／祷告与增益数据尚未内置，页面无法计算。");
         return;
       }
       state.loaded = true;
