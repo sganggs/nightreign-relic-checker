@@ -247,12 +247,6 @@ struct BuffRankerOutputSection: View {
                             text: spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh,
                             color: AppTheme.green
                         )
-                        // v3 修订：spells[] 只收施法器能带的法术，能带它的施法器见 casterWeaponIds（usage.法术来源（v3））。
-                        let casters = model.skills?.casters(for: spell) ?? []
-                        if !casters.isEmpty {
-                            Pill(text: "\(casters.count) 把施法器能带", color: AppTheme.secondaryText)
-                                .help("局内掉落的这些施法器可能从法术池里抽到它：" + casters.map(\.displayName).joined(separator: "、"))
-                        }
                         Spacer(minLength: 0)
                         // 施法器同样占左右手之一，按 appliesToDetail.requires.hand 判定（与 Windows 端一致）。
                         handPicker

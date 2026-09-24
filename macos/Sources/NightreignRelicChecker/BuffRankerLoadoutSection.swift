@@ -536,7 +536,7 @@ struct LoadoutCandidateRow<Leading: View>: View {
                         }
                         // 道具 2／3 级行（学者「携物知识」）：名字旁标等级，悬停说明只有学者能把道具升上去。
                         if let tag = goodsLevelTag {
-                            Pill(text: tag, color: AppTheme.amber)
+                            Pill(text: tag, color: AppTheme.purpleSoft)
                                 .help(LoadoutText.t("goodsLevel.hint"))
                         }
                     }
