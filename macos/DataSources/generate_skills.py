@@ -55,6 +55,18 @@
                      只用来判「哪些 custom 行真的会给到玩家」：itemCategory=6 /
                      lotItemCategory0N=6 / equipType=6 引用的 custom 行 ID（实测三者引用的 ID
                      全部落在 EquipParamCustomWeapon 里，见 PROVENANCE「战技池（v3）」）
+  （v3 修订）法术的可施放口径：
+  EquipParamCustomWeapon.magicTableId_1 / magicTableId_2   施法器（手杖 / 圣印记）custom 行的两个法术槽
+  MagicTableParam          法术池：同一个 ID 的全部行 = 一个池（同 SwordArtsTableParam），每行 magicId + chanceWeight
+
+法术来源（v3 修订）
+-----------------
+  spells[] 只收「本作玩家能施放」的法术：magicId 出现在可达施法器 custom 行（可达口径同下面的战技池）的
+  magicTableId_1 / _2 指向的 MagicTableParam 池里、且 chanceWeight>0（本版本 122 个池、158 个 magicId）。
+  Magic 表里有名字却不在任何这种池里的行不收（本版本只有 8100 / 8101「风暴管束者」：全部参数表都不引用这两行 Magic，
+  是本体把风暴管束者做成 Magic 时的残留行；本作的风暴管束者是战技 SwordArtsParam 1200，武器是各渡夜者的角色武器），
+  记进 coverage.spellsNotCastable。命中归属仍按全部有名 Magic 行做（名字索引不变，其它法术的 hits 与修订前逐段相同），
+  落地后再过滤。每个法术新增 casterWeaponIds / casterSources，施法器侧新增 weapons[].customMagicTables，顶层 magicPools。
 
 战技池（v3）
 -----------
@@ -164,6 +176,13 @@ SCHEMA_CHANGELOG = [
          "fpBoth / noFpConflicts",
          "（审查修正）hits[].selfOrAllyOnly（AtkParam opposeTarget=0 且 selfTarget / friendlyTarget=1：只打自己 / 队友）；"
          "counts.hitsSelfOrAllyOnly / hitsSelfOrAllyOnlyWithValues",
+         "（法术可施放口径）spells[].casterWeaponIds（能携带该法术的施法器基础武器）与 spells[].casterSources"
+         "（{id, pool: [[magicTableId, chanceWeight, customRows], ...]}，仿 weaponSources）；weapons[].customMagicTables"
+         "（[[customId, magicTableId_1, magicTableId_2], ...]）；顶层 magicPools（{池 ID: [[magicId, chanceWeight], ...]}）；"
+         "coverage.spellsNotCastable(+Note)；counts.spellsNamed / spellsCastable / spellsDropped / magicPools / magicPoolEntries / "
+         "magicPoolZeroWeightRows / casterWeapons / casterCustomRows / casterCustomRowsUnreachable / spellWeaponPairs；"
+         "diagnostics.spellCasting；fieldNotes.casterWeaponIds / casterSources / customMagicTables / magicPools / spellsNotCastable；"
+         "usage.法术来源（v3）",
      ],
      "changed": [
          "skills[].weaponIds：v2 = 只有 EquipParamWeapon.swordArtsParamId 反查；v3 = 固定引用 ∪ 局内战技池"
@@ -190,6 +209,12 @@ SCHEMA_CHANGELOG = [
          "（审查修正）hits[].noDamage：除了六项全 0 的挂状态行，只打自己 / 队友的行（selfOrAllyOnly，如祈祷一击的回血子弹 "
          "1202100 / 1202110）也标 noDamage，motion / flat 原值保留。这一条不依赖 TAE，--no-tae 时同样生效。",
          "（审查修正）counts 的 *Damaging 计数（hitsWithoutVariantDamaging / hitsNotInvokedDamaging）不再把 noDamage 段算作带伤害。",
+         "（法术可施放口径）spells[] 从「Magic 表里有 MagicName 的全部行」收窄为「可施放的行」：magicId 在可达施法器 custom 行"
+         "（可达口径同战技池）的 magicTableId_1 / _2 指向的 MagicTableParam 池里且 chanceWeight>0。"
+         "本版本只删掉 2 条死行 8100 / 8101「风暴管束者」（全部参数表都不引用这两行 Magic，是本体遗留；本作的风暴管束者是战技 1200，"
+         "仍在 skills[]），移到 coverage.spellsNotCastable；其余 158 个法术的全部旧字段与 hits 逐项不变，只多了 casterWeaponIds / "
+         "casterSources。counts.spells 160→158、spellsWithHits 139→137，hits / uniqueAtkIds 等全局计数少了这两行的段。"
+         "schemaVersion 仍为 3：没有改名或改语义的字段，只删了两条死行、其余只增字段。",
      ]},
 ]
 GAME_VERSION = "v1.03.5 + DLC1"
@@ -376,6 +401,16 @@ NOT_INVOKED_REASON_ZH = {
     "spEffectNoSource": "由 SpEffectParam.behaviorId 触发，但该 SpEffect 在全部参数表与全部 TAE 事件里都没有来源",
     "rowForOtherWeapon": "产出它的 BehaviorParam_PC 行只属于别的 behaviorVariationId，这些武器解不到",
     "unreferenced": "没有任何 BehaviorParam_PC 行、子弹、Magic 或其它参数列引用它",
+}
+
+# v3 修订（法术可施放口径）：不可施放的 Magic 行里，逐个核过「全部参数表」的那几个补充证据
+# （生成器只程序化检查 MagicTableParam 与 custom 行；全表引用扫描是一次性的人工核查，见 PROVENANCE「法术可施放口径」）。
+_MAGIC_8100_SCAN = ("全部 252 张参数表里取值为 8100 / 8101 的非 ID 列只有 NpcParam.spEffectID16 / SoundBankId / SfxResBankId、"
+                    "RideParam.defChrId、SpEffectParam.behaviorId、ActionButtonParam.textId、"
+                    "PersonalScenarioParam.personalScenarioObjectiveId，分别是 SpEffect / 音效库 / 特效库 / 角色 / 行为 / 文本 / 剧情目标 ID，"
+                    "没有一列指向 Magic")
+MAGIC_NOT_CASTABLE_EVIDENCE = {
+    magic_id: f"；{_MAGIC_8100_SCAN}——是本体把风暴管束者做成 Magic 时的残留行" for magic_id in (8100, 8101)
 }
 
 CTX_MANUAL_BY_SKILL: dict[int, dict[int, str]] = {
@@ -920,6 +955,8 @@ def main() -> None:
     lot_raw = (read_param(args.params, "ItemLotParam_map")
                + read_param(args.params, "ItemLotParam_enemy"))
     shop_raw = read_param(args.params, "ShopLineupParam")
+    # v3 修订：法术的可施放口径（施法器 custom 行的 magicTableId_1 / _2 → MagicTableParam 池）
+    magic_table_raw = read_param(args.params, "MagicTableParam")
 
     wep_zh = read_fmg(args.msg, "zhocn", "item", "WeaponName")
     wep_en = read_fmg(args.msg, "engus", "item", "WeaponName")
@@ -1145,6 +1182,97 @@ def main() -> None:
         for arts, _w in pool_entries.get(row.get("swordArtsTableId", "-1"), ()):
             epw_table_pairs.add((arts, int(row["ID"])))
 
+    # ---------------------------------------------- 法术的施法器池（v3 修订：可施放口径）
+    # 本作玩家能施放的法术 = 局内施法器（手杖 / 圣印记）custom 行的 magicTableId_1 / magicTableId_2
+    # 指向的 MagicTableParam 池里的 magicId。MagicTableParam 与 SwordArtsTableParam 同一惯例：
+    # **同一个 ID 的全部行 = 一个池**，每行 magicId + chanceWeight（>0 才算池成员）。可达性沿用上面
+    # 战技池的 reachable_custom（ItemTableParam / ItemLotParam / ShopLineupParam 引用）。
+    # Magic 表里有名字、却不在任何可达施法器池里的行不收进 spells（本版本只有 8100 / 8101「风暴管束者」：
+    # 全部参数表都没有引用 Magic 8100 / 8101，是本体把风暴管束者做成 Magic 的残留行；本作的风暴管束者是
+    # 战技 SwordArtsParam 1200），见 coverage.spellsNotCastable 与 PROVENANCE「法术可施放口径」。
+    magic_pool_weights: dict[str, dict[int, int]] = defaultdict(dict)
+    magic_zero_rows: list[tuple[str, int, str]] = []    # (池 ID, magicId, 行名)：chanceWeight=0 的行
+    magic_pool_dup_rows = 0
+    magic_refs_any: dict[int, set[str]] = defaultdict(set)   # magicId → 出现它的池（任意权重）
+    for row in magic_table_raw:
+        magic_id = to_int(row.get("magicId", "-1"), -1)
+        weight = to_int(row.get("chanceWeight", "0"))
+        if magic_id <= 0:
+            continue
+        magic_refs_any[magic_id].add(row["ID"])
+        if weight <= 0:
+            magic_zero_rows.append((row["ID"], magic_id, row.get("Name", "")))
+            continue
+        bucket = magic_pool_weights[row["ID"]]
+        if magic_id in bucket:
+            magic_pool_dup_rows += 1
+        bucket[magic_id] = bucket.get(magic_id, 0) + weight
+    magic_pool_entries: dict[str, list[tuple[int, int]]] = {
+        pid: list(bucket.items()) for pid, bucket in magic_pool_weights.items()}
+
+    # (magicId, 武器) → {池 ID: [权重, 引用该池的可达 custom 行数]}；一行的两个槽指向同一个池时只算一行
+    spell_pool_pairs: dict[tuple[int, int], dict[str, list[int]]] = defaultdict(dict)
+    custom_magic_by_weapon: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
+    used_magic_pools: set[str] = set()
+    magic_custom_stats: Counter = Counter()
+    magic_tables_any_custom: set[str] = set()     # 任意 custom 行（含不可达）引用到的池
+    for row in custom_raw:
+        tables = [row.get(f, "-1") or "-1" for f in ("magicTableId_1", "magicTableId_2")]
+        if all(t == "-1" for t in tables):
+            continue
+        magic_tables_any_custom.update(t for t in tables if t != "-1")
+        cid = row["ID"]
+        target = row.get("targetWeaponId", "-1")
+        if cid not in reachable_custom:
+            magic_custom_stats["unreachable"] += 1
+            continue
+        if target not in weapon_ids_named:
+            magic_custom_stats["reachableUnnamedTarget"] += 1
+            continue
+        magic_custom_stats["reachable"] += 1
+        custom_magic_by_weapon[target].append((to_int(cid), to_int(tables[0], -1), to_int(tables[1], -1)))
+        for table in dict.fromkeys(t for t in tables if t != "-1"):
+            if table not in magic_pool_entries:
+                magic_custom_stats["reachableEmptyPool"] += 1
+                continue
+            used_magic_pools.add(table)
+            for magic_id, weight in magic_pool_entries[table]:
+                slot = spell_pool_pairs[(magic_id, int(target))].setdefault(table, [weight, 0])
+                slot[1] += 1
+    castable_magic: set[int] = {m for m, _w in spell_pool_pairs}
+    spell_caster_weapons: dict[int, set[int]] = defaultdict(set)
+    for magic_id, wid in spell_pool_pairs:
+        spell_caster_weapons[magic_id].add(wid)
+    # 可达施法器池里 chanceWeight=0 的行：抽不到，不算池成员。逐行记下它所在的槽，以及引用该池的 custom 行
+    # 另一个槽的池里有没有这个法术（实测多数是「第 2 槽池把第 1 槽的法术置 0」）。
+    magic_zero_in_used: list[dict] = []
+    for pid, magic_id, name in magic_zero_rows:
+        if pid not in used_magic_pools:
+            continue
+        users = [row for row in custom_raw if row["ID"] in reachable_custom
+                 and pid in (row.get("magicTableId_1"), row.get("magicTableId_2"))]
+        slots = sorted({1 if row.get("magicTableId_1") == pid else 2 for row in users})
+        other_pools = sorted({(row.get("magicTableId_2") if row.get("magicTableId_1") == pid else row.get("magicTableId_1"))
+                              for row in users} - {"-1", ""}, key=int)
+        magic_zero_in_used.append({
+            "pool": int(pid), "magicId": magic_id, "rowName": name, "slots": slots,
+            "otherSlotPools": [int(p) for p in other_pools],
+            "inOtherSlotPool": bool(other_pools) and all(
+                dict(magic_pool_entries.get(p, ())).get(magic_id, 0) > 0 for p in other_pools),
+        })
+
+    def caster_sources(magic_id: int) -> list[dict]:
+        """spells[].casterSources：与 casterWeaponIds 同序，每把施法器一项（结构仿 skills[].weaponSources，
+        法术没有「固定」来源，所以只有 pool）：pool = [[magicTableId, chanceWeight, customRows], ...]，按池 ID 升序；
+        customRows = 这把武器的可达 custom 行里 magicTableId_1 或 _2 指向该池的行数，具体行见
+        weapons[该武器].customMagicTables。"""
+        out = []
+        for wid in sorted(spell_caster_weapons.get(magic_id, ())):
+            tables = spell_pool_pairs[(magic_id, wid)]
+            out.append({"id": wid,
+                        "pool": [[to_int(t), w, n] for t, (w, n) in sorted(tables.items(), key=lambda kv: int(kv[0]))]})
+        return out
+
     def weapon_sources(sid: str) -> list[dict]:
         """skills[].weaponSources：与 weaponIds 同序，每把武器一项。
         fixed=true  → EquipParamWeapon.swordArtsParamId 就是这个战技（v2 的唯一来源）；
@@ -1199,6 +1327,8 @@ def main() -> None:
         })
 
     # ---------------------------------------------------------------- spells
+    # 先按「有 MagicName 的全部 Magic 行」建条目与名字索引、做命中归属（与 v3 之前完全相同，
+    # 保证其它法术的 hits 不因少了两个名字键而变化），落地 hits 之后再按可施放口径过滤（见 finalize 之后）。
     spells: list[dict] = []
     spell_index = NameIndex()
     spell_rows: dict[str, dict] = {}
@@ -1225,6 +1355,9 @@ def main() -> None:
             "kindZh": MAGIC_KIND_ZH.get(kind, "未知"),
             "mp": to_int(row.get("mp", "0")),
             "sparring": bool(to_int(row.get("enableSparringGrounds", "0"))),
+            # v3 修订：能携带它的施法器（基础武器，经 custom 行 targetWeaponId）与每把的池来源
+            "casterWeaponIds": sorted(spell_caster_weapons.get(mid, ())),
+            "casterSources": caster_sources(mid),
             "_rowId": rid,
         })
 
@@ -1429,7 +1562,48 @@ def main() -> None:
         return with_hits, missing
 
     skills_with_hits, skills_missing = finalize(skills, skill_hits, skill_index)
-    spells_with_hits, spells_missing = finalize(spells, spell_hits, spell_index)
+    finalize(spells, spell_hits, spell_index)
+
+    # ---- 法术只收「可施放」的（v3 修订）------------------------------------------
+    # 命中归属已经按全部有名 Magic 行做完（其它法术的 hits 与修订前逐段相同），这里再把不在任何
+    # 可达施法器池里的行拿掉，记进 coverage.spellsNotCastable（附原因），不再出现在 spells[]。
+    skill_by_name_zh: dict[str, list[dict]] = defaultdict(list)
+    for sk in skills:
+        skill_by_name_zh[sk["nameZh"]].append(sk)
+    spells_not_castable: list[dict] = []
+    for entry in spells:
+        if entry["id"] in castable_magic:
+            continue
+        pools_any = sorted(magic_refs_any.get(entry["id"], ()), key=int)
+        same_name_skills = [sk for sk in skill_by_name_zh.get(entry["nameZh"], []) if sk["weaponIds"]]
+        if not pools_any:
+            reason = "MagicTableParam 没有任何行（任何池、任何权重）引用这个 magicId，所以没有施法器能带它"
+            reason += MAGIC_NOT_CASTABLE_EVIDENCE.get(entry["id"], "")
+        elif not set(pools_any) & magic_tables_any_custom:
+            reason = f"只出现在没有任何 custom 行引用的 MagicTableParam 池 {pools_any} 里"
+        else:
+            reason = f"只出现在不可达 custom 行引用的 MagicTableParam 池 {pools_any} 里"
+        if same_name_skills:
+            reason += "；本作同名的是战技 " + "、".join(
+                f'SwordArtsParam {sk["id"]}「{sk["nameZh"]}」（{len(sk["weaponIds"])} 把武器）' for sk in same_name_skills)
+        spells_not_castable.append({
+            "id": entry["id"], "nameZh": entry["nameZh"], "nameEn": entry["nameEn"], "kind": entry["kind"],
+            "hits": len(entry["hits"]), "atkIds": [h["atkId"] for h in entry["hits"]],
+            "magicTablePools": [int(p) for p in pools_any],
+            "sameNameSkillIds": [sk["id"] for sk in same_name_skills],
+            "reason": reason,
+        })
+    spells_named_total = len(spells)
+    spells = [entry for entry in spells if entry["id"] in castable_magic]
+    for entry in spells:
+        assert entry["casterWeaponIds"], entry["id"]
+    spells_with_hits = sum(1 for entry in spells if entry["hits"])
+    spells_missing = [f'{entry["id"]} {entry["nameZh"]}／{entry["nameEn"]}' for entry in spells if not entry["hits"]]
+    # 可施放池里出现、但 Magic 表里没有名字（或根本没有这一行）、因而不在 spells 里的 magicId：本版本应为空
+    castable_unnamed = sorted(castable_magic - {entry["id"] for entry in spells})
+    # 没有 MagicName 文本、从来不收的 Magic 行（90、4641、4642、8000–8023、999999999 这类）
+    unnamed_magic_ids = [to_int(r["ID"]) for r in magic_raw
+                         if not magic_zh.get(to_int(r["ID"])) and not magic_en.get(to_int(r["ID"]))]
 
     # ---------------------------------------------------- 每把武器用哪一套动作
     # 通用战技（战吼 / 野蛮咆哮 / 回旋斩 / 盲击…）在参数里同时存在「不分武器的默认套」
@@ -1766,6 +1940,9 @@ def main() -> None:
                                         for k in sorted(wep["skillVariants"], key=int)}
         if custom_by_weapon.get(wid):
             ordered["customWeapons"] = [[c, t] for c, t in sorted(custom_by_weapon[wid])]
+        # v3 修订：施法器的可达 custom 行与两个法术池槽（spells[].casterSources 回溯用）
+        if custom_magic_by_weapon.get(wid):
+            ordered["customMagicTables"] = [[c, t1, t2] for c, t1, t2 in sorted(custom_magic_by_weapon[wid])]
         weapons[i] = ordered
     weapon_by_id = {str(w["id"]): w for w in weapons}
 
@@ -1963,6 +2140,10 @@ def main() -> None:
     weapons_with_skill_variants = sum(1 for w in weapons if w.get("skillVariants"))
     pool_payload = {str(t): [[a, w] for a, w in pool_entries[t]] for t in sorted(used_pools, key=int)}
     pool_entry_count = sum(len(v) for v in pool_payload.values())
+    # v3 修订：法术池
+    magic_pool_payload = {str(t): [[m, w] for m, w in magic_pool_entries[t]] for t in sorted(used_magic_pools, key=int)}
+    magic_pool_entry_count = sum(len(v) for v in magic_pool_payload.values())
+    caster_type_counts = Counter(weapon_by_id[w]["wepTypeZh"] for w in custom_magic_by_weapon)
     all_pairs = {(sk["id"], wid) for sk in skills for wid in sk["weaponIds"]}
     epw_extra_pairs = {pr for pr in epw_table_pairs if pr not in all_pairs and pr[0] in skill_ids_known}
     epw_extra_skills = {a for a, _w in epw_extra_pairs} - {sk["id"] for sk in skills if sk["weaponIds"]}
@@ -2079,7 +2260,8 @@ def main() -> None:
                 "license": "游戏数据，版权归 FromSoftware / Bandai Namco",
                 "use": "EquipParamWeapon / SwordArtsParam / Magic / AtkParam_Pc / Bullet / BehaviorParam_PC；"
                        "v3 起另读 EquipParamCustomWeapon / SwordArtsTableParam（局内战技池）与 "
-                       "ItemTableParam / ItemLotParam_map / ItemLotParam_enemy / ShopLineupParam（只判 custom 行是否可达）",
+                       "ItemTableParam / ItemLotParam_map / ItemLotParam_enemy / ShopLineupParam（只判 custom 行是否可达）；"
+                       "v3 修订另读 MagicTableParam 与 custom 行的 magicTableId_1 / _2（法术的可施放口径）",
             },
             {
                 "name": "Elden Ring Nightreign 游戏内文本（FMG）",
@@ -2125,6 +2307,17 @@ def main() -> None:
             "customWeaponRowsUnreachable": custom_stats["unreachable"],
             "swordArtsPools": len(pool_payload),
             "swordArtsPoolEntries": pool_entry_count,
+            # v3 修订：法术可施放口径
+            "spellsNamed": spells_named_total,
+            "spellsCastable": len(castable_magic),
+            "spellsDropped": len(spells_not_castable),
+            "magicPools": len(magic_pool_payload),
+            "magicPoolEntries": magic_pool_entry_count,
+            "magicPoolZeroWeightRows": len(magic_zero_in_used),
+            "casterWeapons": len(custom_magic_by_weapon),
+            "casterCustomRows": magic_custom_stats["reachable"],
+            "casterCustomRowsUnreachable": magic_custom_stats["unreachable"],
+            "spellWeaponPairs": len(spell_pool_pairs),
             # v3 第二部分：TAE 核实
             "taeVerified": tae_verified,
             "hitsNotInvoked": hits_not_invoked,
@@ -2146,6 +2339,18 @@ def main() -> None:
                     "基本都是纯增益、闪避、格挡或只改弓箭的技能。",
             "skillsWithoutHits": skills_missing,
             "spellsWithoutHits": spells_missing,
+            "spellsNotCastable": spells_not_castable,
+            "spellsNotCastableNote":
+                f"（v3 修订）spells[] 只收「可施放」的法术：magicId 出现在某个可达施法器 custom 行"
+                f"（magicTableId_1 / magicTableId_2）指向的 MagicTableParam 池里、且 chanceWeight>0。"
+                f"Magic 表里有 MagicName 的 {spells_named_total} 行中，{len(castable_magic)} 行可施放、收进 spells；"
+                f"其余 {len(spells_not_castable)} 行（"
+                + "、".join(f'{e["id"]} {e["nameZh"]}' for e in spells_not_castable)
+                + "）列在 spellsNotCastable，附原因、原先归到它们的命中段（atkIds）与同名战技。"
+                  "这些行修订前在 spells[] 里（带 hits），页面会把它们当成玩家法术参与排名；它们的 hits 不再输出。"
+                  f"另有 {len(unnamed_magic_ids)} 行 Magic 没有 MagicName 文本（"
+                + "、".join(str(i) for i in unnamed_magic_ids)
+                + "），从来不收，也都不在任何可达施法器池里。",
             "hitsWithoutVariantNote":
                 f"skills[].hits 是该战技在参数表里的**全部**动作套，"
                 f"其中只有 variants 覆盖到的那些才会被本作的武器真正打出。"
@@ -2207,7 +2412,9 @@ def main() -> None:
                         "（v3 TAE 核实）hits.notInvoked 缺失 = false（此时也没有 notInvokedReason），"
                         "skills.taeUnmatched 缺失 = false；"
                         "（v3 审查修正）hits.noFpSource 缺失 = noFp 来自行名（或 noFp=false），hits.fpBoth 缺失 = false，"
-                        "hits.selfOrAllyOnly 缺失 = false。",
+                        "hits.selfOrAllyOnly 缺失 = false；"
+                        "（v3 修订）weapons.customMagicTables 缺失 = 没有可达的施法器 custom 行以它为基础武器；"
+                        "spells.casterWeaponIds / casterSources 恒存在且非空（不可施放的 Magic 行不进 spells）。",
             "weaponIds": "（v3 取值扩大）skills[].weaponIds = 能带这个战技的全部武器 ="
                          "EquipParamWeapon.swordArtsParamId 固定引用 ∪ 局内战技池"
                          "（可达的 EquipParamCustomWeapon 行，其 swordArtsTableId 指向的池里含该战技且 chanceWeight>0，"
@@ -2241,6 +2448,32 @@ def main() -> None:
                               "与 AttachEffectTableParam 同一惯例）。Paramdex 行名前缀里的 \"<Dagger>\" / "
                               "\"<Untyped Straight Sword>\" 等与引用它的 custom 行的武器类别逐一吻合；"
                               "行名本身（包括 custom 行与商店行的名字）不可靠，归属一律以 targetWeaponId 为准。",
+            "casterWeaponIds": "spells[].casterWeaponIds（v3 修订）= 能携带这个法术的施法器（基础武器 ID，升序）："
+                               "可达的 EquipParamCustomWeapon 行里，magicTableId_1 或 magicTableId_2 指向的 MagicTableParam 池"
+                               "含该 magicId 且 chanceWeight>0，取该行的 targetWeaponId。本版本施法器 "
+                               f"{len(custom_magic_by_weapon)} 把（"
+                               + "、".join(f"{t} {n} 把" for t, n in sorted(caster_type_counts.items()))
+                               + "）。每把的来源见 casterSources。",
+            "casterSources": "spells[].casterSources（v3 修订）与 casterWeaponIds 一一对应（同序），每项 {id, pool}，"
+                             "结构仿 skills[].weaponSources（法术没有「固定」来源，所以没有 fixed）："
+                             "pool = [[magicTableId, chanceWeight, customRows], ...]（按池 ID 升序）——"
+                             "该武器的可达 custom 行里有 customRows 行的 magicTableId_1 或 _2 指向池 magicTableId"
+                             "（同一行两个槽指向同一个池只算一行），池里这个法术的权重是 chanceWeight"
+                             "（同池其它条目见顶层 magicPools[池 ID]，该槽抽到本法术的概率 = chanceWeight / 池内权重之和）。"
+                             "要回溯到具体行：weapons[该武器].customMagicTables 里两个槽之一等于该池的那些 customId。",
+            "customMagicTables": "weapons[].customMagicTables（v3 修订）= [[customId, magicTableId_1, magicTableId_2], ...]："
+                                 "以这把武器为 targetWeaponId、且至少一个法术槽不是 -1 的**可达** EquipParamCustomWeapon 行"
+                                 "（可达口径同 customWeapons）。一局里拿到的施法器每个槽从对应的池里各抽一个法术。",
+            "magicPools": "顶层 magicPools（v3 修订）= {MagicTableParam 池 ID: [[magicId, chanceWeight], ...]}，只收被可达施法器 "
+                          "custom 行引用的池、且只收 chanceWeight>0 的条目。分组规则同 swordArtsPools：**同一个 ID 的全部行 = 一个池**"
+                          f"（MagicTableParam {len(magic_table_raw)} 行、{len({r['ID'] for r in magic_table_raw})} 个不同 ID；"
+                          f"custom 行引用到的池 {len(magic_tables_any_custom)} 个，全部是表里的 ID）。"
+                          f"可达池里 chanceWeight=0 的行 {len(magic_zero_in_used)} 行（抽不到；多数是第 2 槽池把第 1 槽的法术置 0），不收，"
+                          "清单与说明见 diagnostics.spellCasting.zeroWeightRowsInUsedPools / zeroWeightNote；这些 magicId 也都在别的池里以正权重出现。"
+                          + (f"同一池里同一法术写了两行的 {magic_pool_dup_rows} 行已按权重相加合并。" if magic_pool_dup_rows else ""),
+            "spellsNotCastable": "coverage.spellsNotCastable（v3 修订）：Magic 表里有名字、但不在任何可达施法器池里的行，不收进 spells[]。"
+                                 "每项 {id, nameZh, nameEn, kind, hits（修订前归到它的命中段数）, atkIds, magicTablePools"
+                                 "（任何权重下引用它的池，空 = 没有）, sameNameSkillIds（本作同名、有武器的战技）, reason}。",
             "unnamedWeapons": "没有 WeaponName 文本的 EquipParamWeapon 行不收录（本版本 "
                               f"{unnamed_rows} 行）。其中 100000–101000 这批 wepType 3、rarity 0、Paramdex 行名为空的"
                               "测试行把 swordArtsParamId 指到 210 风暴刃（" + str(unnamed_skill_refs.get(210, 0)) + " 行）——"
@@ -2425,6 +2658,13 @@ def main() -> None:
                          "skills[].weaponIds；要区分固定 / 随机池、或给出池内概率，读 skills[].weaponSources"
                          "（pool 项的权重配合 swordArtsPools 求概率）。不要再用 swordArtsParamId 反查——"
                          f"那样会漏掉 {len(skills_pool_only)} 个只在局内战技池里出现的战技（coverage.skillsPoolOnly）。",
+            "法术来源（v3）": "spells[] 就是本作玩家能施放的全部法术（v3 修订后只收可施放的，"
+                          f"{len(spells_not_castable)} 行 Magic 残留行见 coverage.spellsNotCastable）："
+                          "「这个法术能用哪些施法器」读 spells[].casterWeaponIds；「这把手杖 / 圣印记可能带哪些法术」反查 "
+                          "casterWeaponIds 含它的 spells（或按 weapons[].customMagicTables 的两个槽查 magicPools）；"
+                          "要给出概率，读 spells[].casterSources 的 pool 项并配合 magicPools 求池内占比。"
+                          "施法器每个 custom 行有两个法术槽，各从自己的池里抽一个，所以同一行的两个槽要分开算。"
+                          "不要再按「Magic 表里有名字」列法术——那样会把风暴管束者（8100 / 8101，本作是战技 1200）当成玩家法术。",
             "命中段已按 TAE 核实（v3）": (
                 ("counts.taeVerified=true：skills[].variants[].atkIds 在行为表选段之上又逐武器核对了动画事件（TAE），"
                  "只留下这把武器用这个战技时动画真会打出的段，取段写法不变（仍是 variants[下标].atkIds）。留下的状态："
@@ -2547,14 +2787,47 @@ def main() -> None:
             },
             "notInvokedReason": NOT_INVOKED_REASON_ZH,
         },
-        "diagnostics": {"taeVerification": tae_diagnostics},
+        "diagnostics": {
+            "taeVerification": tae_diagnostics,
+            # v3 修订：法术可施放口径的中间量
+            "spellCasting": {
+                "rule": "spells[] = 可达施法器 custom 行（ItemTableParam itemCategory=6 / ItemLotParam lotItemCategory0N=6 / "
+                        "ShopLineupParam equipType=6 引用）的 magicTableId_1 / magicTableId_2 → MagicTableParam 池"
+                        "（同 ID = 一池）里 chanceWeight>0 的 magicId；同一行两个槽指向同一池只算一行。",
+                "customRows": {"reachable": magic_custom_stats["reachable"],
+                               "unreachable": magic_custom_stats["unreachable"],
+                               "reachableUnnamedTarget": magic_custom_stats["reachableUnnamedTarget"],
+                               "reachableEmptyPool": magic_custom_stats["reachableEmptyPool"]},
+                "poolsReferencedByAnyCustomRow": len(magic_tables_any_custom),
+                "poolsReferencedByReachableRows": len(used_magic_pools),
+                "poolDuplicateRows": magic_pool_dup_rows,
+                "zeroWeightRowsInUsedPools": magic_zero_in_used,
+                "zeroWeightNote": (
+                    f"可达施法器池里 chanceWeight=0 的行（{len(magic_zero_in_used)} 行）：抽取时抽不到，不计入 magicPools 与 casterSources。"
+                    "每项 {pool, magicId, rowName, slots（该池在引用它的 custom 行里是第几槽）, otherSlotPools（这些行另一个槽的池）, "
+                    "inOtherSlotPool（另一个槽的池里这个法术是否有正权重）}。"
+                    f"全部在第 {'/'.join(str(s) for s in sorted({s for z in magic_zero_in_used for s in z['slots']}))} 槽；"
+                    f"{sum(1 for z in magic_zero_in_used if z['inOtherSlotPool'])} 行的法术正是同一行另一个槽的池里的法术"
+                    "（例 3300100 的 4000 = 33000000 辉石杖第 1 槽池 3300000 的唯一法术），推断是「第 2 槽不再抽第 1 槽已给的法术」；"
+                    "其余："
+                    + ("、".join(f'{z["pool"]} 的 {z["magicId"]}（另一槽池 {z["otherSlotPools"]} 里没有它）'
+                                for z in magic_zero_in_used if not z["inOtherSlotPool"]) or "无")
+                    + "。行名多是 \"<Table> (0% weight)\"，保留了法术名的有 "
+                    + ("、".join(f'{z["pool"]} 的 {z["magicId"]}「{z["rowName"]}」' for z in magic_zero_in_used
+                                if "(0% weight)" not in z["rowName"]) or "无") + "。"
+                    "这些 magicId 都另有正权重的来源（self_check 断言），所以不影响哪些法术可施放。"),
+                "unnamedMagicIds": unnamed_magic_ids,
+                "castableButUnnamed": castable_unnamed,
+            },
+        },
         "swordArtsPools": pool_payload,
+        "magicPools": magic_pool_payload,
         "weapons": weapons,
         "skills": skills,
         "spells": spells,
     }
 
-    self_check(payload, {row["ID"]: row for row in custom_raw}, reachable_custom, pre_sel)
+    self_check(payload, {row["ID"]: row for row in custom_raw}, reachable_custom, pre_sel, magic_table_raw)
     print("self_check 通过")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -2584,6 +2857,11 @@ def main() -> None:
     for line in skills_pool_only:
         print(f"  + {line}")
     print(f"仍然没有武器的战技：{skills_without_weapons}")
+    print(f"法术可施放口径（v3 修订）：有名 Magic 行 {spells_named_total}，可施放 {len(castable_magic)}（收进 spells），"
+          f"不可施放 {len(spells_not_castable)}：" + "、".join(f'{e["id"]} {e["nameZh"]}' for e in spells_not_castable)
+          + f"；施法器 {len(custom_magic_by_weapon)} 把 {dict(caster_type_counts)}、可达 custom 行 {magic_custom_stats['reachable']}"
+          f"（不可达 {magic_custom_stats['unreachable']}）、池 {len(magic_pool_payload)} 个 / 条目 {magic_pool_entry_count}、"
+          f"(法术, 施法器) 对 {len(spell_pool_pairs)}；0 权重行 {len(magic_zero_in_used)}")
     print(f"选段与两级回退口径不同的 (战技, 武器) 对 {len(legacy_changed)}（固定 {len(legacy_changed_fixed)}："
           f"{legacy_changed_fixed_text or '无'}）；同类别拆两套的战技：v3 {split_v3}，"
           f"两级回退只看固定 {split_legacy_fixed}、全部武器 {split_legacy_all}")
@@ -2648,9 +2926,9 @@ def main() -> None:
 
 # ------------------------------------------------------------------ self_check
 def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str],
-               pre_sel: dict[tuple[int, int], frozenset[str]]) -> None:
-    """生成后立刻校验 v3 的战技池字段与 TAE 核实结果（任何一条不成立都直接中止，不写文件）。
-    pre_sel：行为表层（TAE 核实前）每个 (战技, 武器) 解出的段。"""
+               pre_sel: dict[tuple[int, int], frozenset[str]], magic_table_rows: list[dict]) -> None:
+    """生成后立刻校验 v3 的战技池字段、法术可施放口径与 TAE 核实结果（任何一条不成立都直接中止，不写文件）。
+    pre_sel：行为表层（TAE 核实前）每个 (战技, 武器) 解出的段；magic_table_rows：原始 MagicTableParam。"""
     assert payload["schemaVersion"] == SCHEMA_VERSION == 3, payload["schemaVersion"]
     assert [c["version"] for c in payload["schemaChangelog"]] == [1, 2, 3]
     weapons = {w["id"]: w for w in payload["weapons"]}
@@ -2731,6 +3009,82 @@ def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str]
     assert skills[100]["weaponIds"]
     storm_ruler = skills[1200]
     assert len(storm_ruler.get("variants", ())) == len(storm_ruler["weaponIds"]) == 10, "风暴管束者应每个角色一套"
+
+    # ---- v3 修订：法术只收可施放的 -------------------------------------------------
+    spells = {sp["id"]: sp for sp in payload["spells"]}
+    magic_pools = payload["magicPools"]
+    counts_ = payload["counts"]
+    not_castable = {e["id"]: e for e in payload["coverage"]["spellsNotCastable"]}
+    # 用户点名的风暴管束者：Magic 8100 / 8101 是本体遗留的死行，不是玩家法术；本作的风暴管束者是战技 1200
+    for magic_id in (8100, 8101):
+        assert magic_id not in spells, f"{magic_id} 风暴管束者不应在 spells 里"
+        e = not_castable[magic_id]
+        assert e["magicTablePools"] == [] and e["sameNameSkillIds"] == [1200] and "残留" in e["reason"], e
+    assert 1200 in skills and skills[1200]["nameZh"] == not_castable[8100]["nameZh"] and skills[1200]["weaponIds"]
+    assert set(spells).isdisjoint(not_castable)
+    assert counts_["spells"] == len(spells) == counts_["spellsCastable"], (counts_["spells"], counts_["spellsCastable"])
+    assert counts_["spellsDropped"] == len(not_castable) and counts_["spellsNamed"] == len(spells) + len(not_castable)
+    assert counts_["magicPools"] == len(magic_pools)
+    assert counts_["magicPoolEntries"] == sum(len(v) for v in magic_pools.values())
+    assert counts_["spellsWithHits"] == sum(1 for sp in spells.values() if sp["hits"])
+    spell_info = payload["diagnostics"]["spellCasting"]
+    assert not spell_info["castableButUnnamed"], spell_info["castableButUnnamed"]
+    # 池内容与 MagicTableParam 原表一致（同 ID = 一池、只收正权重、重复行权重相加）
+    raw_pools: dict[str, dict[int, int]] = defaultdict(dict)
+    for row in magic_table_rows:
+        m, wt = int(row["magicId"]), int(row["chanceWeight"])
+        if m > 0 and wt > 0:
+            raw_pools[row["ID"]][m] = raw_pools[row["ID"]].get(m, 0) + wt
+    referenced_magic_tables = {t for w in weapons.values() for _c, t1, t2 in w.get("customMagicTables", ())
+                               for t in (t1, t2) if t != -1}
+    assert {int(p) for p in magic_pools} == referenced_magic_tables, sorted(referenced_magic_tables ^ {int(p) for p in magic_pools})
+    for pid, entries in magic_pools.items():
+        assert entries and all(wt > 0 for _m, wt in entries), pid
+        assert len({m for m, _w in entries}) == len(entries), f"法术池 {pid} 有重复条目"
+        assert dict((m, wt) for m, wt in entries) == raw_pools[pid], pid
+    # 权重 0 的行抽不到：不进 magicPools，且它们的 magicId 都另有正权重来源（所以不影响可施放集合）
+    assert payload["counts"]["magicPoolZeroWeightRows"] == len(spell_info["zeroWeightRowsInUsedPools"])
+    for z in spell_info["zeroWeightRowsInUsedPools"]:
+        pid, m = z["pool"], z["magicId"]
+        assert str(pid) in magic_pools and m not in {mm for mm, _w in magic_pools[str(pid)]}, z
+        assert m in spells, z
+        if z["inOtherSlotPool"]:
+            assert all(m in {mm for mm, _w in magic_pools[str(p)]} for p in z["otherSlotPools"]), z
+    # zeroWeightNote 里举的例子
+    assert magic_pools["3300000"] == [[4000, 100]] and [33000000, 3300000, 3300100] in weapons[33000000]["customMagicTables"]
+    assert any(z["pool"] == 3300100 and z["magicId"] == 4000 and z["inOtherSlotPool"]
+               for z in spell_info["zeroWeightRowsInUsedPools"])
+    # customMagicTables 逐行回溯到原始 custom 行
+    for wid, w in weapons.items():
+        rows = w.get("customMagicTables", [])
+        assert rows == sorted(rows), wid
+        for cid, t1, t2 in rows:
+            raw = custom_by_id.get(str(cid))
+            assert raw is not None and str(cid) in reachable, (wid, cid)
+            assert int(raw["targetWeaponId"]) == wid, (wid, cid)
+            assert (int(raw["magicTableId_1"]), int(raw["magicTableId_2"])) == (t1, t2), (wid, cid)
+            assert t1 != -1 or t2 != -1, (wid, cid)
+    # 每个法术至少一把施法器；casterSources 可回溯到 custom 行，且反过来施法器池里的每个法术都列了这把武器
+    spell_pairs: set[tuple[int, int]] = set()
+    for sid, sp in spells.items():
+        srcs = sp["casterSources"]
+        assert sp["casterWeaponIds"], f"法术 {sid} 没有施法器"
+        assert [s["id"] for s in srcs] == sp["casterWeaponIds"] == sorted(set(sp["casterWeaponIds"])), sid
+        for src in srcs:
+            wid = src["id"]
+            assert set(src) == {"id", "pool"} and src["pool"], (sid, wid)
+            spell_pairs.add((sid, wid))
+            for table, weight, n_rows in src["pool"]:
+                assert [sid, weight] in magic_pools[str(table)], (sid, wid, table, weight)
+                backing = [cid for cid, t1, t2 in weapons[wid].get("customMagicTables", ()) if table in (t1, t2)]
+                assert n_rows >= 1 and n_rows == len(backing), (sid, wid, table, n_rows, backing)
+    pairs_from_pools = {(m, wid) for wid, w in weapons.items() for _c, t1, t2 in w.get("customMagicTables", ())
+                        for t in (t1, t2) if t != -1 for m, _wt in magic_pools[str(t)]}
+    assert spell_pairs == pairs_from_pools, sorted(spell_pairs ^ pairs_from_pools)[:10]
+    assert counts_["spellWeaponPairs"] == len(spell_pairs)
+    assert counts_["casterWeapons"] == sum(1 for w in weapons.values() if w.get("customMagicTables"))
+    # 施法器都是手杖（57）或圣印记（61）
+    assert {weapons[wid]["wepType"] for sp in spells.values() for wid in sp["casterWeaponIds"]} <= {57, 61}
 
     # ---- TAE 核实 ---------------------------------------------------------------
     counts = payload["counts"]

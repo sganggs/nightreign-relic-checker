@@ -3,11 +3,11 @@
  "datasetId": "nightreign-buffs",
  "gameVersion": "v1.03.5 + DLC1",
  "dataVersion": "regulation 10350000",
- "generatedAt": "2026-09-24T00:20:07Z",
+ "generatedAt": "2026-09-24T01:36:26Z",
  "schemaChangelog": [
   {
    "version": 6,
-   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）：(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)：上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)：算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。"
+   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）：(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)：上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)：算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。⑫ **道具等级（携物知识）修订**（仍是 v6，只增字段与改名）：(a) **新增 buffs[].goodsLevel（2／3）／goodsLevelSource（\"学者能力「携物知识」（CL_MenuText 20020）\"）／goodsBaseSpEffectId（对应的 1 级行）／goodsLevels（被几级共用时列出）／goodsLevelPaths**，enums.goodsLevel、notes.goodsLevel、diagnostics.goodsLevelRows(+Note)、counts.buffsWithGoodsLevel／buffsByGoodsLevel／buffsWithGoodsLevels／buffsWithGoodsBaseSpEffectId／goodsLevelRenamed。EquipParamGoods.level2RefId／level3RefId（＋_1）是道具被学者能力『携物知识』提到 2／3 级后的效果行，本版本 72 条 buff（57 条经 sources 里的 level 列到达，另 15 条壶类异常状态行只挂在 2／3 级子弹的子子弹上）；500925 粪便壶的自身中毒被 1–3 级共用，只写 goodsLevels=[1,2,3]。(b) **改名**：这些行 displayNameZh 的『档位N』→『携物知识N级』（2、3 级共用的写『携物知识2–3级』），displayNameEn 的『LvN』→『Bagcraft LvN』，并一律带道具名：15 条壶类行补上了道具名（粪便壶／苍蝇壶／结冰壶／毒壶／催眠壶／腐败壶），708680『魅惑树枝』→『魅惑树枝（携物知识3级）』；**708421『提升物理攻击力（勇者肉块・档位3）』→『提升物理与属性攻击力（勇者肉块・携物知识3级）』**（英文 Improved Physical and Affinity Attack Power）——它是物理 ×1.3＋魔力／火／雷／圣 ×1.2，1 级 3950／2 级 708420 只有物理（道具等级行里只有这一条要改；同一规则推广到全表见 (d)）。同族消歧连带：500930／500931（苍蝇壶 1 级的两行）补了类别与数值限定词。(c) 随 skills 数据集法术可施放口径（8100／8101 风暴管束者不再是法术）：attackIndex.spells 少这两项、attackIndex.populationCounts.sorcery 与 counts.attackPopulation.sorcery 61→59，14 条 buff 的 appliesToDetail.sorcery 的 reason 分母与 matchShare 随之变化（appliesTo 取值不变）。notes.displayName、stackingRules 与 diagnostics.displayNameZhIdFallbackNote／activationNote／exclusiveKeyEvidenceNote 里举的道具等级例子改用新写法。(d) **名字前缀写真推广到全表**（复核）：显示名开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』，英文 Improved X Attack Power／X Attack (Power) Up）比 rates 实际提高的攻击类型少时，只把前缀换成按实际覆盖的写法，限定词沿用按原名消歧的结果。除 708421 外另有 9 条（(b) 的『只有这一条』只就道具等级行而言）：1605000『火焰啊，赐予我力量！』与 99565 火星蝶是物理与火（→『提升物理与火属性攻击力』／Improved Physical and Fire Attack Power），7031202、7031302、7032202、7032704、7032706、7032903（隐士遗物）、7260803 是物理与魔力／火／雷／圣同倍率（→『提升物理与属性攻击力』）。除 99565 外它们的 appliesTo.sorcery／incantation 都是 yes，页面对纯魔法构成按 ×1.05–×1.25 计入，旧名字只说物理。新增 diagnostics.attackTypeHeadRenames(+Note)、counts.attackTypeHeadRenamed（10）；notes.goodsLevel／displayName 写明规则，notes.displayName 另写明『档位N』只留给遗物／武器词条的强度档位（刻意保留）。(e) **壶类 1 级行也写道具名**（复核）：显示名的道具名兜底（sources 里没有道具名、只被一种道具到达时取重走结果里的道具名）从 2／3 级行扩到 1 级行，500900／500901 毒壶、500910／500911 结冰壶、500920／500921 粪便壶、500931 苍蝇壶、500940／500941 腐败壶、500950 催眠壶这 10 条 1 级异常状态行由只写『道具』改为带壶名，与各自的 2／3 级行一致；同族消歧连带 500925、708350 的限定词变化。新增 diagnostics.goodsOriginNameRows(+Note)、counts.buffsWithGoodsOriginName。⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。"
   },
   {
    "version": 5,
@@ -72,11 +72,11 @@
   "damageTypeNaming": "参数里的 dark 槽位在本作即『圣』属性；physics 为物理总量，slash/blow/thrust/neutral 是物理攻击类型细分。",
   "ranking": "增伤排名的推荐步骤（顺序不能省）：① 先按 `target` 过滤，只保留 self 与 ally——summon 是召唤物自己的系数、enemy 是挂在敌人身上的效果，混进来会直接占据榜首／榜尾；② 按 `direction` 过滤（只要 increase／mixed）；③ **先看 `activation`，再看 `conditions`／`triggered`**：只有 activation=\"passive\" 才允许默认计入乘积；conditional（残血、双手持、叠层、命中触发…）与 activated（技艺／绝招／战技发动期间）一律由用户勾选，默认不计入。顺序不能反过来——v2 只写了『看 conditions／triggered』，而 704301（×1.5）、8300000-2、8310000-2、707201-215（×3.55）这些榜首条目的 conditions／triggered 全是 null，那一步在最需要它的条目上是空转的。拿到具体条件字段仍然看 `conditions`（含义见 conditionFields，**只有 isActivationCondition=true 的列才是发动条件**，motionInterval／isPeriodicEffect 是计时机制）与 `triggered`；④ **再看 `scope.attackContexts`**：非空表示这条倍率只在某种攻击情境下生效（致命一击、突刺反击、防御反击、连段最后一击、蓄力、跳跃／冲刺／翻滚攻击、双手持…），**默认不得计入通用排名**，只有当用户勾选了对应情境时才参与乘算——这类条目本身是 passive（装上就一直在），限制的是作用范围而不是发动时机，所以第③步拦不住它们，必须单独走这一步。其余 scope 字段（affectsSorcery／affectsIncantation／affectsShaman／affectsThrow／weaponSlot／spAttribute／subCategories）仍按伤害构成加权；attackContexts 是 subCategories 与 stateInfo 两条来路的归一化视图，原始值都还在原处，中文解释见 enums.attackContext；⑤ 对每个 rates 字段查 `rateFields[key].valueKind` 与 `countsAsDamage`／`conditionalDamage` 决定怎么用——damage 组（减防后）与 attackPower 组（减防前）分别按伤害构成加权后两层相乘，attackPowerFlat 先加后乘，conditionalDamage 只在对应分区里算，stance／status 另开一条轴——**status（异常累积）那条轴的过滤口径与伤害轴不同**：武器／油脂／附加属性带来的累积 target 是 enemy（累积加在被命中者身上，要按 sources[].kind 取玩家可获得的来源而不是按 target=self 取），而 target=self 且带 `selfInflictedStatus: true` 的是自伤（切腹、癫火自伤），必须排除；special／flag／economy 只展示不乘；⑥ 用 `stacking.exclusiveKey` 分组去重（同键只留一份，按 `spCategoryBehavior` 选哪份）后跨组相乘（v6 起：stacking.group 是只按类别的旧口径，200 系列不看优先度、累积阶梯不合并，留作兼容；resetOnApply 的 group 也已改为按 ID，见 stackingRules 第 2 条）；⑦ 列表一律显示 `displayNameZh`（已保证唯一）。**v6**：第④步里『其余 scope 字段按伤害构成加权』之前，先用 buffs[].appliesTo 判断这条 buff 对所选输出（战技／魔法／祷告…）是否生效——no 直接虚化并显示 appliesToDetail.reason，conditional 按 requires 与 attackIndex 对所选条目判定；页面分栏改用 sourceSlot（见 notes.appliesTo／notes.sourceSlot）。武器词条栏按 slotRules 组装：常规 6 条、深夜 12 条正面词条（另有每把 1 条诅咒，最多 6 条），**其中 weaponAffixDeepOnlyPositive=true 的最多 6 条**（slotRules.weaponAffix.maxDeepOnlyAffixes，每把 1 条；诅咒也是 weaponAffixDeepOnly=true，但不计入这个上限，见 slotRules.weaponAffix.deepOnlyCapField）；叠层类按 stackInput 让用户填层数。**v6 复核三轮**：第①步保留 self 与 ally 时，带 `selfAllyPair` 的成对行（同一战技的 Self／Allies 两行）算施放者自己只计 role=self 那一行，role=ally 那一行只在队友施放时计入（notes.selfAllyPair）；第⑥步的 exclusiveKey 新增取值 \"affix#<attachEffectId>\"（exclusiveScope=affixVariant）：同一词条互为替代的 4 档共用一键、只取一档（notes.affixVariant）；relicAffixes[].exclusivityId 相同的不同词条（出击武器附加类 7 条）同时选中时给出提示；accumulatorStages 的各阶段各自一键、逐段相乘（notes.accumulatorStages）；累积阶梯的 \"sp120\" 同时让不同物品互斥（notes.accumulatorLadder）。",
   "howToUseRates": "把 rates 折算成伤害之前，必须先看 rateFields[key].valueKind：multiplier 可直接相乘；flat 是点数，要先加进攻击力再乘倍率；flag 只是开关，不参与计算；special 的每个字段语义各不相同、**一律不得相乘**（restageAttackRate=0.6 指女爵『再演』复制那一份占 60%，不是 -40% 伤害）。再用两个布尔做粗筛：`countsAsDamage=true` 的组（damage／attackPower／attackPowerFlat）是**无条件**的血量伤害，可以进通用乘积；`conditionalDamage=true` 的组与字段（weakness 特攻、critical 致命一击、以及 economy 里的 bowDistRate 远程衰减）确实改血量伤害，但要先满足条件才成立，**不得无条件乘进通用排名**——『纠死圣律』weakDmgRateB=10 只对不死类敌人生效，无条件相乘会让它以 ×10 稳居榜首；页面应在『指定敌人类型』或『远程／致命一击』分区里另算。两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）不进伤害乘积，只单独展示或另开轴。",
-  "displayName": "nameZh 取自状态栏文本，重名极多（『提升攻击力』92 条、『异常状态：冻伤』53 条），**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%）、③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。因此『提升火属性攻击力（火油脂・档位2・右手）』这种长名字是刻意的：六个油脂档位×左右手原本完全同名。v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，避免同一组遗物一条带 #id、一条不带。实际退到 `#spEffectId` 的条数见 counts.displayNameZhFallingBackToSpEffectId，完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId（v2 为 52 条）。",
+  "displayName": "nameZh 取自状态栏文本，重名极多（『提升攻击力』92 条、『异常状态：冻伤』53 条），**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%；v6 修订：道具等级行写『携物知识N级』而不是『档位N』，且总带道具名，见 notes.goodsLevel）、③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。因此『提升火属性攻击力（火油脂・携物知识2级・右手武器）』这种长名字是刻意的：三个道具等级×左右手的六行油脂原本完全同名。v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，避免同一组遗物一条带 #id、一条不带。实际退到 `#spEffectId` 的条数见 counts.displayNameZhFallingBackToSpEffectId，完整 ID 清单见 diagnostics.displayNameZhFallingBackToSpEffectId（v2 为 52 条）。**v6 修订复核（前缀写真）**：名字开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』；英文 \"Improved X Attack Power\"／\"X Attack (Power) Up\"）比 rates 实际提高的攻击类型少时，只把这段前缀换成按实际覆盖的写法（物理＋四属性＝『提升物理与属性攻击力』，物理＋火＝『提升物理与火属性攻击力』），限定词沿用按原名消歧的结果。本版本 10 条：99565『提升物理与火属性攻击力（场景互动・×1.1・火星蝶・提升物理与火属性伤害）』、708421『提升物理与属性攻击力（勇者肉块・携物知识3级）』、1605000『提升物理与火属性攻击力（火焰啊，赐予我力量！）』、7031202『提升物理与属性攻击力（遗物・×1.25）』、7031302『提升物理与属性攻击力（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限）』、7032202『提升物理与属性攻击力（受到攻击时，能提升攻击力）』、7032704『提升物理与属性攻击力（遗物・×1.15）』、7032706『提升物理与属性攻击力（遗物・×1.05）』、7032903『提升物理与属性攻击力（遗物・×1.16）』、7260803『提升物理与属性攻击力（周围人物陷入中毒、腐败时，能提升攻击力）』；其中 9 条 appliesTo 的 sorcery／incantation 为 yes（在法术上也按倍率计入，旧名字只说物理正是误导所在）。清单见 diagnostics.attackTypeHeadRenames；self_check 断言改写后全表显示名的主干里不再有『点名的类型少于实际』的写法。nameZh／statusLabelsZh 仍是游戏文本，所以 nameZh 可能是『提升物理攻击力』而 displayNameZh 是『提升物理与属性攻击力』。**『档位N』是刻意保留的**：它只表示遗物／武器词条的强度档位（Paramdex 行名里的 Lv／Potency），显示名里 167 条（[Weapon…] 135、[Relic…] 32）；道具等级写『携物知识N级』、叠层写『第N层』、阶段写『第N阶段』。self_check 断言『档位』只出现在没有道具来源的 [Weapon…]／[Relic…] 行，不是『全表为 0』。",
   "userQuestions": {
    "Q1": {
     "question": "战技排名为什么没有局内武器「提升战技攻击力」？法术为什么会吃到战技攻击力？",
-    "answer": "**数据是收录了的，是页面口径错了两处，另有一处数据集自身的推导错误（v6 已修）。**局内武器词条『提升战技攻击力』＝ AttachEffectParam／SpEffectParam 8350000（×1.15）、8350001（×1.18）、8350002（×1.21），全部五种伤害倍率、magicSubCategoryChange＝[112 战技攻击, 111 蓄力战技攻击]；同样带 112 的还有 312300『提升战技攻击力（战士壶碎片）』（accessory）、7006700『提升战技攻击力』（relicAffix）。① 数据集错误：v4 起 scope.attackContexts 把 111（蓄力战技）单独当成情境限制，给这 5 条标了 [\"chargedSkill\"]，页面据此把它们藏到『蓄力战技』勾选项后面。magicSubCategoryChange1..3 是『命中任一即生效』：实测 skills 数据集 155 个有伤害段的战技里 150 个的命中段带 112（没有的是 野蛮咆哮、战吼、夸耀咆哮、黄金剑技、拉塔恩的骤雨——咆哮类的伤害段是咆哮后强化的普通攻击，子类别 106+130）。v6 规定只有**全部**子类别都是情境类时才输出 attackContexts，这 5 条的 attackContexts 已删除（diagnostics.droppedAttackContexts）。② 页面错误：v5 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都标成 sources[].kind=\"relicAffix\"，局内武器词条与遗物词条混在一起，页面无法单列『局内武器词条』；v6 新增 buffs[].sourceSlot=\"weaponAffix\"。③ 页面错误：ranker.js 的 meleeOnly 规则把只标 [130 近战武器攻击] 的条目（『提升近战攻击力』）判为不作用于战技，但实测 149/155 个战技的命中段带 130（只有弓系战技没有），v6 的 appliesTo.skill 已给出 conditional＋requires.subCategoriesAny=[130]。**法术不会吃『提升战技攻击力』**：125 个有伤害段的法术里带 112 的有 0 个，且这些词条 magParamChange＝miracleParamChange＝0，appliesTo.sorcery／incantation＝\"no\"。页面上法术吃到的『提升攻击力（战技・×1.115）』之类，是战技**发动后给自己的全伤害增益**——1730『[AoW] Golden Vow』×1.115（战技『黄金树立誓』）、1768『[AoW] Rallying Standard』×1.2（战技『归于麾下』）等，magParamChange＝miracleParamChange＝1，确实作用于法术；显示名里的『战技』是**来源类别**不是生效范围。v6 把它们归到 sourceSlot=\"weaponSkill\"，并在 sources[].artsNameZh／displayNameZh 写出战技名（例：1730 现在显示为『提升攻击力（黄金树立誓・战技）』，1768 为『提升攻击力（归于麾下）』）。"
+    "answer": "**数据是收录了的，是页面口径错了两处，另有一处数据集自身的推导错误（v6 已修）。**局内武器词条『提升战技攻击力』＝ AttachEffectParam／SpEffectParam 8350000（×1.15）、8350001（×1.18）、8350002（×1.21），全部五种伤害倍率、magicSubCategoryChange＝[112 战技攻击, 111 蓄力战技攻击]；同样带 112 的还有 312300『提升战技攻击力（战士壶碎片）』（accessory）、7006700『提升战技攻击力』（relicAffix）。① 数据集错误：v4 起 scope.attackContexts 把 111（蓄力战技）单独当成情境限制，给这 5 条标了 [\"chargedSkill\"]，页面据此把它们藏到『蓄力战技』勾选项后面。magicSubCategoryChange1..3 是『命中任一即生效』：实测 skills 数据集 155 个有伤害段的战技里 150 个的命中段带 112（没有的是 野蛮咆哮、战吼、夸耀咆哮、黄金剑技、拉塔恩的骤雨——咆哮类的伤害段是咆哮后强化的普通攻击，子类别 106+130）。v6 规定只有**全部**子类别都是情境类时才输出 attackContexts，这 5 条的 attackContexts 已删除（diagnostics.droppedAttackContexts）。② 页面错误：v5 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都标成 sources[].kind=\"relicAffix\"，局内武器词条与遗物词条混在一起，页面无法单列『局内武器词条』；v6 新增 buffs[].sourceSlot=\"weaponAffix\"。③ 页面错误：ranker.js 的 meleeOnly 规则把只标 [130 近战武器攻击] 的条目（『提升近战攻击力』）判为不作用于战技，但实测 149/155 个战技的命中段带 130（只有弓系战技没有），v6 的 appliesTo.skill 已给出 conditional＋requires.subCategoriesAny=[130]。**法术不会吃『提升战技攻击力』**：123 个有伤害段的法术里带 112 的有 0 个，且这些词条 magParamChange＝miracleParamChange＝0，appliesTo.sorcery／incantation＝\"no\"。页面上法术吃到的『提升攻击力（战技・×1.115）』之类，是战技**发动后给自己的全伤害增益**——1730『[AoW] Golden Vow』×1.115（战技『黄金树立誓』）、1768『[AoW] Rallying Standard』×1.2（战技『归于麾下』）等，magParamChange＝miracleParamChange＝1，确实作用于法术；显示名里的『战技』是**来源类别**不是生效范围。v6 把它们归到 sourceSlot=\"weaponSkill\"，并在 sources[].artsNameZh／displayNameZh 写出战技名（例：1730 现在显示为『提升攻击力（黄金树立誓・战技）』，1768 为『提升攻击力（归于麾下）』）。"
    },
    "Q2": {
     "question": "法术不可能吃到的加成（各类武器攻击力等）应标不生效。",
@@ -104,7 +104,8 @@
   "accumulatorLadder": "**v6 复核新增** `accumulatorLadder`（可缺，出现在累积阶梯的**每一档**上，本版本 15 条）各键的口径：`key`＝这条阶梯共用的 exclusiveKey（与 stacking.exclusiveKey 相同）；`tier`＝本条是第几档（从 1 起）；`tiers`＝阶梯总档数，**含第 1 档**；`tierSpEffectIds`＝**全部各档**的 spEffectId（含第 1 档、含本条自己），按阈值升序，长度恒等于 tiers；`accumulatorSpEffectIds`＝与各档一一对应的累积器行（带 accumuOverFireId 的那一行）；`thresholds`＝各档的触发阈值（累积器的 accumuOverVal，单位是累积器自己的计数，连续攻击类随命中累积），升序；`shippedTierSpEffectIds`（复核三轮新增）＝tierSpEffectIds 里真正作为 buff 出现在 buffs[] 里的那些档。**与 stackLadder 的同名字段含义相反**：stackLadder.tierSpEffectIds 是『第 2 层起、不含第 1 层』，而且那些 id 不会出现在 buffs[] 里；accumulatorLadder.tierSpEffectIds 含第 1 档，各档本身就是 buff。例外是没有任何倍率的档不会成为 buff：遗物『连续攻击时，提升攻击力』7037604 的 tiers=4，但第 4 档 7037607 是 spCategory 120、持续 0 秒、没有倍率的行，不在 buffs[] 里，shippedTierSpEffectIds 只有 7037604–7037606 三档——页面显示层数时请用 shippedTierSpEffectIds，不要按 tiers 显示『共 4 层』。两者的区别：stackLadder 是存档叠层（saveCategory≠-1，打倒首领／监牢囚犯等一层层存起来，数据集只收第 1 层，页面让用户填层数）；accumulatorLadder 是局内累积（命中次数达到阈值依次触发下一档，各档都收录，页面让用户选能维持的档）。两者都是同一阶梯各档互斥，**各档绝不能相乘**。**互斥结论（参数推断，未实测）**：连续攻击类的各档落在 spCategory 120（Paramdex：Remove Previous），键都是 \"sp120\"，所以不止同一件物品的各档互斥，不同物品之间也互斥——道具（消耗品）『连刺破露滴』3558–3561、护符『米莉森的义手』312505–312508、护符『带翼剑徽章』320804–320807、遗物词条『连续攻击时，提升攻击力』7037604–7037606 这几件任取两件同时装备也只有一份生效（新触发的顶替旧的；它们的阈值都是 17／30／45／60，几乎同时触发），排名只算一份、默认取倍率最高的一档，页面同时选中时应提示。v6 之前的说明曾把『米莉森的义手＋带翼剑徽章』当成相乘的例子，以本条为准。",
   "accumulatorStages": "**v6 复核三轮新增** `accumulatorStages`（可缺，本版本 3 条：武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』的 8885220／8885221／8885222）：累积器依次触发、但每一阶段经『行为→子弹』才把 buff 交给玩家的阶段链。链路：累积器 8885201–8885203（stateInfo=307，阈值 4000000／9000000／15000000）→ 8885210–8885212（behaviorId 900010020–900010022，BehaviorParam_PC refType=1＝子弹）→ Bullet 98885200–98885202 的 spEffectId0 → 8885220–8885222。各键：`stage`／`stages`（本条是第几阶段／共几阶段）、`stageSpEffectIds`（各阶段的 buff，按阈值升序，含本条）、`accumulatorSpEffectIds`、`thresholds`、`behaviorSpEffectIds`、`behaviorParamIds`、`bulletIds`、`durations`（各阶段 buff 的持续秒数）、`expiryAligned`（阈值差与持续时间差成同一比例时给出：unitsPerSecond＝推出的每秒累积量，commonEndSeconds＝各阶段一起结束的时刻；不成比例时为 null）、`coexist`=true。**与 accumulatorLadder 相反，这里的各阶段是同时存在、逐段相乘的**：三条都是 ×1.1（另各带 dexterityCancelSystemOnlyAddDexterity=30 的咏唱加速），spCategory=20 各自一个 ID；持续时间 28／25.5／22.5 秒，阈值差 5M／6M 与持续时间差 2.5／3 秒同为每秒 2000000，即三段在开始防御后第 30 秒一起结束——这是『叠上去一起到期』的设计，游戏文本 AttachEffectInfo#8885200 也写『能阶段性提升』。所以三条保持各自的 exclusiveKey：维持到第 n 阶段时 ×1.1^n（第 3 阶段 ×1.331）。页面应按阶段勾选：勾第 n 阶段时第 1..n-1 阶段必然也在（依次达到）。累积量随防御时间线性增长是推断，阶段叠乘未实测。",
   "affixVariant": "**v6 复核三轮新增** `affixVariant`（可缺，本版本 28 条）与 exclusiveScope=\"affixVariant\"：同一条词条下互为替代的档位，共用键 \"affix#<attachEffectId>\"，**同键只取一档，绝不能相乘**。本版本只有『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条，每条 4 档：词条（AttachEffectParam 7120000 等）只有一个被动 7120000『Apply State Info』（stateInfo=2101，全表只有这 7 行），4 档 7120001–7120004 等没有任何参数列指向，只能由这个派发行按条件选一档；词条库说明『根据武器类型降低物理攻击力30/40/50/60，并增加魔力属性攻击力33/44/55/66』——按出击武器的类别取一档。所以同一词条的 4 档不可能同时生效；它们不是可以分装在不同遗物上的独立词条（能装备的只有词条本身，档位由武器决定）；同一词条装在两件遗物上时，词条库叠加性是『不可叠加』，同键也只算一份。冻伤／中毒／出血的 4 档逐列相同（×0.85），只差指向的负载行。各键：`key`；`attachEffectId`；`variant`／`variants`（第几档／共几档，按 spEffectId 升序）；`variantSpEffectIds`；`dispatcherSpEffectIds`／`dispatcherStateInfo`（词条自己的被动行及其 stateInfo）；`differingRateKeys`（各档数值不同的倍率键，逐列相同的为空）；`differingChainFields`（各档不同的指向列）。页面：让用户按出击武器选一档（不知道时显示档位 1–4 的区间），不要把 4 档都乘进去；fixedRelics[].spEffectIds 仍列出全部 4 档（如『细腻的水滴情景』[7120001,7120002,7120003,7120004]），整件选入时同样按键去重。识别条件与没合并的近似组见 diagnostics.affixVariantScan(+Note)。",
-  "selfAllyPair": "**v6 复核三轮新增** `selfAllyPair`（可缺，本版本 6 条＝3 对）：Paramdex 行名以『- Self』／『- Allies』成对的战技增益，`role`（self／ally，与 target 一致）＋`counterpartSpEffectId`（另一行）。**算施放者自己的伤害时，不计入同一战技的 role=ally 那一行**——共享圣律 1876（自身 ×1.1）与 1877（队友 ×1.075）：队友那一行由 AtkParam_Pc 300000820（friendlyTarget=1、selfTarget=0）交给命中的队友，施放者自己不会被命中；若只按 notes.ranking 第①步同时保留 self 与 ally 再相乘，施放者会被错算成 ×1.1825。role=ally 的行只在『队友施放、落到自己身上』时计入；两名队友都施放时，自己的 1876 与队友给的 1877 确实能同时存在（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。投递证据与哀悼墓碑 1835／1836 行名与投递对调的说明见 diagnostics.selfAllyPairs(+Note)。"
+  "selfAllyPair": "**v6 复核三轮新增** `selfAllyPair`（可缺，本版本 6 条＝3 对）：Paramdex 行名以『- Self』／『- Allies』成对的战技增益，`role`（self／ally，与 target 一致）＋`counterpartSpEffectId`（另一行）。**算施放者自己的伤害时，不计入同一战技的 role=ally 那一行**——共享圣律 1876（自身 ×1.1）与 1877（队友 ×1.075）：队友那一行由 AtkParam_Pc 300000820（friendlyTarget=1、selfTarget=0）交给命中的队友，施放者自己不会被命中；若只按 notes.ranking 第①步同时保留 self 与 ally 再相乘，施放者会被错算成 ×1.1825。role=ally 的行只在『队友施放、落到自己身上』时计入；两名队友都施放时，自己的 1876 与队友给的 1877 确实能同时存在（不同 ID、载体类别也不同），所以两行不共用 exclusiveKey。投递证据与哀悼墓碑 1835／1836 行名与投递对调的说明见 diagnostics.selfAllyPairs(+Note)。",
+  "goodsLevel": "**v6 修订新增** 道具等级字段（可缺）：`goodsLevel`（2／3）、`goodsLevelSource`（固定为 \"学者能力「携物知识」（CL_MenuText 20020）\"）、`goodsBaseSpEffectId`（对应的 1 级行，可缺）、`goodsLevels`（这一行被道具的哪几级共用，只在多于一级时出现）、`goodsLevelPaths`（\"<道具 ID>:<路径>\"，路径写法同 sources[].via，子子弹写作 \"->HitBulletID->Bullet<ID>\"）。**来源**：EquipParamGoods 除 refId_default／refId_1（1 级）外还有 level2RefId／level3RefId（＋_1）两组列（本机 regulation 10350000 有 85 种道具填了它们，字段自 regulation 10310025 起存在），道具升到 2／3 级时用它们代替 1 级的两列。等级来自 DLC 角色学者的能力「携物知识」：CL_MenuText 20020『学者－能力【携物知识】』（英文 \"Scholar: Bagcraft\"），SpEffectInfo 121206–121208『“携物知识”的效果』；官方 1.03.1 更新说明也写学者的 Bagcraft 能力让飞镖类道具达到 level 3。Paramdex 把这些行叫 \"[Item - Level 2/3] …\"，v6 之前 displayNameZh 照行名写成『档位N』，与遗物／武器词条的强度档位混成一个词。**口径**：从道具的 6 个效果列出发重走一遍（refCategory 2＝SpEffect、1＝子弹及其 HitBulletID／intervalCreateBulletId 子子弹，再沿 CHAIN_FIELDS 走 3 层），只被 2／3 级的列到达的行写 goodsLevel＝最低那一级；1 级列也到达的行是各级共用的 1 级行，不写 goodsLevel、只写 goodsLevels（如 500925 粪便壶的自身中毒 [1,2,3]）。本版本 72 条（2 级 45、3 级 27），其中 15 条壶类 2／3 级异常状态行只挂在子子弹上，sources 里只有 paramRowName（inferred）。goodsBaseSpEffectId＝同一道具、同一只手（_1 列对 _1 列）、同一条路径形状（子弹号不计）上的 1 级行，找到唯一一条时写出（67 条；3 级新增的子子弹行等没有 1 级对照）。其中 1 级行也在 buffs 里的 66 条，exclusiveKey 与 1 级行相同的 66 条（同一道具换等级只是换一行，不会与 1 级行同时生效）。**名字**：这些行 displayNameZh 的『档位N』改写为『携物知识N级』（被 2、3 级共用的写『携物知识2–3级』），英文 LvN→Bagcraft LvN，并一律带上道具名（壶类子子弹行的道具名取自重走结果；复核后同一兜底也用于壶类 1 级行，500900 毒壶等 1 级异常状态行不再只写『道具』，与它们的 2／3 级行一致，见 diagnostics.goodsOriginNameRows）；nameZh／statusLabelsZh 仍是游戏文本。**名字前缀写真**：名字点名的攻击类型（如状态栏文本『提升物理攻击力』只说物理）比 rates 实际提高的攻击类型（damage／attackPower／attackPowerFlat 三组，按物理与魔力／火／雷／圣归类）少时，前缀改为按实际覆盖写（物理＋四属性＝『提升物理与属性攻击力』，英文 \"Improved Physical and Affinity Attack Power\"；这是全表规则，见 notes.displayName）。道具等级行里只有 708421『提升物理与属性攻击力（勇者肉块・携物知识3级）』（1 级行也在 buffs 里的等级行中，攻击类型与 1 级不同的也只有它）：3950 物理 ×1.2；708420 物理 ×1.3；708421 物理 ×1.3、魔力 ×1.2、火 ×1.2、雷 ×1.2、圣 ×1.2。即勇者肉块 1 级、2 级只提高物理，对纯魔法／祷告输出没有增益；3 级（学者携物知识 3 级）物理 ×1.3 之外魔力／火／雷／圣也 ×1.2，状态栏文本『提升物理攻击力』只说了一半。遗物『道具效用能扩及我方人物』的区域子弹 900503011／900503012（[Relic - Level 2/3] Exalted Flesh (Area)）的 spEffectId0 正是 708420／708421，即队友拿到的也是同一行（参数观察，本数据集没有为它们加来源）。『只有这一条』只就道具等级行而言：全表按同一规则改写前缀的共 10 条，其余是遗物／祷告／场景互动行（如 7032903 隐士遗物『提升物理攻击力』＝物理与四属性 ×1.16），见 diagnostics.attackTypeHeadRenames。页面：道具等级是局内状态（取决于是否学者、携物知识几级），默认按 1 级；列出 2／3 级行时应标明需要携物知识，同一道具的各级互斥（同 exclusiveKey），只取当前等级那一行。逐行明细见 diagnostics.goodsLevelRows。"
  },
  "rateFieldGroups": [
   {
@@ -2164,6 +2165,20 @@
   "stackInputMode": {
    "ladder": "叠层阶梯：每层是一条独立的 SpEffect，同层互斥，取当前层",
    "copies": "同一效果多份共存（spCategory=10 stackSelf），层数＝份数，逐份相乘"
+  },
+  "goodsLevel": {
+   "1": {
+    "zh": "道具基础效果（EquipParamGoods.refId_default／refId_1），不写 goodsLevel",
+    "en": "Base (Lv1)"
+   },
+   "2": {
+    "zh": "携物知识2级：EquipParamGoods.level2RefId／level2RefId_1 代替 1 级的两列",
+    "en": "Bagcraft Lv2"
+   },
+   "3": {
+    "zh": "携物知识3级：EquipParamGoods.level3RefId／level3RefId_1 代替 1 级的两列",
+    "en": "Bagcraft Lv3"
+   }
   }
  },
  "conditionFields": [
@@ -2321,7 +2336,7 @@
   }
  ],
  "stackingRules": {
-  "zh": "本数据集给出的叠加判定，是依据参数结构（SpEffectParam 的 spCategory / categoryPriority / saveCategory / stateInfo 四个字段）推断出来的，未经木桩全面实测，请当作「参数层面的默认规则」而不是最终结论。\n\n1. spCategory 是主判定字段，决定同类效果之间怎么处理：\n   - 0（none）：不参与互斥，想挂多少份就挂多少份；\n   - 10（stackSelf）：同一个效果可以与自己叠加（遗物词条里的「提升物理攻击力」等就属于这一类，因此带同名词条的多枚遗物是各自结算再相乘的）；\n   - 20（resetOnApply）：**同一个 SpEffect** 重复取得时只刷新持续时间、不叠第二份；不同 ID 之间不互斥。\n     Paramdex NR 的枚举就叫 Reset on Apply，说的是同一效果重复获得；遗物词条、护符的被动绝大多数是这一类\n     （SpEffectParam 里 1310 行；AttachEffectParam passiveSpEffectId_1..3 的引用里有 1202 处指向 20 类），若跨 ID 互斥，装两条遗物词条就会互相顶掉。\n     词条库的实测叠加性与此一致：『不可叠加』（同一词条装两次不叠）有 126 条是 20，\n     『不同级别可叠加』（＋1 与＋2 可以同时生效）也有 7 条是 20（词条 6005600／6005601…，对应 buff 7005601／7005602）；\n     固定遗物『辽阔的光耀情景』一件就带 7030602、7034402 两条 20 类增益。\n     v6 之前 stacking.group 把 20 按类别整组合并，77 条互不相干的增益只剩一条，已改为按 ID；\n   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；\n     200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示\n     整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个\n     （带火破露滴 511028 与档位2 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；\n     204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、\n     黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、\n     遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。\n     Paramdex 的 SP_EFFECT_SPCATEGORY 枚举只标注到 204，但本作实际还用了 205（学者绝招「共鸣」）与 206\n     （遗物词条「异常状态量表逐层提升攻击力」1～10 层、三级投掷道具的减防叠层），整个 200 系列都是\n     Remove Previous 语义，所以本表按区间归类：那十层「逐层提升攻击力」彼此互斥，同一时刻只生效当前层，\n     排名时应按玩家能稳定维持的层数取一条，不能把 10 层相乘；\n   - 1000～1999（applyHighest）：同类互斥，取 categoryPriority 更优（数值小）的那一份；枚举只标到 1006，\n     本作还用了 1007（处刑人「诅咒之剑」）与 1008（濒死），同属该区间；\n   - 10000 以上（applyFirst）：同类互斥，先生效的保留，后来的被忽略。\n   本数据集把每个 buff 的 spCategory 数值、以及它落在哪一档（stacking.spCategoryBehavior）都一并输出；\n   enums.spCategoryBehavior 末尾还有一条 min/max 为 null 的 \"unknown\" 兜底项，用于万一出现区间外的新值\n   （本版本数据中不会出现，见 diagnostics.observedSpCategoryBehaviors）。\n\n2. 排名时的建议做法：**按 stacking.exclusiveKey 分组**（v6 新增，取值规则见 enums.exclusiveScope）：\n   - exclusiveScope=perSpEffect：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown，\n     键＝\"sp<spCategory>#<spEffectId>\"，只和自己同键；\n   - exclusiveScope=category：removePrevious 100～199、applyHighest、applyFirst，键＝\"sp<spCategory>\"；\n   - exclusiveScope=categoryPriority：removePrevious 200～299，键＝\"sp<spCategory>@p<categoryPriority>\"；\n   - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），\n     各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 \"sp120\"），否则 \"ladder#<第 1 档 id>\"。\n     最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），\n     按 ID 算会把同一护符的两档相乘。键 \"sp120\" 同时让连刺破露滴、米莉森的义手、带翼剑徽章、遗物『连续攻击时，提升攻击力』\n     这几件彼此互斥（同时装备只有一份生效，参数推断、未实测，见 notes.accumulatorLadder）；\n   - exclusiveScope=affixVariant（v6 复核三轮）：同一条词条下互为替代的档位（buffs[].affixVariant），键＝\"affix#<attachEffectId>\"。\n     『出击时的武器，附加…』7 条遗物词条各有 4 档（7120001–7120004 等），由词条自己的派发行（stateInfo=2101）按出击武器选一档，\n     按 ID 算会把物理 −30／−40／−50／−60 与属性 +33／+44／+55／+66 全加起来、把 ×0.85 乘成 ×0.52；\n   - 反过来，accumulatorStages（8885220–8885222，武器词条『维持防御时…』的三个阶段）各自一键，逐段相乘（notes.accumulatorStages）；\n     selfAllyPair 的 Self／Allies 两行各自一键，但算施放者自己时只计 Self 行（notes.selfAllyPair）。\n   同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；\n   不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。\n   stacking.group 保留旧口径（\"sp<spCategory>#<spEffectId>\" 或 \"sp<spCategory>\"，只按类别、不看优先度与阶梯），\n   v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。\n   正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；\n   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；\n   『出击时的武器，附加魔力属性攻击力』四档 7120001–7120004、『…附加异常状态冻伤』四档 7120401–7120404。\n   反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；\n   『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；\n   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间；\n   『出击时的武器，附加…』7 条词条彼此之间（各自一键，同 exclusivityId=100 只作提示）；8885220／8885221／8885222 三个阶段；共享圣律 1876／1877。\n   这些都写进了 self_check。\n\n3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。\n\n4. categoryPriority 是同一 spCategory 内的优先度（Paramdex 字段说明为「同一カテゴリ内での優先度（低い方が優先）」，即数值小的优先）；saveCategory 是存档槽位，-1 表示不写入存档，正值表示该 buff 占用某个可保存的槽（多用于永久强化）。\n\n4b. rates 不能一律相乘：先看 rateFields[key].valueKind。multiplier 才是乘数；flat 是点数加算（先加进攻击力再乘倍率）；\n   flag 只是开关；special 组（currentHealthAttackRate 随血量的加成系数、restageAttackRate 女爵「再演」复制那一份的伤害占比）\n   语义各自独立，**一律不得参与乘算或加权汇总**——把 restageAttackRate=0.6 当乘数会把「提升技艺伤害」算成 -40%，排名完全反向。\n   countsAsDamage=true 的组（damage／attackPower／attackPowerFlat）才是无条件的血量伤害；\n   conditionalDamage=true 的（weakness 特攻、critical 致命一击、economy 里的 bowDistRate）要先满足条件才成立，\n   不得无条件乘进通用排名（『纠死圣律』weakDmgRateB=10 只对不死类敌人生效）；\n   两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）都不进伤害乘积，只能单独展示。\n\n5. 不同层之间的关系：xxxAttackPowerRate（攻击力倍率，减算防御前）与 xxxAttackRate（最终伤害倍率，减算防御后）属于两个不同的计算层，两者相乘；同一层内不同属性（物理／魔力／火／雷／圣）各自只作用于对应属性的伤害分量；物理攻击类型倍率（slash/blow/thrust/neutral）与 physics 倍率同时生效、相乘。\n\n6. scope 字段（magicSubCategoryChange1..3、magParamChange、miracleParamChange、shamanParamChange、throwAttackParamChange、wepParamChange、atkAttribute、spAttribute）是这些倍率的生效范围。本作没有独立的「战技伤害 +x%」字段——所谓「强化战技／跳跃攻击／防御反击／绝招」都是普通的 AttackRate 字段加上 magicSubCategoryChange 的子类过滤（112 战技攻击、102 跳跃攻击、103 防御反击、110 蓄力法术、111 蓄力战技、122 角色技艺、123 绝招、105 远程武器攻击等）。页面按战技伤害构成加权时，必须先用 scope 判断这条 buff 是否作用于该攻击。"
+  "zh": "本数据集给出的叠加判定，是依据参数结构（SpEffectParam 的 spCategory / categoryPriority / saveCategory / stateInfo 四个字段）推断出来的，未经木桩全面实测，请当作「参数层面的默认规则」而不是最终结论。\n\n1. spCategory 是主判定字段，决定同类效果之间怎么处理：\n   - 0（none）：不参与互斥，想挂多少份就挂多少份；\n   - 10（stackSelf）：同一个效果可以与自己叠加（遗物词条里的「提升物理攻击力」等就属于这一类，因此带同名词条的多枚遗物是各自结算再相乘的）；\n   - 20（resetOnApply）：**同一个 SpEffect** 重复取得时只刷新持续时间、不叠第二份；不同 ID 之间不互斥。\n     Paramdex NR 的枚举就叫 Reset on Apply，说的是同一效果重复获得；遗物词条、护符的被动绝大多数是这一类\n     （SpEffectParam 里 1310 行；AttachEffectParam passiveSpEffectId_1..3 的引用里有 1202 处指向 20 类），若跨 ID 互斥，装两条遗物词条就会互相顶掉。\n     词条库的实测叠加性与此一致：『不可叠加』（同一词条装两次不叠）有 126 条是 20，\n     『不同级别可叠加』（＋1 与＋2 可以同时生效）也有 7 条是 20（词条 6005600／6005601…，对应 buff 7005601／7005602）；\n     固定遗物『辽阔的光耀情景』一件就带 7030602、7034402 两条 20 类增益。\n     v6 之前 stacking.group 把 20 按类别整组合并，77 条互不相干的增益只剩一条，已改为按 ID；\n   - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；\n     200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示\n     整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个\n     （带火破露滴 511028 与它的携物知识2级行 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；\n     204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、\n     黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、\n     遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。\n     Paramdex 的 SP_EFFECT_SPCATEGORY 枚举只标注到 204，但本作实际还用了 205（学者绝招「共鸣」）与 206\n     （遗物词条「异常状态量表逐层提升攻击力」1～10 层、三级投掷道具的减防叠层），整个 200 系列都是\n     Remove Previous 语义，所以本表按区间归类：那十层「逐层提升攻击力」彼此互斥，同一时刻只生效当前层，\n     排名时应按玩家能稳定维持的层数取一条，不能把 10 层相乘；\n   - 1000～1999（applyHighest）：同类互斥，取 categoryPriority 更优（数值小）的那一份；枚举只标到 1006，\n     本作还用了 1007（处刑人「诅咒之剑」）与 1008（濒死），同属该区间；\n   - 10000 以上（applyFirst）：同类互斥，先生效的保留，后来的被忽略。\n   本数据集把每个 buff 的 spCategory 数值、以及它落在哪一档（stacking.spCategoryBehavior）都一并输出；\n   enums.spCategoryBehavior 末尾还有一条 min/max 为 null 的 \"unknown\" 兜底项，用于万一出现区间外的新值\n   （本版本数据中不会出现，见 diagnostics.observedSpCategoryBehaviors）。\n\n2. 排名时的建议做法：**按 stacking.exclusiveKey 分组**（v6 新增，取值规则见 enums.exclusiveScope）：\n   - exclusiveScope=perSpEffect：spCategoryBehavior 为 none／persistThroughDeath／stackSelf／resetOnApply／unknown，\n     键＝\"sp<spCategory>#<spEffectId>\"，只和自己同键；\n   - exclusiveScope=category：removePrevious 100～199、applyHighest、applyFirst，键＝\"sp<spCategory>\"；\n   - exclusiveScope=categoryPriority：removePrevious 200～299，键＝\"sp<spCategory>@p<categoryPriority>\"；\n   - exclusiveScope=accumulatorLadder：连续攻击类累积阶梯（accumuOverFireId 逐档触发，buffs[].accumulatorLadder），\n     各档共用一个键——有档位落在互斥类别里时取该类别的键（连续攻击类都是 \"sp120\"），否则 \"ladder#<第 1 档 id>\"。\n     最高档常是 spCategory=20、effectEndurance=0、数值与前一档相同的『保持』行（312508 ×1.11＝312507 ×1.11），\n     按 ID 算会把同一护符的两档相乘。键 \"sp120\" 同时让连刺破露滴、米莉森的义手、带翼剑徽章、遗物『连续攻击时，提升攻击力』\n     这几件彼此互斥（同时装备只有一份生效，参数推断、未实测，见 notes.accumulatorLadder）；\n   - exclusiveScope=affixVariant（v6 复核三轮）：同一条词条下互为替代的档位（buffs[].affixVariant），键＝\"affix#<attachEffectId>\"。\n     『出击时的武器，附加…』7 条遗物词条各有 4 档（7120001–7120004 等），由词条自己的派发行（stateInfo=2101）按出击武器选一档，\n     按 ID 算会把物理 −30／−40／−50／−60 与属性 +33／+44／+55／+66 全加起来、把 ×0.85 乘成 ×0.52；\n   - 反过来，accumulatorStages（8885220–8885222，武器词条『维持防御时…』的三个阶段）各自一键，逐段相乘（notes.accumulatorStages）；\n     selfAllyPair 的 Self／Allies 两行各自一键，但算施放者自己时只计 Self 行（notes.selfAllyPair）。\n   同键的只保留一份（applyHighest 取 categoryPriority 最优，其余取玩家实际选择的那一份，默认取倍率最高者）；\n   不同键之间视为相互独立，各自的倍率相乘。同一个 spEffectId 从多个来源各拿一份时，stackSelf 各份相乘，其余只算一份。\n   stacking.group 保留旧口径（\"sp<spCategory>#<spEffectId>\" 或 \"sp<spCategory>\"，只按类别、不看优先度与阶梯），\n   v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。\n   正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；\n   同一破露滴的 1 级与携物知识2级 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；\n   『出击时的武器，附加魔力属性攻击力』四档 7120001–7120004、『…附加异常状态冻伤』四档 7120401–7120404。\n   反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；\n   『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；\n   封印监牢 7069001、黑夜入侵者 7069201、玛雷家的庇佑 8988200、复仇的庇佑 8998000 四条阶梯彼此之间；\n   『出击时的武器，附加…』7 条词条彼此之间（各自一键，同 exclusivityId=100 只作提示）；8885220／8885221／8885222 三个阶段；共享圣律 1876／1877。\n   这些都写进了 self_check。\n\n3. stateInfo 是「状态变化类型」标记，主要给游戏内的状态判定（例如 invocationConditionsStateChange、enemyStateInfoTrigger）用，并不是互斥分组；大量增伤 buff 的 stateInfo 都是 0。只有当两个 buff 的 stateInfo 相同且非 0 时，才值得怀疑它们是同一状态的不同档位（例如同一祷告的不同强度）。本数据集仍输出该值供交叉验证。\n\n4. categoryPriority 是同一 spCategory 内的优先度（Paramdex 字段说明为「同一カテゴリ内での優先度（低い方が優先）」，即数值小的优先）；saveCategory 是存档槽位，-1 表示不写入存档，正值表示该 buff 占用某个可保存的槽（多用于永久强化）。\n\n4b. rates 不能一律相乘：先看 rateFields[key].valueKind。multiplier 才是乘数；flat 是点数加算（先加进攻击力再乘倍率）；\n   flag 只是开关；special 组（currentHealthAttackRate 随血量的加成系数、restageAttackRate 女爵「再演」复制那一份的伤害占比）\n   语义各自独立，**一律不得参与乘算或加权汇总**——把 restageAttackRate=0.6 当乘数会把「提升技艺伤害」算成 -40%，排名完全反向。\n   countsAsDamage=true 的组（damage／attackPower／attackPowerFlat）才是无条件的血量伤害；\n   conditionalDamage=true 的（weakness 特攻、critical 致命一击、economy 里的 bowDistRate）要先满足条件才成立，\n   不得无条件乘进通用排名（『纠死圣律』weakDmgRateB=10 只对不死类敌人生效）；\n   两者都为 false 的组（stance 削韧、status 异常累积、special、flag、其余 economy）都不进伤害乘积，只能单独展示。\n\n5. 不同层之间的关系：xxxAttackPowerRate（攻击力倍率，减算防御前）与 xxxAttackRate（最终伤害倍率，减算防御后）属于两个不同的计算层，两者相乘；同一层内不同属性（物理／魔力／火／雷／圣）各自只作用于对应属性的伤害分量；物理攻击类型倍率（slash/blow/thrust/neutral）与 physics 倍率同时生效、相乘。\n\n6. scope 字段（magicSubCategoryChange1..3、magParamChange、miracleParamChange、shamanParamChange、throwAttackParamChange、wepParamChange、atkAttribute、spAttribute）是这些倍率的生效范围。本作没有独立的「战技伤害 +x%」字段——所谓「强化战技／跳跃攻击／防御反击／绝招」都是普通的 AttackRate 字段加上 magicSubCategoryChange 的子类过滤（112 战技攻击、102 跳跃攻击、103 防御反击、110 蓄力法术、111 蓄力战技、122 角色技艺、123 绝招、105 远程武器攻击等）。页面按战技伤害构成加权时，必须先用 scope 判断这条 buff 是否作用于该攻击。"
  },
  "counts": {
   "buffs": 874,
@@ -2457,7 +2472,7 @@
   "buffsWithWeaponAffixIds": 152,
   "attackPopulation": {
    "skill": 155,
-   "sorcery": 61,
+   "sorcery": 59,
    "incantation": 64,
    "melee": 4011,
    "ranged": 112,
@@ -2480,7 +2495,17 @@
   "buffsWithAffixVariant": 28,
   "affixVariantGroups": 7,
   "buffsWithAccumulatorStages": 3,
-  "buffsWithSelfAllyPair": 6
+  "buffsWithSelfAllyPair": 6,
+  "buffsWithGoodsLevel": 72,
+  "buffsByGoodsLevel": {
+   "2": 45,
+   "3": 27
+  },
+  "buffsWithGoodsLevels": 18,
+  "buffsWithGoodsBaseSpEffectId": 67,
+  "goodsLevelRenamed": 1,
+  "attackTypeHeadRenamed": 10,
+  "buffsWithGoodsOriginName": 25
  },
  "diagnostics": {
   "buffsWithoutChineseName": 80,
@@ -2680,11 +2705,11 @@
     296554
    ]
   },
-  "activationNote": "activation 的三态判定完全由数据推出，没有写死的 ID 名单，判定依据逐条写在 buffs[].activationSource（中文解释见 enums.activationSource）。本版本取值分布见 counts.buffsByActivation／buffsByActivationSource。**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**：v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。**v4 两处修正**：① v3 的『conditions 非空 → conditional』把 motionInterval（重新施加间隔［秒］）与 isPeriodicEffect（周期性重新施加）这两个计时列也算了进去，结果 210 条 buff 仅凭一个 tick 间隔被判成 conditional——其中 8 条是 target∈{self,ally} 的真实无条件增伤（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、707070／707071 处刑人 Tenacity ×1.2、1605000 火焰啊赐予我力量 ×1.20、1660000 黄金树立誓 ×1.15、1732 Golden Great Arrow ×1.075）。现在只看 conditionFields[].isActivationCondition=true 的列，处刑人 Tenacity 改由 paramRowPassiveTimed（[Passive - X] 行且时长有限）判出，1732 改由 eventScriptTimedBuff 判出，都不再依赖那个 0.06 秒的 tick。② activation 只回答『这份 buff 现在在不在身上』，不回答『哪些攻击吃得到』——后者是 scope.attackContexts（v4 新增），致命一击族与突刺反击族在 v3 里是 passive 且毫无作用范围标记，会被无条件乘进排名，见 diagnostics.contextGatedMultipliers。",
+  "activationNote": "activation 的三态判定完全由数据推出，没有写死的 ID 名单，判定依据逐条写在 buffs[].activationSource（中文解释见 enums.activationSource）。本版本取值分布见 counts.buffsByActivation／buffsByActivationSource。**页面必须先按 activation 过滤再按 conditions／triggered 取具体条件**：v2 里 704301（残血 ×1.5）、8300000-2（双手持 +12/15/18%）、8310000-2（双持 +12/15/18%）、707201-215（绝招兽化 ×1.62–3.55）的 conditions 与 triggered 全是空的，按 v2 文档实现的排名会把它们当无条件增伤压在榜首。**v4 两处修正**：① v3 的『conditions 非空 → conditional』把 motionInterval（重新施加间隔［秒］）与 isPeriodicEffect（周期性重新施加）这两个计时列也算了进去，结果 210 条 buff 仅凭一个 tick 间隔被判成 conditional——其中 8 条是 target∈{self,ally} 的真实无条件增伤（708720 狂热香药·携物知识2–3级 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、707070／707071 处刑人 Tenacity ×1.2、1605000 火焰啊赐予我力量 ×1.20、1660000 黄金树立誓 ×1.15、1732 Golden Great Arrow ×1.075）。现在只看 conditionFields[].isActivationCondition=true 的列，处刑人 Tenacity 改由 paramRowPassiveTimed（[Passive - X] 行且时长有限）判出，1732 改由 eventScriptTimedBuff 判出，都不再依赖那个 0.06 秒的 tick。② activation 只回答『这份 buff 现在在不在身上』，不回答『哪些攻击吃得到』——后者是 scope.attackContexts（v4 新增），致命一击族与突刺反击族在 v3 里是 passive 且毫无作用范围标记，会被无条件乘进排名，见 diagnostics.contextGatedMultipliers。",
   "topUnconditionalMultipliers": [
    {
     "spEffectId": 708720,
-    "displayNameZh": "提升攻击力（狂热香药・档位2）",
+    "displayNameZh": "提升攻击力（狂热香药・携物知识2–3级）",
     "paramName": "[Item - Level 2] Bloodboil Aromatic",
     "maxMultiplier": 1.45,
     "duration": 60,
@@ -2700,7 +2725,7 @@
    },
    {
     "spEffectId": 708420,
-    "displayNameZh": "提升物理攻击力（勇者肉块・档位2）",
+    "displayNameZh": "提升物理攻击力（勇者肉块・携物知识2级）",
     "paramName": "[Item - Level 2] Exalted Flesh",
     "maxMultiplier": 1.3,
     "duration": 30,
@@ -2708,7 +2733,7 @@
    },
    {
     "spEffectId": 708421,
-    "displayNameZh": "提升物理攻击力（勇者肉块・档位3）",
+    "displayNameZh": "提升物理与属性攻击力（勇者肉块・携物知识3级）",
     "paramName": "[Item - Level 3] Exalted Flesh",
     "maxMultiplier": 1.3,
     "duration": 30,
@@ -2716,7 +2741,7 @@
    },
    {
     "spEffectId": 708940,
-    "displayNameZh": "提升火属性攻击力（带火破露滴・档位2）",
+    "displayNameZh": "提升火属性攻击力（带火破露滴・携物知识2级）",
     "paramName": "[Item - Level 2] Flame-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
     "duration": 120,
@@ -2724,7 +2749,7 @@
    },
    {
     "spEffectId": 708950,
-    "displayNameZh": "提升魔力属性攻击力（带魔力破露滴・档位2）",
+    "displayNameZh": "提升魔力属性攻击力（带魔力破露滴・携物知识2级）",
     "paramName": "[Item - Level 2] Magic-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
     "duration": 120,
@@ -2732,7 +2757,7 @@
    },
    {
     "spEffectId": 708960,
-    "displayNameZh": "提升雷属性攻击力（带雷破露滴・档位2）",
+    "displayNameZh": "提升雷属性攻击力（带雷破露滴・携物知识2级）",
     "paramName": "[Item - Level 2] Lightning-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
     "duration": 120,
@@ -2740,7 +2765,7 @@
    },
    {
     "spEffectId": 708970,
-    "displayNameZh": "提升圣属性攻击力（带圣破露滴・档位2）",
+    "displayNameZh": "提升圣属性攻击力（带圣破露滴・携物知识2级）",
     "paramName": "[Item - Level 2] Holy-Shrouding Cracked Tear",
     "maxMultiplier": 1.3,
     "duration": 120,
@@ -2796,7 +2821,7 @@
    },
    {
     "spEffectId": 708691,
-    "displayNameZh": "提升攻击力（振奋香・档位2）",
+    "displayNameZh": "提升攻击力（振奋香・携物知识2–3级）",
     "paramName": "[Item - Level 2] Uplifting Aromatic (Attack Boost)",
     "maxMultiplier": 1.2,
     "duration": 40,
@@ -2804,7 +2829,7 @@
    },
    {
     "spEffectId": 1605000,
-    "displayNameZh": "提升物理攻击力（火焰啊，赐予我力量！）",
+    "displayNameZh": "提升物理与火属性攻击力（火焰啊，赐予我力量！）",
     "paramName": "[Incantation] Flame Grant Me Strength",
     "maxMultiplier": 1.2,
     "duration": 30,
@@ -2844,7 +2869,7 @@
    },
    {
     "spEffectId": 708605,
-    "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・右手武器）",
+    "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识3级・右手武器）",
     "paramName": "[Item - Level 3] Dragonwound Grease (Right)",
     "maxMultiplier": 1.15,
     "duration": 90,
@@ -2852,7 +2877,7 @@
    },
    {
     "spEffectId": 708606,
-    "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・左手武器）",
+    "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识3级・左手武器）",
     "paramName": "[Item - Level 3] Dragonwound Grease (Left)",
     "maxMultiplier": 1.15,
     "duration": 90,
@@ -3024,7 +3049,7 @@
    },
    {
     "spEffectId": 708860,
-    "displayNameZh": "强化蓄力攻击（大刺破露滴・档位2）",
+    "displayNameZh": "强化蓄力攻击（大刺破露滴・携物知识2级）",
     "paramName": "[Item - Level 2] Spiked Cracked Tear",
     "maxMultiplier": 1.3,
     "duration": 120,
@@ -5004,6 +5029,1929 @@
    "stackSelf"
   ],
   "spCategoryNote": "全部 buff 的 stacking.spCategoryBehavior 都落在 enums.spCategoryBehavior 的已知区间内（本次实测取值：applyFirst、none、removePrevious、resetOnApply、stackSelf）；spCategory 205/206/1007/1008 虽未出现在 Paramdex 枚举里，但已按所在区间（200 系＝removePrevious、1000 系＝applyHighest）归类。",
+  "goodsLevelRows": [
+   {
+    "spEffectId": 708300,
+    "paramName": "[Item - Level 2] Fetid Pot (Blast) - Poison",
+    "goodsIds": [
+     330
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500920,
+    "baseCandidates": [
+     500920
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708301,
+    "paramName": "[Item - Level 2] Fetid Pot (Mist) - Poison",
+    "goodsIds": [
+     330
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500921,
+    "baseCandidates": [
+     500921
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708310,
+    "paramName": "[Item - Level 2] Swarm Pot (Blast) - Blood Loss",
+    "goodsIds": [
+     340
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500930,
+    "baseCandidates": [
+     500930
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708311,
+    "paramName": "[Item - Level 2] Swarm Pot (Flies) - Blood Loss",
+    "goodsIds": [
+     340
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500931,
+    "baseCandidates": [
+     500931
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708312,
+    "paramName": "[Item - Level 3] Swarm Pot (Blood Pool) - Blood Loss",
+    "goodsIds": [
+     340
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": null,
+    "baseCandidates": [],
+    "baseInBuffs": false,
+    "attackTypes": [],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708330,
+    "paramName": "[Item - Level 2] Freezing Pot (Blast) - Frostbite",
+    "goodsIds": [
+     360
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500910,
+    "baseCandidates": [
+     500910
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708331,
+    "paramName": "[Item - Level 2] Freezing Pot (Mist) - Frostbite",
+    "goodsIds": [
+     360
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500911,
+    "baseCandidates": [
+     500911
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708332,
+    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice) - Frostbite",
+    "goodsIds": [
+     360
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": null,
+    "baseCandidates": [],
+    "baseInBuffs": false,
+    "attackTypes": [],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708333,
+    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice Blast) - Frostbite",
+    "goodsIds": [
+     360
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": null,
+    "baseCandidates": [],
+    "baseInBuffs": false,
+    "attackTypes": [],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708340,
+    "paramName": "[Item - Level 2] Poison Pot (Blast) - Poison",
+    "goodsIds": [
+     370
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500900,
+    "baseCandidates": [
+     500900
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708341,
+    "paramName": "[Item - Level 2] Poison Pot (Mist) - Poison",
+    "goodsIds": [
+     370
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500901,
+    "baseCandidates": [
+     500901
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708350,
+    "paramName": "[Item - Level 2] Sleep Pot (Mist) - Sleep",
+    "goodsIds": [
+     640
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500950,
+    "baseCandidates": [
+     500950
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708360,
+    "paramName": "[Item - Level 2] Rot Pot (Blast) - Scarlet Rot",
+    "goodsIds": [
+     670
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500940,
+    "baseCandidates": [
+     500940
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708361,
+    "paramName": "[Item - Level 2] Rot Pot (Mist) - Scarlet Rot",
+    "goodsIds": [
+     670
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 500941,
+    "baseCandidates": [
+     500941
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708362,
+    "paramName": "[Item - Level 3] Rot Pot (Blast) - Poison",
+    "goodsIds": [
+     670
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": null,
+    "baseCandidates": [],
+    "baseInBuffs": false,
+    "attackTypes": [],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708363,
+    "paramName": "[Item - Level 3] Rot Pot (Mist) - Poison",
+    "goodsIds": [
+     670
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": null,
+    "baseCandidates": [],
+    "baseInBuffs": false,
+    "attackTypes": [],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708420,
+    "paramName": "[Item - Level 2] Exalted Flesh",
+    "goodsIds": [
+     1210
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3950,
+    "baseCandidates": [
+     3950
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708421,
+    "paramName": "[Item - Level 3] Exalted Flesh",
+    "goodsIds": [
+     1210
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3950,
+    "baseCandidates": [
+     3950
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ],
+    "renamedTo": "提升物理与属性攻击力"
+   },
+   {
+    "spEffectId": 708520,
+    "paramName": "[Item - Level 2] Fire Grease (Right)",
+    "goodsIds": [
+     1400
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3160,
+    "baseCandidates": [
+     3160
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire"
+    ],
+    "baseAttackTypes": [
+     "fire"
+    ]
+   },
+   {
+    "spEffectId": 708521,
+    "paramName": "[Item - Level 2] Fire Grease (Left)",
+    "goodsIds": [
+     1400
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3162,
+    "baseCandidates": [
+     3162
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire"
+    ],
+    "baseAttackTypes": [
+     "fire"
+    ]
+   },
+   {
+    "spEffectId": 708525,
+    "paramName": "[Item - Level 3] Fire Grease (Right)",
+    "goodsIds": [
+     1400
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3160,
+    "baseCandidates": [
+     3160
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire"
+    ],
+    "baseAttackTypes": [
+     "fire"
+    ]
+   },
+   {
+    "spEffectId": 708526,
+    "paramName": "[Item - Level 3] Fire Grease (Left)",
+    "goodsIds": [
+     1400
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3162,
+    "baseCandidates": [
+     3162
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire"
+    ],
+    "baseAttackTypes": [
+     "fire"
+    ]
+   },
+   {
+    "spEffectId": 708530,
+    "paramName": "[Item - Level 2] Lightning Grease (Right)",
+    "goodsIds": [
+     1410
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3165,
+    "baseCandidates": [
+     3165
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "lightning"
+    ],
+    "baseAttackTypes": [
+     "lightning"
+    ]
+   },
+   {
+    "spEffectId": 708531,
+    "paramName": "[Item - Level 2] Lightning Grease (Left)",
+    "goodsIds": [
+     1410
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3167,
+    "baseCandidates": [
+     3167
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "lightning"
+    ],
+    "baseAttackTypes": [
+     "lightning"
+    ]
+   },
+   {
+    "spEffectId": 708535,
+    "paramName": "[Item - Level 3] Lightning Grease (Right)",
+    "goodsIds": [
+     1410
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3165,
+    "baseCandidates": [
+     3165
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "lightning"
+    ],
+    "baseAttackTypes": [
+     "lightning"
+    ]
+   },
+   {
+    "spEffectId": 708536,
+    "paramName": "[Item - Level 3] Lightning Grease (Left)",
+    "goodsIds": [
+     1410
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3167,
+    "baseCandidates": [
+     3167
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "lightning"
+    ],
+    "baseAttackTypes": [
+     "lightning"
+    ]
+   },
+   {
+    "spEffectId": 708540,
+    "paramName": "[Item - Level 2] Magic Grease (Right)",
+    "goodsIds": [
+     1420
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3170,
+    "baseCandidates": [
+     3170
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "magic"
+    ],
+    "baseAttackTypes": [
+     "magic"
+    ]
+   },
+   {
+    "spEffectId": 708541,
+    "paramName": "[Item - Level 2] Magic Grease (Left)",
+    "goodsIds": [
+     1420
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3172,
+    "baseCandidates": [
+     3172
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "magic"
+    ],
+    "baseAttackTypes": [
+     "magic"
+    ]
+   },
+   {
+    "spEffectId": 708545,
+    "paramName": "[Item - Level 3] Magic Grease (Right)",
+    "goodsIds": [
+     1420
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3170,
+    "baseCandidates": [
+     3170
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "magic"
+    ],
+    "baseAttackTypes": [
+     "magic"
+    ]
+   },
+   {
+    "spEffectId": 708546,
+    "paramName": "[Item - Level 3] Magic Grease (Left)",
+    "goodsIds": [
+     1420
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3172,
+    "baseCandidates": [
+     3172
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "magic"
+    ],
+    "baseAttackTypes": [
+     "magic"
+    ]
+   },
+   {
+    "spEffectId": 708550,
+    "paramName": "[Item - Level 2] Holy Grease (Right)",
+    "goodsIds": [
+     1430
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3185,
+    "baseCandidates": [
+     3185
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "holy"
+    ],
+    "baseAttackTypes": [
+     "holy"
+    ]
+   },
+   {
+    "spEffectId": 708551,
+    "paramName": "[Item - Level 2] Holy Grease (Left)",
+    "goodsIds": [
+     1430
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3187,
+    "baseCandidates": [
+     3187
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "holy"
+    ],
+    "baseAttackTypes": [
+     "holy"
+    ]
+   },
+   {
+    "spEffectId": 708555,
+    "paramName": "[Item - Level 3] Holy Grease (Right)",
+    "goodsIds": [
+     1430
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3185,
+    "baseCandidates": [
+     3185
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "holy"
+    ],
+    "baseAttackTypes": [
+     "holy"
+    ]
+   },
+   {
+    "spEffectId": 708556,
+    "paramName": "[Item - Level 3] Holy Grease (Left)",
+    "goodsIds": [
+     1430
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3187,
+    "baseCandidates": [
+     3187
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "holy"
+    ],
+    "baseAttackTypes": [
+     "holy"
+    ]
+   },
+   {
+    "spEffectId": 708561,
+    "paramName": "[Item - Level 2] Blood Grease (Right) - Blood Loss",
+    "goodsIds": [
+     1440
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3191,
+    "baseCandidates": [
+     3191
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708563,
+    "paramName": "[Item - Level 2] Blood Grease (Left) - Blood Loss",
+    "goodsIds": [
+     1440
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3195,
+    "baseCandidates": [
+     3195
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708566,
+    "paramName": "[Item - Level 3] Blood Grease (Right) - Blood Loss",
+    "goodsIds": [
+     1440
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3191,
+    "baseCandidates": [
+     3191
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708568,
+    "paramName": "[Item - Level 3] Blood Grease (Left) - Blood Loss",
+    "goodsIds": [
+     1440
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3195,
+    "baseCandidates": [
+     3195
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708571,
+    "paramName": "[Item - Level 2] Soporific Grease (Right) - Sleep",
+    "goodsIds": [
+     1450
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3151,
+    "baseCandidates": [
+     3151
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708573,
+    "paramName": "[Item - Level 2] Soporific Grease (Left) - Sleep",
+    "goodsIds": [
+     1450
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3155,
+    "baseCandidates": [
+     3155
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708576,
+    "paramName": "[Item - Level 3] Soporific Grease (Right) - Sleep",
+    "goodsIds": [
+     1450
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3151,
+    "baseCandidates": [
+     3151
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708578,
+    "paramName": "[Item - Level 3] Soporific Grease (Left) - Sleep",
+    "goodsIds": [
+     1450
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3155,
+    "baseCandidates": [
+     3155
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708581,
+    "paramName": "[Item - Level 2] Poison Grease (Right) - Poison",
+    "goodsIds": [
+     1460
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3176,
+    "baseCandidates": [
+     3176
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708583,
+    "paramName": "[Item - Level 2] Poison Grease (Left) - Poison",
+    "goodsIds": [
+     1460
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3180,
+    "baseCandidates": [
+     3180
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708586,
+    "paramName": "[Item - Level 3] Poison Grease (Right) - Poison",
+    "goodsIds": [
+     1460
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3176,
+    "baseCandidates": [
+     3176
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708588,
+    "paramName": "[Item - Level 3] Poison Grease (Left) - Poison",
+    "goodsIds": [
+     1460
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3180,
+    "baseCandidates": [
+     3180
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708591,
+    "paramName": "[Item - Level 2] Freezing Grease (Right) - Frostbite",
+    "goodsIds": [
+     1470
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3141,
+    "baseCandidates": [
+     3141
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708593,
+    "paramName": "[Item - Level 2] Freezing Grease (Left) - Frostbite",
+    "goodsIds": [
+     1470
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3145,
+    "baseCandidates": [
+     3145
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708596,
+    "paramName": "[Item - Level 3] Freezing Grease (Right) - Frostbite",
+    "goodsIds": [
+     1470
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3141,
+    "baseCandidates": [
+     3141
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708598,
+    "paramName": "[Item - Level 3] Freezing Grease (Left) - Frostbite",
+    "goodsIds": [
+     1470
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3145,
+    "baseCandidates": [
+     3145
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708600,
+    "paramName": "[Item - Level 2] Dragonwound Grease (Right)",
+    "goodsIds": [
+     1480
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3260,
+    "baseCandidates": [
+     3260
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708601,
+    "paramName": "[Item - Level 2] Dragonwound Grease (Left)",
+    "goodsIds": [
+     1480
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3262,
+    "baseCandidates": [
+     3262
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708605,
+    "paramName": "[Item - Level 3] Dragonwound Grease (Right)",
+    "goodsIds": [
+     1480
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3260,
+    "baseCandidates": [
+     3260
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708606,
+    "paramName": "[Item - Level 3] Dragonwound Grease (Left)",
+    "goodsIds": [
+     1480
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3262,
+    "baseCandidates": [
+     3262
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708611,
+    "paramName": "[Item - Level 2] Rot Grease (Right) - Scarlet Rot",
+    "goodsIds": [
+     1490
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3311,
+    "baseCandidates": [
+     3311
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708613,
+    "paramName": "[Item - Level 2] Rot Grease (Left) - Scarlet Rot",
+    "goodsIds": [
+     1490
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 3315,
+    "baseCandidates": [
+     3315
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708616,
+    "paramName": "[Item - Level 3] Rot Grease (Right) - Scarlet Rot",
+    "goodsIds": [
+     1490
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3311,
+    "baseCandidates": [
+     3311
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708618,
+    "paramName": "[Item - Level 3] Rot Grease (Left) - Scarlet Rot",
+    "goodsIds": [
+     1490
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 3315,
+    "baseCandidates": [
+     3315
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708650,
+    "paramName": "[Item - Level 2] Poisonbone Dart - Poison",
+    "goodsIds": [
+     1720
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 501720,
+    "baseCandidates": [
+     501720
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708660,
+    "paramName": "[Item - Level 2] Kukri - Blood Loss",
+    "goodsIds": [
+     1730
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 3115,
+    "baseCandidates": [
+     3115
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708680,
+    "paramName": "[Item - Level 3] Bewitching Branch (Attack Boost on Charmed)",
+    "goodsIds": [
+     3350
+    ],
+    "goodsLevels": [
+     3
+    ],
+    "baseSpEffectId": 503350,
+    "baseCandidates": [
+     503350
+    ],
+    "baseInBuffs": false,
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "baseAttackTypes": null
+   },
+   {
+    "spEffectId": 708691,
+    "paramName": "[Item - Level 2] Uplifting Aromatic (Attack Boost)",
+    "goodsIds": [
+     3500
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 503501,
+    "baseCandidates": [
+     503501
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708720,
+    "paramName": "[Item - Level 2] Bloodboil Aromatic",
+    "goodsIds": [
+     3550
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 503550,
+    "baseCandidates": [
+     503550
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708730,
+    "paramName": "[Item - Level 2] Poison Spraymist - Poison",
+    "goodsIds": [
+     3580
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 503580,
+    "baseCandidates": [
+     503580
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708740,
+    "paramName": "[Item - Level 2] Acid Spraymist",
+    "goodsIds": [
+     3610
+    ],
+    "goodsLevels": [
+     2,
+     3
+    ],
+    "baseSpEffectId": 503610,
+    "baseCandidates": [
+     503610
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708860,
+    "paramName": "[Item - Level 2] Spiked Cracked Tear",
+    "goodsIds": [
+     11014
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511014,
+    "baseCandidates": [
+     511014
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "baseAttackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ]
+   },
+   {
+    "spEffectId": 708920,
+    "paramName": "[Item - Level 2] Cerulean Hidden Tear",
+    "goodsIds": [
+     11025
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511060,
+    "baseCandidates": [
+     511060
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708930,
+    "paramName": "[Item - Level 2] Stonebarb Cracked Tear",
+    "goodsIds": [
+     11026
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511026,
+    "baseCandidates": [
+     511026
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [],
+    "baseAttackTypes": []
+   },
+   {
+    "spEffectId": 708940,
+    "paramName": "[Item - Level 2] Flame-Shrouding Cracked Tear",
+    "goodsIds": [
+     11028
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511028,
+    "baseCandidates": [
+     511028
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "fire"
+    ],
+    "baseAttackTypes": [
+     "fire"
+    ]
+   },
+   {
+    "spEffectId": 708950,
+    "paramName": "[Item - Level 2] Magic-Shrouding Cracked Tear",
+    "goodsIds": [
+     11029
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511029,
+    "baseCandidates": [
+     511029
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "magic"
+    ],
+    "baseAttackTypes": [
+     "magic"
+    ]
+   },
+   {
+    "spEffectId": 708960,
+    "paramName": "[Item - Level 2] Lightning-Shrouding Cracked Tear",
+    "goodsIds": [
+     11030
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511030,
+    "baseCandidates": [
+     511030
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "lightning"
+    ],
+    "baseAttackTypes": [
+     "lightning"
+    ]
+   },
+   {
+    "spEffectId": 708970,
+    "paramName": "[Item - Level 2] Holy-Shrouding Cracked Tear",
+    "goodsIds": [
+     11031
+    ],
+    "goodsLevels": [
+     2
+    ],
+    "baseSpEffectId": 511031,
+    "baseCandidates": [
+     511031
+    ],
+    "baseInBuffs": true,
+    "attackTypes": [
+     "holy"
+    ],
+    "baseAttackTypes": [
+     "holy"
+    ]
+   }
+  ],
+  "goodsLevelRowsNote": "v6 修订：每条道具等级行（buffs[].goodsLevel）的重走结果。goodsIds＝到达它的道具；goodsLevels＝到达它的等级；baseSpEffectId／baseCandidates＝按『同道具、同手、同路径形状』找到的 1 级行（候选不唯一或为空时 baseSpEffectId 为 null）；baseInBuffs＝1 级行是否也在 buffs 里；attackTypes／baseAttackTypes＝两行提高的攻击类型（damage／attackPower／attackPowerFlat）；renamedTo＝因提高的攻击类型比名字点名的多而改写后的名字前缀（全表规则与清单见 diagnostics.attackTypeHeadRenames）。1 级行也在 buffs 里的 66 条中，攻击类型与 1 级不同的只有 708421（physical → fire/holy/lightning/magic/physical）。",
+  "attackTypeHeadRenames": [
+   {
+    "spEffectId": 99565,
+    "paramName": "[Interactable Effect] Smoldering Butterfly - Boost Physical and Fire Damage",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与火属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Fire Attack Power",
+    "displayNameZh": "提升物理与火属性攻击力（场景互动・×1.1・火星蝶・提升物理与火属性伤害）",
+    "displayNameEn": "Improved Physical and Fire Attack Power (Smoldering Butterfly - Boost Physical and Fire Damage)",
+    "rates": {
+     "physicsAttackRate": 1.1,
+     "fireAttackRate": 1.1
+    },
+    "appliesToSpells": {
+     "sorcery": "no",
+     "incantation": "no"
+    }
+   },
+   {
+    "spEffectId": 708421,
+    "paramName": "[Item - Level 3] Exalted Flesh",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（勇者肉块・携物知识3级）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Exalted Flesh, Bagcraft Lv3)",
+    "rates": {
+     "physicsAttackRate": 1.3,
+     "magicAttackRate": 1.2,
+     "fireAttackRate": 1.2,
+     "thunderAttackRate": 1.2,
+     "darkAttackRate": 1.2
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 1605000,
+    "paramName": "[Incantation] Flame Grant Me Strength",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与火属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Fire Attack Power",
+    "displayNameZh": "提升物理与火属性攻击力（火焰啊，赐予我力量！）",
+    "displayNameEn": "Improved Physical and Fire Attack Power (Flame, Grant Me Strength)",
+    "rates": {
+     "physicsAttackRate": 1.2,
+     "fireAttackRate": 1.2
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7031202,
+    "paramName": "[Relic - Revenant] Strengthens family and allies when Ultimate Art is activated",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（遗物・×1.25）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Strengthens family and allies when Ultimate Art is activated)",
+    "rates": {
+     "physicsAttackRate": 1.25,
+     "magicAttackRate": 1.25,
+     "fireAttackRate": 1.25,
+     "thunderAttackRate": 1.25,
+     "darkAttackRate": 1.25
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7031302,
+    "paramName": "[Relic - Raider] Damage taken while using Character Skill improves attack power and stamina",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Damage taken while using Character Skill improves attack power and stamina)",
+    "rates": {
+     "physicsAttackRate": 1.1,
+     "magicAttackRate": 1.1,
+     "fireAttackRate": 1.1,
+     "thunderAttackRate": 1.1,
+     "darkAttackRate": 1.1
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7032202,
+    "paramName": "[Relic] Character Taking attacks improves attack power",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（受到攻击时，能提升攻击力）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Taking attacks improves attack power)",
+    "rates": {
+     "physicsAttackRate": 1.15,
+     "magicAttackRate": 1.15,
+     "fireAttackRate": 1.15,
+     "thunderAttackRate": 1.15,
+     "darkAttackRate": 1.15
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7032704,
+    "paramName": "[Relic - Duchess] Defeating enemies while Art is active ups attack power",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（遗物・×1.15）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Defeating enemies while Art is active ups attack power)",
+    "rates": {
+     "physicsAttackRate": 1.15,
+     "magicAttackRate": 1.15,
+     "fireAttackRate": 1.15,
+     "thunderAttackRate": 1.15,
+     "darkAttackRate": 1.15
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7032706,
+    "paramName": "[Relic - Duchess] Defeating enemies while Art is active ups attack power SP",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（遗物・×1.05）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Defeating enemies while Art is active ups attack power SP)",
+    "rates": {
+     "physicsAttackRate": 1.05,
+     "magicAttackRate": 1.05,
+     "fireAttackRate": 1.05,
+     "thunderAttackRate": 1.05,
+     "darkAttackRate": 1.05
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7032903,
+    "paramName": "[Relic - Recluse] Suffer blood loss and increase attack power upon Art activation",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（遗物・×1.16）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Suffer blood loss and increase attack power upon Art activation)",
+    "rates": {
+     "physicsAttackRate": 1.16,
+     "magicAttackRate": 1.16,
+     "fireAttackRate": 1.16,
+     "thunderAttackRate": 1.16,
+     "darkAttackRate": 1.16
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   },
+   {
+    "spEffectId": 7260803,
+    "paramName": "[Relic] Poison & Rot in Vicinity Increases Attack Power - Attack Power Buff",
+    "nameZh": "提升物理攻击力",
+    "nameEn": "Improved Physical Attack Power",
+    "attackTypes": [
+     "fire",
+     "holy",
+     "lightning",
+     "magic",
+     "physical"
+    ],
+    "namedAttackTypesZh": [
+     "physical"
+    ],
+    "headZh": "提升物理攻击力",
+    "renamedHeadZh": "提升物理与属性攻击力",
+    "namedAttackTypesEn": [
+     "physical"
+    ],
+    "headEn": "Improved Physical Attack Power",
+    "renamedHeadEn": "Improved Physical and Affinity Attack Power",
+    "displayNameZh": "提升物理与属性攻击力（周围人物陷入中毒、腐败时，能提升攻击力）",
+    "displayNameEn": "Improved Physical and Affinity Attack Power (Poison & Rot in Vicinity Increases Attack Power)",
+    "rates": {
+     "physicsAttackRate": 1.12,
+     "magicAttackRate": 1.12,
+     "fireAttackRate": 1.12,
+     "thunderAttackRate": 1.12,
+     "darkAttackRate": 1.12
+    },
+    "appliesToSpells": {
+     "sorcery": "yes",
+     "incantation": "yes"
+    }
+   }
+  ],
+  "attackTypeHeadRenamesNote": "v6 修订复核：displayNameZh／displayNameEn 开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』；英文 \"Improved X Attack Power\"／\"X Attack (Power) Up\"）比 rates 提高的攻击类型少、因而改写了前缀的行。namedAttackTypesZh／En＝原前缀说的类型；headZh／En→renamedHeadZh／En＝前缀改写前后；attackTypes＝rates 实际提高的类型（damage／attackPower／attackPowerFlat 三组）；appliesToSpells＝appliesTo 的 sorcery／incantation 取值（yes 即法术上也按倍率计入，旧名字正是在这里误导）。限定词沿用按原名消歧的结果，只换前缀；nameZh／statusLabelsZh 不变。本版本 10 条，其中法术也适用的 9 条。",
+  "goodsOriginNameRows": [
+   {
+    "spEffectId": 500900,
+    "paramName": "[Item] Poison Pot (Blast) - Poison",
+    "goodsNameZh": "毒壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：中毒（毒壶・道具・中毒累积加算+112）",
+    "displayNameEn": "Status: Poison (Poison Pot (Blast) - Poison)"
+   },
+   {
+    "spEffectId": 500901,
+    "paramName": "[Item] Poison Pot (Mist) - Poison",
+    "goodsNameZh": "毒壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：中毒（毒壶・道具・中毒累积加算+10）",
+    "displayNameEn": "Status: Poison (Poison Pot (Mist) - Poison)"
+   },
+   {
+    "spEffectId": 500910,
+    "paramName": "[Item] Freezing Pot (Blast) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：冻伤（结冰壶・道具・冻伤累积加算+112）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Blast) - Frostbite)"
+   },
+   {
+    "spEffectId": 500911,
+    "paramName": "[Item] Freezing Pot (Mist) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：冻伤（结冰壶・道具・冻伤累积加算+10）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Mist) - Frostbite)"
+   },
+   {
+    "spEffectId": 500920,
+    "paramName": "[Item] Fetid Pot (Blast) - Poison",
+    "goodsNameZh": "粪便壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：中毒（粪便壶・道具・中毒累积加算+154）",
+    "displayNameEn": "Status: Poison (Fetid Pot (Blast) - Poison)"
+   },
+   {
+    "spEffectId": 500921,
+    "paramName": "[Item] Fetid Pot (Mist) - Poison",
+    "goodsNameZh": "粪便壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：中毒（粪便壶・道具・中毒累积加算+12）",
+    "displayNameEn": "Status: Poison (Fetid Pot (Mist) - Poison)"
+   },
+   {
+    "spEffectId": 500931,
+    "paramName": "[Item] Swarm Pot (Flies) - Blood Loss",
+    "goodsNameZh": "苍蝇壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：出血（苍蝇壶・道具・出血累积加算+25）",
+    "displayNameEn": "Status: Blood Loss (Swarm Pot (Flies) - Blood Loss)"
+   },
+   {
+    "spEffectId": 500940,
+    "paramName": "[Item] Rot Pot (Blast) - Scarlet Rot",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：猩红腐败（腐败壶・道具・猩红腐败累积加算+112）",
+    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Blast) - Scarlet Rot)"
+   },
+   {
+    "spEffectId": 500941,
+    "paramName": "[Item] Rot Pot (Mist) - Scarlet Rot",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：猩红腐败（腐败壶・道具・猩红腐败累积加算+10）",
+    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Mist) - Scarlet Rot)"
+   },
+   {
+    "spEffectId": 500950,
+    "paramName": "[Item] Sleep Pot (Mist) - Sleep",
+    "goodsNameZh": "催眠壶",
+    "goodsLevel": null,
+    "displayNameZh": "异常状态：催眠（催眠壶）",
+    "displayNameEn": "Status: Sleep (Sleep Pot (Mist) - Sleep)"
+   },
+   {
+    "spEffectId": 708300,
+    "paramName": "[Item - Level 2] Fetid Pot (Blast) - Poison",
+    "goodsNameZh": "粪便壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：中毒（粪便壶・携物知识2–3级・道具・中毒累积加算+177）",
+    "displayNameEn": "Status: Poison (Fetid Pot (Blast) - Poison, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708301,
+    "paramName": "[Item - Level 2] Fetid Pot (Mist) - Poison",
+    "goodsNameZh": "粪便壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：中毒（粪便壶・携物知识2–3级・道具・中毒累积加算+14）",
+    "displayNameEn": "Status: Poison (Fetid Pot (Mist) - Poison, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708311,
+    "paramName": "[Item - Level 2] Swarm Pot (Flies) - Blood Loss",
+    "goodsNameZh": "苍蝇壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：出血（苍蝇壶・携物知识2–3级・道具・出血累积加算+29）",
+    "displayNameEn": "Status: Blood Loss (Swarm Pot (Flies) - Blood Loss, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708312,
+    "paramName": "[Item - Level 3] Swarm Pot (Blood Pool) - Blood Loss",
+    "goodsNameZh": "苍蝇壶",
+    "goodsLevel": 3,
+    "displayNameZh": "异常状态：出血（苍蝇壶・携物知识3级）",
+    "displayNameEn": "Status: Blood Loss (Swarm Pot (Blood Pool) - Blood Loss, Bagcraft Lv3)"
+   },
+   {
+    "spEffectId": 708330,
+    "paramName": "[Item - Level 2] Freezing Pot (Blast) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：冻伤（结冰壶・携物知识2–3级・道具・冻伤累积加算+129）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Blast) - Frostbite, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708331,
+    "paramName": "[Item - Level 2] Freezing Pot (Mist) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：冻伤（结冰壶・携物知识2–3级・道具・冻伤累积加算+12）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Mist) - Frostbite, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708332,
+    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": 3,
+    "displayNameZh": "异常状态：冻伤（结冰壶・携物知识3级・道具・冻伤累积加算+5）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice) - Frostbite, Bagcraft Lv3)"
+   },
+   {
+    "spEffectId": 708333,
+    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice Blast) - Frostbite",
+    "goodsNameZh": "结冰壶",
+    "goodsLevel": 3,
+    "displayNameZh": "异常状态：冻伤（结冰壶・携物知识3级・道具・冻伤累积加算+20）",
+    "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice Blast) - Frostbite, Bagcraft Lv3)"
+   },
+   {
+    "spEffectId": 708340,
+    "paramName": "[Item - Level 2] Poison Pot (Blast) - Poison",
+    "goodsNameZh": "毒壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：中毒（毒壶・携物知识2–3级・道具・中毒累积加算+129）",
+    "displayNameEn": "Status: Poison (Poison Pot (Blast) - Poison, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708341,
+    "paramName": "[Item - Level 2] Poison Pot (Mist) - Poison",
+    "goodsNameZh": "毒壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：中毒（毒壶・携物知识2–3级・道具・中毒累积加算+12）",
+    "displayNameEn": "Status: Poison (Poison Pot (Mist) - Poison, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708350,
+    "paramName": "[Item - Level 2] Sleep Pot (Mist) - Sleep",
+    "goodsNameZh": "催眠壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：催眠（催眠壶・携物知识2–3级）",
+    "displayNameEn": "Status: Sleep (Sleep Pot (Mist) - Sleep, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708360,
+    "paramName": "[Item - Level 2] Rot Pot (Blast) - Scarlet Rot",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：猩红腐败（腐败壶・携物知识2–3级・道具・猩红腐败累积加算+129）",
+    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Blast) - Scarlet Rot, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708361,
+    "paramName": "[Item - Level 2] Rot Pot (Mist) - Scarlet Rot",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": 2,
+    "displayNameZh": "异常状态：猩红腐败（腐败壶・携物知识2–3级・道具・猩红腐败累积加算+12）",
+    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Mist) - Scarlet Rot, Bagcraft Lv2–3)"
+   },
+   {
+    "spEffectId": 708362,
+    "paramName": "[Item - Level 3] Rot Pot (Blast) - Poison",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": 3,
+    "displayNameZh": "异常状态：中毒（腐败壶・携物知识3级・道具・中毒累积加算+129）",
+    "displayNameEn": "Status: Poison (Rot Pot (Blast) - Poison, Bagcraft Lv3)"
+   },
+   {
+    "spEffectId": 708363,
+    "paramName": "[Item - Level 3] Rot Pot (Mist) - Poison",
+    "goodsNameZh": "腐败壶",
+    "goodsLevel": 3,
+    "displayNameZh": "异常状态：中毒（腐败壶・携物知识3级・道具・中毒累积加算+12）",
+    "displayNameEn": "Status: Poison (Rot Pot (Mist) - Poison, Bagcraft Lv3)"
+   }
+  ],
+  "goodsOriginNameRowsNote": "v6 修订复核：显示名里的道具名取自道具效果列重走结果（goods_level_reach，只被一种道具到达时）而不是 sources 的行。它们是壶类的异常状态行，只挂在子弹的 HitBulletID 子子弹上，sources 里只有 paramRowName。上一轮只给 2／3 级行补了道具名，1 级行（如 500900 毒壶）仍只写『道具』；现在 1 级行同样补上。goodsLevel 为 null 的是 1 级行。",
   "droppedAttackContexts": [
    {
     "spEffectId": 312300,
@@ -5231,7 +7179,7 @@
    ],
    "sp204LaddersAreIdBlocks": true
   },
-  "exclusiveKeyEvidenceNote": "v6（复核）stacking.exclusiveKey 的依据，全部由生成器从参数表实测：spCategory20Rows＝SpEffectParam 里 spCategory=20 的行数；attachEffectPassivesBySpCategory＝AttachEffectParam passiveSpEffectId_1..3 指向的 SpEffect 按 spCategory 计数（遗物词条与护符的被动绝大多数是 20，若 20 跨 ID 互斥，两条遗物词条就会互相顶掉）；affixCatalogSuperposabilityOfSp20＝被动全是 20 的词条在词条库里的叠加性（『不可叠加』＝同一词条装两次不叠，『不同级别可叠加』＝＋1 与＋2 这两个不同 ID 能同时生效）；category200sPriorities＝200 系列每个类别的行数与不同 categoryPriority 数；sp204Ladders＝204 按 categoryPriority 分组，每组正好是一段连续 ID 的存档阶梯（sp204LaddersAreIdBlocks=true；优先度 3 的一组中间隔了 5 个别类行），即一条阶梯一个优先度。self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴两档、同一护符四档、封印监牢十层）做正例，用 77 条 spCategory=20 里明显应共存的组合（护符＋遗物＋角色被动、两条『装备三把以上X』、＋1／＋2）与四条 204 阶梯彼此之间做反例。",
+  "exclusiveKeyEvidenceNote": "v6（复核）stacking.exclusiveKey 的依据，全部由生成器从参数表实测：spCategory20Rows＝SpEffectParam 里 spCategory=20 的行数；attachEffectPassivesBySpCategory＝AttachEffectParam passiveSpEffectId_1..3 指向的 SpEffect 按 spCategory 计数（遗物词条与护符的被动绝大多数是 20，若 20 跨 ID 互斥，两条遗物词条就会互相顶掉）；affixCatalogSuperposabilityOfSp20＝被动全是 20 的词条在词条库里的叠加性（『不可叠加』＝同一词条装两次不叠，『不同级别可叠加』＝＋1 与＋2 这两个不同 ID 能同时生效）；category200sPriorities＝200 系列每个类别的行数与不同 categoryPriority 数；sp204Ladders＝204 按 categoryPriority 分组，每组正好是一段连续 ID 的存档阶梯（sp204LaddersAreIdBlocks=true；优先度 3 的一组中间隔了 5 个别类行），即一条阶梯一个优先度。self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴的 1 级与携物知识2级、同一护符四档、封印监牢十层）做正例，用 77 条 spCategory=20 里明显应共存的组合（护符＋遗物＋角色被动、两条『装备三把以上X』、＋1／＋2）与四条 204 阶梯彼此之间做反例。",
   "accumulatorLadderConflicts": [],
   "affixVariantScan": {
    "groups": [
@@ -5770,7 +7718,7 @@
     "displayNameZh": "异常状态：催眠（武器・睡眠累积加算+20・#8882515）"
    }
   ],
-  "displayNameZhIdFallbackNote": "v6（复核）displayNameZh 仍以『#spEffectId』收尾的条目。消歧顺序是：来源名→档位（行名的 Potency／Tier，累积阶梯用『第N层』，行名没有档位时取所属词条 AttachEffectParam 的档位）→左右手→类别（[Weapon] 行只由 PermanentBuffParam 授予时写『永久强化』而不是『武器』）→数值→行名的中文拼写→#spEffectId。剩下的这些在参数上逐列相同或只差指向／条件列，没有可读的区别：7120401–7120408／7120501–7120508／7120601–7120608（同一遗物词条『出击时的武器，附加异常状态…』下 4 份逐列相同的行，只差 atkOccurrenceSpEffectId 指向的下一行）、8660203／8660206 与 8660204／8660207（同一效果的右手／左手两份，后两条逐列相同）、7035402／7035412（两个词条 7035400／7035410 同名，只差 invocationConditionsStateChange1）、8882514／8882515（只差 wepParamChange 3／0）。",
+  "displayNameZhIdFallbackNote": "v6（复核）displayNameZh 仍以『#spEffectId』收尾的条目。消歧顺序是：来源名→档位（行名的 Potency／Tier，道具等级行写『携物知识N级』，累积阶梯用『第N层』，行名没有档位时取所属词条 AttachEffectParam 的档位）→左右手→类别（[Weapon] 行只由 PermanentBuffParam 授予时写『永久强化』而不是『武器』）→数值→行名的中文拼写→#spEffectId。剩下的这些在参数上逐列相同或只差指向／条件列，没有可读的区别：7120401–7120408／7120501–7120508／7120601–7120608（同一遗物词条『出击时的武器，附加异常状态…』下 4 份逐列相同的行，只差 atkOccurrenceSpEffectId 指向的下一行）、8660203／8660206 与 8660204／8660207（同一效果的右手／左手两份，后两条逐列相同）、7035402／7035412（两个词条 7035400／7035410 同名，只差 invocationConditionsStateChange1）、8882514／8882515（只差 wepParamChange 3／0）。",
   "droppedAttackContextsNote": "v6 删除了这些条目 v5 里的 scope.attackContexts：它们的 magicSubCategoryChange 同时列了情境类子类别（111 蓄力战技）与非情境类子类别（112 战技攻击），而 magicSubCategoryChange1..3 是『命中任一即生效』，所有战技命中段都带 112，所以 111 不构成限制。v5 按 attackContexts 默认不计入，导致战技排名看不到『提升战技攻击力』。",
   "suggestedNameZhUntranslated": [],
   "displayNameZhLatinResidue": [],
@@ -22428,7 +24376,7 @@
   "zh": "appliesTo 的『人口』：每个战技／法术实际命中段的 AtkParam 子类别集合（法术再并上 Magic.subCategory1..2 流派），以及近战／射击／致命一击的 AtkParam_Pc 行分布。appliesTo=conditional 且 requires.subCategoriesAny 存在时，页面用所选战技／法术在这里的 subCategorySets 判定：某一段的 subs 与 requires.subCategoriesAny 有交集，这一段才吃这条 buff（hits 是段数，可按段加权）。",
   "populationCounts": {
    "skill": 155,
-   "sorcery": 61,
+   "sorcery": 59,
    "incantation": 64,
    "melee": 4011,
    "ranged": 112,
@@ -26584,32 +28532,6 @@
      {
       "subs": [
        110
-      ],
-      "hits": 2
-     }
-    ]
-   },
-   "8100": {
-    "nameZh": "风暴管束者",
-    "kind": "sorcery",
-    "magicSubCategories": [],
-    "subCategorySets": [
-     {
-      "subs": [
-       122
-      ],
-      "hits": 2
-     }
-    ]
-   },
-   "8101": {
-    "nameZh": "风暴管束者",
-    "kind": "sorcery",
-    "magicSubCategories": [],
-    "subCategorySets": [
-     {
-      "subs": [
-       122
       ],
       "hits": 2
      }
@@ -40666,8 +42588,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（场景互动・×1.1・火星蝶・提升物理与火属性伤害）",
-   "displayNameEn": "Improved Physical Attack Power (Smoldering Butterfly - Boost Physical and Fire Damage)",
+   "displayNameZh": "提升物理与火属性攻击力（场景互动・×1.1・火星蝶・提升物理与火属性伤害）",
+   "displayNameEn": "Improved Physical and Fire Attack Power (Smoldering Butterfly - Boost Physical and Fire Damage)",
    "paramName": "[Interactable Effect] Smoldering Butterfly - Boost Physical and Fire Damage",
    "sources": [
     {
@@ -54503,14 +56425,14 @@
      "matchShare": 0.0645
     },
     "sorcery": {
-     "reason": "子类别限定 [110 蓄力法术攻击、111 蓄力战技攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
+     "reason": "子类别限定 [110 蓄力法术攻击、111 蓄力战技攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
      "requires": {
       "subCategoriesAny": [
        110,
        111
       ]
      },
-     "matchShare": 0.4262
+     "matchShare": 0.4407
     },
     "incantation": {
      "reason": "子类别限定 [110 蓄力法术攻击、111 蓄力战技攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）",
@@ -54619,7 +56541,7 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（道具・中毒累积加算+112）",
+   "displayNameZh": "异常状态：中毒（毒壶・道具・中毒累积加算+112）",
    "displayNameEn": "Status: Poison (Poison Pot (Blast) - Poison)",
    "paramName": "[Item] Poison Pot (Blast) - Poison",
    "sources": [
@@ -54721,7 +56643,7 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（道具・中毒累积加算+10）",
+   "displayNameZh": "异常状态：中毒（毒壶・道具・中毒累积加算+10）",
    "displayNameEn": "Status: Poison (Poison Pot (Mist) - Poison)",
    "paramName": "[Item] Poison Pot (Mist) - Poison",
    "sources": [
@@ -54821,7 +56743,7 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（道具・冻伤累积加算+112）",
+   "displayNameZh": "异常状态：冻伤（结冰壶・道具・冻伤累积加算+112）",
    "displayNameEn": "Status: Frost (Freezing Pot (Blast) - Frostbite)",
    "paramName": "[Item] Freezing Pot (Blast) - Frostbite",
    "sources": [
@@ -54923,7 +56845,7 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（道具・冻伤累积加算+10）",
+   "displayNameZh": "异常状态：冻伤（结冰壶・道具・冻伤累积加算+10）",
    "displayNameEn": "Status: Frost (Freezing Pot (Mist) - Frostbite)",
    "paramName": "[Item] Freezing Pot (Mist) - Frostbite",
    "sources": [
@@ -55025,7 +56947,7 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（道具・中毒累积加算+154）",
+   "displayNameZh": "异常状态：中毒（粪便壶・道具・中毒累积加算+154）",
    "displayNameEn": "Status: Poison (Fetid Pot (Blast) - Poison)",
    "paramName": "[Item] Fetid Pot (Blast) - Poison",
    "sources": [
@@ -55125,7 +57047,7 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（道具・中毒累积加算+12）",
+   "displayNameZh": "异常状态：中毒（粪便壶・道具・中毒累积加算+12）",
    "displayNameEn": "Status: Poison (Fetid Pot (Mist) - Poison)",
    "paramName": "[Item] Fetid Pot (Mist) - Poison",
    "sources": [
@@ -55225,7 +57147,7 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（粪便壶）",
+   "displayNameZh": "异常状态：中毒（粪便壶・道具・中毒累积加算+200）",
    "displayNameEn": "Status: Poison (Fetid Pot)",
    "paramName": "[Item] Fetid Pot (Self) - Poison",
    "sources": [
@@ -55303,6 +57225,11 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    1,
+    2,
+    3
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -55341,7 +57268,7 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（苍蝇壶）",
+   "displayNameZh": "异常状态：出血（苍蝇壶・道具・出血累积加算+80）",
    "displayNameEn": "Status: Blood Loss (Swarm Pot)",
    "paramName": "[Item] Swarm Pot (Blast) - Blood Loss",
    "sources": [
@@ -55440,7 +57367,7 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（道具）",
+   "displayNameZh": "异常状态：出血（苍蝇壶・道具・出血累积加算+25）",
    "displayNameEn": "Status: Blood Loss (Swarm Pot (Flies) - Blood Loss)",
    "paramName": "[Item] Swarm Pot (Flies) - Blood Loss",
    "sources": [
@@ -55540,7 +57467,7 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（道具・猩红腐败累积加算+112）",
+   "displayNameZh": "异常状态：猩红腐败（腐败壶・道具・猩红腐败累积加算+112）",
    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Blast) - Scarlet Rot)",
    "paramName": "[Item] Rot Pot (Blast) - Scarlet Rot",
    "sources": [
@@ -55640,7 +57567,7 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（道具・猩红腐败累积加算+10）",
+   "displayNameZh": "异常状态：猩红腐败（腐败壶・道具・猩红腐败累积加算+10）",
    "displayNameEn": "Status: Scarlet Rot (Rot Pot (Mist) - Scarlet Rot)",
    "paramName": "[Item] Rot Pot (Mist) - Scarlet Rot",
    "sources": [
@@ -55751,7 +57678,7 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（道具）",
+   "displayNameZh": "异常状态：催眠（催眠壶）",
    "displayNameEn": "Status: Sleep (Sleep Pot (Mist) - Sleep)",
    "paramName": "[Item] Sleep Pot (Mist) - Sleep",
    "sources": [
@@ -58732,8 +60659,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位2・道具・中毒累积加算+177）",
-   "displayNameEn": "Status: Poison (Fetid Pot (Blast) - Poison, Lv2)",
+   "displayNameZh": "异常状态：中毒（粪便壶・携物知识2–3级・道具・中毒累积加算+177）",
+   "displayNameEn": "Status: Poison (Fetid Pot (Blast) - Poison, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Fetid Pot (Blast) - Poison",
    "sources": [
     {
@@ -58794,6 +60721,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "330:level2RefId->Bullet13033000->HitBulletID->Bullet13033001.spEffectId0",
+    "330:level3RefId->Bullet13033010->HitBulletID->Bullet13033011.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500920,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -58832,8 +60770,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位2・道具・中毒累积加算+14）",
-   "displayNameEn": "Status: Poison (Fetid Pot (Mist) - Poison, Lv2)",
+   "displayNameZh": "异常状态：中毒（粪便壶・携物知识2–3级・道具・中毒累积加算+14）",
+   "displayNameEn": "Status: Poison (Fetid Pot (Mist) - Poison, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Fetid Pot (Mist) - Poison",
    "sources": [
     {
@@ -58894,6 +60832,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "330:level2RefId->Bullet13033000->HitBulletID->Bullet13033001->HitBulletID->Bullet13033002->intervalCreateBulletId->Bullet13033003.spEffectId0",
+    "330:level3RefId->Bullet13033010->HitBulletID->Bullet13033011->HitBulletID->Bullet13033012->intervalCreateBulletId->Bullet13033013.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500921,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -58932,8 +60881,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（苍蝇壶・档位2）",
-   "displayNameEn": "Status: Blood Loss (Swarm Pot, Lv2)",
+   "displayNameZh": "异常状态：出血（苍蝇壶・携物知识2–3级・道具・出血累积加算+92）",
+   "displayNameEn": "Status: Blood Loss (Swarm Pot, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Swarm Pot (Blast) - Blood Loss",
    "sources": [
     {
@@ -59000,6 +60949,17 @@
      "spEffectId": 500
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "340:level2RefId->Bullet13034000.spEffectId0",
+    "340:level3RefId->Bullet13034010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500930,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59038,8 +60998,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（档位2・道具）",
-   "displayNameEn": "Status: Blood Loss (Swarm Pot (Flies) - Blood Loss, Lv2)",
+   "displayNameZh": "异常状态：出血（苍蝇壶・携物知识2–3级・道具・出血累积加算+29）",
+   "displayNameEn": "Status: Blood Loss (Swarm Pot (Flies) - Blood Loss, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Swarm Pot (Flies) - Blood Loss",
    "sources": [
     {
@@ -59100,6 +61060,17 @@
      "spEffectId": 500
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "340:level2RefId->Bullet13034000->HitBulletID->Bullet13034001->HitBulletID->Bullet13034002->intervalCreateBulletId->Bullet13034003.spEffectId0",
+    "340:level3RefId->Bullet13034010->HitBulletID->Bullet13034011->HitBulletID->Bullet13034012->intervalCreateBulletId->Bullet13034013.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500931,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59138,8 +61109,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（档位3）",
-   "displayNameEn": "Status: Blood Loss (Swarm Pot (Blood Pool) - Blood Loss)",
+   "displayNameZh": "异常状态：出血（苍蝇壶・携物知识3级）",
+   "displayNameEn": "Status: Blood Loss (Swarm Pot (Blood Pool) - Blood Loss, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Swarm Pot (Blood Pool) - Blood Loss",
    "sources": [
     {
@@ -59200,6 +61171,11 @@
      "spEffectId": 500
     }
    ],
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "340:level3RefId->Bullet13034010->HitBulletID->Bullet13034011->intervalCreateBulletId->Bullet13034015->HitBulletID->Bullet13034016.spEffectId0"
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59238,8 +61214,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（档位2・道具・冻伤累积加算+129）",
-   "displayNameEn": "Status: Frost (Freezing Pot (Blast) - Frostbite, Lv2)",
+   "displayNameZh": "异常状态：冻伤（结冰壶・携物知识2–3级・道具・冻伤累积加算+129）",
+   "displayNameEn": "Status: Frost (Freezing Pot (Blast) - Frostbite, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Freezing Pot (Blast) - Frostbite",
    "sources": [
     {
@@ -59302,6 +61278,17 @@
      "spEffectId": 502
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "360:level2RefId->Bullet13036000->HitBulletID->Bullet13036001.spEffectId0",
+    "360:level3RefId->Bullet13036010->HitBulletID->Bullet13036011.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500910,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59340,8 +61327,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（档位2・道具・冻伤累积加算+12）",
-   "displayNameEn": "Status: Frost (Freezing Pot (Mist) - Frostbite, Lv2)",
+   "displayNameZh": "异常状态：冻伤（结冰壶・携物知识2–3级・道具・冻伤累积加算+12）",
+   "displayNameEn": "Status: Frost (Freezing Pot (Mist) - Frostbite, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Freezing Pot (Mist) - Frostbite",
    "sources": [
     {
@@ -59404,6 +61391,17 @@
      "spEffectId": 502
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "360:level2RefId->Bullet13036000->HitBulletID->Bullet13036001->HitBulletID->Bullet13036002->intervalCreateBulletId->Bullet13036003.spEffectId0",
+    "360:level3RefId->Bullet13036010->HitBulletID->Bullet13036011->HitBulletID->Bullet13036012->intervalCreateBulletId->Bullet13036013.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500911,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59442,8 +61440,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（档位3・道具・冻伤累积加算+5）",
-   "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice) - Frostbite)",
+   "displayNameZh": "异常状态：冻伤（结冰壶・携物知识3级・道具・冻伤累积加算+5）",
+   "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice) - Frostbite, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice) - Frostbite",
    "sources": [
     {
@@ -59506,6 +61504,11 @@
      "spEffectId": 502
     }
    ],
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "360:level3RefId->Bullet13036010->HitBulletID->Bullet13036011->intervalCreateBulletId->Bullet13036014->HitBulletID->Bullet13036015.spEffectId0"
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59544,8 +61547,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（档位3・道具・冻伤累积加算+20）",
-   "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice Blast) - Frostbite)",
+   "displayNameZh": "异常状态：冻伤（结冰壶・携物知识3级・道具・冻伤累积加算+20）",
+   "displayNameEn": "Status: Frost (Freezing Pot (Ground Ice Blast) - Frostbite, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Freezing Pot (Ground Ice Blast) - Frostbite",
    "sources": [
     {
@@ -59608,6 +61611,11 @@
      "spEffectId": 502
     }
    ],
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "360:level3RefId->Bullet13036010->HitBulletID->Bullet13036011->intervalCreateBulletId->Bullet13036014->HitBulletID->Bullet13036015->HitBulletID->Bullet13036016.spEffectId0"
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59646,8 +61654,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位2・道具・中毒累积加算+129）",
-   "displayNameEn": "Status: Poison (Poison Pot (Blast) - Poison, Lv2)",
+   "displayNameZh": "异常状态：中毒（毒壶・携物知识2–3级・道具・中毒累积加算+129）",
+   "displayNameEn": "Status: Poison (Poison Pot (Blast) - Poison, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Poison Pot (Blast) - Poison",
    "sources": [
     {
@@ -59710,6 +61718,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "370:level2RefId->Bullet13037000->HitBulletID->Bullet13037001.spEffectId0",
+    "370:level3RefId->Bullet13037010->HitBulletID->Bullet13037011.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500900,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59748,8 +61767,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位2・道具・中毒累积加算+12）",
-   "displayNameEn": "Status: Poison (Poison Pot (Mist) - Poison, Lv2)",
+   "displayNameZh": "异常状态：中毒（毒壶・携物知识2–3级・道具・中毒累积加算+12）",
+   "displayNameEn": "Status: Poison (Poison Pot (Mist) - Poison, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Poison Pot (Mist) - Poison",
    "sources": [
     {
@@ -59810,6 +61829,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "370:level2RefId->Bullet13037000->HitBulletID->Bullet13037001->HitBulletID->Bullet13037002->intervalCreateBulletId->Bullet13037003.spEffectId0",
+    "370:level3RefId->Bullet13037010->HitBulletID->Bullet13037011->HitBulletID->Bullet13037012->intervalCreateBulletId->Bullet13037013.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500901,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59848,8 +61878,8 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（档位2・道具）",
-   "displayNameEn": "Status: Sleep (Sleep Pot (Mist) - Sleep, Lv2)",
+   "displayNameZh": "异常状态：催眠（催眠壶・携物知识2–3级）",
+   "displayNameEn": "Status: Sleep (Sleep Pot (Mist) - Sleep, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Sleep Pot (Mist) - Sleep",
    "sources": [
     {
@@ -59910,6 +61940,17 @@
      "spEffectId": 1100
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "640:level2RefId->Bullet13064000->HitBulletID->Bullet13064001.spEffectId0",
+    "640:level3RefId->Bullet13064010->HitBulletID->Bullet13064012->HitBulletID->Bullet13064011.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500950,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -59948,8 +61989,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（档位2・道具・猩红腐败累积加算+129）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Pot (Blast) - Scarlet Rot, Lv2)",
+   "displayNameZh": "异常状态：猩红腐败（腐败壶・携物知识2–3级・道具・猩红腐败累积加算+129）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Pot (Blast) - Scarlet Rot, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Rot Pot (Blast) - Scarlet Rot",
    "sources": [
     {
@@ -60010,6 +62051,17 @@
      "spEffectId": 1120
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "670:level2RefId->Bullet13067000->HitBulletID->Bullet13067001.spEffectId0",
+    "670:level3RefId->Bullet13067010->HitBulletID->Bullet13067011.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500940,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60048,8 +62100,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（档位2・道具・猩红腐败累积加算+12）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Pot (Mist) - Scarlet Rot, Lv2)",
+   "displayNameZh": "异常状态：猩红腐败（腐败壶・携物知识2–3级・道具・猩红腐败累积加算+12）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Pot (Mist) - Scarlet Rot, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Rot Pot (Mist) - Scarlet Rot",
    "sources": [
     {
@@ -60109,6 +62161,17 @@
      "spEffectId": 1120
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "670:level2RefId->Bullet13067000->HitBulletID->Bullet13067001->HitBulletID->Bullet13067002->intervalCreateBulletId->Bullet13067003.spEffectId0",
+    "670:level3RefId->Bullet13067010->HitBulletID->Bullet13067011->HitBulletID->Bullet13067012->intervalCreateBulletId->Bullet13067013.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 500941,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60159,8 +62222,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位3・道具・中毒累积加算+129）",
-   "displayNameEn": "Status: Poison (Rot Pot (Blast) - Poison, Lv3)",
+   "displayNameZh": "异常状态：中毒（腐败壶・携物知识3级・道具・中毒累积加算+129）",
+   "displayNameEn": "Status: Poison (Rot Pot (Blast) - Poison, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Rot Pot (Blast) - Poison",
    "sources": [
     {
@@ -60223,6 +62286,11 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "670:level3RefId->Bullet13067010->HitBulletID->Bullet13067011.spEffectId1"
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60261,8 +62329,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（档位3・道具・中毒累积加算+12）",
-   "displayNameEn": "Status: Poison (Rot Pot (Mist) - Poison, Lv3)",
+   "displayNameZh": "异常状态：中毒（腐败壶・携物知识3级・道具・中毒累积加算+12）",
+   "displayNameEn": "Status: Poison (Rot Pot (Mist) - Poison, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Rot Pot (Mist) - Poison",
    "sources": [
     {
@@ -60323,6 +62391,11 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "670:level3RefId->Bullet13067010->HitBulletID->Bullet13067011->HitBulletID->Bullet13067012->intervalCreateBulletId->Bullet13067013.spEffectId1"
+   ],
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60361,8 +62434,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（勇者肉块・档位2）",
-   "displayNameEn": "Improved Physical Attack Power (Exalted Flesh, Lv2)",
+   "displayNameZh": "提升物理攻击力（勇者肉块・携物知识2级）",
+   "displayNameEn": "Improved Physical Attack Power (Exalted Flesh, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Exalted Flesh",
    "sources": [
     {
@@ -60411,6 +62484,12 @@
     "Improved Physical Attack Power"
    ],
    "descZh": "“勇者肉块”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1210:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3950,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60429,8 +62508,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（勇者肉块・档位3）",
-   "displayNameEn": "Improved Physical Attack Power (Exalted Flesh, Lv3)",
+   "displayNameZh": "提升物理与属性攻击力（勇者肉块・携物知识3级）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Exalted Flesh, Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Exalted Flesh",
    "sources": [
     {
@@ -60485,6 +62564,12 @@
     "Improved Affinity Attack Power"
    ],
    "descZh": "“勇者肉块”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1210:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3950,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60503,8 +62588,8 @@
    "nameZh": "提升火属性攻击力",
    "nameEn": "Improved Fire Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升火属性攻击力（火油脂・档位2・右手武器）",
-   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Lv2, Right-hand)",
+   "displayNameZh": "提升火属性攻击力（火油脂・携物知识2级・右手武器）",
+   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Bagcraft Lv2, Right-hand)",
    "paramName": "[Item - Level 2] Fire Grease (Right)",
    "sources": [
     {
@@ -60557,6 +62642,12 @@
     "Improved Fire Attack Power"
    ],
    "descZh": "“火油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1400:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3160,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60607,8 +62698,8 @@
    "nameZh": "提升火属性攻击力",
    "nameEn": "Improved Fire Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升火属性攻击力（火油脂・档位2・左手武器）",
-   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Lv2, Left-hand)",
+   "displayNameZh": "提升火属性攻击力（火油脂・携物知识2级・左手武器）",
+   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Bagcraft Lv2, Left-hand)",
    "paramName": "[Item - Level 2] Fire Grease (Left)",
    "sources": [
     {
@@ -60661,6 +62752,12 @@
     "Improved Fire Attack Power"
    ],
    "descZh": "“火油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1400:level2RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3162,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60711,8 +62808,8 @@
    "nameZh": "提升火属性攻击力",
    "nameEn": "Improved Fire Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升火属性攻击力（火油脂・档位3・右手武器）",
-   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Lv3, Right-hand)",
+   "displayNameZh": "提升火属性攻击力（火油脂・携物知识3级・右手武器）",
+   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Bagcraft Lv3, Right-hand)",
    "paramName": "[Item - Level 3] Fire Grease (Right)",
    "sources": [
     {
@@ -60765,6 +62862,12 @@
     "Improved Fire Attack Power"
    ],
    "descZh": "“火油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1400:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3160,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60815,8 +62918,8 @@
    "nameZh": "提升火属性攻击力",
    "nameEn": "Improved Fire Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升火属性攻击力（火油脂・档位3・左手武器）",
-   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Lv3, Left-hand)",
+   "displayNameZh": "提升火属性攻击力（火油脂・携物知识3级・左手武器）",
+   "displayNameEn": "Improved Fire Attack Power (Fire Grease, Bagcraft Lv3, Left-hand)",
    "paramName": "[Item - Level 3] Fire Grease (Left)",
    "sources": [
     {
@@ -60869,6 +62972,12 @@
     "Improved Fire Attack Power"
    ],
    "descZh": "“火油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1400:level3RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3162,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -60919,8 +63028,8 @@
    "nameZh": "提升雷属性攻击力",
    "nameEn": "Improved Lightning Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升雷属性攻击力（雷油脂・档位2・右手武器）",
-   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Lv2, Right-hand)",
+   "displayNameZh": "提升雷属性攻击力（雷油脂・携物知识2级・右手武器）",
+   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Bagcraft Lv2, Right-hand)",
    "paramName": "[Item - Level 2] Lightning Grease (Right)",
    "sources": [
     {
@@ -60973,6 +63082,12 @@
     "Improved Lightning Attack Power"
    ],
    "descZh": "“雷油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1410:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3165,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61023,8 +63138,8 @@
    "nameZh": "提升雷属性攻击力",
    "nameEn": "Improved Lightning Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升雷属性攻击力（雷油脂・档位2・左手武器）",
-   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Lv2, Left-hand)",
+   "displayNameZh": "提升雷属性攻击力（雷油脂・携物知识2级・左手武器）",
+   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Bagcraft Lv2, Left-hand)",
    "paramName": "[Item - Level 2] Lightning Grease (Left)",
    "sources": [
     {
@@ -61077,6 +63192,12 @@
     "Improved Lightning Attack Power"
    ],
    "descZh": "“雷油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1410:level2RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3167,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61127,8 +63248,8 @@
    "nameZh": "提升雷属性攻击力",
    "nameEn": "Improved Lightning Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升雷属性攻击力（雷油脂・档位3・右手武器）",
-   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Lv3, Right-hand)",
+   "displayNameZh": "提升雷属性攻击力（雷油脂・携物知识3级・右手武器）",
+   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Bagcraft Lv3, Right-hand)",
    "paramName": "[Item - Level 3] Lightning Grease (Right)",
    "sources": [
     {
@@ -61181,6 +63302,12 @@
     "Improved Lightning Attack Power"
    ],
    "descZh": "“雷油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1410:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3165,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61231,8 +63358,8 @@
    "nameZh": "提升雷属性攻击力",
    "nameEn": "Improved Lightning Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升雷属性攻击力（雷油脂・档位3・左手武器）",
-   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Lv3, Left-hand)",
+   "displayNameZh": "提升雷属性攻击力（雷油脂・携物知识3级・左手武器）",
+   "displayNameEn": "Improved Lightning Attack Power (Lightning Grease, Bagcraft Lv3, Left-hand)",
    "paramName": "[Item - Level 3] Lightning Grease (Left)",
    "sources": [
     {
@@ -61285,6 +63412,12 @@
     "Improved Lightning Attack Power"
    ],
    "descZh": "“雷油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1410:level3RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3167,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61335,8 +63468,8 @@
    "nameZh": "提升魔力属性攻击力",
    "nameEn": "Improved Magic Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升魔力属性攻击力（魔力油脂・档位2・右手武器）",
-   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Lv2, Right-hand)",
+   "displayNameZh": "提升魔力属性攻击力（魔力油脂・携物知识2级・右手武器）",
+   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Bagcraft Lv2, Right-hand)",
    "paramName": "[Item - Level 2] Magic Grease (Right)",
    "sources": [
     {
@@ -61389,6 +63522,12 @@
     "Improved Magic Attack Power"
    ],
    "descZh": "“魔力油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1420:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3170,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61439,8 +63578,8 @@
    "nameZh": "提升魔力属性攻击力",
    "nameEn": "Improved Magic Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升魔力属性攻击力（魔力油脂・档位2・左手武器）",
-   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Lv2, Left-hand)",
+   "displayNameZh": "提升魔力属性攻击力（魔力油脂・携物知识2级・左手武器）",
+   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Bagcraft Lv2, Left-hand)",
    "paramName": "[Item - Level 2] Magic Grease (Left)",
    "sources": [
     {
@@ -61493,6 +63632,12 @@
     "Improved Magic Attack Power"
    ],
    "descZh": "“魔力油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1420:level2RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3172,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61543,8 +63688,8 @@
    "nameZh": "提升魔力属性攻击力",
    "nameEn": "Improved Magic Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升魔力属性攻击力（魔力油脂・档位3・右手武器）",
-   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Lv3, Right-hand)",
+   "displayNameZh": "提升魔力属性攻击力（魔力油脂・携物知识3级・右手武器）",
+   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Bagcraft Lv3, Right-hand)",
    "paramName": "[Item - Level 3] Magic Grease (Right)",
    "sources": [
     {
@@ -61597,6 +63742,12 @@
     "Improved Magic Attack Power"
    ],
    "descZh": "“魔力油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1420:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3170,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61647,8 +63798,8 @@
    "nameZh": "提升魔力属性攻击力",
    "nameEn": "Improved Magic Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升魔力属性攻击力（魔力油脂・档位3・左手武器）",
-   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Lv3, Left-hand)",
+   "displayNameZh": "提升魔力属性攻击力（魔力油脂・携物知识3级・左手武器）",
+   "displayNameEn": "Improved Magic Attack Power (Magic Grease, Bagcraft Lv3, Left-hand)",
    "paramName": "[Item - Level 3] Magic Grease (Left)",
    "sources": [
     {
@@ -61701,6 +63852,12 @@
     "Improved Magic Attack Power"
    ],
    "descZh": "“魔力油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1420:level3RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3172,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61751,8 +63908,8 @@
    "nameZh": "提升圣属性攻击力",
    "nameEn": "Improved Holy Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升圣属性攻击力（圣油脂・档位2・右手武器）",
-   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Lv2, Right-hand)",
+   "displayNameZh": "提升圣属性攻击力（圣油脂・携物知识2级・右手武器）",
+   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Bagcraft Lv2, Right-hand)",
    "paramName": "[Item - Level 2] Holy Grease (Right)",
    "sources": [
     {
@@ -61805,6 +63962,12 @@
     "Improved Holy Attack Power"
    ],
    "descZh": "“圣油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1430:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3185,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61855,8 +64018,8 @@
    "nameZh": "提升圣属性攻击力",
    "nameEn": "Improved Holy Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升圣属性攻击力（圣油脂・档位2・左手武器）",
-   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Lv2, Left-hand)",
+   "displayNameZh": "提升圣属性攻击力（圣油脂・携物知识2级・左手武器）",
+   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Bagcraft Lv2, Left-hand)",
    "paramName": "[Item - Level 2] Holy Grease (Left)",
    "sources": [
     {
@@ -61909,6 +64072,12 @@
     "Improved Holy Attack Power"
    ],
    "descZh": "“圣油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1430:level2RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3187,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -61959,8 +64128,8 @@
    "nameZh": "提升圣属性攻击力",
    "nameEn": "Improved Holy Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升圣属性攻击力（圣油脂・档位3・右手武器）",
-   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Lv3, Right-hand)",
+   "displayNameZh": "提升圣属性攻击力（圣油脂・携物知识3级・右手武器）",
+   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Bagcraft Lv3, Right-hand)",
    "paramName": "[Item - Level 3] Holy Grease (Right)",
    "sources": [
     {
@@ -62013,6 +64182,12 @@
     "Improved Holy Attack Power"
    ],
    "descZh": "“圣油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1430:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3185,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62063,8 +64238,8 @@
    "nameZh": "提升圣属性攻击力",
    "nameEn": "Improved Holy Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升圣属性攻击力（圣油脂・档位3・左手武器）",
-   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Lv3, Left-hand)",
+   "displayNameZh": "提升圣属性攻击力（圣油脂・携物知识3级・左手武器）",
+   "displayNameEn": "Improved Holy Attack Power (Holy Grease, Bagcraft Lv3, Left-hand)",
    "paramName": "[Item - Level 3] Holy Grease (Left)",
    "sources": [
     {
@@ -62117,6 +64292,12 @@
     "Improved Holy Attack Power"
    ],
    "descZh": "“圣油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1430:level3RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3187,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62167,8 +64348,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（出血油脂・档位2・右手）",
-   "displayNameEn": "Status: Blood Loss (Blood Grease, Lv2, Right)",
+   "displayNameZh": "异常状态：出血（出血油脂・携物知识2级・右手）",
+   "displayNameEn": "Status: Blood Loss (Blood Grease, Bagcraft Lv2, Right)",
    "paramName": "[Item - Level 2] Blood Grease (Right) - Blood Loss",
    "sources": [
     {
@@ -62232,6 +64413,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1440:level2RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3191,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62270,8 +64457,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（出血油脂・档位2・左手）",
-   "displayNameEn": "Status: Blood Loss (Blood Grease, Lv2, Left)",
+   "displayNameZh": "异常状态：出血（出血油脂・携物知识2级・左手）",
+   "displayNameEn": "Status: Blood Loss (Blood Grease, Bagcraft Lv2, Left)",
    "paramName": "[Item - Level 2] Blood Grease (Left) - Blood Loss",
    "sources": [
     {
@@ -62335,6 +64522,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1440:level2RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3195,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62373,8 +64566,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（出血油脂・档位3・右手）",
-   "displayNameEn": "Status: Blood Loss (Blood Grease, Lv3, Right)",
+   "displayNameZh": "异常状态：出血（出血油脂・携物知识3级・右手）",
+   "displayNameEn": "Status: Blood Loss (Blood Grease, Bagcraft Lv3, Right)",
    "paramName": "[Item - Level 3] Blood Grease (Right) - Blood Loss",
    "sources": [
     {
@@ -62438,6 +64631,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1440:level3RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3191,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62476,8 +64675,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（出血油脂・档位3・左手）",
-   "displayNameEn": "Status: Blood Loss (Blood Grease, Lv3, Left)",
+   "displayNameZh": "异常状态：出血（出血油脂・携物知识3级・左手）",
+   "displayNameEn": "Status: Blood Loss (Blood Grease, Bagcraft Lv3, Left)",
    "paramName": "[Item - Level 3] Blood Grease (Left) - Blood Loss",
    "sources": [
     {
@@ -62541,6 +64740,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1440:level3RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3195,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62579,8 +64784,8 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（催眠油脂・档位2・右手）",
-   "displayNameEn": "Status: Sleep (Soporific Grease, Lv2, Right)",
+   "displayNameZh": "异常状态：催眠（催眠油脂・携物知识2级・右手）",
+   "displayNameEn": "Status: Sleep (Soporific Grease, Bagcraft Lv2, Right)",
    "paramName": "[Item - Level 2] Soporific Grease (Right) - Sleep",
    "sources": [
     {
@@ -62644,6 +64849,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1450:level2RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3151,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62682,8 +64893,8 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（催眠油脂・档位2・左手）",
-   "displayNameEn": "Status: Sleep (Soporific Grease, Lv2, Left)",
+   "displayNameZh": "异常状态：催眠（催眠油脂・携物知识2级・左手）",
+   "displayNameEn": "Status: Sleep (Soporific Grease, Bagcraft Lv2, Left)",
    "paramName": "[Item - Level 2] Soporific Grease (Left) - Sleep",
    "sources": [
     {
@@ -62747,6 +64958,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1450:level2RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3155,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62785,8 +65002,8 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（催眠油脂・档位3・右手）",
-   "displayNameEn": "Status: Sleep (Soporific Grease, Lv3, Right)",
+   "displayNameZh": "异常状态：催眠（催眠油脂・携物知识3级・右手）",
+   "displayNameEn": "Status: Sleep (Soporific Grease, Bagcraft Lv3, Right)",
    "paramName": "[Item - Level 3] Soporific Grease (Right) - Sleep",
    "sources": [
     {
@@ -62850,6 +65067,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1450:level3RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3151,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62888,8 +65111,8 @@
    "nameZh": "异常状态：催眠",
    "nameEn": "Status: Sleep",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：催眠（催眠油脂・档位3・左手）",
-   "displayNameEn": "Status: Sleep (Soporific Grease, Lv3, Left)",
+   "displayNameZh": "异常状态：催眠（催眠油脂・携物知识3级・左手）",
+   "displayNameEn": "Status: Sleep (Soporific Grease, Bagcraft Lv3, Left)",
    "paramName": "[Item - Level 3] Soporific Grease (Left) - Sleep",
    "sources": [
     {
@@ -62953,6 +65176,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1450:level3RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3155,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -62991,8 +65220,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（中毒油脂・档位2・右手）",
-   "displayNameEn": "Status: Poison (Poison Grease, Lv2, Right)",
+   "displayNameZh": "异常状态：中毒（中毒油脂・携物知识2级・右手）",
+   "displayNameEn": "Status: Poison (Poison Grease, Bagcraft Lv2, Right)",
    "paramName": "[Item - Level 2] Poison Grease (Right) - Poison",
    "sources": [
     {
@@ -63057,6 +65286,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1460:level2RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3176,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63095,8 +65330,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（中毒油脂・档位2・左手）",
-   "displayNameEn": "Status: Poison (Poison Grease, Lv2, Left)",
+   "displayNameZh": "异常状态：中毒（中毒油脂・携物知识2级・左手）",
+   "displayNameEn": "Status: Poison (Poison Grease, Bagcraft Lv2, Left)",
    "paramName": "[Item - Level 2] Poison Grease (Left) - Poison",
    "sources": [
     {
@@ -63161,6 +65396,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1460:level2RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3180,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63199,8 +65440,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（中毒油脂・档位3・右手）",
-   "displayNameEn": "Status: Poison (Poison Grease, Lv3, Right)",
+   "displayNameZh": "异常状态：中毒（中毒油脂・携物知识3级・右手）",
+   "displayNameEn": "Status: Poison (Poison Grease, Bagcraft Lv3, Right)",
    "paramName": "[Item - Level 3] Poison Grease (Right) - Poison",
    "sources": [
     {
@@ -63265,6 +65506,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1460:level3RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3176,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63303,8 +65550,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（中毒油脂・档位3・左手）",
-   "displayNameEn": "Status: Poison (Poison Grease, Lv3, Left)",
+   "displayNameZh": "异常状态：中毒（中毒油脂・携物知识3级・左手）",
+   "displayNameEn": "Status: Poison (Poison Grease, Bagcraft Lv3, Left)",
    "paramName": "[Item - Level 3] Poison Grease (Left) - Poison",
    "sources": [
     {
@@ -63369,6 +65616,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1460:level3RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3180,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63407,8 +65660,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（结冰油脂・档位2・右手）",
-   "displayNameEn": "Status: Frost (Freezing Grease, Lv2, Right)",
+   "displayNameZh": "异常状态：冻伤（结冰油脂・携物知识2级・右手）",
+   "displayNameEn": "Status: Frost (Freezing Grease, Bagcraft Lv2, Right)",
    "paramName": "[Item - Level 2] Freezing Grease (Right) - Frostbite",
    "sources": [
     {
@@ -63472,6 +65725,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1470:level2RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3141,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63510,8 +65769,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（结冰油脂・档位2・左手）",
-   "displayNameEn": "Status: Frost (Freezing Grease, Lv2, Left)",
+   "displayNameZh": "异常状态：冻伤（结冰油脂・携物知识2级・左手）",
+   "displayNameEn": "Status: Frost (Freezing Grease, Bagcraft Lv2, Left)",
    "paramName": "[Item - Level 2] Freezing Grease (Left) - Frostbite",
    "sources": [
     {
@@ -63575,6 +65834,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1470:level2RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3145,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63613,8 +65878,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（结冰油脂・档位3・右手）",
-   "displayNameEn": "Status: Frost (Freezing Grease, Lv3, Right)",
+   "displayNameZh": "异常状态：冻伤（结冰油脂・携物知识3级・右手）",
+   "displayNameEn": "Status: Frost (Freezing Grease, Bagcraft Lv3, Right)",
    "paramName": "[Item - Level 3] Freezing Grease (Right) - Frostbite",
    "sources": [
     {
@@ -63678,6 +65943,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1470:level3RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3141,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63716,8 +65987,8 @@
    "nameZh": "异常状态：冻伤",
    "nameEn": "Status: Frost",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：冻伤（结冰油脂・档位3・左手）",
-   "displayNameEn": "Status: Frost (Freezing Grease, Lv3, Left)",
+   "displayNameZh": "异常状态：冻伤（结冰油脂・携物知识3级・左手）",
+   "displayNameEn": "Status: Frost (Freezing Grease, Bagcraft Lv3, Left)",
    "paramName": "[Item - Level 3] Freezing Grease (Left) - Frostbite",
    "sources": [
     {
@@ -63781,6 +66052,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1470:level3RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3145,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63819,8 +66096,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（伤龙油脂・档位2・右手武器）",
-   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Lv2, Right-hand)",
+   "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识2级・右手武器）",
+   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Bagcraft Lv2, Right-hand)",
    "paramName": "[Item - Level 2] Dragonwound Grease (Right)",
    "sources": [
     {
@@ -63877,6 +66154,12 @@
     "Attacks Possess Anti-Dragon Effect"
    ],
    "descZh": "“伤龙油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1480:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 3260,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -63927,8 +66210,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（伤龙油脂・档位2・左手武器）",
-   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Lv2, Left-hand)",
+   "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识2级・左手武器）",
+   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Bagcraft Lv2, Left-hand)",
    "paramName": "[Item - Level 2] Dragonwound Grease (Left)",
    "sources": [
     {
@@ -63985,6 +66268,12 @@
     "Attacks Possess Anti-Dragon Effect"
    ],
    "descZh": "“伤龙油脂”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1480:level2RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3262,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64035,8 +66324,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・右手武器）",
-   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Lv3, Right-hand)",
+   "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识3级・右手武器）",
+   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Bagcraft Lv3, Right-hand)",
    "paramName": "[Item - Level 3] Dragonwound Grease (Right)",
    "sources": [
     {
@@ -64093,6 +66382,12 @@
     "Attacks Possess Anti-Dragon Effect"
    ],
    "descZh": "“伤龙油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1480:level3RefId"
+   ],
+   "goodsBaseSpEffectId": 3260,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64143,8 +66438,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（伤龙油脂・档位3・左手武器）",
-   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Lv3, Left-hand)",
+   "displayNameZh": "提升物理攻击力（伤龙油脂・携物知识3级・左手武器）",
+   "displayNameEn": "Improved Physical Attack Power (Dragonwound Grease, Bagcraft Lv3, Left-hand)",
    "paramName": "[Item - Level 3] Dragonwound Grease (Left)",
    "sources": [
     {
@@ -64201,6 +66496,12 @@
     "Attacks Possess Anti-Dragon Effect"
    ],
    "descZh": "“伤龙油脂”的效用",
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1480:level3RefId_1"
+   ],
+   "goodsBaseSpEffectId": 3262,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64251,8 +66552,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（腐败油脂・档位2・右手）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Lv2, Right)",
+   "displayNameZh": "异常状态：猩红腐败（腐败油脂・携物知识2级・右手）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Bagcraft Lv2, Right)",
    "paramName": "[Item - Level 2] Rot Grease (Right) - Scarlet Rot",
    "sources": [
     {
@@ -64316,6 +66617,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1490:level2RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3311,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64354,8 +66661,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（腐败油脂・档位2・左手）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Lv2, Left)",
+   "displayNameZh": "异常状态：猩红腐败（腐败油脂・携物知识2级・左手）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Bagcraft Lv2, Left)",
    "paramName": "[Item - Level 2] Rot Grease (Left) - Scarlet Rot",
    "sources": [
     {
@@ -64419,6 +66726,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1490:level2RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3315,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64457,8 +66770,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（腐败油脂・档位3・右手）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Lv3, Right)",
+   "displayNameZh": "异常状态：猩红腐败（腐败油脂・携物知识3级・右手）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Bagcraft Lv3, Right)",
    "paramName": "[Item - Level 3] Rot Grease (Right) - Scarlet Rot",
    "sources": [
     {
@@ -64522,6 +66835,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1490:level3RefId->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3311,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64560,8 +66879,8 @@
    "nameZh": "异常状态：猩红腐败",
    "nameEn": "Status: Scarlet Rot",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：猩红腐败（腐败油脂・档位3・左手）",
-   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Lv3, Left)",
+   "displayNameZh": "异常状态：猩红腐败（腐败油脂・携物知识3级・左手）",
+   "displayNameEn": "Status: Scarlet Rot (Rot Grease, Bagcraft Lv3, Left)",
    "paramName": "[Item - Level 3] Rot Grease (Left) - Scarlet Rot",
    "sources": [
     {
@@ -64625,6 +66944,12 @@
     }
    ],
    "triggered": true,
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1490:level3RefId_1->atkOccurrenceSpEffectId"
+   ],
+   "goodsBaseSpEffectId": 3315,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64663,8 +66988,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（兽骨毒飞刀・档位2）",
-   "displayNameEn": "Status: Poison (Poisonbone Dart, Lv2)",
+   "displayNameZh": "异常状态：中毒（兽骨毒飞刀・携物知识2–3级）",
+   "displayNameEn": "Status: Poison (Poisonbone Dart, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Poisonbone Dart - Poison",
    "sources": [
     {
@@ -64731,6 +67056,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1720:level2RefId->Bullet13172000.spEffectId0",
+    "1720:level3RefId->Bullet13172010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 501720,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64769,8 +67105,8 @@
    "nameZh": "异常状态：出血",
    "nameEn": "Status: Blood Loss",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：出血（廓尔喀弯刀・档位2）",
-   "displayNameEn": "Status: Blood Loss (Kukri, Lv2)",
+   "displayNameZh": "异常状态：出血（廓尔喀弯刀・携物知识2–3级）",
+   "displayNameEn": "Status: Blood Loss (Kukri, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Kukri - Blood Loss",
    "sources": [
     {
@@ -64837,6 +67173,17 @@
      "spEffectId": 500
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "1730:level2RefId->Bullet13173000.spEffectId0",
+    "1730:level3RefId->Bullet13173010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 3115,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64875,8 +67222,8 @@
    "nameZh": "魅惑树枝",
    "nameEn": "Bewitching Branch",
    "nameSource": "itemName",
-   "displayNameZh": "魅惑树枝",
-   "displayNameEn": "Bewitching Branch",
+   "displayNameZh": "魅惑树枝（携物知识3级）",
+   "displayNameEn": "Bewitching Branch (Bagcraft Lv3)",
    "paramName": "[Item - Level 3] Bewitching Branch (Attack Boost on Charmed)",
    "sources": [
     {
@@ -64925,6 +67272,12 @@
    "conditions": {
     "invocationConditionsStateChange1": 132
    },
+   "goodsLevel": 3,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "3350:level3RefId->Bullet13335010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 503350,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -64963,8 +67316,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（振奋香・档位2）",
-   "displayNameEn": "Improved Attack Power (Uplifting Aromatic, Lv2)",
+   "displayNameZh": "提升攻击力（振奋香・携物知识2–3级）",
+   "displayNameEn": "Improved Attack Power (Uplifting Aromatic, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Uplifting Aromatic (Attack Boost)",
    "sources": [
     {
@@ -65020,6 +67373,17 @@
     "Improved Attack Power"
    ],
    "descZh": "“振奋香”的效用",
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "3500:level2RefId->Bullet13350000.spEffectId1",
+    "3500:level3RefId->Bullet13350010.spEffectId1"
+   ],
+   "goodsBaseSpEffectId": 503501,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65046,8 +67410,8 @@
    "nameZh": "提升攻击力",
    "nameEn": "Improved Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升攻击力（狂热香药・档位2）",
-   "displayNameEn": "Improved Attack Power (Bloodboil Aromatic, Lv2)",
+   "displayNameZh": "提升攻击力（狂热香药・携物知识2–3级）",
+   "displayNameEn": "Improved Attack Power (Bloodboil Aromatic, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Bloodboil Aromatic",
    "sources": [
     {
@@ -65110,6 +67474,17 @@
    "conditions": {
     "motionInterval": 0.06
    },
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "3550:level2RefId->Bullet13355000.spEffectId0",
+    "3550:level3RefId->Bullet13355010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 503550,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65136,8 +67511,8 @@
    "nameZh": "异常状态：中毒",
    "nameEn": "Status: Poison",
    "nameSource": "spEffectName",
-   "displayNameZh": "异常状态：中毒（毒发喷雾・档位2）",
-   "displayNameEn": "Status: Poison (Poison Spraymist, Lv2)",
+   "displayNameZh": "异常状态：中毒（毒发喷雾・携物知识2–3级）",
+   "displayNameEn": "Status: Poison (Poison Spraymist, Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Poison Spraymist - Poison",
    "sources": [
     {
@@ -65204,6 +67579,17 @@
      "spEffectId": 505
     }
    ],
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "3580:level2RefId->Bullet13358000.spEffectId0",
+    "3580:level3RefId->Bullet13358010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 503580,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65242,8 +67628,8 @@
    "nameZh": "酸蚀喷雾",
    "nameEn": "Acid Spraymist",
    "nameSource": "itemName",
-   "displayNameZh": "酸蚀喷雾（档位2）",
-   "displayNameEn": "Acid Spraymist (Lv2)",
+   "displayNameZh": "酸蚀喷雾（携物知识2–3级）",
+   "displayNameEn": "Acid Spraymist (Bagcraft Lv2–3)",
    "paramName": "[Item - Level 2] Acid Spraymist",
    "sources": [
     {
@@ -65292,6 +67678,17 @@
    "targetSource": "bulletHitOpposeOnly",
    "activation": "passive",
    "activationSource": "noEvidence",
+   "goodsLevels": [
+    2,
+    3
+   ],
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "3610:level2RefId->Bullet13361000.spEffectId0",
+    "3610:level3RefId->Bullet13361010.spEffectId0"
+   ],
+   "goodsBaseSpEffectId": 503610,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65330,8 +67727,8 @@
    "nameZh": "强化蓄力攻击",
    "nameEn": "Improved Charge Attacks",
    "nameSource": "spEffectName",
-   "displayNameZh": "强化蓄力攻击（大刺破露滴・档位2）",
-   "displayNameEn": "Improved Charge Attacks (Spiked Cracked Tear, Lv2)",
+   "displayNameZh": "强化蓄力攻击（大刺破露滴・携物知识2级）",
+   "displayNameEn": "Improved Charge Attacks (Spiked Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Spiked Cracked Tear",
    "sources": [
     {
@@ -65390,6 +67787,12 @@
     "Improved Charge Attacks"
    ],
    "descZh": "“大刺破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11014:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511014,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65446,8 +67849,8 @@
    "nameZh": "所有的专注值消耗归零",
    "nameEn": "FP Costs Nullified",
    "nameSource": "spEffectName",
-   "displayNameZh": "所有的专注值消耗归零（蓝秘密露滴・档位2）",
-   "displayNameEn": "FP Costs Nullified (Cerulean Hidden Tear, Lv2)",
+   "displayNameZh": "所有的专注值消耗归零（蓝秘密露滴・携物知识2级）",
+   "displayNameEn": "FP Costs Nullified (Cerulean Hidden Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Cerulean Hidden Tear",
    "sources": [
     {
@@ -65503,6 +67906,12 @@
    "conditions": {
     "motionInterval": 0.05
    },
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11025:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511060,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65532,8 +67941,8 @@
    "nameZh": "提升让敌人失去平衡的能力",
    "nameEn": "Improved Stance-Breaking",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升让敌人失去平衡的能力（岩刺破露滴・档位2）",
-   "displayNameEn": "Improved Stance-Breaking (Stonebarb Cracked Tear, Lv2)",
+   "displayNameZh": "提升让敌人失去平衡的能力（岩刺破露滴・携物知识2级）",
+   "displayNameEn": "Improved Stance-Breaking (Stonebarb Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Stonebarb Cracked Tear",
    "sources": [
     {
@@ -65583,6 +67992,12 @@
     "Improved Stance-Breaking"
    ],
    "descZh": "“岩刺破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11026:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511026,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65609,8 +68024,8 @@
    "nameZh": "提升火属性攻击力",
    "nameEn": "Improved Fire Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升火属性攻击力（带火破露滴・档位2）",
-   "displayNameEn": "Improved Fire Attack Power (Flame-Shrouding Cracked Tear, Lv2)",
+   "displayNameZh": "提升火属性攻击力（带火破露滴・携物知识2级）",
+   "displayNameEn": "Improved Fire Attack Power (Flame-Shrouding Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Flame-Shrouding Cracked Tear",
    "sources": [
     {
@@ -65659,6 +68074,12 @@
     "Improved Fire Attack Power"
    ],
    "descZh": "“带火破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11028:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511028,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65677,8 +68098,8 @@
    "nameZh": "提升魔力属性攻击力",
    "nameEn": "Improved Magic Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升魔力属性攻击力（带魔力破露滴・档位2）",
-   "displayNameEn": "Improved Magic Attack Power (Magic-Shrouding Cracked Tear, Lv2)",
+   "displayNameZh": "提升魔力属性攻击力（带魔力破露滴・携物知识2级）",
+   "displayNameEn": "Improved Magic Attack Power (Magic-Shrouding Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Magic-Shrouding Cracked Tear",
    "sources": [
     {
@@ -65727,6 +68148,12 @@
     "Improved Magic Attack Power"
    ],
    "descZh": "“带魔力破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11029:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511029,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65745,8 +68172,8 @@
    "nameZh": "提升雷属性攻击力",
    "nameEn": "Improved Lightning Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升雷属性攻击力（带雷破露滴・档位2）",
-   "displayNameEn": "Improved Lightning Attack Power (Lightning-Shrouding Cracked Tear, Lv2)",
+   "displayNameZh": "提升雷属性攻击力（带雷破露滴・携物知识2级）",
+   "displayNameEn": "Improved Lightning Attack Power (Lightning-Shrouding Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Lightning-Shrouding Cracked Tear",
    "sources": [
     {
@@ -65795,6 +68222,12 @@
     "Improved Lightning Attack Power"
    ],
    "descZh": "“带雷破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11030:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511030,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -65813,8 +68246,8 @@
    "nameZh": "提升圣属性攻击力",
    "nameEn": "Improved Holy Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升圣属性攻击力（带圣破露滴・档位2）",
-   "displayNameEn": "Improved Holy Attack Power (Holy-Shrouding Cracked Tear, Lv2)",
+   "displayNameZh": "提升圣属性攻击力（带圣破露滴・携物知识2级）",
+   "displayNameEn": "Improved Holy Attack Power (Holy-Shrouding Cracked Tear, Bagcraft Lv2)",
    "paramName": "[Item - Level 2] Holy-Shrouding Cracked Tear",
    "sources": [
     {
@@ -65863,6 +68296,12 @@
     "Improved Holy Attack Power"
    ],
    "descZh": "“带圣破露滴”的效用",
+   "goodsLevel": 2,
+   "goodsLevelSource": "学者能力「携物知识」（CL_MenuText 20020）",
+   "goodsLevelPaths": [
+    "11031:level2RefId"
+   ],
+   "goodsBaseSpEffectId": 511031,
    "sourceSlot": "consumable",
    "sourceSlots": [
     "consumable"
@@ -67869,8 +70308,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（火焰啊，赐予我力量！）",
-   "displayNameEn": "Improved Physical Attack Power (Flame, Grant Me Strength)",
+   "displayNameZh": "提升物理与火属性攻击力（火焰啊，赐予我力量！）",
+   "displayNameEn": "Improved Physical and Fire Attack Power (Flame, Grant Me Strength)",
    "paramName": "[Incantation] Flame Grant Me Strength",
    "sources": [
     {
@@ -77045,8 +79484,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（遗物・×1.25）",
-   "displayNameEn": "Improved Physical Attack Power (Strengthens family and allies when Ultimate Art is activated)",
+   "displayNameZh": "提升物理与属性攻击力（遗物・×1.25）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Strengthens family and allies when Ultimate Art is activated)",
    "paramName": "[Relic - Revenant] Strengthens family and allies when Ultimate Art is activated",
    "sources": [
     {
@@ -77132,8 +79571,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限）",
-   "displayNameEn": "Improved Physical Attack Power (Damage taken while using Character Skill improves attack power and stamina)",
+   "displayNameZh": "提升物理与属性攻击力（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Damage taken while using Character Skill improves attack power and stamina)",
    "paramName": "[Relic - Raider] Damage taken while using Character Skill improves attack power and stamina",
    "sources": [
     {
@@ -77224,8 +79663,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（受到攻击时，能提升攻击力）",
-   "displayNameEn": "Improved Physical Attack Power (Taking attacks improves attack power)",
+   "displayNameZh": "提升物理与属性攻击力（受到攻击时，能提升攻击力）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Taking attacks improves attack power)",
    "paramName": "[Relic] Character Taking attacks improves attack power",
    "sources": [
     {
@@ -77416,8 +79855,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（遗物・×1.15）",
-   "displayNameEn": "Improved Physical Attack Power (Defeating enemies while Art is active ups attack power)",
+   "displayNameZh": "提升物理与属性攻击力（遗物・×1.15）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Defeating enemies while Art is active ups attack power)",
    "paramName": "[Relic - Duchess] Defeating enemies while Art is active ups attack power",
    "sources": [
     {
@@ -77506,8 +79945,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（遗物・×1.05）",
-   "displayNameEn": "Improved Physical Attack Power (Defeating enemies while Art is active ups attack power SP)",
+   "displayNameZh": "提升物理与属性攻击力（遗物・×1.05）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Defeating enemies while Art is active ups attack power SP)",
    "paramName": "[Relic - Duchess] Defeating enemies while Art is active ups attack power SP",
    "sources": [
     {
@@ -77784,8 +80223,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（遗物・×1.16）",
-   "displayNameEn": "Improved Physical Attack Power (Suffer blood loss and increase attack power upon Art activation)",
+   "displayNameZh": "提升物理与属性攻击力（遗物・×1.16）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Suffer blood loss and increase attack power upon Art activation)",
    "paramName": "[Relic - Recluse] Suffer blood loss and increase attack power upon Art activation",
    "sources": [
     {
@@ -82673,13 +85112,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [4 掘石魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [4 掘石魔法]：61 个里只有 2 个有这类段（爆碎岩盘、爆破岩盘）",
+     "reason": "子类别限定 [4 掘石魔法]：59 个里只有 2 个有这类段（爆碎岩盘、爆破岩盘）",
      "requires": {
       "subCategoriesAny": [
        4
       ]
      },
-     "matchShare": 0.0328
+     "matchShare": 0.0339
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [4 掘石魔法]：祷告的命中段都不带这类子类别"
@@ -82782,13 +85221,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [2 卡利亚剑魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [2 卡利亚剑魔法]：61 个里只有 4 个有这类段（卡利亚大剑、亚杜拉的月光剑、卡利亚迅剑、卡利亚贯刺）",
+     "reason": "子类别限定 [2 卡利亚剑魔法]：59 个里只有 4 个有这类段（卡利亚大剑、亚杜拉的月光剑、卡利亚迅剑、卡利亚贯刺）",
      "requires": {
       "subCategoriesAny": [
        2
       ]
      },
-     "matchShare": 0.0656
+     "matchShare": 0.0678
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [2 卡利亚剑魔法]：祷告的命中段都不带这类子类别"
@@ -82891,13 +85330,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [3 辉剑魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [3 辉剑魔法]：61 个里只有 5 个有这类段（辉剑圆阵、卡利亚圆阵、巨剑阵、魔法辉剑、卡利亚式奉还）",
+     "reason": "子类别限定 [3 辉剑魔法]：59 个里只有 5 个有这类段（辉剑圆阵、卡利亚圆阵、巨剑阵、魔法辉剑、卡利亚式奉还）",
      "requires": {
       "subCategoriesAny": [
        3
       ]
      },
-     "matchShare": 0.082
+     "matchShare": 0.0847
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [3 辉剑魔法]：祷告的命中段都不带这类子类别"
@@ -83000,13 +85439,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [12 夜之魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [12 夜之魔法]：61 个里只有 2 个有这类段（黑夜魔砾、黑夜彗星）",
+     "reason": "子类别限定 [12 夜之魔法]：59 个里只有 2 个有这类段（黑夜魔砾、黑夜彗星）",
      "requires": {
       "subCategoriesAny": [
        12
       ]
      },
-     "matchShare": 0.0328
+     "matchShare": 0.0339
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [12 夜之魔法]：祷告的命中段都不带这类子类别"
@@ -83109,13 +85548,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [5 结晶人魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [5 结晶人魔法]：61 个里只有 3 个有这类段（爆散结晶、飞散结晶、奔放结晶）",
+     "reason": "子类别限定 [5 结晶人魔法]：59 个里只有 3 个有这类段（爆散结晶、飞散结晶、奔放结晶）",
      "requires": {
       "subCategoriesAny": [
        5
       ]
      },
-     "matchShare": 0.0492
+     "matchShare": 0.0508
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [5 结晶人魔法]：祷告的命中段都不带这类子类别"
@@ -83218,13 +85657,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [11 重力魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [11 重力魔法]：61 个里只有 5 个有这类段（陨石、艾丝缇陨石、岩石球、重力球、碎星）",
+     "reason": "子类别限定 [11 重力魔法]：59 个里只有 5 个有这类段（陨石、艾丝缇陨石、岩石球、重力球、碎星）",
      "requires": {
       "subCategoriesAny": [
        11
       ]
      },
-     "matchShare": 0.082
+     "matchShare": 0.0847
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [11 重力魔法]：祷告的命中段都不带这类子类别"
@@ -83327,13 +85766,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [9 荆棘魔法]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [9 荆棘魔法]：61 个里只有 2 个有这类段（罪恶荆棘、责罚荆棘）",
+     "reason": "子类别限定 [9 荆棘魔法]：59 个里只有 2 个有这类段（罪恶荆棘、责罚荆棘）",
      "requires": {
       "subCategoriesAny": [
        9
       ]
      },
-     "matchShare": 0.0328
+     "matchShare": 0.0339
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [9 荆棘魔法]：祷告的命中段都不带这类子类别"
@@ -93479,8 +95918,8 @@
    "nameZh": "提升物理攻击力",
    "nameEn": "Improved Physical Attack Power",
    "nameSource": "spEffectName",
-   "displayNameZh": "提升物理攻击力（周围人物陷入中毒、腐败时，能提升攻击力）",
-   "displayNameEn": "Improved Physical Attack Power (Poison & Rot in Vicinity Increases Attack Power)",
+   "displayNameZh": "提升物理与属性攻击力（周围人物陷入中毒、腐败时，能提升攻击力）",
+   "displayNameEn": "Improved Physical and Affinity Attack Power (Poison & Rot in Vicinity Increases Attack Power)",
    "paramName": "[Relic] Poison & Rot in Vicinity Increases Attack Power - Attack Power Buff",
    "sources": [
     {
@@ -110355,13 +112794,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
+     "reason": "子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
      "requires": {
       "subCategoriesAny": [
        110
       ]
      },
-     "matchShare": 0.4262
+     "matchShare": 0.4407
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）"
@@ -110496,13 +112935,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
+     "reason": "子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
      "requires": {
       "subCategoriesAny": [
        110
       ]
      },
-     "matchShare": 0.4262
+     "matchShare": 0.4407
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）"
@@ -110637,13 +113076,13 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
+     "reason": "子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）",
      "requires": {
       "subCategoriesAny": [
        110
       ]
      },
-     "matchShare": 0.4262
+     "matchShare": 0.4407
     },
     "incantation": {
      "reason": "miracleParamChange=0：参数声明不作用于祷告；子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）"
@@ -110777,7 +113216,7 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
+     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
     },
     "incantation": {
      "reason": "子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）",
@@ -110918,7 +113357,7 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
+     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
     },
     "incantation": {
      "reason": "子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）",
@@ -111059,7 +113498,7 @@
      "reason": "wepParamChange=3（自身）：不作用于武器攻击；子类别限定 [110 蓄力法术攻击]：战技的命中段都不带这类子类别"
     },
     "sorcery": {
-     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：61 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
+     "reason": "magParamChange=0：参数声明不作用于魔法；子类别限定 [110 蓄力法术攻击]：59 个里只有 26 个有这类段（辉石彗星、帚星、旋飞魔砾、辉石流星、流星雨、海摩炮弹…）"
     },
     "incantation": {
      "reason": "子类别限定 [110 蓄力法术攻击]：64 个里只有 21 个有这类段（死亡雷击、火焰啊！、投火、火焰啊，倾注吧、火焰啊，缠绕吧、感受巨人火焰吧…）",

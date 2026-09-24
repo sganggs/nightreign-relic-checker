@@ -1278,3 +1278,188 @@ generate_buffs.py（schemaVersion 6，复核三轮）补充：
 - `python3 verify_skill_hits.py --out raw/tae/v3-review-fix`（新报告，不入库；原 raw/tae/hit-invocation-report.* 保留作对照）：数据集 variant × var 层带伤害只剩 invoked 9905 / weaponTae 1756 / spEffect 4 / conditional 2 / noJudge 7，spEffect 从 36 降到 4（剩下的是卡利亚式奉还 682/683），其余不变。
 - 三端测试与改动前逐项相同：Windows 376 过 / 3 败（196、202、223；361 是 TODO），失败输出逐字相同；macOS RelicCoreChecks 仍在「多套动作的战技两边都应选出段」处中止；Android `:gamedata:test` 408 项 84 项失败，失败清单与换回上一版数据时逐项相同。
 - 未处理：`data/nightreign-buffs-v1.03.5.json` 的 attackIndex 是从 v2 的战技数据算的（A 阶段起就没有重生成），本次的 noDamage 变化只影响其中 208 / 6760 / 7900 三项的段数；buffs 由别的车道重生成。
+
+## 法术可施放口径（skills，schemaVersion 仍为 3，2026-09-24）
+
+**起因**：`spells[]` 原先收「Magic 表里有 MagicName 的全部行」（160 个），其中 8100 / 8101「风暴管束者」
+（kind=sorcery，各带 2 段 flat 火 / 魔力）在页面上被当成玩家法术参与排名。本作的风暴管束者是战技
+`SwordArtsParam` 1200（10 套角色动作，武器是各渡夜者的角色武器），不是法术。
+
+**证据**：
+
+1. 本作玩家能施放的法术只来自局内施法器：`EquipParamCustomWeapon` 里手杖（wepType 57）/ 圣印记（61）行的
+   `magicTableId_1` / `magicTableId_2` 两个法术槽，各指向一个 `MagicTableParam` 池。`MagicTableParam`
+   （2350 行、225 个不同 ID；列 = ID / magicId / chanceWeight）与 `SwordArtsTableParam` 同一惯例：**同一个 ID 的全部行
+   = 一个池**。custom 行引用到的 122 个池全部是表里的 ID。
+2. 可达性沿用「战技池（v3）」一节的口径（被 `ItemTableParam` itemCategory=6、`ItemLotParam_map/_enemy`
+   lotItemCategory0N=6 或 `ShopLineupParam` equipType=6 引用）：带法术槽的 custom 行 156 行，可达 151 行
+   （28 把施法器：辉石魔杖 19、圣印记 9），不可达的 5 行引用的池都已被可达行引用，不带来额外法术。
+3. 可达池里 chanceWeight>0 的 magicId 共 158 个，与原 160 个 spells 的差正好是 {8100, 8101}。
+   `MagicTableParam` 没有任何行（任何池、任何权重）引用 8100 / 8101。
+4. 全部 252 张参数表里取值为 8100 / 8101 的非 ID 列只有 `NpcParam.spEffectID16` / `SoundBankId` / `SfxResBankId`、
+   `RideParam.defChrId`、`SpEffectParam.behaviorId`、`ActionButtonParam.textId`、
+   `PersonalScenarioParam.personalScenarioObjectiveId`，分别是 SpEffect / 音效库 / 特效库 / 角色 / 行为 / 文本 / 剧情目标 ID，
+   没有一列指向 Magic。结论：Magic 8100 / 8101 是本体把风暴管束者做成 Magic 时的残留行。
+5. Magic 表另有 18 行没有 MagicName（90、4641、4642、8000–8003、8010–8015、8020–8023、999999999），原来就不收，
+   也都不在任何可达池里。
+6. 可达池里 chanceWeight=0 的 28 行全在第 2 槽的池里，其中 27 行的法术正是同一 custom 行第 1 槽池里的法术
+   （例：33000000 辉石杖 = 第 1 槽池 3300000 只有 4000，第 2 槽池 3300100 里 4000 的权重是 0），推断是「第 2 槽不再抽第 1 槽
+   已给的法术」；例外是 3325100（陨石杖第 2 槽）里的 4710 岩石球，它不在第 1 槽池 3325000（只有 4720）里。
+   这些行不算池成员，它们的 magicId 都另有正权重来源，不影响可施放集合。
+
+**做法**（`generate_skills.py`）：命中归属仍按全部有名 Magic 行做（名字索引不变，保证其它法术的 hits 逐段不变），
+落地后再按可施放口径过滤；不可施放的行写进 `coverage.spellsNotCastable`（附原因、原先归到它们的 atkIds、同名战技 1200）。
+
+**字段**（只增字段，schemaVersion 仍为 3）：
+
+- `spells[].casterWeaponIds`（能携带它的施法器基础武器，经 custom 行 targetWeaponId）；
+- `spells[].casterSources`（`{id, pool: [[magicTableId, chanceWeight, customRows], ...]}`，仿 `skills[].weaponSources`，法术没有 fixed）；
+- `weapons[].customMagicTables`（`[[customId, magicTableId_1, magicTableId_2], ...]`，28 把施法器）；
+- 顶层 `magicPools`（`{池 ID: [[magicId, chanceWeight], ...]}`，122 个池、2138 个条目）；
+- `coverage.spellsNotCastable(+Note)`、`diagnostics.spellCasting`（规则、custom 行统计、0 权重行及其槽位分析、无名 Magic 行）；
+- counts：`spellsNamed` 160 / `spellsCastable` 158 / `spellsDropped` 2 / `magicPools` 122 / `magicPoolEntries` 2138 /
+  `magicPoolZeroWeightRows` 28 / `casterWeapons` 28 / `casterCustomRows` 151 / `casterCustomRowsUnreachable` 5 / `spellWeaponPairs` 2071；
+- `fieldNotes.casterWeaponIds / casterSources / customMagicTables / magicPools / spellsNotCastable`、`usage.法术来源（v3）`、
+  `schemaChangelog` v3 条目的 added / changed 各追加一条。
+
+**变化**：spells 160 → 158（只删 8100 / 8101），其余 158 个法术的旧字段与 hits 逐项不变；spellsWithHits 139 → 137；
+全局 hits 2201 → 2197、uniqueAtkIds 2191 → 2187（少了这两行的 4 段）。weapons 旧字段、skills、swordArtsPools、
+diagnostics.taeVerification 与上一版逐项相同。每个魔法有 19 把手杖能带（4710 岩石球 18 把），每个祷告 9 把圣印记。
+
+**self_check**：8100 / 8101 不在 spells、在 spellsNotCastable 且 magicTablePools 为空、同名战技是 1200；1200 仍在 skills 且有武器；
+每个法术至少一把施法器、施法器全是手杖 / 圣印记；casterSources 的每个池项在 magicPools 里、行数等于 customMagicTables 里
+两个槽之一等于该池的行数；customMagicTables 逐行回溯到原始 custom 行（可达、target、两个槽都对得上）；magicPools 与原表一致
+（同 ID = 一池、只收正权重）；反向：施法器池里的每个法术都列了这把施法器；0 权重行不进 magicPools 且另有来源；counts 与清单一致。
+另做 8 种篡改（8100 回到 spells、法术没有施法器、池项行数 / 权重错、customMagicTables 指错池、漏一把施法器、1200 消失、
+magicPools 混入 0 权重条目），全部被拦下。连续两次生成除 generatedAt 外一致，`--no-tae` 也通过。
+
+## 道具等级（携物知识）（buffs，schemaVersion 仍为 6，2026-09-24）
+
+**起因**：用户问「提升物理攻击力的勇者肉块还能对魔法增伤？」。勇者肉块（goods 1210）三行：1 级 3950 = 物理 ×1.2，
+2 级 708420 = 物理 ×1.3，**3 级 708421 = 物理 ×1.3 ＋ 魔力 / 火 / 雷 / 圣 ×1.2**。页面对纯魔法输出把 3950 / 708420 算成 ×1
+（标「对当前构成无增益」、默认隐藏），把 708421 按 ×1.2 计入——计算没错，但它的名字是状态栏文本「提升物理攻击力」＋「档位3」，
+看起来像只加物理。另外「档位N」本身也不对：这些行不是词条强度档位，而是道具等级。
+
+**证据**：
+
+1. `EquipParamGoods` 除 `refId_default` / `refId_1`（1 级）外还有 `level2RefId` / `level3RefId`（＋`_1`），本机
+   regulation 10350000 有 85 种道具填了它们；这组字段自 regulation 10310025 起存在。
+2. 等级来自 DLC 角色学者的能力「携物知识」：`CL_MenuText` 20020「学者－能力【携物知识】」（engus "Scholar: Bagcraft"），
+   `SpEffectInfo` 121206–121208「“携物知识”的效果」（engus "Effect of Bagcraft"）；官方 1.03.1 更新说明提到学者的 Bagcraft
+   能力让飞镖类道具达到 level 3。
+3. `SpEffectParam` 行名 "[Item - Level 2/3] Exalted Flesh" 就是 708420 / 708421；`Bullet` 900503011 / 900503012
+   "[Relic - Level 2/3] Exalted Flesh (Area)" 的 spEffectId0 也是 708420 / 708421——遗物「道具效用能扩及我方人物」的区域版，
+   队友拿到的是同一行（参数观察，数据集没有为它们加来源）。
+4. 重走 6 个效果列（refCategory 2 = SpEffect；1 = 子弹，另沿 `HitBulletID` / `intervalCreateBulletId` 走子子弹；再沿 CHAIN_FIELDS
+   走 3 层）：只被 2 / 3 级列到达的 buff 72 条（2 级 45、3 级 27），与行名 "[Item - Level N]" 的 buff 一一对应。其中 57 条在
+   sources 里本来就有 level 列来源，另 15 条是壶类（粪便壶 / 苍蝇壶 / 结冰壶 / 毒壶 / 催眠壶 / 腐败壶）2 / 3 级的异常状态行，
+   只挂在子子弹上（例 708300：goods 330 level2RefId → Bullet 13033000 → HitBulletID → 13033001.spEffectId0），
+   sources 里只有 paramRowName。17 条同时被 2、3 级用到（例 708720 狂热香药、708310 苍蝇壶），500925 粪便壶的自身中毒被 1–3 级共用。
+5. 1 级对照：同一道具、同一只手（`_1` 对 `_1`）、同一条路径形状（子弹号不计）上的 1 级行，67 条找得到唯一对照
+   （其中 66 条的 1 级行也在 buffs 里，exclusiveKey 全部与 1 级行相同）；708312 / 708332 / 708333 / 708362 / 708363 是 3 级新增的
+   子子弹行，没有 1 级对照。这 66 条里，提高的攻击类型（damage / attackPower / attackPowerFlat）与 1 级不同的**只有 708421**
+   （physical → physical + magic / fire / lightning / holy）。
+
+**字段**（只增字段与改名，schemaVersion 仍为 6）：`buffs[].goodsLevel`（2 / 3，最低那一级）、`goodsLevelSource`
+（"学者能力「携物知识」（CL_MenuText 20020）"）、`goodsBaseSpEffectId`（1 级行，可缺）、`goodsLevels`（被多级共用时列出；
+1 级行被共用时只写它，如 500925 的 [1,2,3]）、`goodsLevelPaths`（"<道具 ID>:<路径>"）；`enums.goodsLevel`、`notes.goodsLevel`、
+`diagnostics.goodsLevelRows(+Note)`；counts `buffsWithGoodsLevel` 72 / `buffsByGoodsLevel` {2: 45, 3: 27} / `buffsWithGoodsLevels` 18 /
+`buffsWithGoodsBaseSpEffectId` 67 / `goodsLevelRenamed` 1（只数道具等级行）；`schemaChangelog` v6 条目追加 ⑫。
+
+**改名**（本节首轮 displayNameZh 变 74 条、displayNameEn 72 条；加上下面「复核」一节合计 93 / 81 条；nameZh / statusLabelsZh 仍是游戏文本）：
+
+- 等级行的「档位N」→「携物知识N级」（2、3 级共用的写「携物知识2–3级」），英文 LvN → Bagcraft LvN；等级行一律带道具名与等级：
+  15 条壶类行补上道具名，708680「魅惑树枝」→「魅惑树枝（携物知识3级）」。
+- **伤害类型写真**：等级行提高的攻击类型是 1 级行的真超集、且多出属性类时，前缀按实际覆盖改写。道具等级行里只有
+  **708421「提升物理攻击力（勇者肉块・档位3）」→「提升物理与属性攻击力（勇者肉块・携物知识3级）」**
+  （英文 "Improved Physical and Affinity Attack Power (Exalted Flesh, Bagcraft Lv3)"）；倍率由页面的倍率列展示。
+  「只有这一条」只就道具等级行而言——复核发现全表还有 9 条同样的问题，规则已推广，见下面「复核」一节。
+- 同族消歧连带：500930 / 500931（苍蝇壶 1 级的两行）补了类别与数值限定词。
+- 连带的说明文字：`notes.displayName`、`stackingRules`、`diagnostics.displayNameZhIdFallbackNote / activationNote /
+  exclusiveKeyEvidenceNote` 里的道具等级例子改用新写法；显示名里「档位」现在只剩 [Weapon…] / [Relic…] 行的词条强度（167 条）。
+
+**勇者肉块对纯魔法输出的结论**：1 级、2 级只提高物理，对纯魔法 / 祷告输出没有增益（页面照旧标「无增益」）；3 级
+（学者携物知识 3 级）物理 ×1.3 之外魔力 / 火 / 雷 / 圣也 ×1.2，所以在法术上 ×1.2 是对的，现在名字也写明了「物理与属性」。
+道具等级是局内状态，页面默认应按 1 级，列出 2 / 3 级行时标明需要携物知识；同一道具各级同 exclusiveKey，只取当前等级那一行。
+
+**skills 连带**：法术可施放口径让 sorcery 人口 61 → 59（`attackIndex.populationCounts` 与 `counts.attackPopulation`），
+`attackIndex.spells` 少 8100 / 8101，14 条 buff 的 `appliesToDetail.sorcery` 的 reason 分母与 matchShare 随之变化，appliesTo 取值不变。
+
+**self_check**（`self_check_goods_level`）：goodsLevel 与行名 "[Item - Level N]" 一一对应；goodsLevelSource 固定文本；
+goodsLevelPaths 的等级集合等于 goodsLevels；1 级对照不是等级行、且与等级行同道具（子子弹 1 级行按行名词干核对）；
+显示名含「携物知识N级」（范围与 goodsLevels 一致）、不含「档位」，英文含 "Bagcraft LvN"；全表含「档位」的显示名只能是
+[Weapon…] / [Relic…] 行、且没有道具来源；勇者肉块三行的 rates、1 级对照与名字（708421 含「属性」、不以「提升物理攻击力」开头，
+nameZh 仍是「提升物理攻击力」）；改名与「攻击类型与 1 级不同」的清单都恰好是 [708421]。原有的叠层行断言（「第N层」、不含「档位」）
+不变。另做 9 种篡改（708421 改回只说物理、708420 写回档位2、范围写错、去掉 goodsLevel、goodsLevelSource 改成任意文本、
+非词条行出现档位、708421 对照指错、改名清单多一条、英文缺 Bagcraft），全部被拦下。连续两次生成除 generatedAt 外一致。
+
+**三端测试**（换回上一版数据时三端全过：Windows 388 过 / 0 败、macOS 22461 项、Android 420 项 0 败）：
+
+- Windows `node --test`：388 过 / 0 败（1 条 TODO 是原有的 core.js normalizeEffectId）。
+- macOS `RelicCoreChecks`：在 `BuffRankerChecks.swift:1686`「v3 计数 … hits 2201」处中止（现为 2197）。临时把该处与 1712 行
+  「usage 8 个键」（现为 9 个）改成新值试跑，其余 22459 项全过；两处测试未改。
+- Android `:gamedata:test`：420 项 3 败——`SkillDataTest` 的 usage 键清单（多了「法术来源（v3）」）与「能算构成的法术 121 → 119」，
+  `RankerCrossCheckTest` 的桌面 dump（spells=121 → 119，需按新数据重出 Windows dump）。
+
+### 复核：前缀写真推广到全表、壶类 1 级行道具名、「档位」的保留（2026-09-24）
+
+**起因**：审查者扫全表，发现上面「伤害类型写真」只在道具等级行上比较（等级行 vs 1 级行），全表还有 9 条 displayNameZh 以
+「提升物理攻击力」开头、rates 却同时提高属性攻击的行。其中 8 条 appliesTo.sorcery / incantation 都是 yes，页面对纯魔法输出
+按 ×1.05–×1.25 计入，名字却只说物理——正是用户问的「提升物理攻击力……还能对魔法增伤？」。隐士魔法构成会直接看到 7032903。
+
+**规则**（generate_buffs.py「显示名前缀写真」一段，全表统一）：显示名开头点名的攻击类型——中文『提升物理攻击力』
+『提升X属性攻击力』『提升属性攻击力』（＝四属性），英文 "Improved X Attack Power" / "X Attack (Power) Up"——比 rates 实际提高的
+攻击类型（damage / attackPower / attackPowerFlat 三组，按物理与魔力 / 火 / 雷 / 圣归类）少时，把这段前缀换成
+`attack_type_head(实际类型)`：物理＋四属性＝「提升物理与属性攻击力」/ "Improved Physical and Affinity Attack Power"，
+物理＋火＝「提升物理与火属性攻击力」/ "Improved Physical and Fire Attack Power"。**只换前缀**：消歧仍按原来的名字做，写出显示名时
+再替换开头的片段，所以限定词与改写前一致（7031202 仍是「（遗物・×1.25）」），原来同名的 99620 艾奥尼亚蝶等也不会因为少了同名对象
+而丢掉限定词。nameZh / statusLabelsZh 仍是游戏文本。
+
+**改写的 10 条**（diagnostics.attackTypeHeadRenames，counts.attackTypeHeadRenamed = 10）：
+
+| spEffectId | 来源（Paramdex 行名） | rates | 新 displayNameZh | 法术适用 |
+|---|---|---|---|---|
+| 708421 | 勇者肉块 3 级 | 物理 ×1.3、四属性 ×1.2 | 提升物理与属性攻击力（勇者肉块・携物知识3级） | 是 |
+| 1605000 | 祷告「火焰啊，赐予我力量！」 | 物理、火 ×1.2 | 提升物理与火属性攻击力（火焰啊，赐予我力量！） | 是 |
+| 7031202 | [Relic - Revenant] Strengthens family and allies when Ultimate Art is activated | 物理＋四属性 ×1.25 | 提升物理与属性攻击力（遗物・×1.25） | 是 |
+| 7031302 | [Relic - Raider] Damage taken while using Character Skill improves attack power and stamina | 物理＋四属性 ×1.1 | 提升物理与属性攻击力（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限） | 是 |
+| 7032202 | [Relic] Character Taking attacks improves attack power | 物理＋四属性 ×1.15 | 提升物理与属性攻击力（受到攻击时，能提升攻击力） | 是 |
+| 7032704 | [Relic - Duchess] Defeating enemies while Art is active ups attack power | 物理＋四属性 ×1.15 | 提升物理与属性攻击力（遗物・×1.15） | 是 |
+| 7032706 | [Relic - Duchess] …ups attack power SP | 物理＋四属性 ×1.05 | 提升物理与属性攻击力（遗物・×1.05） | 是 |
+| 7032903 | [Relic - Recluse] Suffer blood loss and increase attack power upon Art activation | 物理＋四属性 ×1.16 | 提升物理与属性攻击力（遗物・×1.16） | 是 |
+| 7260803 | [Relic] Poison & Rot in Vicinity Increases Attack Power | 物理＋四属性 ×1.12 | 提升物理与属性攻击力（周围人物陷入中毒、腐败时，能提升攻击力） | 是 |
+| 99565 | [Interactable Effect] Smoldering Butterfly（火星蝶） | 物理、火 ×1.1 | 提升物理与火属性攻击力（场景互动・×1.1・火星蝶・提升物理与火属性伤害） | 否 |
+
+英文名只换前缀（"Improved Physical Attack Power" → "Improved Physical and Affinity / Fire Attack Power"）。倍率与 appliesTo 不变——
+页面算得本来就对，改的只是名字。
+
+**壶类 1 级行的道具名**：上一轮只给 2 / 3 级行补了取自重走结果的道具名（sources 里没有道具名、只被一种道具到达的行），
+1 级行 500900 仍是「异常状态：中毒（道具・中毒累积加算+112）」，而它的 2–3 级行 708340 是「异常状态：中毒（毒壶・携物知识2–3级・…）」。
+现在 1 级行同样取：500900 / 500901 毒壶、500910 / 500911 结冰壶、500920 / 500921 粪便壶、500931 苍蝇壶、500940 / 500941 腐败壶、
+500950 催眠壶 10 条改为带壶名，同族消歧连带 500925（→「（粪便壶・道具・中毒累积加算+200）」）与 708350（去掉多余的「道具」）。
+清单见 diagnostics.goodsOriginNameRows（25 条：1 级 10、2 / 3 级 15），counts.buffsWithGoodsOriginName = 25。
+
+**「档位」是刻意保留的**：原任务写的是「含『档位』的 displayName 为 0」，实际做法更窄也更严：『档位N』只表示遗物 / 武器词条的
+强度档位（Paramdex 行名里的 Lv / Potency），这个词在那里是对的；显示名里仍有 167 条（[Weapon…] 135、[Relic…] 32）。道具等级写
+「携物知识N级」、叠层写「第N层」、阶段写「第N阶段」。self_check 断言「档位」只出现在没有道具来源的 [Weapon…] / [Relic…] 行。
+notes.displayName 也写明了这一点。
+
+**self_check**（`self_check_attack_heads`，由 `self_check_goods_level` 末尾调用）：全表每条 buff 的 displayNameZh / displayNameEn
+主干（第一个限定括号之前，整段搜，不只开头）里点名的攻击类型都不少于 rates 实际提高的类型；改写清单恰好是上面 10 条（显式集合）、
+与 counts 一致；每条的新前缀等于 attack_type_head(实际类型)、nameZh 仍以「提升物理攻击力」开头、appliesToSpells 与 appliesTo 一致；
+7032903 / 1605000 的完整名字、7031302 的限定词不变、99620 仍带「艾奥尼亚蝶」。`self_check_goods_level` 另加：每条有 1 级对照的等级行，
+其道具名也出现在 1 级行的显示名里；goodsOriginNameRows 的 1 级行恰好是上面 10 条。`goodsLevelRenamed == [708421]` 保留，
+含义是「道具等级行里」。另做 14 种篡改（7032903 / 99565 / 708421 改回「提升物理攻击力」、1605000 英文改回、改写清单少一条、
+counts 改错、500900 改回只写「道具」、7260803 前缀写成物理与火、nameZh 被改、某条「提升火属性攻击力」的 rates 混入魔力、
+把「提升物理攻击力」嵌进主干中间、99620 丢掉「艾奥尼亚蝶」、goodsOriginNameRows 少 500950、7032903 的 appliesTo.sorcery 改成 no），
+全部被拦下。连续两次生成除 generatedAt 外一致。
+
+**本轮数据变化**（相对上一提交）：displayNameZh 21 条（前缀写真 9 条＋壶类 1 级 10 条＋连带 500925 / 708350）、displayNameEn 9 条；
+其余 buff 字段全不变；新增 counts.attackTypeHeadRenamed / buffsWithGoodsOriginName、diagnostics.attackTypeHeadRenames(+Note) /
+goodsOriginNameRows(+Note)；notes.displayName / goodsLevel、diagnostics.goodsLevelRowsNote / topUnconditionalMultipliers（抄录的名字）、
+schemaChangelog v6 ⑫ (d)(e) 随之更新。显示名中英文仍全表唯一。skills 数据未变。
+
+**三端测试**（未改界面与测试）：Windows `node --test windows/tests/*.test.mjs` 389 项，388 过 / 0 败 / 1 TODO（原有）；
+macOS `RelicCoreChecks` 仍在上一节所说的 `BuffRankerChecks.swift:1686`（hits 2201 → 2197）处中止，临时把 1686 / 1712 行改成新值试跑
+22459 项全过（试跑后已还原）；Android `:gamedata:test` 420 项 3 败，与上一节相同（SkillDataTest 两处、RankerCrossCheckTest 的 spells=121 → 119），
+没有新增失败——这 3 处与 macOS 两处要由界面车道按新 skills 数据更新测试并重出 Windows dump。

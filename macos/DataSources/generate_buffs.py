@@ -14,7 +14,8 @@ is reachable from something a player can actually equip, drink, cast or unlock:
                        AttachEffectParam, *not* at SpEffectParam directly)
   * consumables        EquipParamGoods.refId_default / refId_1 / level2RefId /
                        level3RefId (+ _1) with refCategory 1=Bullet 2=SpEffect,
-                       plus carrySpEffectId / emptySpEffectId
+                       plus carrySpEffectId / emptySpEffectId; level2/level3 are the item
+                       levels granted by the Scholar skill 携物知识 (Bagcraft) -> buffs[].goodsLevel
   * weapon passives    EquipParamWeapon.spEffectBehaviorId0..2 /
                        residentSpEffectId(1,2)
   * spells             Magic.refId1..10 with refCategory1..10
@@ -294,7 +295,37 @@ SCHEMA_CHANGELOG: list[dict[str, Any]] = [
               "『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。"
               "(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，"
               "counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；"
-              "notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。",
+              "notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。"
+              "⑫ **道具等级（携物知识）修订**（仍是 v6，只增字段与改名）："
+              "(a) **新增 buffs[].goodsLevel（2／3）／goodsLevelSource（\"学者能力「携物知识」（CL_MenuText 20020）\"）／"
+              "goodsBaseSpEffectId（对应的 1 级行）／goodsLevels（被几级共用时列出）／goodsLevelPaths**，"
+              "enums.goodsLevel、notes.goodsLevel、diagnostics.goodsLevelRows(+Note)、counts.buffsWithGoodsLevel／buffsByGoodsLevel／"
+              "buffsWithGoodsLevels／buffsWithGoodsBaseSpEffectId／goodsLevelRenamed。EquipParamGoods.level2RefId／level3RefId（＋_1）"
+              "是道具被学者能力『携物知识』提到 2／3 级后的效果行，本版本 72 条 buff（57 条经 sources 里的 level 列到达，"
+              "另 15 条壶类异常状态行只挂在 2／3 级子弹的子子弹上）；500925 粪便壶的自身中毒被 1–3 级共用，只写 goodsLevels=[1,2,3]。"
+              "(b) **改名**：这些行 displayNameZh 的『档位N』→『携物知识N级』（2、3 级共用的写『携物知识2–3级』），"
+              "displayNameEn 的『LvN』→『Bagcraft LvN』，并一律带道具名：15 条壶类行补上了道具名（粪便壶／苍蝇壶／结冰壶／毒壶／催眠壶／腐败壶），"
+              "708680『魅惑树枝』→『魅惑树枝（携物知识3级）』；**708421『提升物理攻击力（勇者肉块・档位3）』→"
+              "『提升物理与属性攻击力（勇者肉块・携物知识3级）』**（英文 Improved Physical and Affinity Attack Power）——"
+              "它是物理 ×1.3＋魔力／火／雷／圣 ×1.2，1 级 3950／2 级 708420 只有物理（道具等级行里只有这一条要改；同一规则推广到全表见 (d)）。"
+              "同族消歧连带：500930／500931（苍蝇壶 1 级的两行）补了类别与数值限定词。"
+              "(c) 随 skills 数据集法术可施放口径（8100／8101 风暴管束者不再是法术）：attackIndex.spells 少这两项、"
+              "attackIndex.populationCounts.sorcery 与 counts.attackPopulation.sorcery 61→59，"
+              "14 条 buff 的 appliesToDetail.sorcery 的 reason 分母与 matchShare 随之变化（appliesTo 取值不变）。"
+              "notes.displayName、stackingRules 与 diagnostics.displayNameZhIdFallbackNote／activationNote／exclusiveKeyEvidenceNote 里举的道具等级例子改用新写法。"
+              "(d) **名字前缀写真推广到全表**（复核）：显示名开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』，"
+              "英文 Improved X Attack Power／X Attack (Power) Up）比 rates 实际提高的攻击类型少时，只把前缀换成按实际覆盖的写法，"
+              "限定词沿用按原名消歧的结果。除 708421 外另有 9 条（(b) 的『只有这一条』只就道具等级行而言）："
+              "1605000『火焰啊，赐予我力量！』与 99565 火星蝶是物理与火（→『提升物理与火属性攻击力』／Improved Physical and Fire Attack Power），"
+              "7031202、7031302、7032202、7032704、7032706、7032903（隐士遗物）、7260803 是物理与魔力／火／雷／圣同倍率"
+              "（→『提升物理与属性攻击力』）。除 99565 外它们的 appliesTo.sorcery／incantation 都是 yes，页面对纯魔法构成按 ×1.05–×1.25 计入，"
+              "旧名字只说物理。新增 diagnostics.attackTypeHeadRenames(+Note)、counts.attackTypeHeadRenamed（10）；notes.goodsLevel／displayName 写明规则，"
+              "notes.displayName 另写明『档位N』只留给遗物／武器词条的强度档位（刻意保留）。"
+              "(e) **壶类 1 级行也写道具名**（复核）：显示名的道具名兜底（sources 里没有道具名、只被一种道具到达时取重走结果里的道具名）"
+              "从 2／3 级行扩到 1 级行，500900／500901 毒壶、500910／500911 结冰壶、500920／500921 粪便壶、500931 苍蝇壶、500940／500941 腐败壶、"
+              "500950 催眠壶这 10 条 1 级异常状态行由只写『道具』改为带壶名，与各自的 2／3 级行一致；同族消歧连带 500925、708350 的限定词变化。"
+              "新增 diagnostics.goodsOriginNameRows(+Note)、counts.buffsWithGoodsOriginName。"
+              "⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。",
     },
     {
         "version": 5,
@@ -1758,7 +1789,7 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
    - 100～299（removePrevious）：同类互斥，新的把旧的顶掉。100～199 整个 spCategory 互斥；
      200～299 要求 categoryPriority 也相同才顶替。Paramdex 只把 200 标成 w/ Matching Priority，但数据显示
      整个 200 系列都按优先度分组：201 的 292 行分成 90 个优先度，同一破露滴的两档共用一个
-     （带火破露滴 511028 与档位2 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；
+     （带火破露滴 511028 与它的携物知识2级行 708940 都是 226，带魔力破露滴 511029／708950 都是 227）；
      204 的 350 行按优先度分成 12 组，每组正好是一条存档阶梯（一段连续 ID），即每条阶梯自己一个优先度（封印监牢 7069001–7069010＝11、
      黑夜入侵者 7069201–7069210＝13、玛雷家的庇佑 8988200–8988299＝5、复仇的庇佑 8998000–8998099＝4、
      遗物『每次打倒…强敌』的几条＝8／9／10…）。所以同一阶梯的各层互斥，不同阶梯互不影响。
@@ -1793,7 +1824,7 @@ STACKING_RULES_ZH = """本数据集给出的叠加判定，是依据参数结构
    stacking.group 保留旧口径（"sp<spCategory>#<spEffectId>" 或 "sp<spCategory>"，只按类别、不看优先度与阶梯），
    v6 起 resetOnApply 也按 ID；页面应改用 exclusiveKey。
    正例（同键互斥）：右手附魔 162 的火油脂 3160 与雷油脂 3165；151 的『火焰啊，赐予我力量！』1605000 与狂热香药 503550；
-   同一破露滴两档 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；
+   同一破露滴的 1 级与携物知识2级 511028／708940；米莉森的义手四档 312505–312508；封印监牢十层 7069001–7069010；
    『出击时的武器，附加魔力属性攻击力』四档 7120001–7120004、『…附加异常状态冻伤』四档 7120401–7120404。
    反例（不同键，相乘）：红羽七刃剑 320400、遗物『装备三把以上短剑』7080000、无赖被动 704301；
    『三把以上短剑』7080000 与『三把以上刀』7080600；7034402 与 7036801；7005601／7005602（＋1／＋2）；
@@ -2269,6 +2300,161 @@ def pool_members(table_rows: list[dict[str, str]]) -> dict[str, list[str]]:
 def potency_of(name: str | None) -> int | None:
     match = re.search(r"\bPotency (\d+)\b", name or "")
     return int(match.group(1)) if match else None
+
+
+# ==========================================================================
+# v6 修订 -- 道具等级（学者能力「携物知识」）
+# ==========================================================================
+# EquipParamGoods.level2RefId / level3RefId（+ _1）是道具 2 级 / 3 级时代替 refId_default / refId_1 的效果行
+# （本机 regulation 10350000 有 85 种道具填了它们；字段自 regulation 10310025 起存在）。道具等级来自 DLC 角色
+# 学者的能力「携物知识」：CL_MenuText 20020「学者－能力【携物知识】」（英文 "Scholar: Bagcraft"），
+# SpEffectInfo 121206–121208「“携物知识”的效果」；官方 1.03.1 更新说明提到学者的 Bagcraft 能力让飞镖类道具达到 level 3。
+# 所以 buffs 里这些行的「档位N」其实是「携物知识N级」，见 notes.goodsLevel。
+GOODS_LEVEL_FIELDS: dict[str, tuple[int, str]] = {
+    "refId_default": (1, ""), "refId_1": (1, "_1"),
+    "level2RefId": (2, ""), "level2RefId_1": (2, "_1"),
+    "level3RefId": (3, ""), "level3RefId_1": (3, "_1"),
+}
+GOODS_BASE_FIELD = {"": "refId_default", "_1": "refId_1"}
+GOODS_LEVEL_TEXT_ID = 20020
+GOODS_LEVEL_SOURCE_ZH = f"学者能力「携物知识」（CL_MenuText {GOODS_LEVEL_TEXT_ID}）"
+GOODS_LEVEL_WORD = ("携物知识", "Bagcraft")
+GOODS_LEVEL_TOKEN_RE = re.compile(r"携物知识([23])(?:–([23]))?级")
+BULLET_CHILD_FIELDS = ("HitBulletID", "intervalCreateBulletId")
+BULLET_ID_RE = re.compile(r"Bullet\d+")
+# 攻击类型覆盖：rates 里 damage / attackPower / attackPowerFlat 三组的键按前缀归到物理或四种属性
+ATTACK_TYPE_PREFIXES = (("physics", "physical"), ("slash", "physical"), ("blow", "physical"),
+                        ("thrust", "physical"), ("neutral", "physical"), ("magic", "magic"),
+                        ("fire", "fire"), ("thunder", "lightning"), ("dark", "holy"))
+ELEMENT_TYPES = ("magic", "fire", "lightning", "holy")
+ELEMENT_LABELS = {"magic": ("魔力", "Magic"), "fire": ("火", "Fire"),
+                  "lightning": ("雷", "Lightning"), "holy": ("圣", "Holy")}
+ATTACK_TYPE_GROUPS = ("damage", "attackPower", "attackPowerFlat")
+# 名字里点名攻击类型的写法（v6 修订：前缀写真）。中文：状态栏文本『提升物理攻击力』『提升火属性攻击力』…，
+# 四属性一起的『提升属性攻击力』；英文：『Improved X Attack Power』与『X Attack (Power) Up』两种。
+# 『提升物理与属性攻击力』这类按实际覆盖写的前缀不会被匹配到（中间隔着『与』）。
+NAMED_ATTACK_WORD_TYPES: dict[str, frozenset[str]] = {
+    "物理": frozenset({"physical"}), "魔力属性": frozenset({"magic"}), "火属性": frozenset({"fire"}),
+    "雷属性": frozenset({"lightning"}), "圣属性": frozenset({"holy"}), "属性": frozenset(ELEMENT_TYPES),
+    "Physical": frozenset({"physical"}), "Magic": frozenset({"magic"}), "Fire": frozenset({"fire"}),
+    "Lightning": frozenset({"lightning"}), "Holy": frozenset({"holy"}), "Affinity": frozenset(ELEMENT_TYPES),
+}
+NAMED_ATTACK_ZH_RE = re.compile(r"提升(物理|魔力属性|火属性|雷属性|圣属性|属性)攻击力")
+NAMED_ATTACK_EN_RE = re.compile(r"Improved (Physical|Magic|Fire|Lightning|Holy|Affinity) Attack Power"
+                                r"|(Physical|Magic|Fire|Lightning|Holy|Affinity) Attack(?: Power)? Up")
+
+
+def goods_level_reach(goods_rows: list[dict[str, str]], bullets: dict[str, dict[str, str]],
+                      sp: dict[str, dict[str, str]]) -> dict[str, list[dict[str, Any]]]:
+    """spEffectId -> [{goodsId, level, hand, path}]：从道具的 6 个效果列出发能到达的 SpEffect 与路径。
+
+    与 build() 收集来源的口径一致（refCategory 2 = 直接是 SpEffect，1 = Bullet 的 spEffectIDForShooter /
+    spEffectId0..4，再沿 CHAIN_FIELDS 走 CHAIN_DEPTH 层），另外沿子弹的 HitBulletID / intervalCreateBulletId
+    走子子弹——壶类道具 2 / 3 级的异常状态行（708300 等）挂在子子弹上，build() 的来源收集不走这一步，
+    它们在 sources 里只有 paramRowName（inferred）。路径写法同 sources[].via，子子弹写成 "->HitBulletID->Bullet<ID>"。
+    """
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in goods_rows:
+        category = row.get("refCategory", "0")
+        for field, (level, hand) in GOODS_LEVEL_FIELDS.items():
+            value = ref(row.get(field))
+            if not value:
+                continue
+            starts: list[tuple[str, str]] = []
+            if category == "2":
+                starts.append((value, field))
+            elif category == "1":
+                queue = [(value, f"{field}->Bullet{value}")]
+                seen_bullets: set[str] = set()
+                while queue and len(seen_bullets) < 64:
+                    bullet_id, path = queue.pop(0)
+                    if bullet_id in seen_bullets or bullet_id not in bullets:
+                        continue
+                    seen_bullets.add(bullet_id)
+                    bullet = bullets[bullet_id]
+                    for bullet_field in BULLET_SPEFFECT_FIELDS:
+                        target = ref(bullet.get(bullet_field))
+                        if target:
+                            starts.append((target, f"{path}.{bullet_field}"))
+                    for child_field in BULLET_CHILD_FIELDS:
+                        child = ref(bullet.get(child_field))
+                        if child and child not in seen_bullets:
+                            queue.append((child, f"{path}->{child_field}->Bullet{child}"))
+            frontier = starts
+            seen_sp: set[str] = set()
+            for depth in range(CHAIN_DEPTH + 1):
+                next_frontier: list[tuple[str, str]] = []
+                for sp_id, path in frontier:
+                    if sp_id in seen_sp:
+                        continue
+                    seen_sp.add(sp_id)
+                    out[sp_id].append({"goodsId": int(row["ID"]), "level": level, "hand": hand, "path": path})
+                    parent = sp.get(sp_id)
+                    if parent is None or depth == CHAIN_DEPTH:
+                        continue
+                    for chain_field, _label in CHAIN_FIELDS:
+                        child = ref(parent.get(chain_field))
+                        if child and child != sp_id:
+                            next_frontier.append((child, f"{path}->{chain_field}"))
+                frontier = next_frontier
+    return out
+
+
+def goods_level_base_key(goods_id: int, path: str) -> tuple[int, str]:
+    """把 2 / 3 级的路径换成对应的 1 级列（level2RefId → refId_default，level3RefId_1 → refId_1）、子弹号抹成 *，
+    用来找同一道具、同一条路径形状上的 1 级行。"""
+    field, _sep, rest = path.partition("->")
+    _level, hand = GOODS_LEVEL_FIELDS[field.split(".")[0]]
+    base = GOODS_BASE_FIELD[hand] + (("->" + rest) if rest else "")
+    return goods_id, BULLET_ID_RE.sub("Bullet*", base)
+
+
+def attack_types(rates: dict[str, Any]) -> set[str]:
+    """rates 里提高（rate_direction>0）的攻击力 / 伤害键覆盖了哪些攻击类型：physical / magic / fire / lightning / holy。"""
+    out: set[str] = set()
+    for key, value in rates.items():
+        field = RATE_FIELD_BY_KEY.get(key)
+        if not field or field["group"] not in ATTACK_TYPE_GROUPS or not isinstance(value, (int, float)):
+            continue
+        if rate_direction(key, float(value)) <= 0:
+            continue
+        for prefix, kind in ATTACK_TYPE_PREFIXES:
+            if key.startswith(prefix):
+                out.add(kind)
+                break
+    return out
+
+
+def attack_type_head(types: set[str], is_zh: bool) -> str:
+    """覆盖的攻击类型 → 名字前缀：{物理+四属性} = 提升物理与属性攻击力；物理+部分属性 = 提升物理与魔力、火属性攻击力。"""
+    elements = [e for e in ELEMENT_TYPES if e in types]
+    physical = "physical" in types
+    if is_zh:
+        element_text = "属性" if len(elements) == len(ELEMENT_TYPES) else "、".join(ELEMENT_LABELS[e][0] for e in elements) + "属性"
+        return f"提升{'物理与' if physical else ''}{element_text}攻击力"
+    element_text = ("Affinity" if len(elements) == len(ELEMENT_TYPES)
+                    else ", ".join(ELEMENT_LABELS[e][1] for e in elements))
+    return f"Improved {'Physical and ' if physical else ''}{element_text} Attack Power"
+
+
+def named_attack_heads(name: str | None, is_zh: bool, prefix_only: bool) -> list[tuple[str, frozenset[str]]]:
+    """名字的主干（第一个限定括号之前）里点名的攻击类型：[(原文片段, 它说的类型)]。
+
+    prefix_only=True 只看开头（改写前缀用）；False 看整个主干（self_check 用，
+    如『切换武器时，能提升物理攻击力』这种把状态栏文本嵌在中间的来源名）。"""
+    if not name:
+        return []
+    stem = name.split("（")[0] if is_zh else name.split(" (")[0]
+    pattern = NAMED_ATTACK_ZH_RE if is_zh else NAMED_ATTACK_EN_RE
+    found = []
+    for match in pattern.finditer(stem):
+        if prefix_only and match.start() != 0:
+            break
+        word = next(g for g in match.groups() if g)
+        found.append((match.group(0), NAMED_ATTACK_WORD_TYPES[word]))
+        if prefix_only:
+            break
+    return found
 
 
 def subcategory_set(row: dict[str, str], fields: tuple[str, ...]) -> frozenset[int]:
@@ -4707,6 +4893,117 @@ def build() -> dict[str, Any]:
     forced_step_origin = {b["spEffectId"] for b in buffs
                           if b.get("accumulatorStages") or STACK_ROW_RE.search(b["paramName"] or "")}
 
+    # --- v6 修订：道具等级（学者能力「携物知识」）-----------------------------
+    # 「[Item - Level 2] …」这些行以前在 displayNameZh 里写「档位2」，与遗物 / 武器词条的强度档位同一个词，
+    # 其实是道具被学者的「携物知识」提到 2 / 3 级后的效果行。这里从 EquipParamGoods 的 6 个效果列重走一遍
+    # （含子子弹，见 goods_level_reach），给每条 buff 标上它属于道具的第几级、对应的 1 级行是哪条。
+    named_goods = [row for row in goods
+                   if zh["goods"].get(row["ID"]) or en["goods"].get(row["ID"]) or clean_param_name(row.get("Name", ""))]
+    goods_reach = goods_level_reach(named_goods, bullets, sp)
+    goods_level1_index: dict[tuple[int, str], set[int]] = defaultdict(set)
+    for reach_sp, reach_list in goods_reach.items():
+        for item in reach_list:
+            if item["level"] == 1:
+                goods_level1_index[goods_level_base_key(item["goodsId"], item["path"])].add(int(reach_sp))
+    buff_by_sp = {b["spEffectId"]: b for b in buffs}
+    goods_level_mismatch: list[str] = []
+    goods_level_rows: list[dict[str, Any]] = []      # diagnostics.goodsLevelRows
+    goods_level_renamed: list[int] = []
+    for buff in buffs:
+        reach_list = goods_reach.get(str(buff["spEffectId"]), [])
+        reach_pairs = {(item["goodsId"], item["level"]) for item in reach_list}
+        # 与 sources[].via 的口径一致：带道具 ID 的 goods 来源，其效果列的等级必须在重走的结果里
+        for entry in sources[str(buff["spEffectId"])]:
+            if entry["kind"] != "goods" or entry.get("id") is None:
+                continue
+            head_field = entry["via"].split("->")[0]
+            if head_field in GOODS_LEVEL_FIELDS and (entry["id"], GOODS_LEVEL_FIELDS[head_field][0]) not in reach_pairs:
+                goods_level_mismatch.append(f"{buff['spEffectId']} {entry['id']} {entry['via']}")
+        levels = sorted({item["level"] for item in reach_list})
+        if not levels or max(levels) < 2:
+            continue
+        if len(levels) > 1:
+            buff["goodsLevels"] = levels
+        if 1 in levels:
+            continue    # 1 级行本身（各级共用，如 500925 粪便壶的自身中毒），不是等级行
+        buff["goodsLevel"] = levels[0]
+        buff["goodsLevelSource"] = GOODS_LEVEL_SOURCE_ZH
+        level_items = [item for item in reach_list if item["level"] >= 2]
+        buff["goodsLevelPaths"] = sorted({f"{item['goodsId']}:{item['path']}" for item in level_items})
+        bases = set().union(*(goods_level1_index.get(goods_level_base_key(item["goodsId"], item["path"]), set())
+                              for item in level_items)) - {buff["spEffectId"]}
+        if len(bases) == 1:
+            buff["goodsBaseSpEffectId"] = next(iter(bases))
+        base_buff = buff_by_sp.get(buff.get("goodsBaseSpEffectId"))
+        types = attack_types(buff["rates"])
+        base_types = attack_types(base_buff["rates"]) if base_buff else set()
+        record: dict[str, Any] = {
+            "spEffectId": buff["spEffectId"], "paramName": buff["paramName"],
+            "goodsIds": sorted({item["goodsId"] for item in level_items}),
+            "goodsLevels": levels, "baseSpEffectId": buff.get("goodsBaseSpEffectId"),
+            "baseCandidates": sorted(bases), "baseInBuffs": base_buff is not None,
+            "attackTypes": sorted(types), "baseAttackTypes": sorted(base_types) if base_buff else None,
+        }
+        # 名字写真（例 708421 勇者肉块 3 级 = 物理 ×1.3 + 魔力／火／雷／圣 ×1.2，1 级 3950 / 2 级 708420 只有物理）
+        # 由下面全表统一的「前缀写真」处理，改写结果随后回填到 record["renamedTo"]
+        goods_level_rows.append(record)
+    assert not goods_level_mismatch, goods_level_mismatch
+
+    # --- v6 修订：显示名前缀写真（攻击类型）-----------------------------------
+    # 状态栏文本只点名一种攻击类型（『提升物理攻击力』『提升火属性攻击力』…，或四属性一起的『提升属性攻击力』），
+    # rates 实际提高的类型却更多时，名字会让人以为它对法术没有增益：7032903 隐士遗物『提升物理攻击力』是物理与
+    # 魔力／火／雷／圣都 ×1.16，1605000『火焰啊，赐予我力量！』是物理与火 ×1.2。前缀按 rates 实际覆盖改写
+    # （attack_type_head），nameZh／statusLabelsZh 仍是游戏文本。上一轮只在道具等级行上做（708421 勇者肉块 3 级，
+    # 规则是「比 1 级行多出属性类」），这里推广到全表：比较对象改为名字点名的类型。
+    # 只换前缀：消歧仍按原来的名字做，写出显示名时再把开头的片段换掉（attack_head_swaps），这样限定词与改写前一致
+    # （7031202 仍是『（遗物・×1.25）』），同名族里没被改写的行（99620 艾奥尼亚蝶等）也不会因为少了同名对象而丢限定词。
+    attack_head_renames: list[dict[str, Any]] = []
+    attack_head_swaps: dict[tuple[str, int], tuple[str, str]] = {}
+    for buff in buffs:
+        types = attack_types(buff["rates"])
+        if not types:
+            continue
+        rename: dict[str, Any] = {}
+        for field, is_zh in (("displayNameZh", True), ("displayNameEn", False)):
+            heads = named_attack_heads(buff[field], is_zh, prefix_only=True)
+            if not heads or not types - heads[0][1]:
+                continue
+            fragment, named_types = heads[0]
+            new_head = attack_type_head(types, is_zh)
+            suffix = "Zh" if is_zh else "En"
+            rename[f"namedAttackTypes{suffix}"] = sorted(named_types)
+            rename[f"head{suffix}"] = fragment
+            rename[f"renamedHead{suffix}"] = new_head
+            attack_head_swaps[(field, buff["spEffectId"])] = (fragment, new_head)
+        if rename:
+            attack_head_renames.append({"spEffectId": buff["spEffectId"], "paramName": buff["paramName"],
+                                        "nameZh": buff["nameZh"], "nameEn": buff["nameEn"],
+                                        "attackTypes": sorted(types), **rename})
+    attack_head_renamed_ids = {r["spEffectId"] for r in attack_head_renames}
+    for record in goods_level_rows:
+        if record["spEffectId"] in attack_head_renamed_ids:
+            record["renamedTo"] = next(r.get("renamedHeadZh") for r in attack_head_renames
+                                       if r["spEffectId"] == record["spEffectId"])
+            goods_level_renamed.append(record["spEffectId"])
+
+    # 道具名（到达它的道具只有一种时）：sources 里没有道具名的壶类子子弹行在显示名里用它。
+    # 2／3 级行与 1 级行一样取（v6 修订复核：只取等级行时，500900 毒壶 1 级仍只写『道具』，与它的 2–3 级行 708340
+    # 『毒壶・携物知识2–3级』写法不一致）
+    goods_origin_names: dict[int, tuple[str | None, str | None]] = {}
+    for reach_sp, reach_list in goods_reach.items():
+        reach_goods = {item["goodsId"] for item in reach_list}
+        if len(reach_goods) == 1:
+            goods_key = str(next(iter(reach_goods)))
+            goods_origin_names[int(reach_sp)] = (zh["goods"].get(goods_key), en["goods"].get(goods_key))
+
+    def goods_level_token(buff: dict[str, Any], is_zh: bool) -> str | None:
+        level = buff.get("goodsLevel")
+        if not level:
+            return None
+        levels = buff.get("goodsLevels") or [level]
+        span = f"{levels[0]}–{levels[-1]}" if len(levels) > 1 else f"{level}"
+        return f"{GOODS_LEVEL_WORD[0]}{span}级" if is_zh else f"{GOODS_LEVEL_WORD[1]} Lv{span}"
+
     # --- display names ----------------------------------------------------
     # Only names that actually collide get a qualifier: a unique name such as
     # 「【女爵】提升技艺造成的伤害」 stays clean, while the 92 buffs called
@@ -4752,6 +5049,8 @@ def build() -> dict[str, Any]:
             return "永久强化" if is_zh else "Permanent"
         return row_category_label(param_name, is_zh)
 
+    goods_origin_fallback: dict[tuple[str, int], str] = {}   # (field, spEffectId) -> 取自重走结果的道具名
+
     def disambiguate(field: str, is_zh: bool, zh_detail: bool) -> dict[int, str]:
         """Rendered, unique display names for one list (nothing is written)."""
         heads: dict[int, str] = {}
@@ -4779,6 +5078,12 @@ def build() -> dict[str, Any]:
                         head, localized = owner, None   # 「提升攻击力」 -> the affix that says so
                     else:
                         localized = owner
+            if not localized and sp_key in goods_origin_names:
+                # v6 修订：壶类的异常状态行（1 级与 2 / 3 级）只经子子弹到达，sources 里没有道具名——用重走得到的道具名
+                origin = goods_origin_names[sp_key][0 if is_zh else 1]
+                if origin and origin != head and origin not in head:
+                    localized = origin
+                    goods_origin_fallback[(field, sp_key)] = origin
             if is_zh and zh_detail:
                 # never the English row name in a Chinese list (see above)
                 raw = zh_row_detail(sp_key, param_name, head, localized,
@@ -4793,7 +5098,9 @@ def build() -> dict[str, Any]:
             used[sp_key] = set()
             levels[sp_key] = [
                 localized,
-                (ladder_step_token(buff, is_zh, not (is_zh and not zh_detail)) or step_token(param_name, is_zh)
+                # v6 修订：道具等级行写「携物知识N级」，不再借用词条强度的「档位N」
+                (goods_level_token(buff, is_zh)
+                 or ladder_step_token(buff, is_zh, not (is_zh and not zh_detail)) or step_token(param_name, is_zh)
                  or owner_potency_token(buff, is_zh)),
                 side_token(buff["scope"], param_name, is_zh),
                 slot_category_label(buff, param_name, is_zh),
@@ -4802,6 +5109,10 @@ def build() -> dict[str, Any]:
                 f"#{sp_key}",
             ]
             if forced:
+                used[sp_key] |= {level for level in (0, 1) if levels[sp_key][level]}
+            # v6 修订：道具等级行一律写出道具名与「携物知识N级」（名字本来唯一的 708680 魅惑树枝 3 级也要写，
+            # 否则看不出它只在 3 级出现；只写等级不写道具名会让同族的 1 级行在族内合并时丢掉道具名）
+            if buff.get("goodsLevel"):
                 used[sp_key] |= {level for level in (0, 1) if levels[sp_key][level]}
 
         named = [b for b in buffs if b[field]]
@@ -4881,7 +5192,13 @@ def build() -> dict[str, Any]:
         rendered = disambiguate(field, is_zh, True)
         named = [b for b in buffs if b["spEffectId"] in rendered]
         for buff in named:
-            buff[field] = rendered[buff["spEffectId"]]
+            value = rendered[buff["spEffectId"]]
+            swap = attack_head_swaps.get((field, buff["spEffectId"]))
+            if swap:
+                # v6 修订：前缀写真（见上面 attack_head_renames）；消歧后的名字必须仍以原前缀开头
+                assert value.startswith(swap[0]), (buff["spEffectId"], value, swap)
+                value = swap[1] + value[len(swap[0]):]
+            buff[field] = value
 
         seen_display: dict[str, int] = {}
         for buff in named:
@@ -4892,6 +5209,13 @@ def build() -> dict[str, Any]:
                     f"{seen_display[value]} and {buff['spEffectId']}")
             seen_display[value] = buff["spEffectId"]
     display_by_id = {b["spEffectId"]: b["displayNameZh"] for b in buffs}
+    # v6 修订复核：显示名里用上了「重走得到的道具名」的行（sources 里没有道具名，只经子子弹到达的壶类异常状态行）
+    goods_origin_name_rows = [
+        {"spEffectId": b["spEffectId"], "paramName": b["paramName"], "goodsNameZh": goods_origin_fallback[("displayNameZh", b["spEffectId"])],
+         "goodsLevel": b.get("goodsLevel"), "displayNameZh": b["displayNameZh"], "displayNameEn": b["displayNameEn"]}
+        for b in buffs
+        if ("displayNameZh", b["spEffectId"]) in goods_origin_fallback
+        and goods_origin_fallback[("displayNameZh", b["spEffectId"])] in (b["displayNameZh"] or "")]
     # rows the English detail used to separate but the Chinese one cannot:
     # they now end in 「#spEffectId」 instead
     detail_untranslated_needed = [
@@ -5465,12 +5789,12 @@ def build() -> dict[str, Any]:
                        "**任何列表都不要只显示 nameZh**。请直接用 displayNameZh／displayNameEn，"
                        "**生成时已断言它们在全表唯一**（v1 还有 323/827 条重名，现在为 0）。"
                        "消歧是逐级追加的：名字本身唯一时等于 nameZh；否则依次补"
-                       "① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%）、"
+                       "① 本地化来源名（『提升攻击力（黄金树立誓）』）、② 强度档位（Potency／Level／+N%；v6 修订：道具等级行写『携物知识N级』而不是『档位N』，且总带道具名，见 notes.goodsLevel）、"
                        "③ 武器槽（右手／左手）、④ 来源类别（武器／遗物／护符／道具／战技／祷告／魔法／技艺／绝招／被动，"
                        "取自 Paramdex 行名的 [...] 前缀）、⑤ 首个 rates 数值（×1.11 / 火攻击力加算+35）、"
                        "⑥ 原始英文行名，全部用完仍重名才退到 `#spEffectId`。"
-                       "因此『提升火属性攻击力（火油脂・档位2・右手）』这种长名字是刻意的："
-                       "六个油脂档位×左右手原本完全同名。"
+                       "因此『提升火属性攻击力（火油脂・携物知识2级・右手武器）』这种长名字是刻意的："
+                       "三个道具等级×左右手的六行油脂原本完全同名。"
                        "v3 相对 v2 改了两处：原始英文行名从第一级降到倒数第二级（v2 有 261 条中文名挂着英文行名做限定词，"
                        "还会出现括号套括号的『强化魔法、祷告（Improved Sorceries and Incantations (+11%)）』）；"
                        "同族（Paramdex 行名词干相同）的条目现在强制取相同的限定词组合，"
@@ -5705,7 +6029,7 @@ def build() -> dict[str, Any]:
                           "与 isPeriodicEffect（周期性重新施加）这两个计时列也算了进去，"
                           "结果 210 条 buff 仅凭一个 tick 间隔被判成 conditional——"
                           "其中 8 条是 target∈{self,ally} 的真实无条件增伤"
-                          "（708720 狂热香药·档位2 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、"
+                          "（708720 狂热香药·携物知识2–3级 ×1.45、503550 狂热香药 ×1.35、1733000 夏玻利利的嘶吼 ×1.25、"
                           "707070／707071 处刑人 Tenacity ×1.2、1605000 火焰啊赐予我力量 ×1.20、"
                           "1660000 黄金树立誓 ×1.15、1732 Golden Great Arrow ×1.075）。"
                           "现在只看 conditionFields[].isActivationCondition=true 的列，"
@@ -6479,6 +6803,116 @@ def build() -> dict[str, Any]:
     payload["counts"]["affixVariantGroups"] = len(variant_groups)
     payload["counts"]["buffsWithAccumulatorStages"] = sum(1 for b in buffs if b.get("accumulatorStages"))
     payload["counts"]["buffsWithSelfAllyPair"] = sum(1 for b in buffs if b.get("selfAllyPair"))
+    # v6 修订：道具等级（携物知识）
+    payload["counts"]["buffsWithGoodsLevel"] = sum(1 for b in buffs if b.get("goodsLevel"))
+    payload["counts"]["buffsByGoodsLevel"] = {
+        str(level): sum(1 for b in buffs if b.get("goodsLevel") == level) for level in (2, 3)}
+    payload["counts"]["buffsWithGoodsLevels"] = sum(1 for b in buffs if b.get("goodsLevels"))
+    payload["counts"]["buffsWithGoodsBaseSpEffectId"] = sum(1 for b in buffs if b.get("goodsBaseSpEffectId"))
+    payload["counts"]["goodsLevelRenamed"] = len(goods_level_renamed)
+    # v6 修订复核：显示名前缀写真（全表）
+    for record in attack_head_renames:
+        renamed_buff = buff_by_sp[record["spEffectId"]]
+        record["displayNameZh"] = renamed_buff["displayNameZh"]
+        record["displayNameEn"] = renamed_buff["displayNameEn"]
+        record["rates"] = dict(renamed_buff["rates"])
+        record["appliesToSpells"] = {cls: renamed_buff["appliesTo"][cls] for cls in ("sorcery", "incantation")}
+    payload["counts"]["attackTypeHeadRenamed"] = len(attack_head_renames)
+    payload["counts"]["buffsWithGoodsOriginName"] = len(goods_origin_name_rows)
+    potency_word_rows = [b for b in buffs if "档位" in (b["displayNameZh"] or "")]
+    potency_word_by_head = Counter(("Weapon" if (b["paramName"] or "").startswith("[Weapon") else "Relic")
+                                   for b in potency_word_rows)
+    renamed_spell_rows = [r for r in attack_head_renames if "yes" in r["appliesToSpells"].values()]
+    payload["notes"]["displayName"] += (
+        "**v6 修订复核（前缀写真）**：名字开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』；"
+        "英文 \"Improved X Attack Power\"／\"X Attack (Power) Up\"）比 rates 实际提高的攻击类型少时，只把这段前缀换成按实际覆盖的写法"
+        "（物理＋四属性＝『提升物理与属性攻击力』，物理＋火＝『提升物理与火属性攻击力』），限定词沿用按原名消歧的结果。"
+        f"本版本 {len(attack_head_renames)} 条："
+        + "、".join(f"{r['spEffectId']}『{r['displayNameZh']}』" for r in attack_head_renames)
+        + f"；其中 {len(renamed_spell_rows)} 条 appliesTo 的 sorcery／incantation 为 yes（在法术上也按倍率计入，旧名字只说物理正是误导所在）。"
+        "清单见 diagnostics.attackTypeHeadRenames；self_check 断言改写后全表显示名的主干里不再有『点名的类型少于实际』的写法。"
+        "nameZh／statusLabelsZh 仍是游戏文本，所以 nameZh 可能是『提升物理攻击力』而 displayNameZh 是『提升物理与属性攻击力』。"
+        f"**『档位N』是刻意保留的**：它只表示遗物／武器词条的强度档位（Paramdex 行名里的 Lv／Potency），显示名里 {len(potency_word_rows)} 条"
+        f"（[Weapon…] {potency_word_by_head['Weapon']}、[Relic…] {potency_word_by_head['Relic']}）；道具等级写『携物知识N级』、"
+        "叠层写『第N层』、阶段写『第N阶段』。self_check 断言『档位』只出现在没有道具来源的 [Weapon…]／[Relic…] 行，不是『全表为 0』。"
+    )
+    payload["enums"]["goodsLevel"] = {
+        "1": {"zh": "道具基础效果（EquipParamGoods.refId_default／refId_1），不写 goodsLevel", "en": "Base (Lv1)"},
+        "2": {"zh": "携物知识2级：EquipParamGoods.level2RefId／level2RefId_1 代替 1 级的两列", "en": "Bagcraft Lv2"},
+        "3": {"zh": "携物知识3级：EquipParamGoods.level3RefId／level3RefId_1 代替 1 级的两列", "en": "Bagcraft Lv3"},
+    }
+    level_rows_with_base = [r for r in goods_level_rows if r["baseInBuffs"]]
+    level_rows_type_changed = [r for r in level_rows_with_base if r["attackTypes"] != r["baseAttackTypes"]]
+    level_rows_same_key = sum(
+        1 for r in level_rows_with_base
+        if buff_by_sp[r["spEffectId"]]["stacking"]["exclusiveKey"] == buff_by_sp[r["baseSpEffectId"]]["stacking"]["exclusiveKey"])
+    flesh = {sid: buff_by_sp[sid] for sid in (3950, 708420, 708421)}
+    level_rows_inferred = sum(1 for b in buffs if b.get("goodsLevel")
+                              and all(e.get("inferred") for e in sources[str(b["spEffectId"])]))
+
+    def flesh_rates(buff: dict[str, Any]) -> str:
+        return "、".join(f"{RATE_FIELD_BY_KEY[k]['zh'].replace('伤害倍率', '')} ×{v}" for k, v in buff["rates"].items())
+
+    payload["notes"]["goodsLevel"] = (
+        "**v6 修订新增** 道具等级字段（可缺）：`goodsLevel`（2／3）、`goodsLevelSource`（固定为 \"" + GOODS_LEVEL_SOURCE_ZH + "\"）、"
+        "`goodsBaseSpEffectId`（对应的 1 级行，可缺）、`goodsLevels`（这一行被道具的哪几级共用，只在多于一级时出现）、"
+        "`goodsLevelPaths`（\"<道具 ID>:<路径>\"，路径写法同 sources[].via，子子弹写作 \"->HitBulletID->Bullet<ID>\"）。"
+        "**来源**：EquipParamGoods 除 refId_default／refId_1（1 级）外还有 level2RefId／level3RefId（＋_1）两组列"
+        "（本机 regulation 10350000 有 85 种道具填了它们，字段自 regulation 10310025 起存在），道具升到 2／3 级时用它们代替 1 级的两列。"
+        "等级来自 DLC 角色学者的能力「携物知识」：CL_MenuText 20020『学者－能力【携物知识】』（英文 \"Scholar: Bagcraft\"），"
+        "SpEffectInfo 121206–121208『“携物知识”的效果』；官方 1.03.1 更新说明也写学者的 Bagcraft 能力让飞镖类道具达到 level 3。"
+        "Paramdex 把这些行叫 \"[Item - Level 2/3] …\"，v6 之前 displayNameZh 照行名写成『档位N』，与遗物／武器词条的强度档位混成一个词。"
+        "**口径**：从道具的 6 个效果列出发重走一遍（refCategory 2＝SpEffect、1＝子弹及其 HitBulletID／intervalCreateBulletId 子子弹，"
+        "再沿 CHAIN_FIELDS 走 3 层），只被 2／3 级的列到达的行写 goodsLevel＝最低那一级；1 级列也到达的行是各级共用的 1 级行，"
+        "不写 goodsLevel、只写 goodsLevels（如 500925 粪便壶的自身中毒 [1,2,3]）。"
+        f"本版本 {payload['counts']['buffsWithGoodsLevel']} 条（2 级 {payload['counts']['buffsByGoodsLevel']['2']}、"
+        f"3 级 {payload['counts']['buffsByGoodsLevel']['3']}），其中 {level_rows_inferred} 条壶类 2／3 级异常状态行只挂在子子弹上，sources 里只有 paramRowName（inferred）。"
+        "goodsBaseSpEffectId＝同一道具、同一只手（_1 列对 _1 列）、同一条路径形状（子弹号不计）上的 1 级行，"
+        f"找到唯一一条时写出（{payload['counts']['buffsWithGoodsBaseSpEffectId']} 条；3 级新增的子子弹行等没有 1 级对照）。"
+        f"其中 1 级行也在 buffs 里的 {len(level_rows_with_base)} 条，exclusiveKey 与 1 级行相同的 {level_rows_same_key} 条"
+        "（同一道具换等级只是换一行，不会与 1 级行同时生效）。"
+        "**名字**：这些行 displayNameZh 的『档位N』改写为『携物知识N级』（被 2、3 级共用的写『携物知识2–3级』），英文 LvN→Bagcraft LvN，"
+        "并一律带上道具名（壶类子子弹行的道具名取自重走结果；复核后同一兜底也用于壶类 1 级行，500900 毒壶等 1 级异常状态行不再只写『道具』，与它们的 2／3 级行一致，见 diagnostics.goodsOriginNameRows）；nameZh／statusLabelsZh 仍是游戏文本。"
+        "**名字前缀写真**：名字点名的攻击类型（如状态栏文本『提升物理攻击力』只说物理）比 rates 实际提高的攻击类型"
+        "（damage／attackPower／attackPowerFlat 三组，按物理与魔力／火／雷／圣归类）少时，前缀改为按实际覆盖写"
+        "（物理＋四属性＝『提升物理与属性攻击力』，英文 \"Improved Physical and Affinity Attack Power\"；这是全表规则，见 notes.displayName）。"
+        "道具等级行里只有 " + "、".join(f"{sid}『{buff_by_sp[sid]['displayNameZh']}』" for sid in goods_level_renamed)
+        + "（1 级行也在 buffs 里的等级行中，攻击类型与 1 级不同的也只有它）："
+        + "；".join(f"{sid} {flesh_rates(b)}" for sid, b in flesh.items())
+        + "。即勇者肉块 1 级、2 级只提高物理，对纯魔法／祷告输出没有增益；3 级（学者携物知识 3 级）物理 ×1.3 之外魔力／火／雷／圣也 ×1.2，"
+          "状态栏文本『提升物理攻击力』只说了一半。遗物『道具效用能扩及我方人物』的区域子弹 900503011／900503012"
+          "（[Relic - Level 2/3] Exalted Flesh (Area)）的 spEffectId0 正是 708420／708421，即队友拿到的也是同一行（参数观察，本数据集没有为它们加来源）。"
+        f"『只有这一条』只就道具等级行而言：全表按同一规则改写前缀的共 {len(attack_head_renames)} 条，"
+        "其余是遗物／祷告／场景互动行（如 7032903 隐士遗物『提升物理攻击力』＝物理与四属性 ×1.16），见 diagnostics.attackTypeHeadRenames。"
+        "页面：道具等级是局内状态（取决于是否学者、携物知识几级），默认按 1 级；列出 2／3 级行时应标明需要携物知识，"
+        "同一道具的各级互斥（同 exclusiveKey），只取当前等级那一行。逐行明细见 diagnostics.goodsLevelRows。"
+    )
+    payload["diagnostics"]["goodsLevelRows"] = goods_level_rows
+    payload["diagnostics"]["goodsLevelRowsNote"] = (
+        "v6 修订：每条道具等级行（buffs[].goodsLevel）的重走结果。goodsIds＝到达它的道具；goodsLevels＝到达它的等级；"
+        "baseSpEffectId／baseCandidates＝按『同道具、同手、同路径形状』找到的 1 级行（候选不唯一或为空时 baseSpEffectId 为 null）；"
+        "baseInBuffs＝1 级行是否也在 buffs 里；attackTypes／baseAttackTypes＝两行提高的攻击类型（damage／attackPower／attackPowerFlat）；"
+        "renamedTo＝因提高的攻击类型比名字点名的多而改写后的名字前缀（全表规则与清单见 diagnostics.attackTypeHeadRenames）。"
+        f"1 级行也在 buffs 里的 {len(level_rows_with_base)} 条中，攻击类型与 1 级不同的只有 "
+        + ("、".join(f"{r['spEffectId']}（{'/'.join(r['baseAttackTypes'])} → {'/'.join(r['attackTypes'])}）"
+                     for r in level_rows_type_changed) or "无") + "。"
+    )
+    payload["diagnostics"]["attackTypeHeadRenames"] = attack_head_renames
+    payload["diagnostics"]["attackTypeHeadRenamesNote"] = (
+        "v6 修订复核：displayNameZh／displayNameEn 开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』；"
+        "英文 \"Improved X Attack Power\"／\"X Attack (Power) Up\"）比 rates 提高的攻击类型少、因而改写了前缀的行。"
+        "namedAttackTypesZh／En＝原前缀说的类型；headZh／En→renamedHeadZh／En＝前缀改写前后；attackTypes＝rates 实际提高的类型"
+        "（damage／attackPower／attackPowerFlat 三组）；appliesToSpells＝appliesTo 的 sorcery／incantation 取值（yes 即法术上也按倍率计入，"
+        "旧名字正是在这里误导）。限定词沿用按原名消歧的结果，只换前缀；nameZh／statusLabelsZh 不变。"
+        f"本版本 {len(attack_head_renames)} 条，其中法术也适用的 "
+        f"{sum(1 for r in attack_head_renames if 'yes' in r['appliesToSpells'].values())} 条。"
+    )
+    payload["diagnostics"]["goodsOriginNameRows"] = goods_origin_name_rows
+    payload["diagnostics"]["goodsOriginNameRowsNote"] = (
+        "v6 修订复核：显示名里的道具名取自道具效果列重走结果（goods_level_reach，只被一种道具到达时）而不是 sources 的行。"
+        "它们是壶类的异常状态行，只挂在子弹的 HitBulletID 子子弹上，sources 里只有 paramRowName。上一轮只给 2／3 级行补了道具名，"
+        "1 级行（如 500900 毒壶）仍只写『道具』；现在 1 级行同样补上。goodsLevel 为 null 的是 1 级行。"
+    )
     payload["diagnostics"]["droppedAttackContexts"] = dropped_attack_contexts
     # v6 (re-verify): the measurements behind stackingRules 1-2 / exclusiveKey
     key_evidence = exclusive_key_evidence(sp, attach, load_json(AFFIX_CATALOG_PATH)["affixes"])
@@ -6504,7 +6938,7 @@ def build() -> dict[str, Any]:
         "category200sPriorities＝200 系列每个类别的行数与不同 categoryPriority 数；sp204Ladders＝204 按 categoryPriority 分组，"
         "每组正好是一段连续 ID 的存档阶梯（sp204LaddersAreIdBlocks=true；优先度 3 的一组中间隔了 5 个别类行），"
         "即一条阶梯一个优先度。"
-        "self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴两档、同一护符四档、封印监牢十层）做正例，"
+        "self_check 另用已知互斥组（油脂与附魔 162、身体增益 151、同一破露滴的 1 级与携物知识2级、同一护符四档、封印监牢十层）做正例，"
         "用 77 条 spCategory=20 里明显应共存的组合（护符＋遗物＋角色被动、两条『装备三把以上X』、＋1／＋2）"
         "与四条 204 阶梯彼此之间做反例。"
     )
@@ -6552,7 +6986,7 @@ def build() -> dict[str, Any]:
         {"spEffectId": b["spEffectId"], "displayNameZh": b["displayNameZh"]}
         for b in buffs if DISPLAY_ID_TAIL_RE.search(b["displayNameZh"] or "")]
     payload["diagnostics"]["displayNameZhIdFallbackNote"] = (
-        "v6（复核）displayNameZh 仍以『#spEffectId』收尾的条目。消歧顺序是：来源名→档位（行名的 Potency／Tier，"
+        "v6（复核）displayNameZh 仍以『#spEffectId』收尾的条目。消歧顺序是：来源名→档位（行名的 Potency／Tier，道具等级行写『携物知识N级』，"
         "累积阶梯用『第N层』，行名没有档位时取所属词条 AttachEffectParam 的档位）→左右手→类别（[Weapon] 行只由 "
         "PermanentBuffParam 授予时写『永久强化』而不是『武器』）→数值→行名的中文拼写→#spEffectId。"
         "剩下的这些在参数上逐列相同或只差指向／条件列，没有可读的区别："
@@ -7183,6 +7617,135 @@ def self_check_v6_round3(payload: dict[str, Any]) -> None:
     pairs = {p["self"]["spEffectId"]: p for p in diagnostics["selfAllyPairs"]}
     assert pairs[1870]["ally"]["friendlyHitAtkIds"] == [300000820] and pairs[1876]["ally"]["friendlyHitAtkIds"] == [300000820]
     assert pairs[1876]["deliveryMatchesRowName"] and not pairs[1835]["deliveryMatchesRowName"], pairs
+
+    self_check_goods_level(payload)
+
+
+def self_check_goods_level(payload: dict[str, Any]) -> None:
+    """v6 修订：道具等级（学者能力「携物知识」）字段与改名。"""
+    buffs = payload["buffs"]
+    by_id = {b["spEffectId"]: b for b in buffs}
+    counts = payload["counts"]
+    item_level_re = re.compile(r"^\[Item - Level ([23])\]")
+    level_rows = [b for b in buffs if b.get("goodsLevel")]
+    assert counts["buffsWithGoodsLevel"] == len(level_rows) == len(payload["diagnostics"]["goodsLevelRows"]) > 0
+    assert counts["buffsByGoodsLevel"] == {str(n): sum(1 for b in level_rows if b["goodsLevel"] == n) for n in (2, 3)}
+    for buff in buffs:
+        sp_id = buff["spEffectId"]
+        levels = buff.get("goodsLevels")
+        if levels is not None:
+            assert levels == sorted(set(levels)) and len(levels) > 1 and set(levels) <= {1, 2, 3}, (sp_id, levels)
+        # Paramdex 的 "[Item - Level N]" 行与 goodsLevel 一一对应（行名只作核对，goodsLevel 来自参数重走）
+        match = item_level_re.match(buff["paramName"] or "")
+        assert (int(match.group(1)) if match else None) == buff.get("goodsLevel"), (sp_id, buff["paramName"], buff.get("goodsLevel"))
+        if not buff.get("goodsLevel"):
+            for key in ("goodsLevelSource", "goodsBaseSpEffectId", "goodsLevelPaths"):
+                assert key not in buff, (sp_id, key)
+            continue
+        level = buff["goodsLevel"]
+        assert level in (2, 3) and buff["goodsLevelSource"] == GOODS_LEVEL_SOURCE_ZH, sp_id
+        assert levels is None or (levels[0] == level and 1 not in levels), (sp_id, levels)
+        path_levels = {GOODS_LEVEL_FIELDS[p.split(":", 1)[1].split("->")[0]][0] for p in buff["goodsLevelPaths"]}
+        assert path_levels and min(path_levels) == level and path_levels == set(levels or [level]), (sp_id, path_levels)
+        base = buff.get("goodsBaseSpEffectId")
+        if base is not None:
+            assert base != sp_id, sp_id
+            if base in by_id:
+                assert not by_id[base].get("goodsLevel"), (sp_id, base)
+                base_goods = {e.get("id") for e in by_id[base]["sources"] if e["kind"] == "goods"} - {None}
+                path_goods = {int(p.split(":", 1)[0]) for p in buff["goodsLevelPaths"]}
+                if base_goods:
+                    assert base_goods & path_goods, (sp_id, base, base_goods, path_goods)
+                else:
+                    # 1 级行同样只挂在子子弹上（sources 只有 paramRowName）：至少行名词干要一致
+                    assert all(e.get("inferred") for e in by_id[base]["sources"]), (sp_id, base)
+                    assert param_stem(by_id[base]["paramName"]) == param_stem(buff["paramName"]), (sp_id, base)
+        # 名字：「携物知识N级」（多级共用写 N–M），不再有「档位」；英文 Bagcraft LvN
+        zh, en = buff["displayNameZh"], buff["displayNameEn"]
+        token = GOODS_LEVEL_TOKEN_RE.search(zh or "")
+        span = levels or [level]
+        assert token and int(token.group(1)) == span[0] and int(token.group(2) or token.group(1)) == span[-1], (sp_id, zh)
+        assert "档位" not in zh, (sp_id, zh)
+        assert f"Bagcraft Lv{span[0]}" in (en or ""), (sp_id, en)
+    # 「档位」只剩词条强度（[Weapon…] / [Relic…] 行），道具相关的行一条都没有
+    for buff in buffs:
+        if "档位" in (buff["displayNameZh"] or ""):
+            assert (buff["paramName"] or "").startswith(("[Weapon", "[Relic")), (buff["spEffectId"], buff["displayNameZh"])
+            assert not any(e["kind"] == "goods" for e in buff["sources"]), (buff["spEffectId"], buff["displayNameZh"])
+    # 用户点名的勇者肉块：1 / 2 级只有物理；3 级物理 ×1.3 + 四属性 ×1.2，名字必须说出属性
+    flesh1, flesh2, flesh3 = by_id[3950], by_id[708420], by_id[708421]
+    assert flesh1["rates"] == {"physicsAttackRate": 1.2} and "goodsLevel" not in flesh1, flesh1["rates"]
+    assert flesh2["rates"] == {"physicsAttackRate": 1.3} and flesh2["goodsLevel"] == 2, flesh2["rates"]
+    assert flesh3["rates"] == {"physicsAttackRate": 1.3, "magicAttackRate": 1.2, "fireAttackRate": 1.2,
+                               "thunderAttackRate": 1.2, "darkAttackRate": 1.2}, flesh3["rates"]
+    assert flesh2["goodsBaseSpEffectId"] == flesh3["goodsBaseSpEffectId"] == 3950 and flesh3["goodsLevel"] == 3
+    assert flesh3["displayNameZh"] == "提升物理与属性攻击力（勇者肉块・携物知识3级）", flesh3["displayNameZh"]
+    assert "属性" in flesh3["displayNameZh"] and not flesh3["displayNameZh"].startswith("提升物理攻击力"), flesh3["displayNameZh"]
+    assert flesh3["displayNameEn"].startswith("Improved Physical and Affinity Attack Power"), flesh3["displayNameEn"]
+    assert flesh3["nameZh"] == "提升物理攻击力", flesh3["nameZh"]     # 游戏状态栏文本原样保留
+    assert flesh2["displayNameZh"] == "提升物理攻击力（勇者肉块・携物知识2级）", flesh2["displayNameZh"]
+    # 道具等级行里因攻击类型改名的只有 708421（全表的前缀写真见 self_check_attack_heads）
+    renamed = [r["spEffectId"] for r in payload["diagnostics"]["goodsLevelRows"] if r.get("renamedTo")]
+    assert renamed == [708421] and counts["goodsLevelRenamed"] == 1, renamed
+    changed = [r["spEffectId"] for r in payload["diagnostics"]["goodsLevelRows"]
+               if r["baseInBuffs"] and r["attackTypes"] != r["baseAttackTypes"]]
+    assert changed == [708421], changed
+    assert "goodsLevel" in payload["notes"] and set(payload["enums"]["goodsLevel"]) == {"1", "2", "3"}
+    # 等级行与它的 1 级行写同一个道具名（v6 修订复核：500900 毒壶 1 级曾只写『道具』，而 2–3 级行 708340 写『毒壶』）
+    for buff in level_rows:
+        base = by_id.get(buff.get("goodsBaseSpEffectId"))
+        if base is None:
+            continue
+        token = re.search(r"（(?:([^（）・]+)・)?携物知识", buff["displayNameZh"])
+        item = (token.group(1) if token and token.group(1) else buff["displayNameZh"].split("（")[0])
+        assert item in base["displayNameZh"], (buff["spEffectId"], buff["displayNameZh"], base["spEffectId"], base["displayNameZh"])
+    origin_rows = payload["diagnostics"]["goodsOriginNameRows"]
+    assert counts["buffsWithGoodsOriginName"] == len(origin_rows)
+    for row in origin_rows:
+        assert row["goodsNameZh"] in by_id[row["spEffectId"]]["displayNameZh"], row
+        assert row["goodsLevel"] == by_id[row["spEffectId"]].get("goodsLevel"), row
+    pot_level1 = {r["spEffectId"] for r in origin_rows if r["goodsLevel"] is None}
+    assert pot_level1 == {500900, 500901, 500910, 500911, 500920, 500921, 500931, 500940, 500941, 500950}, sorted(pot_level1)
+    assert by_id[500900]["displayNameZh"].startswith("异常状态：中毒（毒壶・"), by_id[500900]["displayNameZh"]
+    self_check_attack_heads(payload)
+
+
+# v6 修订复核：前缀写真改写的行（显式清单；新版本数据若有增减，先核对再改这里）
+ATTACK_HEAD_RENAMED_IDS = {99565, 708421, 1605000, 7031202, 7031302, 7032202, 7032704, 7032706, 7032903, 7260803}
+
+
+def self_check_attack_heads(payload: dict[str, Any]) -> None:
+    """v6 修订复核：显示名主干里点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』，
+    英文 Improved X Attack Power／X Attack (Power) Up）不得少于 rates 实际提高的攻击类型。"""
+    buffs = payload["buffs"]
+    by_id = {b["spEffectId"]: b for b in buffs}
+    for buff in buffs:
+        types = attack_types(buff["rates"])
+        for field, is_zh in (("displayNameZh", True), ("displayNameEn", False)):
+            for fragment, named in named_attack_heads(buff[field], is_zh, prefix_only=False):
+                assert not types - named, (buff["spEffectId"], field, buff[field], fragment, sorted(types))
+    records = payload["diagnostics"]["attackTypeHeadRenames"]
+    renamed = {r["spEffectId"] for r in records}
+    assert renamed == ATTACK_HEAD_RENAMED_IDS, sorted(renamed ^ ATTACK_HEAD_RENAMED_IDS)
+    assert len(records) == len(renamed) == payload["counts"]["attackTypeHeadRenamed"]
+    for record in records:
+        buff = by_id[record["spEffectId"]]
+        types = attack_types(buff["rates"])
+        assert record["attackTypes"] == sorted(types), record
+        for suffix, field, is_zh in (("Zh", "displayNameZh", True), ("En", "displayNameEn", False)):
+            head = attack_type_head(types, is_zh)
+            assert record[f"renamedHead{suffix}"] == head and buff[field].startswith(head), (record["spEffectId"], buff[field])
+            assert record[f"displayName{suffix}"] == buff[field], record["spEffectId"]
+        # 游戏文本原样保留：nameZh 仍是只说一种类型的状态栏文本
+        assert buff["nameZh"].startswith(record["headZh"]) and record["headZh"] == "提升物理攻击力", record
+        assert record["appliesToSpells"] == {c: buff["appliesTo"][c] for c in ("sorcery", "incantation")}, record
+    # 用户问题的实例：隐士遗物与祷告『火焰啊，赐予我力量！』在法术上也计入
+    assert by_id[7032903]["displayNameZh"] == "提升物理与属性攻击力（遗物・×1.16）", by_id[7032903]["displayNameZh"]
+    assert by_id[1605000]["displayNameZh"] == "提升物理与火属性攻击力（火焰啊，赐予我力量！）", by_id[1605000]["displayNameZh"]
+    assert by_id[7032903]["appliesTo"]["sorcery"] == "yes" and by_id[1605000]["appliesTo"]["incantation"] == "yes"
+    # 只换前缀：限定词与改写前一致（99620 艾奥尼亚蝶这类同名对象也不丢限定词）
+    assert by_id[7031302]["displayNameZh"].endswith("（遗物・×1.1・【无赖】在技艺发动期间，受到攻击时能提升攻击力与精力上限）")
+    assert "艾奥尼亚蝶" in by_id[99620]["displayNameZh"], by_id[99620]["displayNameZh"]
 
 
 def main() -> None:
