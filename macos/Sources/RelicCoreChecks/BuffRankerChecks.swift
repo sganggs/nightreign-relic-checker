@@ -403,9 +403,10 @@ private func checkTwoSidedParity(
     )
     try rankerExpect(notes.count == 13, "本页口径应当是 13 条，实际 \(notes.count)", counter: &count)
     try rankerExpect(notes.allSatisfy { $0.count > 20 }, "每条口径说明都应当有正文", counter: &count)
-    // 锚点表：windows/tests/ranker.test.mjs 里有一份一模一样的。
+    // 锚点表（Windows 端的 pageRuleNotes 已随配置版重构移除，这一组现在只钉 macOS 自己的措辞；
+    // 战技数据 v3 起第 1 条按 skillVariants 选段）。
     let anchors = [
-        "weapons[].skillVariant → skills[].variants[i].atkIds",
+        "weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds",
         "只有法术段忽略 motion",
         "rateFields[].countsAsDamage 为 true 且 valueKind 为 multiplier",
         "武器槽（scope.weaponSlot）",
@@ -429,7 +430,7 @@ private func checkTwoSidedParity(
     // 把数字挖掉之后的正文在两端必须逐字节相同（FNV-1a 32 位）。这个摘要与数据无关
     //（数字全部归一成 #），数据集改数值不会弄红它；两端任何一句措辞漂移都会立刻分叉。
     try rankerExpect(
-        pageNotesDigest(notes) == "333839f9",
+        pageNotesDigest(notes) == "61520191",
         "两端 13 条说明的正文必须逐字相同（实际摘要 \(pageNotesDigest(notes))）",
         counter: &count
     )
@@ -564,6 +565,46 @@ private func checkDamageMath(counter count: inout Int) throws {
     let noFpSelection = SkillDamageMath.selection(segments, useNoFp: true)
     try rankerExpect(noFpSelection == [4], "切到专注值不足版应只勾选 noFp 段，实际 \(noFpSelection.sorted())", counter: &count)
     try rankerExpect(noFpSelection.isDisjoint(with: defaultSelection), "正常版与专注值不足版必须互斥", counter: &count)
+
+    // v3 fpBoth：带 FP / 无 FP 两侧动画共用的段，开关在哪一侧都计入（取段规则 fpBoth || noFp == 开关）；
+    // 旧写法 noFp == 开关 会在专注值不足版这一侧把它丢掉（1024 唤矛仪式切过去一段都不剩）。
+    let fpBothHits = try decodeHits("""
+    [
+      {"atkId":21,"labelZh":"正常版","motion":{"physical":100},"attribute":"Slash","source":"n"},
+      {"atkId":22,"labelZh":"两侧共用","motion":{"physical":50},"attribute":"Slash","fpBoth":true,"source":"n"},
+      {"atkId":23,"labelZh":"无FP版","motion":{"physical":80},"attribute":"Slash","noFp":true,"noFpSource":"tae","source":"n"},
+      {"atkId":24,"labelZh":"两侧共用但只打自己","motion":{"holy":100},"attribute":"None","fpBoth":true,
+       "noDamage":true,"selfOrAllyOnly":true,"source":"n"}
+    ]
+    """)
+    try rankerExpect(
+        fpBothHits[1].fpBoth && !fpBothHits[1].noFp && fpBothHits[2].noFp && fpBothHits[2].noFpSource == "tae"
+            && fpBothHits[0].noFpSource == nil && fpBothHits[3].selfOrAllyOnly && fpBothHits[3].noDamage,
+        "v3 命中段字段 fpBoth / noFpSource / selfOrAllyOnly 应解码出来",
+        counter: &count
+    )
+    let fpBothSegments = fpBothHits.map { SkillDamageMath.segment(for: $0, weapon: weapon) }
+    try rankerExpect(fpBothSegments[1].fpBoth && !fpBothSegments[0].fpBoth, "fpBoth 应透到分段上", counter: &count)
+    try rankerExpect(
+        SkillDamageMath.defaultSelection(fpBothSegments) == [21, 22],
+        "正常版这一侧 = 正常段 + fpBoth 段，实际 \(SkillDamageMath.defaultSelection(fpBothSegments).sorted())",
+        counter: &count
+    )
+    try rankerExpect(
+        SkillDamageMath.selection(fpBothSegments, useNoFp: true) == [22, 23],
+        "专注值不足版这一侧 = 无 FP 段 + fpBoth 段（fpBoth 两侧都计），"
+            + "实际 \(SkillDamageMath.selection(fpBothSegments, useNoFp: true).sorted())",
+        counter: &count
+    )
+    try rankerExpect(
+        fpBothHits.map { $0.isOnSide(useNoFp: true) } == [false, true, true, true]
+            && fpBothHits.map { $0.isOnSide(useNoFp: false) } == [true, true, false, true],
+        "SkillHit.isOnSide 与取段规则同一口径（fpBoth || noFp == 开关）",
+        counter: &count
+    )
+    try rankerExpectClose(
+        fpBothSegments[3].total, 0, "selfOrAllyOnly 段带 noDamage，motion 是回血倍率，不得算成伤害", counter: &count
+    )
 
     // 构成：斩击 200 + 突刺 100 + 标准 100 + 火（50 + 110）= 560。
     let composition = SkillDamageMath.composition(of: segments, selected: defaultSelection)
@@ -1120,7 +1161,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     // 3. 整份 skills 数据集：未知顶层字段 + 坏的 weapons 元素
     let dataset = try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 2, "gameVersion": "x", "dataVersion": "y",
+      "schemaVersion": 3, "gameVersion": "x", "dataVersion": "y",
       "未来块": {"a": [1,2,3]},
       "usage": {"选段（必读）": "…", "坏值": 3},
       "caveats": ["一条"],
@@ -1156,7 +1197,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     // 4. variants 整个缺失 → ctx 单选逻辑（先武器名，再类别名，最后 ctx 缺失那组），不取并集
     let ctxDataset = try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":7}],
       "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
                   "hits":[{"atkId":1,"ctx":"Alpha","motion":{"physical":100},"attribute":"Slash"},
@@ -1178,7 +1219,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     )
     let noSharedIndex = try SkillDataIndex(dataset: try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","attackBase":{"physical":10},"swordArtsParamId":7}],
       "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
                   "hits":[{"atkId":1,"ctx":"Alpha","motion":{"physical":100},"attribute":"Slash"},
@@ -1191,6 +1232,151 @@ private func checkLenientDecoding(counter count: inout Int) throws {
         "ctx 一个都对不上、又没有「ctx 缺失」段时应返回空，不能退回全部 hits",
         counter: &count
     )
+    // 直接从 hits[] 取段的路径（variants 缺失）要剔掉 notInvoked 与 noDamage：
+    // TAE 判定永远打不出的段、只挂状态 / 只打自己队友的段都不该出现在选段结果里。
+    let fallbackFilterIndex = try SkillDataIndex(dataset: try SkillDataset.decode(from: Data("""
+    {
+      "schemaVersion": 3,
+      "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","attackBase":{"physical":10},"swordArtsParamId":7}],
+      "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
+                  "hits":[{"atkId":1,"motion":{"physical":100},"attribute":"Slash"},
+                          {"atkId":2,"motion":{"physical":300},"attribute":"Slash","notInvoked":true,"notInvokedReason":"gated"},
+                          {"atkId":3,"motion":{"holy":100},"attribute":"None","noDamage":true,"selfOrAllyOnly":true}]}],
+      "spells": []
+    }
+    """.utf8)))
+    let filteredSkill = fallbackFilterIndex.skillsByID[7]!
+    try rankerExpect(
+        fallbackFilterIndex.hits(for: filteredSkill, weapon: fallbackFilterIndex.weaponsByID[1]).map(\.atkId) == [1],
+        "回退到 hits[] 的路径必须过滤 notInvoked 与 noDamage，实际 "
+            + "\(fallbackFilterIndex.hits(for: filteredSkill, weapon: fallbackFilterIndex.weaponsByID[1]).map(\.atkId))",
+        counter: &count
+    )
+    try rankerExpect(
+        filteredSkill.hits[1].notInvoked && filteredSkill.hits[1].notInvokedReason == "gated" && !filteredSkill.hits[0].notInvoked,
+        "hits[].notInvoked / notInvokedReason 应解码出来",
+        counter: &count
+    )
+
+    // 4b. v3：skillVariants / weaponSources / customWeapons / swordArtsPools / taeUnmatched
+    //     武器 1：固定战技 7，局内池能抽到 8（skillVariants 给 8 的下标 1）；
+    //     武器 2：固定战技 9（不收录），池里抽到 8（skillVariants 给 0）；
+    //     武器 3：固定战技就是 8、没写 skillVariants → 回退 skillVariant（只对固定战技有效）；
+    //     武器 4：固定战技 9、skillVariant=1、没写 skillVariants → 8 不得借用 9 的下标，打不出段。
+    let v3Dataset = try SkillDataset.decode(from: Data("""
+    {
+      "schemaVersion": 3, "counts": {"taeVerified": true, "hits": 4},
+      "swordArtsPools": {"500": [[8, 100], [7, 300], "坏条目"], "坏池": [[8, 1]]},
+      "weapons": [
+        {"id":1,"nameZh":"甲","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":7,"skillVariant":0,
+         "skillIds":[7,8],"skillVariants":{"7":0,"8":1,"坏键":3},"customWeapons":[[100,500],[101,-1],"坏行"]},
+        {"id":2,"nameZh":"乙","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":9,"skillVariant":0,
+         "skillIds":[8,9],"skillVariants":{"8":0}},
+        {"id":3,"nameZh":"丙","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":8,"skillVariant":1},
+        {"id":4,"nameZh":"丁","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":9,"skillVariant":1},
+        {"id":5,"nameZh":"戊","wepTypeZh":"大剑","attackBase":{"physical":10},"swordArtsParamId":9,
+         "skillVariants":{"8":0}}
+      ],
+      "skills": [
+        {"id":7,"nameZh":"固定战技","weaponIds":[1],"weaponSources":[{"id":1,"fixed":true,"pool":[[500,300,1]]}],
+         "variants":[{"atkIds":[71],"via":"behavior","weaponIds":[1]}],
+         "hits":[{"atkId":71,"motion":{"physical":100},"attribute":"Slash"}]},
+        {"id":8,"nameZh":"池里的战技","weaponIds":[5,1,2,3,4],"taeUnmatched":true,
+         "weaponSources":[{"id":5,"pool":[[500,100,1]]},{"id":1,"pool":[[500,100,1]]},{"id":2,"pool":[[500,100,2]]},
+                          {"id":3,"fixed":true,"pool":[[500,100,1]]},{"id":4,"pool":[[500,100,1]]}],
+         "variants":[{"atkIds":[81],"via":"behavior","weaponIds":[2,5]},{"atkIds":[82,83],"via":"behavior","weaponIds":[1,3]}],
+         "hits":[{"atkId":81,"motion":{"physical":100},"attribute":"Slash"},
+                 {"atkId":82,"motion":{"physical":120},"attribute":"Slash"},
+                 {"atkId":83,"labelZh":"无FP版","motion":{"physical":60},"attribute":"Slash","noFp":true,"noFpSource":"tae"},
+                 {"atkId":84,"motion":{"physical":999},"attribute":"Slash","notInvoked":true,"notInvokedReason":"exclusiveBlock"}]}
+      ],
+      "spells": []
+    }
+    """.utf8))
+    let v3Index = try SkillDataIndex(dataset: v3Dataset)
+    let poolSkill = v3Index.skillsByID[8]!
+    func v3IDs(_ weaponID: Int) -> [Int] {
+        v3Index.segments(for: poolSkill, weapon: v3Index.weaponsByID[weaponID]).map(\.atkId)
+    }
+    try rankerExpect(v3Dataset.taeVerified && v3Dataset.counts["hits"] == 4, "counts.taeVerified（布尔）与数字计数都应读出来", counter: &count)
+    try rankerExpect(
+        v3IDs(1) == [82, 83] && v3IDs(2) == [81] && v3IDs(5) == [81],
+        "池里抽到的战技按 skillVariants[战技] 选段（武器 1 → [82,83]、武器 2/5 → [81]），"
+            + "实际 \(v3IDs(1)) / \(v3IDs(2)) / \(v3IDs(5))",
+        counter: &count
+    )
+    try rankerExpect(
+        v3Index.segments(for: v3Index.skillsByID[7]!, weapon: v3Index.weaponsByID[1]).map(\.atkId) == [71],
+        "同一把武器的固定战技照样按 skillVariants 选段",
+        counter: &count
+    )
+    try rankerExpect(v3IDs(3) == [82, 83], "skillVariants 缺这一项、但它就是固定战技时回退 skillVariant", counter: &count)
+    try rankerExpect(
+        v3IDs(4).isEmpty,
+        "skillVariant 只对固定战技有效：池里的战技不得借用固定战技的下标，实际 \(v3IDs(4))",
+        counter: &count
+    )
+    let weaponOne = v3Index.weaponsByID[1]!
+    try rankerExpect(
+        weaponOne.skillIds == [7, 8] && weaponOne.skillVariants == [7: 0, 8: 1]
+            && weaponOne.customWeapons == [SkillCustomWeapon(customId: 100, swordArtsTableId: 500),
+                                           SkillCustomWeapon(customId: 101, swordArtsTableId: -1)]
+            && weaponOne.variantIndex(forSkill: 8) == 1 && weaponOne.variantIndex(forSkill: 99) == nil,
+        "weapons[].skillIds / skillVariants / customWeapons 应解码出来（坏键、坏行跳过）",
+        counter: &count
+    )
+    try rankerExpect(
+        poolSkill.taeUnmatched && poolSkill.weaponSources.map(\.weaponId) == poolSkill.weaponIds
+            && poolSkill.weaponSources[1].pool == [SkillPoolDraw(poolId: 500, weight: 100, customRows: 1)]
+            && poolSkill.weaponSources[3].fixed && !poolSkill.weaponSources[1].fixed,
+        "skills[].weaponSources / taeUnmatched 应解码出来，且与 weaponIds 同序",
+        counter: &count
+    )
+    try rankerExpect(
+        v3Dataset.swordArtsPools.count == 1 && v3Dataset.swordArtsPools[500]?.count == 2
+            && v3Dataset.poolChance(poolId: 500, skillId: 8) == 0.25 && v3Dataset.poolChance(poolId: 500, skillId: 1) == nil,
+        "顶层 swordArtsPools 应解码出来（坏池、坏条目跳过），池内概率 = 权重 / 权重和",
+        counter: &count
+    )
+    // 来源标记：固定 + 池两者都成立时只标固定；不在 weaponIds 里的武器没有标记。
+    try rankerExpect(
+        v3Index.weaponSourceKind(skill: poolSkill, weapon: v3Index.weaponsByID[3]!) == .fixed
+            && v3Index.weaponSourceKind(skill: poolSkill, weapon: v3Index.weaponsByID[1]!) == .pool
+            && v3Index.weaponSourceKind(skill: v3Index.skillsByID[7]!, weapon: v3Index.weaponsByID[2]!) == nil,
+        "weaponSource 标记：fixed 优先于 pool，不在列表里的武器为 nil",
+        counter: &count
+    )
+    try rankerExpect(
+        SkillWeaponSourceKind.fixed.title == "固定战技" && SkillWeaponSourceKind.pool.title == "局内可抽到",
+        "来源标记的文案取自 LoadoutText（weaponSource.fixed / weaponSource.pool）",
+        counter: &count
+    )
+    // 武器分组：含固定武器的类别排前；组内固定武器排前、其余按 id；默认武器是固定武器。
+    let v3Groups = v3Index.weaponGroups(for: poolSkill)
+    try rankerExpect(
+        v3Groups.map(\.wepTypeZh) == ["刀", "大剑"] && v3Groups[0].weapons.map(\.id) == [3, 1, 2, 4]
+            && v3Groups[0].fixedCount == 1 && v3Groups[1].fixedCount == 0,
+        "武器分组应固定武器排前、其余按 id，实际 \(v3Groups.map { "\($0.wepTypeZh):\($0.weapons.map(\.id))" })",
+        counter: &count
+    )
+    try rankerExpect(v3Index.defaultWeapon(for: poolSkill)?.id == 3, "默认武器应是固定带这个战技的那一把", counter: &count)
+    try rankerExpect(v3Index.poolOnlyOutputs == 0, "两个战技都有固定武器，不该算「只在池里」", counter: &count)
+
+    // 4c. schemaVersion < 3 拒绝解码：v2 没有 skillVariants，池里的战技会拿固定战技的下标选错动作套。
+    var rejectedV2 = false
+    do {
+        _ = try SkillDataset.decode(from: Data("{\"schemaVersion\":2,\"weapons\":[],\"skills\":[],\"spells\":[]}".utf8))
+    } catch SkillDataError.unsupportedSchema(let version) {
+        rejectedV2 = version == 2
+    }
+    try rankerExpect(rejectedV2, "skills schemaVersion 2 应抛 unsupportedSchema(2)", counter: &count)
+    var rejectedMissing = false
+    do {
+        _ = try SkillDataset.decode(from: Data("{\"weapons\":[],\"skills\":[],\"spells\":[]}".utf8))
+    } catch SkillDataError.unsupportedSchema(let version) {
+        rejectedMissing = version == 0
+    }
+    try rankerExpect(rejectedMissing, "缺 schemaVersion 的 skills 也应拒绝（按 0 处理）", counter: &count)
 
     // 5. 顶层不是对象 / 空数据
     var threwNotAnObject = false
@@ -1299,7 +1485,7 @@ private struct SkillFailableProbe: Decodable {
 
 private func checkSkillDataset(_ index: SkillDataIndex, counter count: inout Int) throws {
     let dataset = index.dataset
-    try rankerExpect(dataset.schemaVersion >= 2, "skills schemaVersion 应 ≥ 2，实际 \(dataset.schemaVersion)", counter: &count)
+    try rankerExpect(dataset.schemaVersion >= 3, "skills schemaVersion 应 ≥ 3，实际 \(dataset.schemaVersion)", counter: &count)
     try rankerExpect(!dataset.gameVersion.isEmpty && !dataset.dataVersion.isEmpty, "skills 缺少 gameVersion / dataVersion", counter: &count)
     try rankerExpect(dataset.weapons.count > 100, "武器数应 > 100，实际 \(dataset.weapons.count)", counter: &count)
     try rankerExpect(dataset.skills.count > 50, "战技数应 > 50，实际 \(dataset.skills.count)", counter: &count)
@@ -1349,36 +1535,74 @@ private func checkSkillDataset(_ index: SkillDataIndex, counter count: inout Int
 }
 
 private func checkSegmentSelection(_ index: SkillDataIndex, counter count: inout Int) throws {
-    // 全量：每把「有 skillVariant」的武器都能选出段，且永远选不到 noVariant 段。
-    var checkedWeapons = 0
+    // 全量（v3）：每个 (战技, 武器) 对——固定引用与局内战技池——都按 weapons[].skillVariants[战技] 选段，
+    // 结果恰好是那一套的 atkIds，永远选不到 noVariant / notInvoked 段；固定战技那一项与 skillVariant 相同。
+    var checkedPairs = 0
+    var poolPairs = 0
+    var missingIndex = 0
+    var fixedMismatch = 0
+    var legacyWouldDiffer = 0
     var emptySelection = 0
     var pickedNoVariant = 0
-    var outsideVariant = 0
-    for weapon in index.dataset.weapons {
-        guard let variantIndex = weapon.skillVariant,
-              let skill = index.skillsByID[weapon.swordArtsParamId],
-              skill.variants.indices.contains(variantIndex) else { continue }
-        checkedWeapons += 1
-        let allowed = Set(skill.variants[variantIndex].atkIds)
-        let hits = index.hits(for: skill, weapon: weapon)
-        if hits.isEmpty { emptySelection += 1 }
-        if hits.contains(where: \.noVariant) { pickedNoVariant += 1 }
-        if hits.contains(where: { !allowed.contains($0.atkId) }) { outsideVariant += 1 }
+    var pickedNotInvoked = 0
+    var notExactVariant = 0
+    for skill in index.dataset.skills where !skill.variants.isEmpty {
+        for id in skill.weaponIds {
+            guard let weapon = index.weaponsByID[id] else { continue }
+            guard let variantIndex = weapon.skillVariants[skill.id], skill.variants.indices.contains(variantIndex) else {
+                missingIndex += 1
+                continue
+            }
+            checkedPairs += 1
+            if weapon.swordArtsParamId == skill.id {
+                if weapon.skillVariant != variantIndex { fixedMismatch += 1 }
+            } else {
+                poolPairs += 1
+                // 旧写法（拿 skillVariant 去套池里的战技）在这些对上会选错动作套。
+                if let legacy = weapon.skillVariant, legacy != variantIndex { legacyWouldDiffer += 1 }
+            }
+            let hits = index.hits(for: skill, weapon: weapon)
+            if hits.isEmpty { emptySelection += 1 }
+            if hits.contains(where: \.noVariant) { pickedNoVariant += 1 }
+            if hits.contains(where: \.notInvoked) { pickedNotInvoked += 1 }
+            if Set(hits.map(\.atkId)) != Set(skill.variants[variantIndex].atkIds) { notExactVariant += 1 }
+        }
     }
-    try rankerExpect(checkedWeapons > 500, "应有 > 500 把武器参与选段校验，实际 \(checkedWeapons)", counter: &count)
-    try rankerExpect(emptySelection == 0, "有 skillVariant 的武器不应选出空段，实际 \(emptySelection) 把", counter: &count)
-    try rankerExpect(pickedNoVariant == 0, "选段结果不应包含 noVariant 段，实际 \(pickedNoVariant) 把", counter: &count)
-    try rankerExpect(outsideVariant == 0, "选段结果不应超出 variants[].atkIds，实际 \(outsideVariant) 把", counter: &count)
+    try rankerExpect(checkedPairs > 5000, "应有 > 5000 个 (战技, 武器) 对参与选段校验，实际 \(checkedPairs)", counter: &count)
+    try rankerExpect(poolPairs > 3000, "局内战技池带来的 (战技, 武器) 对应 > 3000，实际 \(poolPairs)", counter: &count)
+    try rankerExpect(missingIndex == 0, "有 variants 的战技，每把武器都应在 skillVariants 里有下标，缺 \(missingIndex) 对", counter: &count)
+    try rankerExpect(fixedMismatch == 0, "固定战技那一项的 skillVariants 应与 skillVariant 相同，\(fixedMismatch) 把不同", counter: &count)
+    try rankerExpect(
+        legacyWouldDiffer > 0,
+        "应存在「拿固定战技的 skillVariant 去选池里战技会选错套」的武器（否则 skillVariants 这一改是空跑）",
+        counter: &count
+    )
+    try rankerExpect(emptySelection == 0, "按 skillVariants 选段不应选出空段，实际 \(emptySelection) 对", counter: &count)
+    try rankerExpect(pickedNoVariant == 0, "选段结果不应包含 noVariant 段，实际 \(pickedNoVariant) 对", counter: &count)
+    try rankerExpect(pickedNotInvoked == 0, "选段结果不应包含 notInvoked 段，实际 \(pickedNotInvoked) 对", counter: &count)
+    try rankerExpect(notExactVariant == 0, "选段结果应恰好是 variants[skillVariants[战技]].atkIds，\(notExactVariant) 对不符", counter: &count)
 
     // 多动作套的战技：不同套的武器选出的段必须不同（证明没有按 ctx 取并集）。
+    // v3 起 variants[].weaponIds 含池里的武器，它们的 skillVariant 指的是自己的固定战技——
+    // 下标一律看 skillVariants[战技]。
     guard let multi = index.dataset.skills.first(where: { $0.variants.count > 1 && $0.variants.allSatisfy { !$0.weaponIds.isEmpty } }) else {
         throw CheckFailure(description: "增伤排名：找不到有多套动作的战技")
     }
     let firstWeapon = index.weaponsByID[multi.variants[0].weaponIds[0]]
     let secondWeapon = index.weaponsByID[multi.variants[1].weaponIds[0]]
+    try rankerExpect(
+        firstWeapon?.skillVariants[multi.id] == 0 && secondWeapon?.skillVariants[multi.id] == 1,
+        "variants[i].weaponIds 里的武器，skillVariants[战技] 就是 i（「\(multi.displayName)」）",
+        counter: &count
+    )
     let firstIDs = Set(index.hits(for: multi, weapon: firstWeapon).map(\.atkId))
     let secondIDs = Set(index.hits(for: multi, weapon: secondWeapon).map(\.atkId))
     try rankerExpect(!firstIDs.isEmpty && !secondIDs.isEmpty, "多套动作的战技两边都应选出段", counter: &count)
+    try rankerExpect(
+        firstIDs == Set(multi.variants[0].atkIds) && secondIDs == Set(multi.variants[1].atkIds),
+        "两把武器应各自选出自己那一套（「\(multi.displayName)」）",
+        counter: &count
+    )
     try rankerExpect(firstIDs != secondIDs, "同一战技的不同动作套应选出不同的段（「\(multi.displayName)」）", counter: &count)
     try rankerExpect(
         firstIDs.count < multi.hits.count,
@@ -1410,21 +1634,305 @@ private func checkSegmentSelection(_ index: SkillDataIndex, counter count: inout
               segments.contains(where: { !$0.noFp && $0.hasDamage && !$0.noDamage }) else { continue }
         let normal = SkillDamageMath.defaultSelection(segments)
         let noFp = SkillDamageMath.selection(segments, useNoFp: true)
+        let shared = Set(segments.filter(\.fpBoth).map(\.atkId))
         try rankerExpect(
             normal.allSatisfy { id in segments.first { $0.atkId == id }?.noFp == false },
             "默认勾选不应包含专注值不足版（「\(skill.displayName)」）",
             counter: &count
         )
         try rankerExpect(
-            !noFp.isEmpty && noFp.allSatisfy { id in segments.first { $0.atkId == id }?.noFp == true },
-            "切到专注值不足版后应只剩 noFp 段",
+            !noFp.isEmpty && noFp.allSatisfy { id in segments.first { $0.atkId == id }.map { $0.noFp || $0.fpBoth } == true },
+            "切到专注值不足版后应只剩 noFp 段（与两侧共用的 fpBoth 段）",
             counter: &count
         )
-        try rankerExpect(normal.isDisjoint(with: noFp), "正常版与专注值不足版必须互斥", counter: &count)
+        try rankerExpect(normal.intersection(noFp) == shared.intersection(normal), "正常版与专注值不足版必须互斥（fpBoth 段除外）", counter: &count)
         found = true
         break
     }
     try rankerExpect(found, "真实数据里应存在同时有正常版与专注值不足版段的战技", counter: &count)
+
+    try checkSkillDatasetV3(index, counter: &count)
+}
+
+// MARK: - 战技数据 v3：局内战技池、TAE 核实、FP 分侧
+
+/// 某个战技 × 武器的选段结果：(全部段, 正常版勾选, 专注值不足版勾选)。
+private func v3Selection(
+    _ index: SkillDataIndex, skillID: Int, weaponID: Int
+) throws -> (all: [Int], normal: [Int], noFp: [Int]) {
+    guard let skill = index.skillsByID[skillID], let weapon = index.weaponsByID[weaponID] else {
+        throw CheckFailure(description: "增伤排名：战技 \(skillID) / 武器 \(weaponID) 不在数据集里")
+    }
+    let segments = index.segments(for: skill, weapon: weapon)
+    return (
+        segments.map(\.atkId),
+        SkillDamageMath.defaultSelection(segments).sorted(),
+        SkillDamageMath.selection(segments, useNoFp: true).sorted()
+    )
+}
+
+private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout Int) throws {
+    let dataset = index.dataset
+    let skillHits = dataset.skills.flatMap(\.hits)
+    let allHits = skillHits + dataset.spells.flatMap(\.hits)
+
+    // ① 计数（schemaVersion 3）：counts 与逐条现数一致
+    func counted(_ key: String) -> Int { Int(dataset.counts[key] ?? -1) }
+    try rankerExpect(dataset.taeVerified, "counts.taeVerified 应为 true（本份数据做过 TAE 核实）", counter: &count)
+    try rankerExpect(
+        dataset.skills.count == 187 && counted("skills") == 187
+            && dataset.skills.filter { !$0.hits.isEmpty }.count == 166 && counted("skillsWithHits") == 166
+            && dataset.skills.filter { !$0.weaponIds.isEmpty }.count == 185 && counted("skillsWithWeapons") == 185
+            && allHits.count == 2201 && counted("hits") == 2201,
+        "v3 计数：skills 187 / skillsWithHits 166 / skillsWithWeapons 185 / hits 2201",
+        counter: &count
+    )
+    try rankerExpect(
+        allHits.filter(\.notInvoked).count == 34 && counted("hitsNotInvoked") == 34
+            && allHits.filter { $0.notInvoked && !$0.noDamage && (!$0.motion.isEmpty || !$0.flat.isEmpty) }.count == 24
+            && counted("hitsNotInvokedDamaging") == 24,
+        "notInvoked 34 段（带伤害 24 段）",
+        counter: &count
+    )
+    try rankerExpect(
+        allHits.filter { $0.noFpSource == "tae" }.count == 213 && counted("hitsNoFpByTae") == 213
+            && allHits.filter(\.fpBoth).count == 19 && counted("hitsFpBoth") == 19
+            && allHits.filter(\.selfOrAllyOnly).count == 36 && counted("hitsSelfOrAllyOnly") == 36,
+        "noFp 按 TAE 补标 213 段、fpBoth 19 段、selfOrAllyOnly 36 段",
+        counter: &count
+    )
+    try rankerExpect(
+        allHits.filter { $0.noFpSource == "tae" }.allSatisfy { $0.noFp && $0.displayLabel.hasPrefix("无FP版") },
+        "TAE 补标的无 FP 段 noFp=true、labelZh 以「无FP版」开头",
+        counter: &count
+    )
+    try rankerExpect(allHits.filter(\.fpBoth).allSatisfy { !$0.noFp }, "fpBoth 段的 noFp 一定是 false", counter: &count)
+    try rankerExpect(allHits.filter(\.selfOrAllyOnly).allSatisfy(\.noDamage), "selfOrAllyOnly 段一律带 noDamage", counter: &count)
+    try rankerExpect(
+        dataset.usage.count == 8 && dataset.usage["战技来源（v3）"] != nil && dataset.usage["命中段已按 TAE 核实（v3）"] != nil
+            && dataset.caveats.count == 11,
+        "usage 8 个键（新增「战技来源（v3）」「命中段已按 TAE 核实（v3）」）、caveats 11 条，"
+            + "实际 \(dataset.usage.count) / \(dataset.caveats.count)",
+        counter: &count
+    )
+    try rankerExpect(
+        dataset.swordArtsPools.count == counted("swordArtsPools")
+            && dataset.swordArtsPools.values.reduce(0) { $0 + $1.count } == counted("swordArtsPoolEntries"),
+        "顶层 swordArtsPools 的池数与条目数应与 counts 一致",
+        counter: &count
+    )
+    try rankerExpect(
+        dataset.weapons.reduce(0) { $0 + $1.customWeapons.count } == counted("customWeaponRows")
+            && dataset.weapons.reduce(0) { $0 + $1.skillIds.count } == counted("weaponSkillPairs"),
+        "weapons[].customWeapons / skillIds 的总数应与 counts 一致",
+        counter: &count
+    )
+
+    // ② weaponSources：与 weaponIds 同序；fixed ⇔ swordArtsParamId 就是这个战技；weapons[].skillIds 是反向索引。
+    var sourceOrderBad = 0
+    var fixedBad = 0
+    var reverseBad = 0
+    var fixedPairs = 0
+    var poolPairs = 0
+    var bothPairs = 0
+    var markBad = 0
+    var groupOrderBad = 0
+    var defaultNotFixed = 0
+    for skill in dataset.skills {
+        if skill.weaponSources.map(\.weaponId) != skill.weaponIds { sourceOrderBad += 1 }
+        for source in skill.weaponSources {
+            guard let weapon = index.weaponsByID[source.weaponId] else { continue }
+            if source.fixed != (weapon.swordArtsParamId == skill.id) { fixedBad += 1 }
+            if !weapon.skillIds.contains(skill.id) { reverseBad += 1 }
+            if source.fixed { fixedPairs += 1 }
+            if !source.pool.isEmpty { poolPairs += 1 }
+            if source.fixed && !source.pool.isEmpty { bothPairs += 1 }
+            // 页面标记：两者都成立时只标固定。
+            if index.weaponSourceKind(skill: skill, weapon: weapon) != (source.fixed ? .fixed : .pool) { markBad += 1 }
+        }
+        // 武器选择器：组内固定武器排前、其余按 id；含固定武器的组排前；默认武器是固定武器（有的话）。
+        let groups = index.weaponGroups(for: skill)
+        for group in groups {
+            let kinds = group.weapons.map { index.weaponSourceKind(skill: skill, weapon: $0) }
+            let fixedPart = group.weapons.prefix(group.fixedCount)
+            let poolPart = group.weapons.dropFirst(group.fixedCount)
+            if kinds.prefix(group.fixedCount).contains(where: { $0 != .fixed })
+                || kinds.dropFirst(group.fixedCount).contains(where: { $0 != .pool })
+                || fixedPart.map(\.id) != fixedPart.map(\.id).sorted()
+                || poolPart.map(\.id) != poolPart.map(\.id).sorted() {
+                groupOrderBad += 1
+            }
+        }
+        let fixedGroups = groups.map { $0.fixedCount > 0 }
+        if fixedGroups != fixedGroups.sorted(by: { $0 && !$1 }) { groupOrderBad += 1 }
+        if skill.weaponSources.contains(where: \.fixed),
+           let first = index.defaultWeapon(for: skill), index.weaponSourceKind(skill: skill, weapon: first) != .fixed {
+            defaultNotFixed += 1
+        }
+    }
+    try rankerExpect(sourceOrderBad == 0, "weaponSources 应与 weaponIds 一一对应、同序，\(sourceOrderBad) 个战技不符", counter: &count)
+    try rankerExpect(fixedBad == 0, "weaponSources[].fixed 应当且仅当武器的 swordArtsParamId 就是这个战技，\(fixedBad) 项不符", counter: &count)
+    try rankerExpect(reverseBad == 0, "weapons[].skillIds 应是 skills[].weaponIds 的反向索引，\(reverseBad) 项不符", counter: &count)
+    try rankerExpect(
+        fixedPairs == counted("weaponSkillPairsFixed") && poolPairs == counted("weaponSkillPairsPool")
+            && bothPairs == counted("weaponSkillPairsBoth") && bothPairs > 0,
+        "固定 / 池 / 两者皆是的 (战技, 武器) 对数应与 counts 一致（\(fixedPairs) / \(poolPairs) / \(bothPairs)）",
+        counter: &count
+    )
+    try rankerExpect(markBad == 0, "「固定战技 / 局内可抽到」标记：两者都成立时只标固定，\(markBad) 项不符", counter: &count)
+    try rankerExpect(groupOrderBad == 0, "武器选择器：固定武器排前、其余按 id，含固定武器的类别排前，\(groupOrderBad) 处不符", counter: &count)
+    try rankerExpect(defaultNotFixed == 0, "有固定武器的战技，默认武器应是固定武器，\(defaultNotFixed) 个不符", counter: &count)
+    let poolOnlySkills = dataset.skills.filter { !$0.weaponIds.isEmpty && !$0.weaponSources.contains(where: \.fixed) }
+    try rankerExpect(
+        poolOnlySkills.count == 52 && counted("skillsPoolOnly") == 52,
+        "只在局内战技池里出现的战技 52 个，实际 \(poolOnlySkills.count)",
+        counter: &count
+    )
+    try rankerExpect(
+        index.poolOnlyOutputs > 0 && index.poolOnlyOutputs <= poolOnlySkills.count,
+        "列表里应收进只在池里出现的战技（\(index.poolOnlyOutputs) 个）",
+        counter: &count
+    )
+
+    // ③ 210 风暴刃：v2 没有任何武器；v3 = 64 把、全部来自局内战技池，单一动作套 7 段，
+    //    300000411–413 是 TAE 补标的无 FP 段（noFpSource="tae"）。
+    guard let stormBlade = index.skillsByID[210], let giantHunt = index.skillsByID[116],
+          let serpentHunt = index.skillsByID[1188] else {
+        throw CheckFailure(description: "增伤排名：战技 210 / 116 / 1188 不在数据集里")
+    }
+    try rankerExpect(
+        stormBlade.weaponIds.count == 64 && stormBlade.weaponSources.allSatisfy { !$0.fixed && !$0.pool.isEmpty },
+        "210 风暴刃应有 64 把武器、全部来自局内战技池，实际 \(stormBlade.weaponIds.count)",
+        counter: &count
+    )
+    var stormBad: [Int] = []
+    for id in stormBlade.weaponIds {
+        let selection = try v3Selection(index, skillID: 210, weaponID: id)
+        if selection.all != [300000407, 300000408, 300000409, 300000410, 300000411, 300000412, 300000413]
+            || selection.normal != [300000407, 300000408, 300000409, 300000410]
+            || selection.noFp != [300000411, 300000412, 300000413] {
+            stormBad.append(id)
+        }
+    }
+    try rankerExpect(
+        stormBad.isEmpty,
+        "210 风暴刃每把武器：正常版 300000407–410、专注值不足版 300000411–413，\(stormBad.count) 把不符（例如 \(stormBad.prefix(3))）",
+        counter: &count
+    )
+    if let dagger = index.weaponsByID[1000000] {
+        try rankerExpect(
+            index.weaponSourceKind(skill: stormBlade, weapon: dagger) == .pool && dagger.swordArtsParamId != 210
+                && dagger.variantIndex(forSkill: 210) == dagger.skillVariants[210],
+            "210 × 1000000 匕首：标「局内可抽到」，下标取 skillVariants[210]",
+            counter: &count
+        )
+    }
+    try rankerExpect(
+        stormBlade.hits.filter { (300000411...300000413).contains($0.atkId) }.allSatisfy { $0.noFp && $0.noFpSource == "tae" },
+        "风暴刃 300000411–413 是 TAE 补标的无 FP 段",
+        counter: &count
+    )
+
+    // ④ 116 狩猎巨人：50 把、全部来自局内战技池；正常版 301700910、专注值不足版 301700915（TAE 补标）。
+    try rankerExpect(
+        giantHunt.weaponIds.count == 50 && giantHunt.weaponSources.allSatisfy { !$0.fixed },
+        "116 狩猎巨人应有 50 把武器、全部来自局内战技池，实际 \(giantHunt.weaponIds.count)",
+        counter: &count
+    )
+    var giantBad: [Int] = []
+    for id in giantHunt.weaponIds {
+        let selection = try v3Selection(index, skillID: 116, weaponID: id)
+        if selection.all != [301700910, 301700915] || selection.normal != [301700910] || selection.noFp != [301700915] {
+            giantBad.append(id)
+        }
+    }
+    try rankerExpect(
+        giantBad.isEmpty,
+        "116 狩猎巨人每把武器：正常版 301700910、专注值不足版 301700915，\(giantBad.count) 把不符（例如 \(giantBad.prefix(3))）",
+        counter: &count
+    )
+    for output in index.outputs where output.kind == .skill && (output.entryID == 210 || output.entryID == 116) {
+        try rankerExpect(
+            output.weaponCount == (output.entryID == 210 ? 64 : 50),
+            "输出手段「\(output.displayName)」的武器数应含池来源",
+            counter: &count
+        )
+    }
+    try rankerExpect(
+        index.outputs.contains { $0.kind == .skill && $0.entryID == 210 }
+            && index.outputs.contains { $0.kind == .skill && $0.entryID == 116 },
+        "只在池里出现的 210 风暴刃、116 狩猎巨人应进入输出手段列表（v2 没有武器，被挡在外面）",
+        counter: &count
+    )
+
+    // ⑤ 1188 狩猎大蛇：只有 17030000 大蛇猎刀（固定 + 池两者皆是 → 标固定）；只剩两段近战 L2 与各自的无 FP 版，
+    //    光之束 301703900/901（gated）、301703905/975（notInvoked）、301703955（roarR2Only）永远打不出。
+    try rankerExpect(
+        serpentHunt.weaponIds == [17030000] && serpentHunt.weaponSources.first?.fixed == true
+            && serpentHunt.weaponSources.first?.pool.isEmpty == false,
+        "1188 狩猎大蛇只有 17030000，且固定 + 池两者都成立",
+        counter: &count
+    )
+    if let serpentWeapon = index.weaponsByID[17030000] {
+        try rankerExpect(
+            index.weaponSourceKind(skill: serpentHunt, weapon: serpentWeapon) == .fixed,
+            "1188 × 17030000：固定 + 池两者都成立时只标「固定战技」",
+            counter: &count
+        )
+    }
+    let serpent = try v3Selection(index, skillID: 1188, weaponID: 17030000)
+    try rankerExpect(
+        serpent.all == [301703950, 301703951, 301703970, 301703971]
+            && serpent.normal == [301703950, 301703951] && serpent.noFp == [301703970, 301703971],
+        "1188 狩猎大蛇：正常版 301703950/951、专注值不足版 970/971，实际 \(serpent.all) / \(serpent.normal) / \(serpent.noFp)",
+        counter: &count
+    )
+    let serpentDead = serpentHunt.hits.filter(\.notInvoked)
+    try rankerExpect(
+        Set(serpentDead.map(\.atkId)) == [301703900, 301703901, 301703905, 301703955, 301703975]
+            && serpentDead.filter { $0.notInvokedReason == "gated" }.map(\.atkId).sorted() == [301703900, 301703901],
+        "1188 的五段 notInvoked（两段光之束 gated）只留在 hits[]",
+        counter: &count
+    )
+
+    // ⑥ fpBoth：两侧共用的段，专注值不足版这一侧也要计入（旧写法会丢掉它们）。
+    let ritual = try v3Selection(index, skillID: 1024, weaponID: 16120000)
+    try rankerExpect(
+        ritual.normal == [301612910, 301612911] && ritual.noFp == [301612910, 301612911],
+        "1024 唤矛仪式 × 16120000：两侧都是 fpBoth 的 301612910/911（905–909 只挂状态），"
+            + "实际 \(ritual.normal) / \(ritual.noFp)",
+        counter: &count
+    )
+    let flame = try v3Selection(index, skillID: 1021, weaponID: 3130000)
+    try rankerExpect(
+        flame.normal == [303401400] && flame.noFp == [303401400],
+        "1021 毁灭灵火 × 3130000：唯一一段 303401400 是 fpBoth，两侧都计，实际 \(flame.normal) / \(flame.noFp)",
+        counter: &count
+    )
+    let carian = try v3Selection(index, skillID: 218, weaponID: 1000000)
+    try rankerExpect(
+        carian.normal == [300200870, 300200871, 300200872]
+            && carian.noFp == [300200872, 300200875, 300200876, 300200877],
+        "218 伟哉卡利亚 × 1000000：300200872 两侧都计，实际 \(carian.normal) / \(carian.noFp)",
+        counter: &count
+    )
+    // 全量：凡是选出了 fpBoth 段的 (战技, 武器) 对，两侧勾选都含它。
+    var fpBothPairs = 0
+    var fpBothDropped = 0
+    for skill in dataset.skills where skill.hits.contains(where: \.fpBoth) {
+        for id in skill.weaponIds {
+            guard let weapon = index.weaponsByID[id] else { continue }
+            let segments = index.segments(for: skill, weapon: weapon)
+            let shared = Set(segments.filter { $0.fpBoth && !$0.noDamage }.map(\.atkId))
+            guard !shared.isEmpty else { continue }
+            fpBothPairs += 1
+            if !shared.isSubset(of: SkillDamageMath.selection(segments, useNoFp: false))
+                || !shared.isSubset(of: SkillDamageMath.selection(segments, useNoFp: true)) {
+                fpBothDropped += 1
+            }
+        }
+    }
+    try rankerExpect(fpBothPairs > 0 && fpBothDropped == 0, "fpBoth 段在两侧勾选里都在（\(fpBothPairs) 对里 \(fpBothDropped) 对丢了）", counter: &count)
 }
 
 /// 分段芯片的展示口径：只列「对当前武器真正有贡献」的通道（两端同文同序）。
@@ -1553,7 +2061,7 @@ private func checkSegmentChips(_ index: SkillDataIndex, counter count: inout Int
             + "（例如 \(emptyChipsWithDamage.prefix(3).joined(separator: "、"))）",
         counter: &count
     )
-    try rankerExpect(chipPairs > 8000, "对照样本太少说明遍历写错了（本版本 8540 对）", counter: &count)
+    try rankerExpect(chipPairs > 30000, "对照样本太少说明遍历写错了（v3 含局内战技池的武器，本版本 \(chipPairs) 对）", counter: &count)
     try rankerExpect(
         pairsWithHidden > 0,
         "真实数据里应当有「其余属性该武器为 0」的段，否则这一关是空跑",
@@ -3653,7 +4161,11 @@ private func checkLoadoutParity(
     let dataset = index.dataset
     let rules = index.slotRules
     let reference = LoadoutReference(dataset: dataset)
-    var dump: [String] = []
+    // 对拍行与 Windows 端 ranker_crosscheck.test.mjs 同序：OUTPUTS（输出手段条数，v3 起含只在局内战技池里
+    // 出现的战技）→ CASE → CONFIG → TEXT。
+    var dump: [String] = [
+        "OUTPUTS skills=\(skills.outputs.filter { $0.kind == .skill }.count) spells=\(skills.outputs.filter { $0.kind == .spell }.count)"
+    ]
 
     // ① 七组构成用例：一览（条件全部成立）逐条与参考实现一致，前 10 名降序
     let cases: [(key: String, skillID: Int?, spellID: Int?, weaponID: Int?, only: Set<Int>?)] = [
@@ -3832,8 +4344,8 @@ private func loadoutBriefDigest(_ notes: [String]) -> String {
 }
 
 /// 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新（Windows 端 TEXT_TABLE_DIGEST / BRIEF_DIGEST）。
-private let loadoutTextTableCount = 332
-private let loadoutTextTableDigest = "854da404"
+private let loadoutTextTableCount = 336
+private let loadoutTextTableDigest = "07a69c5e"
 private let loadoutBriefNotesDigest = "ad04314d"
 
 private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {

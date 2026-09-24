@@ -2052,6 +2052,8 @@ public struct BuffRankerIndex: Sendable {
 /// `ranker.js` 的 `pageRuleNotes` **逐字同文**——任何一句改动都要同时改两边，
 /// 两端各有一份锚点断言把顺序与措辞钉住。**所有条数一律由调用方照数据现算**，
 /// 这里不写死任何具体数值。
+/// （Windows 端的 pageRuleNotes 已随配置版重构移除，现在只剩 macOS 自检引用这 13 条；
+/// 战技数据 v3 起第 1 条改为按 skillVariants 选段。）
 public enum BuffRankerPageNotes {
     public static func rules(
         attributeScoped: Int,
@@ -2064,7 +2066,8 @@ public enum BuffRankerPageNotes {
     ) -> [String] {
         let hasContexts = hasAttackContexts
         return [
-            "选段一律走 weapons[].skillVariant → skills[].variants[i].atkIds，不按 ctx 取并集"
+            "选段一律走 weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds"
+                + "（缺这一项时只有固定战技才回退 weapons[].skillVariant），不按 ctx 取并集"
                 + "（usage.选段（必读））；一个都对不上就是这把武器打不出段。",
             "只有法术段忽略 motion：usage「法术 / 子弹段」的结论是「motion 只在施法器该属性 attackBase 非 0 时"
                 + "才有意义」，而法术在本页走「没有武器」这一路（attackBase 全 0）。战技的子弹段挂的是真武器、"

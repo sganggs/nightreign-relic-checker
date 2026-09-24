@@ -284,10 +284,12 @@ struct BuffRankerOutputSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Menu {
+                    // 组内固定带这个战技的武器排前、其余按 id（SkillDataIndex.weaponGroups）；
+                    // 每把都标「固定战技 / 局内可抽到」，两者都成立时只标固定。
                     ForEach(model.weaponGroups) { group in
                         Menu("\(group.wepTypeZh)（\(group.weapons.count)）") {
                             ForEach(group.weapons) { weapon in
-                                Button(weapon.displayName) { model.select(weapon: weapon) }
+                                Button(model.weaponMenuTitle(weapon)) { model.select(weapon: weapon) }
                             }
                         }
                     }
@@ -306,6 +308,15 @@ struct BuffRankerOutputSection: View {
                     Pill(text: weapon.wepTypeZh, color: AppTheme.secondaryText)
                     if !weapon.rarityZh.isEmpty {
                         Pill(text: weapon.rarityZh, color: AppTheme.tertiaryText)
+                    }
+                    switch model.currentWeaponSource {
+                    case .fixed:
+                        Pill(text: LoadoutText.t("weaponSource.fixed"), color: AppTheme.green)
+                    case .pool:
+                        Pill(text: LoadoutText.t("weaponSource.pool"), color: AppTheme.amber)
+                            .help(LoadoutText.t("weaponSource.poolHint"))
+                    case nil:
+                        EmptyView()
                     }
                 }
 
@@ -335,6 +346,12 @@ struct BuffRankerOutputSection: View {
                     .foregroundStyle(AppTheme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            // v3：武器列表 = 固定引用 ∪ 局内战技池（usage.战技来源（v3））。
+            Text(LoadoutText.t("weaponSource.note"))
+                .font(.system(size: 11))
+                .foregroundStyle(AppTheme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -362,7 +379,7 @@ struct BuffRankerSegmentSection: View {
                 title: "分段命中",
                 subtitle: model.skill == nil
                     ? "法术的全部命中段；勾掉不想统计的段（例如只算爆发段）"
-                    : "按 weapons[].skillVariant → skills[].variants[].atkIds 选出「这把武器会打出的段」",
+                    : "按 weapons[].skillVariants[战技] → skills[].variants[].atkIds 选出「这把武器会打出的段」（已按 TAE 核实）",
                 symbol: "list.bullet.rectangle"
             )
 

@@ -2,17 +2,22 @@ import Foundation
 
 // 「增伤排名」页上半部分的数据模型：武器 / 战技 / 法术与它们的分段命中。
 //
-// 数据来源：Resources/skills.json（schemaVersion 2），经
+// 数据来源：Resources/skills.json（schemaVersion 3，更早的版本拒绝解码），经
 // `GameDataLoader.dataIfAvailable(for: .skills)` 读出原始 Data 后在这里解码。
 //
 // 解码原则（数据集由另一条流水线维护，字段随时可能增删）：
 //   * 未知字段一律忽略；
 //   * 已知字段缺失 / 类型不符时退回默认值，**不抛错**；
 //   * 数组逐元素解码，坏元素跳过而不是整份失败。
-// 只有「顶层不是 JSON 对象」「武器与战技全空」这种读不懂的情况才抛 `SkillDataError`。
+// 只有「顶层不是 JSON 对象」「schemaVersion < 3」「武器与战技全空」这种读不懂的情况才抛 `SkillDataError`。
 //
 // 关键算法（严格按数据集 usage 块，见页面底部的「原文」折叠区）：
-//   * 选段：weapons[].skillVariant → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
+//   * 选段：weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
+//     skillVariants 缺这个战技时，只有「它就是武器的 swordArtsParamId」才回退 weapons[].skillVariant
+//     （v3 起 skillVariant 只对固定战技有效，池里抽到的战技一律看 skillVariants）；
+//   * 武器来源（v3）：skills[].weaponIds = 固定引用 ∪ 局内战技池；逐把来源看 skills[].weaponSources；
+//   * 正常版 / 专注值不足版：取段规则是 `hit.fpBoth || hit.noFp == 开关`（fpBoth 段两侧都计）；
+//   * 页面只从 variants 取段；任何直接回到 hits[] 的路径都过滤 notInvoked 与 noDamage；
 //   * 近战武器段：该属性伤害 ≈ 武器该属性攻击力 × motion/100 + flat（addBaseAtk 再加一份基础攻击力）；
 //   * 法术 / 子弹段：法术只用 flat（motion 的五属性同值 100 是占位写法）；
 //   * 伤害类型：attribute 为 WeaponAtkAttribute / WeaponAtkAttribute2 时回 weapons[] 取 atkAttribute / atkAttribute2。
@@ -25,12 +30,16 @@ import Foundation
 public enum SkillDataError: LocalizedError {
     case notAnObject
     case undecodable(String)
+    case unsupportedSchema(Int)
     case empty
 
     public var errorDescription: String? {
         switch self {
         case .notAnObject: return "战技数据不是合法的 JSON 对象"
         case .undecodable(let detail): return "战技数据无法解码：" + detail
+        case .unsupportedSchema(let version):
+            return "战技数据是 schemaVersion \(version)：本页按 v3 的 skillVariants / weaponSources 选段，"
+                + "需要 schemaVersion \(SkillDataset.minimumSchemaVersion) 或更新的数据"
         case .empty: return "战技数据里没有任何武器或战技记录"
         }
     }
@@ -97,6 +106,31 @@ extension KeyedDecodingContainer {
     func skillIntArray(_ key: Key) -> [Int] {
         let numbers: [Double] = skillArray(key)
         return numbers.map { Int($0.rounded()) }
+    }
+
+    /// `{"123": 0, ...}` 这种「字符串形式的整数键 → 整数」字典（weapons[].skillVariants）。
+    /// 键不是整数、值不是有限数的项跳过。
+    func skillIntKeyedIntDictionary(_ key: Key) -> [Int: Int] {
+        guard let wrapped = try? decodeIfPresent([String: SkillFailable<Double>].self, forKey: key) else { return [:] }
+        var result: [Int: Int] = [:]
+        for (rawKey, value) in wrapped {
+            guard let id = Int(rawKey.trimmingCharacters(in: .whitespaces)),
+                  let number = value.value, number.isFinite else { continue }
+            result[id] = Int(number.rounded())
+        }
+        return result
+    }
+
+    /// `[[1, 2, 3], ...]` 这种整数元组数组（weaponSources[].pool、weapons[].customWeapons）。
+    /// 坏元素（不是数组、元素不是数）跳过，不让整份失败。
+    func skillIntTuples(_ key: Key) -> [[Int]] {
+        guard let wrapped = try? decodeIfPresent([SkillFailable<[SkillFailable<Double>]>].self, forKey: key) else { return [] }
+        return wrapped.compactMap { row -> [Int]? in
+            guard let items = row.value else { return nil }
+            let numbers = items.compactMap(\.value)
+            guard numbers.count == items.count, numbers.allSatisfy(\.isFinite) else { return nil }
+            return numbers.map { Int($0.rounded()) }
+        }
     }
 
     func skillStringDictionary(_ key: Key) -> [String: String] {
@@ -272,10 +306,25 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
     public let atkAttributeZh: String
     public let atkAttribute2: Int
     public let atkAttribute2Zh: String
-    /// 该武器在「它的战技」variants 数组里的下标；缺失表示这把武器的战技没有命中段。
+    /// 该武器在「它的**固定**战技（swordArtsParamId）」variants 数组里的下标；缺失表示这把武器的
+    /// 固定战技没有命中段。v3 起只对固定战技有效——选段一律先看 `skillVariants`（见 `variantIndex(forSkill:)`）。
     public let skillVariant: Int?
+    /// v3：这把武器局内可能出现的全部战技 ID（固定 + 可达 custom 行的池成员），升序。
+    public let skillIds: [Int]
+    /// v3：{战技 ID: 该战技 variants 的下标}，对每个 (战技, 武器) 对按 BehaviorParam_PC 实解。
+    public let skillVariants: [Int: Int]
+    /// v3：以这把武器为 targetWeaponId 的可达 EquipParamCustomWeapon 行。
+    public let customWeapons: [SkillCustomWeapon]
 
     public var displayName: String { nameZh.isEmpty ? nameEn : nameZh }
+
+    /// 这把武器用某个战技时的 variants 下标（usage.选段（必读））：
+    /// 先看 `skillVariants[战技 ID]`；缺失时**只有**这个战技就是武器的 swordArtsParamId，才回退 `skillVariant`
+    /// ——skillVariant 是固定战技的下标，拿去套池里抽到的别的战技会选错动作套。
+    public func variantIndex(forSkill skillID: Int) -> Int? {
+        if let index = skillVariants[skillID] { return index }
+        return skillID == swordArtsParamId ? skillVariant : nil
+    }
 
     public func attack(_ element: SkillElement) -> Double { attackBase[element] ?? 0 }
 
@@ -305,12 +354,18 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         atkAttribute2 = container.skillInt(.atkAttribute2, default: 3)
         atkAttribute2Zh = container.skillString(.atkAttribute2Zh)
         skillVariant = container.skillOptionalInt(.skillVariant)
+        skillIds = container.skillIntArray(.skillIds)
+        skillVariants = container.skillIntKeyedIntDictionary(.skillVariants)
+        customWeapons = container.skillIntTuples(.customWeapons).compactMap { row in
+            row.count >= 2 ? SkillCustomWeapon(customId: row[0], swordArtsTableId: row[1]) : nil
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, nameZh, nameEn, wepType, wepTypeZh, wepTypeEn, rarityZh
         case attackBase, staminaBase, poiseDamageBase, swordArtsParamId
         case atkAttribute, atkAttributeZh, atkAttribute2, atkAttribute2Zh, skillVariant
+        case skillIds, skillVariants, customWeapons
     }
 
     /// 自检 / 预览用的直接构造。
@@ -321,7 +376,8 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         poiseDamageBase: Double = 0, swordArtsParamId: Int = -1,
         atkAttribute: Int = 3, atkAttributeZh: String = "标准",
         atkAttribute2: Int = 3, atkAttribute2Zh: String = "标准",
-        skillVariant: Int? = nil
+        skillVariant: Int? = nil, skillIds: [Int] = [], skillVariants: [Int: Int] = [:],
+        customWeapons: [SkillCustomWeapon] = []
     ) {
         self.id = id
         self.nameZh = nameZh
@@ -339,6 +395,101 @@ public struct SkillWeapon: Sendable, Hashable, Identifiable, Decodable {
         self.atkAttribute2 = atkAttribute2
         self.atkAttribute2Zh = atkAttribute2Zh
         self.skillVariant = skillVariant
+        self.skillIds = skillIds
+        self.skillVariants = skillVariants
+        self.customWeapons = customWeapons
+    }
+}
+
+/// weapons[].customWeapons 的一项：[customId, swordArtsTableId]（-1 = 该行不抽池，沿用武器自带的战技）。
+public struct SkillCustomWeapon: Sendable, Hashable {
+    public let customId: Int
+    public let swordArtsTableId: Int
+
+    public init(customId: Int, swordArtsTableId: Int) {
+        self.customId = customId
+        self.swordArtsTableId = swordArtsTableId
+    }
+}
+
+/// 这把武器带某个战技的来源（v3 skills[].weaponSources）。同一把武器两者都成立时只算「固定」。
+public enum SkillWeaponSourceKind: String, Sendable, Hashable, CaseIterable {
+    /// EquipParamWeapon.swordArtsParamId 就是这个战技。
+    case fixed
+    /// 只在局内战技池（EquipParamCustomWeapon → SwordArtsTableParam）里抽得到。
+    case pool
+
+    /// 文案键（LoadoutText.table：weaponSource.fixed / weaponSource.pool）。
+    public var textKey: String { "weaponSource." + rawValue }
+
+    /// 页面上的标记：「固定战技」「局内可抽到」（与 Windows 端 TEXT.weaponSource 同文）。
+    public var title: String { LoadoutText.t(textKey) }
+}
+
+/// skills[].weaponSources[].pool 的一项：[swordArtsTableId, chanceWeight, customRows]。
+public struct SkillPoolDraw: Sendable, Hashable {
+    public let poolId: Int
+    public let weight: Int
+    public let customRows: Int
+
+    public init(poolId: Int, weight: Int, customRows: Int) {
+        self.poolId = poolId
+        self.weight = weight
+        self.customRows = customRows
+    }
+}
+
+/// skills[].weaponSources 的一项（与 weaponIds 同序）：{id, fixed?, pool?}。
+public struct SkillWeaponSource: Sendable, Hashable, Decodable {
+    public let weaponId: Int
+    public let fixed: Bool
+    public let pool: [SkillPoolDraw]
+
+    /// 页面标记：两者都成立时只标固定。
+    public var kind: SkillWeaponSourceKind { fixed ? .fixed : .pool }
+
+    public init(weaponId: Int, fixed: Bool, pool: [SkillPoolDraw] = []) {
+        self.weaponId = weaponId
+        self.fixed = fixed
+        self.pool = pool
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        weaponId = container.skillInt(.id, default: -1)
+        fixed = container.skillBool(.fixed)
+        pool = container.skillIntTuples(.pool).compactMap { row in
+            row.count >= 2 ? SkillPoolDraw(poolId: row[0], weight: row[1], customRows: row.count >= 3 ? row[2] : 0) : nil
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, fixed, pool
+    }
+}
+
+/// counts 里的布尔项（其余计数是数字，走 `SkillDataset.counts`）。
+struct SkillCountFlags: Decodable {
+    let taeVerified: Bool
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        taeVerified = container.skillBool(.taeVerified)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case taeVerified
+    }
+}
+
+/// 顶层 swordArtsPools 的一项：[战技 ID, chanceWeight]。
+public struct SkillPoolEntry: Sendable, Hashable {
+    public let skillId: Int
+    public let weight: Int
+
+    public init(skillId: Int, weight: Int) {
+        self.skillId = skillId
+        self.weight = weight
     }
 }
 
@@ -358,13 +509,29 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
     public let attribute: SkillAttackAttribute
     public let attributeZh: String
     public let isBullet: Bool
+    /// 专注值不足时打出的弱化版分支（与正常版互为替代，不相加）。
     public let noFp: Bool
+    /// v3：noFp 由 TAE 判出时为 "tae"；nil = 来自行名里的 "No FP"。
+    public let noFpSource: String?
+    /// v3：带 FP / 无 FP 两侧动画共用的段——无论开关在哪一侧都计入（noFp 一定是 false）。
+    public let fpBoth: Bool
     public let noDamage: Bool
+    /// v3：只打自己 / 队友（自疗子弹等），数据集同时标了 noDamage。
+    public let selfOrAllyOnly: Bool
     /// 该段所属动作套在本作没有任何武器会用到，按选段算法永远取不到。
     public let noVariant: Bool
+    /// v3（TAE 核实）：所有解到它的武器的动画都不调用它，已从 variants 移除；只在 hits[] 里保留。
+    public let notInvoked: Bool
+    /// notInvoked 的原因（enums.notInvokedReason 的键）。
+    public let notInvokedReason: String?
     public let addBaseAtk: Bool
 
     public var id: Int { atkId }
+
+    /// 按「专注值不足版」开关取段：fpBoth 段两侧都计，其余段只取与开关同侧的。
+    public func isOnSide(useNoFp: Bool) -> Bool {
+        fpBoth || noFp == useNoFp
+    }
 
     public var displayLabel: String {
         if let labelZh, !labelZh.isEmpty { return labelZh }
@@ -390,8 +557,13 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
         attributeZh = container.skillString(.attributeZh)
         isBullet = container.skillBool(.isBullet)
         noFp = container.skillBool(.noFp)
+        noFpSource = container.skillOptionalString(.noFpSource)
+        fpBoth = container.skillBool(.fpBoth)
         noDamage = container.skillBool(.noDamage)
+        selfOrAllyOnly = container.skillBool(.selfOrAllyOnly)
         noVariant = container.skillBool(.noVariant)
+        notInvoked = container.skillBool(.notInvoked)
+        notInvokedReason = container.skillOptionalString(.notInvokedReason)
         addBaseAtk = container.skillBool(.addBaseAtk)
     }
 
@@ -406,7 +578,8 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
     private enum CodingKeys: String, CodingKey {
         case atkId, ctx, ctxZh, ctxKind, label, labelZh, motion, flat
         case poise, poiseMv, stamina, staminaMv, attribute, attributeZh
-        case isBullet, noFp, noDamage, noVariant, addBaseAtk
+        case isBullet, noFp, noFpSource, fpBoth, noDamage, selfOrAllyOnly, noVariant
+        case notInvoked, notInvokedReason, addBaseAtk
     }
 }
 
@@ -444,11 +617,21 @@ public struct SkillEntry: Sendable, Hashable, Identifiable, Decodable {
     public let id: Int
     public let nameZh: String
     public let nameEn: String
+    /// v3：能带这个战技的全部武器 = 固定引用（swordArtsParamId）∪ 局内战技池能抽到它的基础武器。
     public let weaponIds: [Int]
+    /// v3：与 weaponIds 同序的来源（fixed / pool）。
+    public let weaponSources: [SkillWeaponSource]
     public let hits: [SkillHit]
     public let variants: [SkillVariant]
+    /// v3（TAE 核实）：战技动画匹配不到（本版本是弓系战技），hits / variants 没做 TAE 过滤。
+    public let taeUnmatched: Bool
 
     public var displayName: String { nameZh.isEmpty ? nameEn : nameZh }
+
+    /// 这把武器的来源记录（weaponSources 里 id 相同的那一项）。
+    public func weaponSource(for weaponID: Int) -> SkillWeaponSource? {
+        weaponSources.first { $0.weaponId == weaponID }
+    }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -456,12 +639,14 @@ public struct SkillEntry: Sendable, Hashable, Identifiable, Decodable {
         nameZh = container.skillString(.nameZh)
         nameEn = container.skillString(.nameEn)
         weaponIds = container.skillIntArray(.weaponIds)
+        weaponSources = container.skillArray(.weaponSources)
         hits = container.skillArray(.hits)
         variants = container.skillArray(.variants)
+        taeUnmatched = container.skillBool(.taeUnmatched)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, nameZh, nameEn, weaponIds, hits, variants
+        case id, nameZh, nameEn, weaponIds, weaponSources, hits, variants, taeUnmatched
     }
 }
 
@@ -496,29 +681,50 @@ public struct SpellEntry: Sendable, Hashable, Identifiable, Decodable {
 }
 
 public struct SkillDataset: Sendable {
+    /// 本页按 v3 的 skillVariants / weaponSources / fpBoth / notInvoked 选段，更早的数据拒绝解码。
+    public static let minimumSchemaVersion = 3
+
     public let schemaVersion: Int
     public let gameVersion: String
     public let dataVersion: String
     public let generatedAt: String
     public let sources: [SkillSource]
     public let counts: [String: Double]
+    /// counts.taeVerified（v3）：命中段是否按 TAE 动画事件核实过。它是布尔值，不在 `counts` 里。
+    public let taeVerified: Bool
     /// 数据集自带的算法说明（页面底部原样展示）。
     public let usage: [String: String]
     public let caveats: [String]
     public let weapons: [SkillWeapon]
     public let skills: [SkillEntry]
     public let spells: [SpellEntry]
+    /// v3 顶层 swordArtsPools：{池 ID: [[战技 ID, chanceWeight], ...]}（只收被可达 custom 行引用的池）。
+    public let swordArtsPools: [Int: [SkillPoolEntry]]
 
     public static func decode(from data: Data) throws -> SkillDataset {
         guard let object = try? JSONSerialization.jsonObject(with: data),
               object is [String: Any] else {
             throw SkillDataError.notAnObject
         }
+        let dataset: SkillDataset
         do {
-            return try JSONDecoder().decode(SkillDataset.self, from: data)
+            dataset = try JSONDecoder().decode(SkillDataset.self, from: data)
         } catch {
             throw SkillDataError.undecodable(String(describing: error))
         }
+        // v2 没有 skillVariants：池里抽到的战技会拿固定战技的下标选段（选错动作套），宁可不认。
+        guard dataset.schemaVersion >= minimumSchemaVersion else {
+            throw SkillDataError.unsupportedSchema(dataset.schemaVersion)
+        }
+        return dataset
+    }
+
+    /// 某个池里某个战技的抽取概率（chanceWeight / 池内权重之和）；池或战技不在表里时为 nil。
+    public func poolChance(poolId: Int, skillId: Int) -> Double? {
+        guard let entries = swordArtsPools[poolId],
+              let entry = entries.first(where: { $0.skillId == skillId }) else { return nil }
+        let total = entries.reduce(0) { $0 + max(0, $1.weight) }
+        return total > 0 ? Double(entry.weight) / Double(total) : nil
     }
 }
 
@@ -533,16 +739,36 @@ extension SkillDataset: Decodable {
         var numbers: [String: Double] = [:]
         for (key, value) in container.skillNumberDictionary(.counts) { numbers[key] = value }
         counts = numbers
+        let flags = try? container.decodeIfPresent(SkillCountFlags.self, forKey: .counts)
+        taeVerified = flags?.taeVerified ?? false
         usage = container.skillStringDictionary(.usage)
         caveats = container.skillArray(.caveats)
         weapons = container.skillArray(.weapons)
         skills = container.skillArray(.skills)
         spells = container.skillArray(.spells)
+        swordArtsPools = SkillDataset.decodePools(container)
+    }
+
+    /// swordArtsPools：键不是整数的池、坏条目一律跳过（宽容解码）。
+    private static func decodePools(_ container: KeyedDecodingContainer<CodingKeys>) -> [Int: [SkillPoolEntry]] {
+        guard let raw = try? container.decodeIfPresent(
+            [String: SkillFailable<[SkillFailable<[SkillFailable<Double>]>]>].self, forKey: .swordArtsPools
+        ) else { return [:] }
+        var pools: [Int: [SkillPoolEntry]] = [:]
+        for (key, value) in raw {
+            guard let poolId = Int(key), let rows = value.value else { continue }
+            pools[poolId] = rows.compactMap { row -> SkillPoolEntry? in
+                guard let items = row.value?.compactMap(\.value), items.count >= 2,
+                      items[0].isFinite, items[1].isFinite else { return nil }
+                return SkillPoolEntry(skillId: Int(items[0].rounded()), weight: Int(items[1].rounded()))
+            }
+        }
+        return pools
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, gameVersion, dataVersion, generatedAt, sources
-        case counts, usage, caveats, weapons, skills, spells
+        case counts, usage, caveats, weapons, skills, spells, swordArtsPools
     }
 }
 
@@ -559,8 +785,8 @@ public enum SkillTextZh {
         ("FP", "专注值")
     ]
 
-    /// 数据集原文里还留着英文的 FP——hits[].labelZh 的「无FP版」（本版本 162 段）、
-    /// caveats 第 4 条的「12 段（6 段带 FP + 6 段 No FP）」——页面一律说中文的「专注值」。
+    /// 数据集原文里还留着英文的 FP——hits[].labelZh 的「无FP版」（v3 本版本 375 段，含 TAE 补标的 213 段）、
+    /// caveats 里的「12 段（6 段带 FP + 6 段 No FP）」「No FP 四段」——页面一律说中文的「专注值」。
     ///
     /// 两端都走正则，`\s` 把全角空格一起吃下（ICU 与 JS 的 `\s` 都含 U+3000），
     /// 数据集以后写成「无　FP版」也不会只有一端替换掉。
@@ -604,6 +830,8 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
     public let stamina: Double
     public let isBullet: Bool
     public let noFp: Bool
+    /// 两侧共用的段（v3 fpBoth）：正常版与专注值不足版都计入。
+    public let fpBoth: Bool
     public let noDamage: Bool
     public let attributeZh: String
     /// 这一段的物理伤害类型（attribute 已解析到武器的 atkAttribute / atkAttribute2）。
@@ -769,6 +997,7 @@ public enum SkillDamageMath {
             stamina: stamina,
             isBullet: hit.isBullet,
             noFp: hit.noFp,
+            fpBoth: hit.fpBoth,
             noDamage: hit.noDamage,
             attributeZh: hit.attributeZh,
             physicalChannel: hasPhysical ? physicalChannel : nil,
@@ -787,8 +1016,12 @@ public enum SkillDamageMath {
     /// 所以这里不做「这一侧为空就退回另一侧」的兜底（本版本数据里也不存在整套只有专注值不足版的动作套）。
     /// 与 Windows 端 hitEnabled / hitOverridesFor 同一口径：数值为 0 但没标 noDamage 的段照样勾上，
     /// 它对构成的贡献本来就是 0。
+    ///
+    /// v3：取段规则是 `fpBoth || noFp == 开关`——fpBoth 段（带 FP / 无 FP 两侧动画共用，本版本 19 段）
+    /// 两侧都计。旧写法 `noFp == 开关` 会在专注值不足版这一侧丢掉它们：1024 唤矛仪式、1021 毁灭灵火
+    /// 切过去一段都不剩，218 伟哉卡利亚少了最后一发。
     public static func selection(_ segments: [SkillSegment], useNoFp: Bool) -> Set<Int> {
-        Set(segments.filter { $0.noFp == useNoFp && !$0.noDamage }.map(\.atkId))
+        Set(segments.filter { ($0.fpBoth || $0.noFp == useNoFp) && !$0.noDamage }.map(\.atkId))
     }
 
     /// 汇总勾选的段：各通道相对伤害量 → 占比。
@@ -836,12 +1069,20 @@ public struct SkillOutput: Sendable, Hashable, Identifiable {
     }
 }
 
-/// 战技的武器选择：按武器类别分组。
+/// 战技的武器选择：按武器类别分组。组内固定带这个战技的武器排前、其余按 id。
 public struct SkillWeaponGroup: Sendable, Hashable, Identifiable {
     public let wepTypeZh: String
     public let weapons: [SkillWeapon]
+    /// 组内固定带这个战技的武器数（它们排在 `weapons` 最前面）。
+    public let fixedCount: Int
 
     public var id: String { wepTypeZh }
+
+    public init(wepTypeZh: String, weapons: [SkillWeapon], fixedCount: Int = 0) {
+        self.wepTypeZh = wepTypeZh
+        self.weapons = weapons
+        self.fixedCount = fixedCount
+    }
 }
 
 public struct SkillDataIndex: Sendable {
@@ -855,6 +1096,12 @@ public struct SkillDataIndex: Sendable {
     public let outputs: [SkillOutput]
     /// 有命中段但本作没有任何武器引用的战技数量（页面底部说明用）。
     public let skillsWithoutWeapons: Int
+    /// 列表里只在局内战技池里抽得到、没有任何武器固定带的战技数（v3 战技来源，页面底部说明用）。
+    public let poolOnlyOutputs: Int
+    /// hits[] 里标了 notInvoked 的段数（v3 TAE 核实：在所有武器上都打不出，本页不取）。
+    public var notInvokedHits: Int {
+        dataset.skills.reduce(0) { $0 + $1.hits.filter(\.notInvoked).count }
+    }
     /// 完全没有命中段的战技 / 法术数量（纯增益、格挡、附魔一类）。
     public let skillsWithoutHits: Int
     public let spellsWithoutHits: Int
@@ -873,6 +1120,7 @@ public struct SkillDataIndex: Sendable {
         var withoutWeapons = 0
         var skillsNoHits = 0
         var skillsNoDamage = 0
+        var poolOnly = 0
         for skill in dataset.skills {
             if skill.hits.isEmpty {
                 skillsNoHits += 1
@@ -888,6 +1136,12 @@ public struct SkillDataIndex: Sendable {
                 continue
             }
             let weapons = skill.weaponIds.count
+            let byID = weaponsByID
+            if !skill.weaponIds.contains(where: { id in
+                byID[id].map { Self.sourceKind(skill: skill, weapon: $0) == .fixed } ?? false
+            }) {
+                poolOnly += 1
+            }
             outputs.append(
                 SkillOutput(
                     kind: .skill,
@@ -932,26 +1186,18 @@ public struct SkillDataIndex: Sendable {
         guard !outputs.isEmpty else { throw SkillDataError.empty }
         self.outputs = outputs
         skillsWithoutWeapons = withoutWeapons
+        poolOnlyOutputs = poolOnly
         skillsWithoutHits = skillsNoHits
         spellsWithoutHits = spellsNoHits
         skillsWithoutDamage = skillsNoDamage
         spellsWithoutDamage = spellsNoDamage
     }
 
-    /// 至少有一把引用它的武器能打出非 0 相对值（与 Windows 端 skillHasDamage 同一口径）。
+    /// 至少有一把能带它的武器（固定或局内战技池）能打出非 0 相对值（与 Windows 端 skillHasDamage 同一口径）。
     static func skillHasDamage(_ skill: SkillEntry, weaponsByID: [Int: SkillWeapon]) -> Bool {
         for id in skill.weaponIds {
             guard let weapon = weaponsByID[id] else { continue }
-            let hits: [SkillHit]
-            if skill.variants.isEmpty {
-                hits = fallbackHits(for: skill, weapon: weapon)
-            } else if let index = weapon.skillVariant, skill.variants.indices.contains(index) {
-                let ids = Set(skill.variants[index].atkIds)
-                hits = skill.hits.filter { ids.contains($0.atkId) }
-            } else {
-                continue
-            }
-            if hits.contains(where: { SkillDamageMath.segment(for: $0, weapon: weapon).hasDamage }) {
+            if selectHits(skill, weapon: weapon).contains(where: { SkillDamageMath.segment(for: $0, weapon: weapon).hasDamage }) {
                 return true
             }
         }
@@ -970,18 +1216,45 @@ public struct SkillDataIndex: Sendable {
 
     // MARK: 武器
 
-    /// 某个战技可用的武器，按武器类别分组（类别内按武器 id 升序，类别按武器数量降序）。
+    /// 这把武器带这个战技的来源（v3 weaponSources）：固定 / 局内可抽到；两者都成立时只算固定。
+    /// 武器不在这个战技的 weaponIds 里时为 nil。
+    public func weaponSourceKind(skill: SkillEntry, weapon: SkillWeapon) -> SkillWeaponSourceKind? {
+        guard skill.weaponIds.contains(weapon.id) else { return nil }
+        return Self.sourceKind(skill: skill, weapon: weapon)
+    }
+
+    /// weaponSources 有这把武器就按它的 fixed；没有（数据缺这一项）时退回 swordArtsParamId 判定。
+    static func sourceKind(skill: SkillEntry, weapon: SkillWeapon) -> SkillWeaponSourceKind {
+        if let source = skill.weaponSource(for: weapon.id) { return source.kind }
+        return weapon.swordArtsParamId == skill.id ? .fixed : .pool
+    }
+
+    /// 某个战技可用的武器（固定引用 ∪ 局内战技池），按武器类别分组：
+    /// 类别内固定带这个战技的武器排前、其余按武器 id 升序；
+    /// 类别之间先排含固定武器的，再按武器数量降序、类别名升序。默认武器因此总是固定武器（有的话）。
     public func weaponGroups(for skill: SkillEntry) -> [SkillWeaponGroup] {
         var grouped: [String: [SkillWeapon]] = [:]
+        var fixed: Set<Int> = []
         for id in skill.weaponIds {
             guard let weapon = weaponsByID[id] else { continue }
             let key = weapon.wepTypeZh.isEmpty ? weapon.wepTypeEn : weapon.wepTypeZh
             grouped[key, default: []].append(weapon)
+            if Self.sourceKind(skill: skill, weapon: weapon) == .fixed { fixed.insert(weapon.id) }
         }
         return grouped
-            .map { SkillWeaponGroup(wepTypeZh: $0.key, weapons: $0.value.sorted { $0.id < $1.id }) }
+            .map { key, weapons in
+                let sorted = weapons.sorted { lhs, rhs in
+                    let lhsFixed = fixed.contains(lhs.id)
+                    let rhsFixed = fixed.contains(rhs.id)
+                    return lhsFixed == rhsFixed ? lhs.id < rhs.id : lhsFixed
+                }
+                return SkillWeaponGroup(
+                    wepTypeZh: key, weapons: sorted, fixedCount: sorted.filter { fixed.contains($0.id) }.count
+                )
+            }
             .sorted { lhs, rhs in
-                lhs.weapons.count == rhs.weapons.count
+                if (lhs.fixedCount > 0) != (rhs.fixedCount > 0) { return lhs.fixedCount > 0 }
+                return lhs.weapons.count == rhs.weapons.count
                     ? lhs.wepTypeZh < rhs.wepTypeZh
                     : lhs.weapons.count > rhs.weapons.count
             }
@@ -994,34 +1267,45 @@ public struct SkillDataIndex: Sendable {
     // MARK: 选段
 
     /// 这把武器打出的段（usage.选段（必读））：
-    /// `variants[weapon.skillVariant].atkIds`；variants 缺失时才退回 ctx 单选逻辑。
+    /// `variants[weapon.skillVariants[战技 ID]].atkIds`（缺失时只有固定战技才回退 skillVariant，
+    /// 见 `SkillWeapon.variantIndex(forSkill:)`）；variants 缺失时才退回 ctx 单选逻辑。
     ///
-    /// **variants 存在时一律以 skillVariant 为准**：数据集写明「skillVariant 缺失表示该武器的
-    /// 战技没有任何命中段」，所以缺失 / 越界就是「打不出段」，不按 weaponIds 回查、也不退回
-    /// ctx 逻辑——那样会把数据问题盖掉。与 Windows 端 selectHits 同一口径。
+    /// **variants 存在时一律以下标为准**：数据集写明「skillVariants 覆盖 skillIds 里每个有命中段的战技」，
+    /// 所以缺失 / 越界就是「打不出段」，不按 weaponIds 回查、也不退回 ctx 逻辑——那样会把数据问题盖掉。
+    /// variants[].atkIds 已剔除 TAE 判定打不出的段（hits[] 里标 notInvoked），这条路径天然取不到它们。
+    /// 与 Windows 端 selectHits 同一口径。
     public func hits(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillHit] {
+        Self.selectHits(skill, weapon: weapon)
+    }
+
+    static func selectHits(_ skill: SkillEntry, weapon: SkillWeapon?) -> [SkillHit] {
         if !skill.variants.isEmpty {
-            guard let weapon, let index = weapon.skillVariant,
+            guard let weapon, let index = weapon.variantIndex(forSkill: skill.id),
                   skill.variants.indices.contains(index) else { return [] }
             let ids = Set(skill.variants[index].atkIds)
             return skill.hits.filter { ids.contains($0.atkId) }
         }
-        return Self.fallbackHits(for: skill, weapon: weapon)
+        return fallbackHits(for: skill, weapon: weapon)
     }
 
     /// variants 缺失时的退回逻辑：先 ctx == 武器 nameEn，再 ctx == wepTypeEn，
     /// 最后 ctx 缺失的那组 —— **单选，不取并集**；一个都对不上就是打不出段。
     /// 按 ctx 取并集会把通用战技（战吼 290 段、野蛮咆哮 358 段）重复统计几十遍。
+    ///
+    /// 这是唯一一条直接从 hits[] 取段的路径，所以先剔掉 notInvoked（TAE 判定永远打不出，
+    /// 如狩猎大蛇的两段光之束）与 noDamage（只挂状态 / 只打自己队友的自疗子弹）——
+    /// variants 那条路径由数据集保证不含 notInvoked，这里要自己把关。
     static func fallbackHits(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillHit] {
+        let playable = skill.hits.filter { !$0.notInvoked && !$0.noDamage }
         if let weapon, !weapon.nameEn.isEmpty {
-            let byName = skill.hits.filter { $0.ctx == weapon.nameEn }
+            let byName = playable.filter { $0.ctx == weapon.nameEn }
             if !byName.isEmpty { return byName }
         }
         if let weapon, !weapon.wepTypeEn.isEmpty {
-            let byType = skill.hits.filter { $0.ctx == weapon.wepTypeEn }
+            let byType = playable.filter { $0.ctx == weapon.wepTypeEn }
             if !byType.isEmpty { return byType }
         }
-        return skill.hits.filter { $0.ctx == nil }
+        return playable.filter { $0.ctx == nil }
     }
 
     public func segments(for skill: SkillEntry, weapon: SkillWeapon?) -> [SkillSegment] {

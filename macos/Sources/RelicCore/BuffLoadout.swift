@@ -2818,6 +2818,10 @@ public enum LoadoutText {
         "warnLadders": "不同叠层阶梯同时生效（{0}）：各阶梯 categoryPriority 不同、按参数结构判为互不顶替、结果相乘，未实测",
         "warnPriority": "互斥键 {0}（applyHighest）：按 categoryPriority 取数值小的「{1}」，压掉 {2}",
         "warnTiers": "「{0}」的不同档位同时计入（{1}），各自独立相乘：参数推断，未实测",
+        "weaponSource.fixed": "固定战技",
+        "weaponSource.note": "武器列表含固定带这个战技的武器与局内战技池能抽到它的武器；动作套按这一把武器实解。",
+        "weaponSource.pool": "局内可抽到",
+        "weaponSource.poolHint": "局内掉落的这把武器有机会抽到这个战技（按战技池权重）",
         "wepTypeFallback": "类别 {0}",
     ]
 

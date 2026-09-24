@@ -184,6 +184,25 @@ final class BuffRankerModel: ObservableObject {
         refreshSegments(resetSelection: true)
     }
 
+    // MARK: 武器来源（v3 weaponSources）
+
+    /// 这把武器带当前战技的来源：固定战技 / 局内可抽到（两者都成立时只算固定）。法术或不在列表里时为 nil。
+    func weaponSource(_ candidate: SkillWeapon) -> SkillWeaponSourceKind? {
+        guard let skills, let skill else { return nil }
+        return skills.weaponSourceKind(skill: skill, weapon: candidate)
+    }
+
+    /// 当前武器的来源。
+    var currentWeaponSource: SkillWeaponSourceKind? {
+        weapon.flatMap { weaponSource($0) }
+    }
+
+    /// 武器菜单里的一项：「名字 · 固定战技」「名字 · 局内可抽到」。
+    func weaponMenuTitle(_ candidate: SkillWeapon) -> String {
+        guard let kind = weaponSource(candidate) else { return candidate.displayName }
+        return candidate.displayName + " · " + kind.title
+    }
+
     // MARK: 分段
 
     private func refreshSegments(resetSelection: Bool) {

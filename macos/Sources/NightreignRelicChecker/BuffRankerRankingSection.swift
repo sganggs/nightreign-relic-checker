@@ -179,9 +179,18 @@ struct BuffRankerNotesSection: View {
                         RankerDetailRow(
                             label: "可选战技",
                             value: "\(skills.outputs.filter { $0.kind == .skill }.count) 个"
-                                + "（另有 \(skills.skillsWithoutWeapons) 个战技本作没有任何武器引用、"
+                                + "（其中 \(skills.poolOnlyOutputs) 个只能从局内战技池抽到，见 usage.战技来源（v3）；"
+                                + "另有 \(skills.skillsWithoutWeapons) 个战技本作没有任何武器能带、"
                                 + "\(skills.skillsWithoutHits) 个战技没有命中段、"
                                 + "\(skills.skillsWithoutDamage) 个战技每一段都算不出伤害，未列入）",
+                            tint: AppTheme.secondaryText
+                        )
+                        RankerDetailRow(
+                            label: "命中段核实",
+                            value: skills.dataset.taeVerified
+                                ? "已按 TAE 动画事件核实：\(skills.notInvokedHits) 段在所有武器上都打不出（hits[].notInvoked），"
+                                    + "本页不取（usage.命中段已按 TAE 核实（v3））"
+                                : "这份数据没做 TAE 核实（counts.taeVerified 不为 true），选段只按行为表",
                             tint: AppTheme.secondaryText
                         )
                         RankerDetailRow(
@@ -253,8 +262,12 @@ struct BuffRankerNotesSection: View {
         return existing + rest
     }
 
+    /// usage 的展示顺序：选段在前，紧跟 v3 的两条（战技来源、命中段已按 TAE 核实），再是算法与边界，其余按键名。
     private func usageKeys(_ skills: SkillDataIndex) -> [String] {
-        let preferred = ["选段（必读）", "近战武器段", "法术 / 子弹段", "伤害类型（斩 / 打 / 突）", "削韧", "本数据集的边界"]
+        let preferred = [
+            "选段（必读）", "战技来源（v3）", "命中段已按 TAE 核实（v3）",
+            "近战武器段", "法术 / 子弹段", "伤害类型（斩 / 打 / 突）", "削韧", "本数据集的边界"
+        ]
         let existing = preferred.filter { skills.dataset.usage[$0] != nil }
         let rest = skills.dataset.usage.keys.filter { !preferred.contains($0) }.sorted()
         return existing + rest
