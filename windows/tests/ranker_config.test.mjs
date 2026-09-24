@@ -29,7 +29,8 @@ function outputFor(kind, id, weaponId, extra) {
   const isSpell = kind !== "skill";
   const weapon = weaponId ? skills._weaponById[weaponId] : null;
   const source = isSpell ? skills._spellById[id] : skills._skillById[id];
-  const hits = (isSpell ? source.hits : R.selectHits(source, weapon)).filter((hit) => !hit.noDamage && !hit.noFp);
+  // 默认勾选＝正常版这一侧（hit.fpBoth || noFp 与开关同侧，开关默认关）。
+  const hits = (isSpell ? source.hits : R.selectHits(source, weapon)).filter((hit) => !hit.noDamage && R.hitOnSide(hit, false));
   const comp = R.composition(hits, weapon, isSpell);
   return R.makeOutput(Object.assign({
     mode: kind, meansId: id, weapon, hand: 1, shares: comp.shares, contexts: {}
@@ -406,10 +407,11 @@ test("appliesTo 分流：持武器的手、出手武器类别、攻击情境各�
   assert.equal(R.appliesVerdict(rightOnly, outputFor("skill", 1177, 9040000, { hand: 2 })).state, "no");
   const daggerOnly = index.byId[8160000];      // 提升短剑的攻击力
   assert.equal(R.appliesVerdict(daggerOnly, corpse).state, "no", "刀不是短剑");
-  const daggerSkill = skills.skills.find((skill) => (skill.weaponIds || []).some((id) =>
-    skills._weaponById[id] && skills._weaponById[id].wepType === 1 && typeof skills._weaponById[id].skillVariant === "number" &&
-    R.selectHits(skill, skills._weaponById[id]).some((hit) => !hit.noDamage)));
-  const daggerWeapon = daggerSkill.weaponIds.map((id) => skills._weaponById[id]).find((weapon) => weapon && weapon.wepType === 1 && typeof weapon.skillVariant === "number");
+  // 短剑 + 它能带的任一战技（v3：固定或局内战技池，动作套读 skillVariants[战技 ID]）。
+  const daggerPlayable = (skill, weapon) => weapon && weapon.wepType === 1 && R.variantIndexFor(skill, weapon) >= 0 &&
+    R.selectHits(skill, weapon).some((hit) => !hit.noDamage);
+  const daggerSkill = skills.skills.find((skill) => (skill.weaponIds || []).some((id) => daggerPlayable(skill, skills._weaponById[id])));
+  const daggerWeapon = daggerSkill.weaponIds.map((id) => skills._weaponById[id]).find((weapon) => daggerPlayable(daggerSkill, weapon));
   assert.equal(R.appliesVerdict(daggerOnly, outputFor("skill", daggerSkill.id, daggerWeapon.id)).state, "yes");
   const counter = index.byId[320600];          // 矛护符：强化突刺反击
   assert.equal(R.appliesVerdict(counter, corpse).state, "context");

@@ -85,9 +85,9 @@ ctx.getGameData("bosses").then(function (data) {
 - 因此页面必须能在 `data === null` 时正常渲染（显示「数据未内置」）——四个 JSON
   由另一条数据流水线生成，换版本或重新生成期间随时可能缺位。
 - bosses / heroes / skills / buffs 四份数据现已全部就位（regulation 1.03.5 导出，当前
-  `bossesSchemaVersion` 4 / heroes `schemaVersion` 1 / skills `schemaVersion` 2 /
+  `bossesSchemaVersion` 4 / heroes `schemaVersion` 1 / skills `schemaVersion` 3 /
   buffs `schemaVersion` 6——这四个数字在页面与测试里是写死的（增伤排名页与 `ranker.test.mjs`
-  要求 buffs ≥ 6，旧数据缺配置页要用的字段时页面会提示结果不可信），重新生成数据集时要连同
+  要求 skills ≥ 3、buffs ≥ 6，旧数据缺选段 / 配置页要用的字段时页面会提示结果不可信），重新生成数据集时要连同
   `PROVENANCE.md` 的数据集总览表一起改）。**字段含义、数值口径与已知局限以
   [`macos/DataSources/PROVENANCE.md`](../../../macos/DataSources/PROVENANCE.md)
   和 JSON 自带的 `notes` / `usage` / `caveats` / `fieldNotes` 为准**，页面不要另立说法，

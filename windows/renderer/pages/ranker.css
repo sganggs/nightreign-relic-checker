@@ -184,6 +184,18 @@
   min-width: 220px;
 }
 
+/* 当前武器的来源标记（固定战技 / 局内可抽到）：与下拉框同高、竖直居中。 */
+.ranker-weapon-source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  flex: 0 0 auto;
+}
+
+.ranker-weapon-source[title] {
+  cursor: help;
+}
+
 .ranker-hand {
   grid-template-columns: repeat(2, minmax(64px, auto));
 }

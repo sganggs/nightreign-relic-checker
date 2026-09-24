@@ -1,7 +1,9 @@
 // 增伤排名页。页面模块契约见 renderer/pages/README.md。
 // 本文件由「增伤排名」功能开发者独占：只改这里与 pages/ranker.css。
 //
-// 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 2）
+// 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 3：局内战技池进 weaponIds / weaponSources，
+//                                   选段读 weapons[].skillVariants[战技 ID]，variants[].atkIds 已按 TAE 核实；
+//                                   hits[].notInvoked / fpBoth / selfOrAllyOnly 见数据集 fieldNotes）
 //       ctx.getGameData("buffs")  → resources/buffs.json（schemaVersion 6：sourceSlot / appliesTo /
 //                                   slotRules / weaponAffixes / fixedRelics / stackInput / exclusiveKey /
 //                                   affixVariant / selfAllyPair / accumulatorLadder）
@@ -32,7 +34,8 @@
 //   · 按推荐填满：武器词条 → 遗物逐格（固定 vs 自组，同分取固定）→ 护符；每步取总倍率增幅最大的
 //     （同增幅取 ID 小的），不选条件型、叠层与累积阶梯。
 // 配置部分的文案串全部集中在下方 TEXT 常量表，与 macOS 端 LoadoutText.table 是同一张表（点号路径逐键对照，
-// 两端测试都校验同一个摘要）。原样保留的输出手段／分段命中／伤害构成／底部原文折叠沿用旧版的行内文案，不在此表。
+// 两端测试都校验同一个摘要）。原样保留的输出手段／分段命中／伤害构成／底部原文折叠沿用旧版的行内文案，不在此表；
+// 例外是 v3 新增的武器来源标记（weaponSource.*），三端同名同值，也放在表里。
 // 本页只做「相对伤害构成」：没有强化等级、能力值补正与 AttackElementCorrectParam，绝对伤害不在范围内。
 (function (root) {
   "use strict";
@@ -132,6 +135,13 @@
     noData: "数据未内置",
     loadoutMissing: "增益数据缺少配置页需要的字段（slotRules／appliesTo，需 schemaVersion 6）",
     schemaTooOld: "增益数据是 schemaVersion {0}：本页按 v6 的 appliesTo / slotRules / exclusiveKey 组配置，旧数据缺这些字段，结果不可信",
+    // 输出手段 · 武器选择器（skills schemaVersion 3 的 weaponSources：固定战技 / 局内战技池）
+    weaponSource: {
+      fixed: "固定战技",
+      pool: "局内可抽到",
+      poolHint: "局内掉落的这把武器有机会抽到这个战技（按战技池权重）",
+      note: "武器列表含固定带这个战技的武器与局内战技池能抽到它的武器；动作套按这一把武器实解。"
+    },
     // 工具条
     runMode: { normal: "常规", deep: "深夜" },
     runModeLabel: "出击模式",
@@ -489,17 +499,50 @@
 
   // ---- 选段（usage.选段（必读））---------------------------------------
 
-  // 武器在这个战技里用的那一套动作。缺 skillVariant = 这把武器的战技没有命中段。
+  // 本页按 skills schemaVersion 3 取段：weapons[].skillVariants（逐 (战技, 武器) 实解的动作套下标）、
+  // skills[].weaponSources（固定 / 局内战技池）与按 TAE 核实过的 variants[].atkIds。旧数据缺这些字段，
+  // 局内战技池的武器取不到段、不打出的段也没剔除，页面照样渲染但要提示结果不可信。
+  var SKILLS_SCHEMA_MIN = 3;
+
+  function skillsSchemaWarning(skillsData) {
+    var version = skillsData ? skillsData.schemaVersion : null;
+    if (num(version) >= SKILLS_SCHEMA_MIN) return "";
+    return "战技数据是 schemaVersion " + (version == null ? "（缺失）" : version) + "：本页按 v" + SKILLS_SCHEMA_MIN +
+      " 的 skillVariants / weaponSources / TAE 核实过的动作套取段，旧数据缺这些字段，结果不可信";
+  }
+
+  // 这把武器用这个战技时的 variants 下标：一律读 weapons[].skillVariants[战技 ID]（v3，覆盖武器
+  // skillIds 里每个有命中段的战技，含局内战技池抽到的）。缺失时才回退旧的 skillVariant，而且只在这个战技
+  // 就是武器的固定战技（swordArtsParamId）时——skillVariant 只指固定战技，拿去套池里抽到的战技会选错套。
+  function variantIndexFor(skill, weapon) {
+    if (!skill || !weapon) return -1;
+    var map = weapon.skillVariants;
+    if (map && typeof map === "object") {
+      var own = map[String(skill.id)];
+      if (typeof own === "number") return own;
+    }
+    if (typeof weapon.skillVariant === "number" && weapon.swordArtsParamId === skill.id) return weapon.skillVariant;
+    return -1;
+  }
+
+  // 武器在这个战技里用的那一套动作。找不到下标 = 这把武器用这个战技没有命中段。
   function selectVariant(skill, weapon) {
     var variants = skill && Array.isArray(skill.variants) ? skill.variants : null;
     if (!variants || !variants.length) return null;
-    var index = weapon && typeof weapon.skillVariant === "number" ? weapon.skillVariant : -1;
+    var index = variantIndexFor(skill, weapon);
     if (index < 0 || index >= variants.length) return null;
     return variants[index] || null;
   }
 
-  // 返回「这把武器实际会打出的段」。variants 存在时一律走 atkIds，
-  // 缺失才退回 ctx 单选（武器名 → 武器类别 → ctx 缺失），任何情况下都不取并集。
+  // 直接从 hits[] 取段时先剔掉 TAE 判定为永远打不出的段（hits[].notInvoked，v3）：它们不在任何
+  // variants[].atkIds 里，只留在 hits[] 备查。法术不做 TAE 过滤，这一步对法术是空操作。
+  function invokedHits(hits) {
+    return (hits || []).filter(function (hit) { return hit && hit.notInvoked !== true; });
+  }
+
+  // 返回「这把武器实际会打出的段」。variants 存在时一律走 atkIds（页面只从 variants 取段），
+  // 缺失才退回 ctx 单选（武器名 → 武器类别 → ctx 缺失），任何情况下都不取并集；回退路径直接读 hits[]，
+  // 所以要再剔掉 notInvoked 与 noDamage 段。
   function selectHits(skill, weapon) {
     var hits = skill && Array.isArray(skill.hits) ? skill.hits : [];
     if (!hits.length) return [];
@@ -511,25 +554,34 @@
       variant.atkIds.forEach(function (id) { wanted[id] = true; });
       return hits.filter(function (hit) { return wanted[hit.atkId] === true; });
     }
+    var pool = invokedHits(hits).filter(function (hit) { return hit.noDamage !== true; });
     var byWeapon = weapon && weapon.nameEn
-      ? hits.filter(function (hit) { return hit.ctx === weapon.nameEn; })
+      ? pool.filter(function (hit) { return hit.ctx === weapon.nameEn; })
       : [];
     if (byWeapon.length) return byWeapon;
     var byType = weapon && weapon.wepTypeEn
-      ? hits.filter(function (hit) { return hit.ctx === weapon.wepTypeEn; })
+      ? pool.filter(function (hit) { return hit.ctx === weapon.wepTypeEn; })
       : [];
     if (byType.length) return byType;
-    return hits.filter(function (hit) { return !hit.ctx; });
+    return pool.filter(function (hit) { return !hit.ctx; });
+  }
+
+  // 这一段在「使用专注值不足版本」开关的这一侧吗：noFp 与开关同侧；fpBoth 段（带 FP 与无 FP
+  // 两侧动画都会打出，v3 按 TAE 标出）两侧都计。只看 noFp 会在专注值不足侧漏掉 fpBoth 段。
+  function hitOnSide(hit, noFp) {
+    if (!hit) return false;
+    return hit.fpBoth === true || Boolean(hit.noFp) === Boolean(noFp);
   }
 
   // 分段列表工具条的三个动作，返回完整的 override 表（reset＝清空，退回默认规则）。
-  // 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍。
+  // 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍；
+  // 两侧共用的 fpBoth 段在哪一侧都勾上。
   function hitOverridesFor(hits, action, noFp) {
     var overrides = {};
     if (action === "reset") return overrides;
     (hits || []).forEach(function (hit) {
       if (!hit || hit.noDamage) return;
-      overrides[hit.atkId] = action === "all" && Boolean(hit.noFp) === Boolean(noFp);
+      overrides[hit.atkId] = action === "all" && hitOnSide(hit, noFp);
     });
     return overrides;
   }
@@ -2842,18 +2894,44 @@
 
   // ---- 输出手段列表 ----------------------------------------------------
 
+  // 每把武器带这个战技的来源（usage「战技来源（v3）」读 skills[].weaponSources）：fixed＝武器的固定战技
+  // （EquipParamWeapon.swordArtsParamId），pool＝局内掉落时战技池能抽到。两者都成立时只记 fixed。
+  // 缺 weaponSources 的旧数据按 swordArtsParamId 判固定，判不出的不标。
+  function weaponSourceMap(skill) {
+    var map = {};
+    var list = skill && Array.isArray(skill.weaponSources) ? skill.weaponSources : [];
+    list.forEach(function (entry) {
+      if (!entry || typeof entry.id !== "number") return;
+      if (entry.fixed === true) map[entry.id] = "fixed";
+      else if (Array.isArray(entry.pool) && entry.pool.length && map[entry.id] !== "fixed") map[entry.id] = "pool";
+    });
+    return map;
+  }
+
+  function weaponSourceOf(skill, weapon, map) {
+    if (!skill || !weapon) return null;
+    var sources = map || weaponSourceMap(skill);
+    if (sources[weapon.id]) return sources[weapon.id];
+    return weapon.swordArtsParamId === skill.id ? "fixed" : null;
+  }
+
+  // 能带这个战技的武器（skills[].weaponIds = 固定引用 ∪ 局内战技池）：固定战技的武器排前，其余按 id 升序。
   function weaponsForSkill(skillsData, skill) {
     var byId = skillsData && skillsData._weaponById;
     var ids = (skill && Array.isArray(skill.weaponIds)) ? skill.weaponIds : [];
+    var sources = weaponSourceMap(skill);
     var out = [];
     ids.forEach(function (id) {
       var weapon = byId ? byId[id] : null;
       if (weapon) out.push(weapon);
     });
+    var rank = function (weapon) { return weaponSourceOf(skill, weapon, sources) === "fixed" ? 0 : 1; };
+    out.sort(function (a, b) { return (rank(a) - rank(b)) || (a.id - b.id); });
     return out;
   }
 
-  // 按 wepTypeZh 分组，组内按武器 id 升序；用于武器下拉的 optgroup。
+  // 按 wepTypeZh 分组，组与组内都保持传入顺序（weaponsForSkill 已按「固定在前、再按 id」排好）；
+  // 用于武器下拉的 optgroup。
   function groupWeapons(weapons) {
     var order = [];
     var groups = {};
@@ -2879,7 +2957,7 @@
     });
   }
 
-  // 战技：任意一把引用它的武器能打出非 0 构成就收录。
+  // 战技：任意一把能带它的武器（skills[].weaponIds：固定战技或局内战技池）能打出非 0 构成就收录。
   function skillHasDamage(skillsData, skill) {
     var byId = (skillsData && skillsData._weaponById) || {};
     var ids = (skill && Array.isArray(skill.weaponIds)) ? skill.weaponIds : [];
@@ -2907,7 +2985,8 @@
     return { skills: skillCount, spells: spellCount };
   }
 
-  // 战技 + 法术的统一检索条目：至少有一段能算出非 0 相对值才收录。
+  // 战技 + 法术的统一检索条目：至少有一段能算出非 0 相对值才收录。战技还要至少有一把武器——
+  // v3 把局内战技池也算进 weaponIds 之后，没有武器的只剩 1 无战技 / 9999 ？？？ 两个占位条目。
   function buildMeansItems(skillsData) {
     var items = [];
     ((skillsData && skillsData.skills) || []).forEach(function (skill) {
@@ -3261,16 +3340,17 @@
     var skill = currentSkill();
     if (skill) return selectHits(skill, currentWeapon());
     var spell = currentSpell();
-    if (spell) return Array.isArray(spell.hits) ? spell.hits.slice() : [];
+    if (spell) return invokedHits(spell.hits);
     return [];
   }
 
-  // 默认：与「使用专注值不足版本」开关同侧的段全勾，另一侧全不勾；用户手动勾选写进 overrides。
+  // 默认：与「使用专注值不足版本」开关同侧的段全勾，另一侧全不勾，两侧共用的 fpBoth 段恒勾；
+  // 用户手动勾选写进 overrides。
   function hitEnabled(hit) {
     if (!hit || hit.noDamage) return false;
     var override = state.hitOverrides[hit.atkId];
     if (override === true || override === false) return override;
-    return Boolean(hit.noFp) === Boolean(state.noFp);
+    return hitOnSide(hit, state.noFp);
   }
 
   function selectedHits() {
@@ -3369,6 +3449,8 @@
       return "<button class='segment-button" + active + "' type='button' data-ranker-means-kind='" +
         option.key + "'>" + esc(option.label) + "</button>";
     }).join("");
+    // 战技数据 schemaVersion < 3：照样渲染，但选段缺局内战技池与 TAE 核实，明确提示结果不可信。
+    var schemaWarn = skillsSchemaWarning(state.skillsData);
 
     return "<div class='section-heading'><div class='section-icon'>◎</div>" +
       "<div><h2>输出手段</h2><p>搜索战技或法术（中文／英文名都可）；战技再选一把武器</p></div></div>" +
@@ -3380,6 +3462,7 @@
       "data-testid='ranker-means-search'></label>" +
       "</div>" +
       "<div class='ranker-means-list' data-testid='ranker-means-list'>" + meansListHtml() + "</div>" +
+      (schemaWarn ? "<p class='ranker-note ranker-note--warn' data-testid='ranker-skills-schema-warn'>" + esc(schemaWarn) + "</p>" : "") +
       "<div data-testid='ranker-weapon-block'>" + weaponPickerHtml() + "</div>";
   }
 
@@ -3436,28 +3519,63 @@
     var skill = currentSkill();
     if (!skill) return "<p class='ranker-note'>找不到这个战技。</p>";
     var weapons = weaponsForSkill(state.skillsData, skill);
+    var sources = weaponSourceMap(skill);
     var groups = groupWeapons(weapons);
     var options = groups.map(function (group) {
       return "<optgroup label='" + esc(group.label) + "'>" + group.weapons.map(function (weapon) {
         var selected = weapon.id === state.selection.weaponId ? " selected" : "";
-        return "<option value='" + weapon.id + "'" + selected + ">" +
-          esc(weapon.nameZh || weapon.nameEn) + "（" + esc(weapon.rarityZh || "") + "）</option>";
+        var source = weaponSourceOf(skill, weapon, sources);
+        return "<option value='" + weapon.id + "'" + selected +
+          (source === "pool" ? " title='" + esc(TEXT.weaponSource.poolHint) + "'" : "") + ">" +
+          esc(weaponOptionLabel(weapon, source)) + "</option>";
       }).join("") + "</optgroup>";
     }).join("");
     var weapon = currentWeapon();
+    var sourceCount = { fixed: 0, pool: 0 };
+    weapons.forEach(function (one) {
+      var source = weaponSourceOf(skill, one, sources);
+      if (source) sourceCount[source] += 1;
+    });
 
     return "<div class='ranker-selection' data-testid='ranker-selection'>" +
       "<div class='ranker-selection-name'>" + esc(skill.nameZh || skill.nameEn) +
       "<span class='ranker-means-en'>" + esc(skill.nameEn) + "</span></div>" +
       "<div class='ranker-selection-pills'>" + pill("战技", "purple") +
       pill(weapons.length + " 把武器可用", "gray") +
+      (sourceCount.fixed ? pill(TEXT.weaponSource.fixed + " " + sourceCount.fixed, "gray") : "") +
+      (sourceCount.pool ? pill(TEXT.weaponSource.pool + " " + sourceCount.pool, "gray") : "") +
       (skill.sparring ? pill("训练场可用", "green") : "") + "</div>" +
       "<div class='ranker-picker-row'>" +
       "<label class='select-field ranker-weapon-field'><span class='ranker-field-label'>武器</span>" +
       "<select data-testid='ranker-weapon'" + (options ? "" : " disabled") + ">" +
       (options || "<option>这个战技没有可用武器</option>") + "</select></label>" +
+      weaponSourceBadgeHtml(skill, weapon, sources) +
       handControlHtml() +
-      "</div>" + weaponStatsHtml(weapon) + "</div>";
+      "</div>" +
+      (weapons.length ? "<p class='ranker-note' data-testid='ranker-weapon-source-note'>" + esc(TEXT.weaponSource.note) + "</p>" : "") +
+      weaponStatsHtml(weapon) + "</div>";
+  }
+
+  // 下拉选项的文字：名称（稀有度）· 来源标记（固定战技 / 局内可抽到；两者都成立时只标固定）。
+  function weaponOptionLabel(weapon, source) {
+    var text = (weapon.nameZh || weapon.nameEn || ("#" + weapon.id)) + "（" + (weapon.rarityZh || "") + "）";
+    if (source === "fixed") return text + " · " + TEXT.weaponSource.fixed;
+    if (source === "pool") return text + " · " + TEXT.weaponSource.pool;
+    return text;
+  }
+
+  // 当前武器的来源标记（下拉旁的小标签，局内可抽到的悬停给出说明）。
+  function weaponSourceBadgeHtml(skill, weapon, sources) {
+    var source = weaponSourceOf(skill, weapon, sources);
+    if (source === "fixed") {
+      return "<span class='ranker-weapon-source' data-testid='ranker-weapon-source' data-source='fixed'>" +
+        pill(TEXT.weaponSource.fixed, "green") + "</span>";
+    }
+    if (source === "pool") {
+      return "<span class='ranker-weapon-source' data-testid='ranker-weapon-source' data-source='pool' title='" +
+        esc(TEXT.weaponSource.poolHint) + "'>" + pill(TEXT.weaponSource.pool, "blue") + "</span>";
+    }
+    return "";
   }
 
   // ---- 分段命中 --------------------------------------------------------
@@ -3478,6 +3596,16 @@
     return cells.join("");
   }
 
+  // 分段列表下的一句来源说明：命中段是否按 TAE 动画事件核实过（数据 counts.taeVerified、skills[].taeUnmatched）。
+  function taeNote(skill) {
+    var counts = (state.skillsData && state.skillsData.counts) || {};
+    if (!skill || counts.taeVerified !== true) return "";
+    if (skill.taeUnmatched === true) {
+      return "这个战技的动画匹配不到（弓系战技，伤害走箭矢），命中段没有经 TAE 过滤。";
+    }
+    return "命中段已按 TAE 动画事件核实：参数表里有、但本作动画打不出的段不列出（依据见页面底部「命中段已按 TAE 核实」）。";
+  }
+
   function hitsHtml() {
     var hits = currentHits();
     var weapon = currentWeapon();
@@ -3491,7 +3619,7 @@
     }
     if (!hits.length) {
       var why = skill
-        ? "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariant 缺失）。"
+        ? "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariants 里没有这个战技）。"
         : "这条法术没有带数值的命中段。";
       return "<div class='section-heading'><div class='section-icon'>≡</div>" +
         "<div><h2>分段命中</h2><p>这把武器打不出任何段</p></div></div>" +
@@ -3507,6 +3635,10 @@
       var on = hitEnabled(hit);
       var marks = [];
       if (hit.noFp) marks.push(pill("专注值不足版", "amber"));
+      if (hit.fpBoth) {
+        marks.push("<span title='正常版与专注值不足版的动画都会打出这一段（数据 hits[].fpBoth，按 TAE 标出），开关在哪一侧都计入'>" +
+          pill("两版共用", "gray") + "</span>");
+      }
       if (hit.isBullet) marks.push(pill("子弹", "blue"));
       if (hit.noDamage) marks.push(pill("只挂状态", "gray"));
       if (hit.addBaseAtk) marks.push(pill("额外加一份攻击力", "purple"));
@@ -3524,7 +3656,7 @@
 
     var toolbar = "<div class='ranker-hits-toolbar'>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='all' " +
-      "title='只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍'>" +
+      "title='只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍（两版共用的段两侧都勾）'>" +
       "全选（当前版本）</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='none'>全不选</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='reset'>恢复默认</button>" +
@@ -3541,7 +3673,7 @@
     var variantNote = variant
       ? "<p class='ranker-note'>动作套：" + esc(variant.ctxZh || variant.ctx || "默认") +
         "（来源 " + esc(variant.via === "behavior" ? "BehaviorParam_PC 实解" : "按 ctx 单选") +
-        "，共 " + variant.atkIds.length + " 段）。</p>"
+        "，共 " + variant.atkIds.length + " 段）。" + esc(taeNote(skill)) + "</p>"
       : "";
 
     return "<div class='section-heading'><div class='section-icon'>≡</div>" +
@@ -4287,6 +4419,24 @@
       }).join("") + "</ul></div></details>";
   }
 
+  // 数据集 usage 里「命中段已按 TAE 核实（v3）」一节：分段命中卡只取 variants 的依据，原文放在底部。
+  var TAE_USAGE_KEY = "命中段已按 TAE 核实（v3）";
+
+  function taeUsageHtml() {
+    var usage = state.skillsData.usage || {};
+    var text = usage[TAE_USAGE_KEY];
+    if (!text) return "";
+    var counts = state.skillsData.counts || {};
+    return "<details class='card ranker-details' data-testid='ranker-tae'>" +
+      "<summary><span class='ranker-summary-title'>命中段已按 TAE 核实</span>" +
+      pill(counts.taeVerified === true ? "已核实" : "未核实", counts.taeVerified === true ? "green" : "amber") +
+      pill("原文", "gray") + "</summary>" +
+      "<div class='ranker-details-body'>" +
+      "<p class='ranker-note'>分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
+      "hits[] 里保留的这类段标了 notInvoked，本页不列出。来源：战技数据集 usage「" + esc(TAE_USAGE_KEY) + "」。</p>" +
+      "<p class='ranker-raw'>" + strongHtml(zhFpText(text)) + "</p></div></details>";
+  }
+
   function versionHtml() {
     var skills = state.skillsData;
     var buffs = state.buffsData;
@@ -4300,7 +4450,9 @@
       "<div><dt>数据版本</dt><dd>" + esc(skills.dataVersion || "—") + "</dd></div>" +
       "<div><dt>skills</dt><dd>schemaVersion " + esc(skills.schemaVersion) + " · 武器 " +
       esc(counts.weapons) + " · 战技 " + esc(counts.skills) + " · 法术 " + esc(counts.spells) +
-      " · 分段 " + esc(counts.hits) + "</dd></div>" +
+      " · 分段 " + esc(counts.hits) +
+      (counts.taeVerified === true ? " · 命中段已按 TAE 核实（打不出的 " + esc(counts.hitsNotInvoked) + " 段不列出）" : "") +
+      "</dd></div>" +
       "<div><dt>buffs</dt><dd>schemaVersion " + esc(buffs.schemaVersion) + " · 增益 " +
       esc(buffCounts.buffs) + " 条 · 倍率字段 " + esc((buffs.rateFields || []).length) + " 个</dd></div>" +
       "<div><dt>v6 字段</dt><dd>局内武器词条 " + esc(buffCounts.weaponAffixes) + " 条 · 固定遗物 " +
@@ -4351,7 +4503,7 @@
 
   function footerHtml() {
     var stackingRules = state.buffsData.stackingRules || {};
-    return caveatsHtml() + noteBlocksHtml() +
+    return caveatsHtml() + taeUsageHtml() + noteBlocksHtml() +
       textBlock("叠加规则（buffs stackingRules）", stackingRules.zh, "ranker-stacking-rules", "amber") +
       versionHtml();
   }
@@ -4816,8 +4968,14 @@
       OTHER_SLOTS: OTHER_SLOTS,
       CHARACTER_NAMES: TEXT.characterNames,
       COPIES_CEILING: COPIES_CEILING,
+      SKILLS_SCHEMA_MIN: SKILLS_SCHEMA_MIN,
+      TAE_USAGE_KEY: TAE_USAGE_KEY,
+      skillsSchemaWarning: skillsSchemaWarning,
+      variantIndexFor: variantIndexFor,
       selectVariant: selectVariant,
+      invokedHits: invokedHits,
       selectHits: selectHits,
+      hitOnSide: hitOnSide,
       hitOverridesFor: hitOverridesFor,
       physicalTypeForHit: physicalTypeForHit,
       usesMotion: usesMotion,
@@ -4910,6 +5068,9 @@
       configWarnings: configWarnings,
       configDumpLine: configDumpLine,
       caseDumpLine: caseDumpLine,
+      weaponSourceMap: weaponSourceMap,
+      weaponSourceOf: weaponSourceOf,
+      weaponOptionLabel: weaponOptionLabel,
       weaponsForSkill: weaponsForSkill,
       groupWeapons: groupWeapons,
       hasAnyDamage: hasAnyDamage,

@@ -1,7 +1,8 @@
 // 增伤排名页（renderer/pages/ranker.js）纯计算层单元测试。
 //
 // 口径以数据集自带的说明为准：
-//   · skills：usage.选段（必读）／近战武器段／法术 · 子弹段／削韧／伤害类型（斩 / 打 / 突）
+//   · skills（schemaVersion 3）：usage.选段（必读）／战技来源（v3）／命中段已按 TAE 核实（v3）／近战武器段／
+//     法术 · 子弹段／削韧／伤害类型（斩 / 打 / 突），fieldNotes.noFp / fpBoth / notInvoked / selfOrAllyOnly
 //   · buffs（schemaVersion 6）：notes.ranking、notes.appliesTo、stackingRules、slotRules、
 //     rateFields[].countsAsDamage、stackInput、accumulatorLadder、stacking.exclusiveKey
 //
@@ -40,8 +41,9 @@ function firstMixedWeapon() {
   });
 }
 
+// 武器自己的固定战技（v3 的 weaponIds 含局内战技池，「第一个引用它的战技」不再是它自带的那个）。
 function skillOf(weapon) {
-  return skills.skills.find((skill) => (skill.weaponIds || []).indexOf(weapon.id) !== -1);
+  return skills._skillById[weapon.swordArtsParamId] || null;
 }
 
 function shares(map) {
@@ -80,11 +82,25 @@ test("模块注册：导出 init / refresh，不依赖 window", () => {
   assert.equal(typeof globalThis.NightreignPages, "undefined", "node 下不应尝试注册页面");
 });
 
-test("两份数据集都带着页面真正依赖的结构（buffs 需要 v6 的 appliesTo / slotRules / exclusiveKey）", () => {
-  assert.equal(skills.schemaVersion, 2);
+test("两份数据集都带着页面真正依赖的结构（skills 需要 v3 的 skillVariants / weaponSources，buffs 需要 v6 的 appliesTo / slotRules / exclusiveKey）", () => {
+  assert.equal(skills.schemaVersion, 3);
+  assert.equal(R.SKILLS_SCHEMA_MIN, 3);
   assert.ok(buffs.schemaVersion >= 6, "配置组装依赖 schemaVersion 6 的字段");
   assert.ok(skills.usage && skills.usage["选段（必读）"], "选段规则必须来自数据集");
   assert.ok(skills.usage["本数据集的边界"], "页面要引用『绝对伤害不在范围内』这段");
+  assert.ok(skills.usage["战技来源（v3）"], "武器来源（固定 / 局内战技池）的读法来自数据集");
+  assert.ok(skills.usage[R.TAE_USAGE_KEY], "底部要引用「命中段已按 TAE 核实（v3）」这段");
+  assert.equal(skills.counts.taeVerified, true, "本版本的 variants 已按 TAE 核实");
+  assert.ok(skills.swordArtsPools && typeof skills.swordArtsPools === "object");
+  skills.weapons.forEach((weapon) => {
+    assert.ok(Array.isArray(weapon.skillIds), weapon.id + " 缺 skillIds");
+    // skillVariants 缺失 = 这把武器能带的战技都没有命中段（fieldNotes.省略即默认值）。
+    assert.ok(weapon.skillVariants === undefined || typeof weapon.skillVariants === "object", weapon.id + " 的 skillVariants");
+  });
+  skills.skills.forEach((skill) => {
+    assert.deepEqual((skill.weaponSources || []).map((one) => one.id), skill.weaponIds || [],
+      skill.id + " 的 weaponSources 与 weaponIds 一一对应");
+  });
   assert.ok(buffs.notes && buffs.notes.ranking && buffs.notes.appliesTo && buffs.notes.userQuestions);
   assert.ok(buffs.stackingRules && buffs.stackingRules.zh);
   assert.ok(buffs.slotRules && buffs.slotRules.modes && buffs.slotRules.weaponAffix && buffs.slotRules.relic);
@@ -182,13 +198,14 @@ test("indexBuff：削韧 / 异常 / special / flag 字段一律不进伤害表",
 
 // ------------------------------------------------------------------ 选段
 
-test("selectHits：一律走 weapons[].skillVariant → variants[i].atkIds，不取并集", () => {
+test("selectHits：一律走 weapons[].skillVariants[战技 ID] → variants[i].atkIds，不取并集", () => {
   const multi = skills.skills.find((skill) => Array.isArray(skill.variants) && skill.variants.length > 1);
   assert.ok(multi, "数据集里应当有多套动作的战技");
   const seen = new Set();
   multi.variants.forEach((variant, position) => {
     const weapon = skills._weaponById[variant.weaponIds[0]];
-    assert.equal(weapon.skillVariant, position, "variant 的下标必须就是武器的 skillVariant");
+    assert.equal(weapon.skillVariants[String(multi.id)], position, "variant 的下标必须就是武器的 skillVariants[战技 ID]");
+    assert.equal(R.variantIndexFor(multi, weapon), position);
     const hits = R.selectHits(multi, weapon);
     assert.equal(hits.length, variant.atkIds.length);
     hits.forEach((hit) => assert.ok(variant.atkIds.indexOf(hit.atkId) !== -1));
@@ -196,13 +213,60 @@ test("selectHits：一律走 weapons[].skillVariant → variants[i].atkIds，不
     hits.forEach((hit) => seen.add(hit.atkId));
   });
   assert.ok(seen.size <= multi.hits.length);
+
+  // 全量：每个 (战技, 武器) 对（固定与局内战技池）都由 skillVariants 指到含这把武器的那一套。
+  let pairs = 0;
+  skills.skills.forEach((skill) => {
+    if (!(skill.variants || []).length) return;
+    (skill.weaponIds || []).forEach((id) => {
+      const weapon = skills._weaponById[id];
+      const position = R.variantIndexFor(skill, weapon);
+      assert.ok(position >= 0, skill.id + " × " + id + " 找不到动作套");
+      assert.equal(position, weapon.skillVariants[String(skill.id)]);
+      assert.ok(skill.variants[position].weaponIds.indexOf(id) !== -1, skill.id + " × " + id + " 指错了套");
+      assert.deepEqual(R.selectHits(skill, weapon).map((hit) => hit.atkId).sort(),
+        skill.hits.filter((hit) => skill.variants[position].atkIds.indexOf(hit.atkId) !== -1).map((hit) => hit.atkId).sort());
+      if (weapon.swordArtsParamId === skill.id) assert.equal(weapon.skillVariant, position, "固定战技的旧 skillVariant 与 skillVariants 一致");
+      pairs += 1;
+    });
+  });
+  assert.ok(pairs > 6000, "局内战技池的武器也要逐对验到（本版本 6567 对）");
 });
 
-test("selectVariant / selectHits：武器没有 skillVariant 就是打不出段", () => {
+test("selectHits：局内战技池抽到的战技不能套用武器固定战技的 skillVariant", () => {
+  // 1080000 蝎尾针：固定战技 109 连击（skillVariant=1），局内还能抽到 103 回旋斩（skillVariants["103"]=0）。
+  // 旧写法拿 skillVariant 去套 103，会选到别的武器类别的那一套动作。
+  const weapon = skills._weaponById[1080000];
+  const pool = skills._skillById[103];
+  assert.ok(weapon && pool);
+  assert.notEqual(weapon.swordArtsParamId, 103);
+  assert.equal(typeof weapon.skillVariant, "number");
+  const own = weapon.skillVariants["103"];
+  assert.equal(typeof own, "number");
+  assert.notEqual(own, weapon.skillVariant, "这个例子要能区分两种写法");
+  assert.equal(R.variantIndexFor(pool, weapon), own);
+  assert.deepEqual(R.selectHits(pool, weapon).map((hit) => hit.atkId), pool.hits
+    .filter((hit) => pool.variants[own].atkIds.indexOf(hit.atkId) !== -1).map((hit) => hit.atkId));
+
+  // 回退规则：缺 skillVariants 条目时才用 skillVariant，而且只对武器的固定战技（swordArtsParamId）。
+  const skill = { id: 7, hits: [{ atkId: 1 }, { atkId: 2 }], variants: [{ atkIds: [1], weaponIds: [9] }, { atkIds: [2], weaponIds: [9] }] };
+  assert.equal(R.variantIndexFor(skill, { id: 9, skillVariants: { 7: 1 }, skillVariant: 0, swordArtsParamId: 7 }), 1, "skillVariants 优先");
+  assert.equal(R.variantIndexFor(skill, { id: 9, skillVariants: {}, skillVariant: 1, swordArtsParamId: 7 }), 1, "缺条目时回退固定战技的 skillVariant");
+  assert.equal(R.variantIndexFor(skill, { id: 9, skillVariant: 1, swordArtsParamId: 7 }), 1, "旧数据没有 skillVariants 也回退");
+  assert.equal(R.variantIndexFor(skill, { id: 9, skillVariants: {}, skillVariant: 1, swordArtsParamId: 8 }), -1,
+    "skillVariant 只指固定战技，不能拿去套别的战技");
+  assert.deepEqual(R.selectHits(skill, { id: 9, skillVariants: {}, skillVariant: 1, swordArtsParamId: 8 }), []);
+});
+
+test("selectVariant / selectHits：武器的 skillVariants 里没有这个战技就是打不出段", () => {
   const skill = skills.skills.find((one) => Array.isArray(one.variants) && one.variants.length);
   assert.equal(R.selectVariant(skill, {}), null);
   assert.deepEqual(R.selectHits(skill, {}), []);
+  assert.deepEqual(R.selectHits(skill, null), []);
   assert.deepEqual(R.selectHits({ hits: [] }, {}), []);
+  const outOfRange = {};
+  outOfRange[String(skill.id)] = skill.variants.length;
+  assert.equal(R.selectVariant(skill, { skillVariants: outOfRange }), null, "越界的下标同样打不出段");
 });
 
 test("selectHits：没有 variants 时退回 ctx 单选（武器名 → 类别 → ctx 缺失）", () => {
@@ -228,6 +292,23 @@ test("selectHits：没有 variants 时退回 ctx 单选（武器名 → 类别 �
     [3],
     "最后才用 ctx 缺失的那组"
   );
+
+  // 回退路径直接读 hits[]：TAE 判为打不出的段（notInvoked）与不带伤害的段（noDamage）一律剔掉。
+  const tae = {
+    hits: [
+      { atkId: 11, ctx: "Dagger", notInvoked: true, notInvokedReason: "gated" },
+      { atkId: 12, ctx: "Dagger", noDamage: true },
+      { atkId: 13, ctx: "Dagger" },
+      { atkId: 14, notInvoked: true },
+      { atkId: 15 }
+    ]
+  };
+  assert.deepEqual(R.selectHits(tae, { nameEn: "Misericorde", wepTypeEn: "Dagger" }).map((hit) => hit.atkId), [13]);
+  assert.deepEqual(R.selectHits(tae, { nameEn: "X", wepTypeEn: "Y" }).map((hit) => hit.atkId), [15]);
+  const onlyDead = { hits: [{ atkId: 21, ctx: "Dagger", notInvoked: true }, { atkId: 22 }] };
+  assert.deepEqual(R.selectHits(onlyDead, { wepTypeEn: "Dagger" }).map((hit) => hit.atkId), [22],
+    "剔掉 notInvoked 之后这一类没有段，才往下退");
+  assert.deepEqual(R.invokedHits(tae.hits).map((hit) => hit.atkId), [12, 13, 15]);
 });
 
 test("hitOverridesFor：「全选」只勾当前这一侧，正常版与专注值不足版不会同时计入", () => {
@@ -247,6 +328,15 @@ test("hitOverridesFor：「全选」只勾当前这一侧，正常版与专注�
 
   assert.deepEqual(R.hitOverridesFor(hits, "none", false), { 1: false, 2: false });
   assert.deepEqual(R.hitOverridesFor(hits, "reset", false), {}, "恢复默认＝清空 override");
+
+  // fpBoth：两侧动画都会打出的段，开关在哪一侧都勾上（取段规则 hit.fpBoth || noFp 同侧）。
+  const shared = hits.concat([{ atkId: 4, fpBoth: true }]);
+  assert.equal(R.hitOverridesFor(shared, "all", false)[4], true);
+  assert.equal(R.hitOverridesFor(shared, "all", true)[4], true, "专注值不足侧也要计入 fpBoth 段");
+  assert.equal(R.hitOnSide({ fpBoth: true }, true), true);
+  assert.equal(R.hitOnSide({ fpBoth: true }, false), true);
+  assert.equal(R.hitOnSide({ noFp: true }, false), false);
+  assert.equal(R.hitOnSide({}, true), false);
 
   // 真实数据：全选之后相对值合计不会翻倍（= 与默认勾选一致）。
   const weapon = skills.weapons.find((one) => typeof one.skillVariant === "number" &&
@@ -429,7 +519,7 @@ test("真实数据：可见芯片的相对值之和恒等于该段总量（隐�
     for (const hit of spell.hits || []) check(hit, null, true, "法术段 " + hit.atkId);
   }
 
-  assert.ok(pairs > 8000, "对照样本太少说明遍历写错了（本版本 8540 对）");
+  assert.ok(pairs > 30000, "对照样本太少说明遍历写错了（本版本含局内战技池的武器，35564 对）");
   assert.ok(withHidden > 0, "真实数据里应当有「其余属性该武器为 0」的段，否则这一关是空跑");
   assert.ok(onlyBaseAtk > 0, "真实数据里应当有只靠 addBaseAtk 出伤害的通道，否则这一关是空跑");
 });
@@ -476,7 +566,7 @@ test("真实数据：某个法术段只显示带 flat 的那些属性", () => {
 });
 
 test("zhFpText：展示层把数据集原文里的 FP 一律换成中文说法", () => {
-  // ① 段名（hits[].labelZh，本版本 162 段）。
+  // ① 段名（hits[].labelZh，本版本 375 段；v3 按 TAE 补标的无 FP 段也以「无FP版」开头）。
   assert.equal(R.zhFpText("无FP版 L2 第1段-第1击"), "专注值不足版 L2 第1段-第1击");
   assert.equal(R.zhFpText("无 FP 版 R2"), "专注值不足版 R2");
   assert.equal(R.zhFpText("L2 第3段"), "L2 第3段", "不含 FP 的标签原样返回");
@@ -638,7 +728,7 @@ test("buildMeansItems / filterMeans：中英文都能搜到，且只收算得出
   assert.ok(items.some((item) => item.kind === "sorcery"));
   assert.ok(items.some((item) => item.kind === "incantation"));
 
-  // 收录口径：有命中段 + （战技）至少一把武器引用 + 至少能算出一段非 0 相对值。
+  // 收录口径：有命中段 + （战技）至少一把武器（固定或局内战技池）+ 至少能算出一段非 0 相对值。
   // 算不出构成的条目选中后只会停在「当前没有勾选任何带伤害的段」，是死路。
   const skillIds = new Set(items.filter((item) => item.kind === "skill").map((item) => item.id));
   skills.skills.forEach((skill) => {
@@ -646,10 +736,29 @@ test("buildMeansItems / filterMeans：中英文都能搜到，且只收算得出
       R.skillHasDamage(skills, skill);
     assert.equal(skillIds.has(skill.id), usable, skill.id + " 的收录判定不对");
   });
-  assert.ok(
-    skills.skills.some((skill) => (skill.hits || []).length > 0 && !(skill.weaponIds || []).length),
-    "数据集里应当确实存在『有段但没有武器引用』的战技"
-  );
+  // v3 把局内战技池算进 weaponIds 后，没有武器的只剩占位条目（1 无战技、9999 ？？？），它们也没有命中段；
+  // 「有段但没有武器」这条排除规则仍然保留，用合成数据钉住。
+  const weaponless = skills.skills.filter((skill) => !(skill.weaponIds || []).length);
+  assert.deepEqual(weaponless.map((skill) => skill.id), [1, 9999], "没有武器的只剩两个占位条目");
+  weaponless.forEach((skill) => assert.equal((skill.hits || []).length, 0, skill.id + " 是占位条目，不该有命中段"));
+  const orphanHit = { atkId: 1, attribute: "Slash", motion: { physical: 100 } };
+  const synthetic = R.decorateSkills({
+    weapons: [{ id: 5, attackBase: { physical: 100 }, atkAttribute: 0, atkAttribute2: 0, skillVariants: { 71: 0 } }],
+    skills: [
+      { id: 70, nameZh: "有段无武器", hits: [orphanHit], variants: [{ atkIds: [1], weaponIds: [] }], weaponIds: [] },
+      { id: 71, nameZh: "有段有武器", hits: [orphanHit], variants: [{ atkIds: [1], weaponIds: [5] }], weaponIds: [5] }
+    ],
+    spells: []
+  });
+  assert.deepEqual(R.buildMeansItems(synthetic).map((item) => item.id), [71], "有段但没有武器的战技选不出武器，不进列表");
+  assert.deepEqual(R.meansWithoutDamage(synthetic), { skills: 0, spells: 0 }, "没有武器的不算「算不出构成」");
+
+  // 只在局内战技池里出现的战技（v2 里一把武器都没有）现在能选：风暴刃 210、狩猎巨人 116。
+  [210, 116].forEach((id) => {
+    const skill = skills._skillById[id];
+    assert.ok((skill.weaponSources || []).every((one) => one.fixed !== true && one.pool.length > 0), id + " 只来自战技池");
+    assert.ok(skillIds.has(id), id + " 应当进输出手段列表");
+  });
 
   // 法术同一条口径：有段但一个固定值都没有的（恢复／庇佑类）不得进列表。
   const spellIds = new Set(items.filter((item) => item.kind !== "skill").map((item) => item.id));
@@ -685,6 +794,175 @@ test("groupWeapons：按武器类别中文名分组，组内保持原顺序", ()
     });
   });
 });
+
+// ------------------------------------------------------------------ v3：局内战技池、TAE 核实、fpBoth
+
+// 按「使用专注值不足版本」开关取一侧的带伤害段（页面默认勾选的口径：hit.fpBoth || noFp 与开关同侧）。
+function sideHits(skill, weapon, noFp) {
+  return R.selectHits(skill, weapon).filter((hit) => !hit.noDamage && R.hitOnSide(hit, noFp));
+}
+
+test("v3：风暴刃 210 能选到武器，专注值正常侧 3 段＋1 段子弹、不足侧 3 段，两侧不相加", () => {
+  const skill = skills._skillById[210];
+  const weapons = R.weaponsForSkill(skills, skill);
+  assert.equal(weapons.length, skill.weaponIds.length);
+  assert.ok(weapons.length > 0, "局内战技池的武器要选得到");
+  weapons.forEach((weapon) => {
+    assert.equal(R.weaponSourceOf(skill, weapon), "pool");
+    const fp = sideHits(skill, weapon, false);
+    const noFp = sideHits(skill, weapon, true);
+    assert.equal(fp.filter((hit) => !hit.isBullet).length, 3, weapon.id + " 正常侧应是 3 段近战");
+    assert.equal(fp.filter((hit) => hit.isBullet).length, 1, weapon.id + " 正常侧另有 1 段飞刃子弹");
+    assert.equal(noFp.length, 3, weapon.id + " 专注值不足侧 3 段");
+    assert.ok(noFp.every((hit) => hit.noFp === true && !hit.isBullet));
+    const fpIds = new Set(fp.map((hit) => hit.atkId));
+    assert.ok(noFp.every((hit) => !fpIds.has(hit.atkId)), "两侧互为替代，不共段");
+  });
+  // 411–413 是 TAE 补标的无 FP 段：行名没写 No FP，labelZh 补了「无FP版」。
+  [300000411, 300000412, 300000413].forEach((id) => {
+    const hit = skill.hits.find((one) => one.atkId === id);
+    assert.equal(hit.noFp, true);
+    assert.equal(hit.noFpSource, "tae");
+    assert.equal(hit.labelZh.indexOf("无FP版"), 0);
+  });
+  const weapon = weapons[0];
+  assert.equal(R.composition(sideHits(skill, weapon, false), weapon, false).hasDamage, true);
+  assert.equal(R.composition(sideHits(skill, weapon, true), weapon, false).hasDamage, true);
+});
+
+test("v3：狩猎巨人 116 专注值正常 / 不足两侧各 1 段", () => {
+  const skill = skills._skillById[116];
+  const weapons = R.weaponsForSkill(skills, skill);
+  assert.ok(weapons.length > 0);
+  weapons.forEach((weapon) => {
+    assert.equal(R.weaponSourceOf(skill, weapon), "pool");
+    assert.deepEqual(sideHits(skill, weapon, false).map((hit) => hit.atkId), [301700910], String(weapon.id));
+    assert.deepEqual(sideHits(skill, weapon, true).map((hit) => hit.atkId), [301700915], String(weapon.id));
+  });
+});
+
+test("v3：狩猎大蛇 1188 只剩两段近战 L2（各带专注值不足版），光之束等 notInvoked 段不进选段", () => {
+  const skill = skills._skillById[1188];
+  const weapon = skills._weaponById[17030000];
+  assert.equal(R.weaponSourceOf(skill, weapon), "fixed");
+  const hits = R.selectHits(skill, weapon);
+  assert.deepEqual(hits.map((hit) => hit.atkId).sort(), [301703950, 301703951, 301703970, 301703971]);
+  assert.deepEqual(sideHits(skill, weapon, false).map((hit) => hit.atkId), [301703950, 301703951]);
+  assert.deepEqual(sideHits(skill, weapon, true).map((hit) => hit.atkId), [301703970, 301703971]);
+  const dead = skill.hits.filter((hit) => hit.notInvoked === true);
+  assert.ok(dead.some((hit) => hit.atkId === 301703900) && dead.some((hit) => hit.atkId === 301703901),
+    "光之束两段留在 hits[] 里并标 notInvoked");
+  dead.forEach((hit) => assert.equal(hits.indexOf(hit), -1, hit.atkId + " 不该进选段"));
+});
+
+test("v3：notInvoked 段在任何武器上都不进选段；selfOrAllyOnly 段恒带 noDamage、不进构成", () => {
+  let notInvoked = 0;
+  let selfOrAlly = 0;
+  skills.skills.forEach((skill) => {
+    notInvoked += skill.hits.filter((hit) => hit.notInvoked === true).length;
+    R.weaponsForSkill(skills, skill).forEach((weapon) => {
+      R.selectHits(skill, weapon).forEach((hit) => {
+        assert.notEqual(hit.notInvoked, true, skill.id + " × " + weapon.id + " 选进了 " + hit.atkId);
+      });
+    });
+    skill.hits.filter((hit) => hit.selfOrAllyOnly === true).forEach((hit) => {
+      selfOrAlly += 1;
+      assert.equal(hit.noDamage, true, hit.atkId + " 只打自己 / 队友，必须带 noDamage");
+      const one = R.hitContribution(hit, { attackBase: { physical: 100, magic: 100, fire: 100, lightning: 100, holy: 100 } }, false);
+      assert.ok(R.TYPE_KEYS.every((key) => one[key] === 0));
+      assert.equal(hit.atkId in R.hitOverridesFor([hit], "all", false), false, "全选也不勾");
+    });
+  });
+  assert.equal(notInvoked, skills.counts.hitsNotInvoked, "notInvoked 段数与数据集 counts 一致");
+  assert.ok(notInvoked > 0 && selfOrAlly > 0);
+});
+
+test("v3：fpBoth 段两侧都计——专注值不足侧不会丢掉两侧共用的段", () => {
+  let fpBoth = 0;
+  skills.skills.forEach((skill) => skill.hits.forEach((hit) => {
+    if (hit.fpBoth !== true) return;
+    fpBoth += 1;
+    assert.notEqual(hit.noFp, true, hit.atkId + "：fpBoth 与 noFp 互斥");
+  }));
+  assert.equal(fpBoth, skills.counts.hitsFpBoth);
+
+  // 1024 唤矛仪式：全部带伤害的段都是两侧共用的子弹。旧写法（noFp 与开关同侧）在专注值不足侧一段都取不到。
+  const ritual = skills._skillById[1024];
+  const spear = skills._weaponById[ritual.weaponIds[0]];
+  const fp = sideHits(ritual, spear, false);
+  const noFp = sideHits(ritual, spear, true);
+  assert.ok(fp.length > 0 && fp.every((hit) => hit.fpBoth === true));
+  assert.deepEqual(noFp.map((hit) => hit.atkId), fp.map((hit) => hit.atkId), "两侧取到同一批段");
+  assert.equal(R.composition(noFp, spear, false).hasDamage, true, "专注值不足侧也算得出构成");
+  const old = R.selectHits(ritual, spear).filter((hit) => !hit.noDamage && Boolean(hit.noFp) === true);
+  assert.equal(old.length, 0, "旧写法在这里会丢段，这个例子才有意义");
+
+  // 218 伟哉卡利亚：300200872 两侧共用，另外各有自己一侧的段。
+  const glintblade = skills._skillById[218];
+  const weapon = R.weaponsForSkill(skills, glintblade)[0];
+  const fpIds = sideHits(glintblade, weapon, false).map((hit) => hit.atkId);
+  const noFpIds = sideHits(glintblade, weapon, true).map((hit) => hit.atkId);
+  assert.ok(fpIds.indexOf(300200872) !== -1 && noFpIds.indexOf(300200872) !== -1);
+  assert.ok(fpIds.length > 1 && noFpIds.length > 1);
+  assert.equal(R.hitOverridesFor(R.selectHits(glintblade, weapon), "all", true)[300200872], true);
+});
+
+test("v3：武器选择器——固定战技的武器排前、其余按 id，每把武器标「固定战技 / 局内可抽到」（两者都成立只标固定）", () => {
+  const lion = skills._skillById[100];
+  const weapons = R.weaponsForSkill(skills, lion);
+  const sources = weapons.map((weapon) => R.weaponSourceOf(lion, weapon));
+  const firstPool = sources.indexOf("pool");
+  assert.ok(firstPool > 0, "狮子斩既有固定武器也有局内战技池的武器");
+  assert.ok(sources.slice(0, firstPool).every((one) => one === "fixed"));
+  assert.ok(sources.slice(firstPool).every((one) => one === "pool"));
+  const ascending = (list) => list.every((weapon, i) => i === 0 || list[i - 1].id < weapon.id);
+  assert.ok(ascending(weapons.slice(0, firstPool)) && ascending(weapons.slice(firstPool)));
+  weapons.slice(0, firstPool).forEach((weapon) => assert.equal(weapon.swordArtsParamId, 100));
+  assert.equal(firstPool, lion.weaponSources.filter((one) => one.fixed === true).length);
+  // 默认武器（列表第一把）是固定武器，分组后第一组的第一把就是它。
+  assert.equal(R.groupWeapons(weapons)[0].weapons[0].id, weapons[0].id);
+
+  // 同一把武器两者都成立（大蛇狩猎矛：固定 1188，局内战技池也抽得到 1188）→ 只标固定。
+  const serpent = skills._skillById[1188];
+  const entry = serpent.weaponSources.find((one) => one.id === 17030000);
+  assert.ok(entry.fixed === true && entry.pool.length > 0);
+  assert.equal(R.weaponSourceMap(serpent)[17030000], "fixed");
+  const label = R.weaponOptionLabel(skills._weaponById[17030000], "fixed");
+  assert.ok(label.indexOf(R.TEXT.weaponSource.fixed) !== -1 && label.indexOf(R.TEXT.weaponSource.pool) === -1);
+  const poolLabel = R.weaponOptionLabel(weapons[firstPool], "pool");
+  assert.ok(poolLabel.indexOf(R.TEXT.weaponSource.pool) !== -1 && poolLabel.indexOf(R.TEXT.weaponSource.fixed) === -1);
+
+  // 全表：标记与 weaponSources 一致，固定标记恰好是 swordArtsParamId 指向这个战技的武器。
+  skills.skills.forEach((skill) => {
+    const map = R.weaponSourceMap(skill);
+    (skill.weaponSources || []).forEach((one) => {
+      const weapon = skills._weaponById[one.id];
+      assert.equal(map[one.id], one.fixed === true ? "fixed" : "pool");
+      assert.equal(map[one.id] === "fixed", weapon.swordArtsParamId === skill.id);
+    });
+  });
+  // 旧数据没有 weaponSources：按 swordArtsParamId 判固定，判不出的不标。
+  assert.equal(R.weaponSourceOf({ id: 5 }, { id: 1, swordArtsParamId: 5 }), "fixed");
+  assert.equal(R.weaponSourceOf({ id: 5 }, { id: 1, swordArtsParamId: 6 }), null);
+
+  // 四条新文案（三端同名同值）。
+  assert.deepEqual(R.TEXT.weaponSource, {
+    fixed: "固定战技",
+    pool: "局内可抽到",
+    poolHint: "局内掉落的这把武器有机会抽到这个战技（按战技池权重）",
+    note: "武器列表含固定带这个战技的武器与局内战技池能抽到它的武器；动作套按这一把武器实解。"
+  });
+});
+
+test("v3：skills schemaVersion < 3 要提示结果不可信", () => {
+  assert.equal(R.skillsSchemaWarning(skills), "");
+  assert.equal(R.skillsSchemaWarning({ schemaVersion: 4 }), "");
+  const old = R.skillsSchemaWarning({ schemaVersion: 2 });
+  assert.ok(old.indexOf("schemaVersion 2") !== -1 && old.indexOf("结果不可信") !== -1);
+  assert.ok(R.skillsSchemaWarning({}).indexOf("结果不可信") !== -1, "缺版本号同样提示");
+  assert.ok(R.skillsSchemaWarning(null).indexOf("结果不可信") !== -1);
+});
+
 test("列表一律显示 displayNameZh（notes.displayName：nameZh 重名极多）", () => {
   const withDisplay = buffs.buffs.find((buff) => buff.displayNameZh);
   assert.equal(R.buffDisplayName(withDisplay), withDisplay.displayNameZh);

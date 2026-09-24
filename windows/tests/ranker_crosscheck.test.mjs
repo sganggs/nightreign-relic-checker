@@ -18,7 +18,11 @@
 // 需要人工对拍时：
 //   NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs
 //   NR_RANKER_DUMP=1 swift run RelicCoreChecks
-// 两端都打出 CASE / CONFIG 两种行（同一格式，见 ranker.js 的 caseDumpLine / configDumpLine），逐行比即可。
+// 两端都打出 CASE / CONFIG / OUTPUTS / TEXT 四种行（同一格式，见 ranker.js 的 caseDumpLine / configDumpLine），
+// 逐行比即可。
+//
+// 战技数据集 schemaVersion 3：选段一律读 weapons[].skillVariants[战技 ID]（局内战技池的武器同样有），
+// 默认勾选按「hit.fpBoth || noFp 与开关同侧」；七组构成用例的战技都是所选武器的固定战技，输入不变。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -40,7 +44,7 @@ const index = R.indexBuffs(buffs);
 const cfgIndex = R.buildConfigIndex(buffs, index, catalog, Core);
 const DUMP = process.env.NR_RANKER_DUMP === "1";
 
-// 构成用例（两端同一组输入）。
+// 构成用例（两端同一组输入；v3 下不变，1177 + 9040000 等仍是武器的固定战技）。
 const CASES = [
   // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
   { key: "corpse-piler-full", kind: "skill", id: 1177, weaponId: 9040000, only: null },
@@ -365,7 +369,7 @@ function runCase(def) {
   const selected = hits.filter((hit) => {
     if (hit.noDamage) return false;
     if (def.only) return def.only.indexOf(hit.atkId) !== -1;
-    return Boolean(hit.noFp) === false;   // 默认勾选＝正常版这一侧
+    return hit.fpBoth === true || hit.noFp !== true;   // 默认勾选＝正常版这一侧（两侧共用的 fpBoth 段也算）
   });
   const comp = R.composition(selected, weapon, isSpell);
   const out = R.makeOutput({ mode: def.kind, meansId: def.id, weapon, hand: 1, shares: comp.shares, contexts: {} }, buffs);
@@ -494,11 +498,28 @@ test("对照：法术的构成只来自 flat，不会凭空多出物理；推荐
   });
 });
 
+// 参考实现：一个战技能不能进列表——不经被测代码，直接读 weapons[].skillVariants → variants[i].atkIds，
+// 任一把武器（固定或局内战技池）的任一段按参考公式算得出非 0 相对值即可。
+function referenceSkillListable(skill) {
+  if (!(skill.hits || []).length || !(skill.weaponIds || []).length) return false;
+  return skill.weaponIds.some((id) => {
+    const weapon = skills._weaponById[id];
+    const position = weapon && weapon.skillVariants ? weapon.skillVariants[String(skill.id)] : undefined;
+    const variant = typeof position === "number" ? (skill.variants || [])[position] : null;
+    if (!variant) return false;
+    const picked = skill.hits.filter((hit) => variant.atkIds.indexOf(hit.atkId) !== -1);
+    return referenceShares(picked, weapon, new Set(picked.map((hit) => hit.atkId))).total > 0;
+  });
+}
+
 test("对照：输出手段列表只收「算得出非 0 相对值」的战技与法术", () => {
   const items = R.buildMeansItems(skills);
   const skillItems = items.filter((item) => item.kind === "skill");
   const spellItems = items.filter((item) => item.kind !== "skill");
   assert.ok(skillItems.length > 0 && spellItems.length > 0);
+  // v3：局内战技池的武器也算，列表里的战技与参考实现逐个相同（本版本 155 个）。
+  assert.deepEqual(skillItems.map((item) => item.id).sort((a, b) => a - b),
+    skills.skills.filter(referenceSkillListable).map((skill) => skill.id).sort((a, b) => a - b));
   skillItems.forEach((item) => {
     const skill = skills._skillById[item.id];
     const playable = (skill.weaponIds || []).some((id) => {
@@ -675,8 +696,10 @@ function briefDigest(notes) {
 }
 
 // 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新。
-const TEXT_TABLE_DIGEST = "854da404";
-const TEXT_TABLE_COUNT = 332;
+// 摘要算法不变（FNV-1a 32 位，点号路径排序后逐行「路径=文案」）；这一版只多了 skills v3 的四个
+// weaponSource.* 键（fixed / pool / poolHint / note），332 → 336 条，854da404 → 07a69c5e。
+const TEXT_TABLE_DIGEST = "07a69c5e";
+const TEXT_TABLE_COUNT = 336;
 const BRIEF_DIGEST = "ad04314d";
 
 test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
