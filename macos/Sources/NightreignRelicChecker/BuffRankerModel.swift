@@ -30,6 +30,10 @@ final class BuffRankerModel: ObservableObject {
     @Published var outputQuery: String = "" {
         didSet { refreshOutputResults() }
     }
+    /// 选择器的三档（战技 / 魔法 / 祷告），默认战技；搜索列表只列当前档。
+    @Published var outputKind: OutputMeansKind = .skill {
+        didSet { if outputKind != oldValue { refreshOutputResults() } }
+    }
     @Published private(set) var outputResults: [SkillOutput] = []
     @Published private(set) var selectedOutput: SkillOutput?
     @Published private(set) var weaponGroups: [SkillWeaponGroup] = []
@@ -151,13 +155,24 @@ final class BuffRankerModel: ObservableObject {
             outputResults = []
             return
         }
-        let matches = skills.outputs(matching: outputQuery)
+        let matches = skills.outputs(matching: outputQuery, kind: outputKind)
         outputResults = Array(matches.prefix(Self.maxOutputResults))
         outputMatchCount = matches.count
     }
 
     private(set) var outputMatchCount: Int = 0
     static let maxOutputResults = 60
+
+    /// 一条输出手段落在哪一档（列表里的类别 pill 用）。
+    func meansKind(of output: SkillOutput) -> OutputMeansKind {
+        skills?.meansKind(of: output) ?? (output.kind == .skill ? .skill : .incantation)
+    }
+
+    /// 结果列表要不要展开：正在搜索、还没选，或者切到了另一档（当前选中的不在这一档）时展开。
+    var showsOutputResults: Bool {
+        guard let selectedOutput else { return true }
+        return !outputQuery.isEmpty || meansKind(of: selectedOutput) != outputKind
+    }
 
     func select(output: SkillOutput) {
         guard let skills else { return }

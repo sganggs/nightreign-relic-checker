@@ -191,6 +191,7 @@ func runBuffRankerChecks() throws -> Int {
     let skills = try SkillDataIndex(data: skillsData)
     let buffs = try BuffRankerIndex(data: buffsData)
     try checkSkillDataset(skills, counter: &count)
+    try checkMeansKindFilter(skills, counter: &count)
     try checkSegmentSelection(skills, counter: &count)
     try checkSegmentChips(skills, counter: &count)
     try checkComposition(skills, counter: &count)
@@ -1531,6 +1532,50 @@ private func checkSkillDataset(_ index: SkillDataIndex, counter count: inout Int
             "按英文名应能搜到「\(sample.nameEn)」",
             counter: &count
         )
+    }
+}
+
+/// 输出手段选择器的三档（战技 / 魔法 / 祷告）：每一档只列自己那一类，三档恰好分完全部输出手段；
+/// 法术按 spells[].kind 分档（sorcery＝魔法、incantation＝祷告），SkillOutput.kind 仍只分战技与法术。
+private func checkMeansKindFilter(_ index: SkillDataIndex, counter count: inout Int) throws {
+    try rankerExpect(OutputMeansKind.allCases == [.skill, .sorcery, .incantation],
+                     "选择器三档依次是 战技 / 魔法 / 祷告", counter: &count)
+    try rankerExpect(OutputMeansKind.allCases.map(LoadoutText.meansKindTitle) == ["战技", "魔法", "祷告"],
+                     "三档的档名取自 meansKind.*（战技 / 魔法 / 祷告）", counter: &count)
+    var perKind: [OutputMeansKind: [SkillOutput]] = [:]
+    for kind in OutputMeansKind.allCases {
+        let listed = index.outputs(matching: "", kind: kind)
+        perKind[kind] = listed
+        try rankerExpect(!listed.isEmpty, "「\(LoadoutText.meansKindTitle(kind))」档不应为空", counter: &count)
+        try rankerExpect(listed.allSatisfy { index.meansKind(of: $0) == kind },
+                         "「\(LoadoutText.meansKindTitle(kind))」档只列这一类", counter: &count)
+    }
+    let skills = perKind[.skill] ?? [], sorceries = perKind[.sorcery] ?? [], incantations = perKind[.incantation] ?? []
+    try rankerExpect(skills.allSatisfy { $0.kind == .skill } && skills.count == index.outputs.filter { $0.kind == .skill }.count,
+                     "战技档恰好是全部战技（\(skills.count) 个）", counter: &count)
+    try rankerExpect(sorceries.allSatisfy { $0.kind == .spell && index.spellsByID[$0.entryID]?.kind == "sorcery" },
+                     "魔法档只有 spells[].kind=sorcery 的法术", counter: &count)
+    try rankerExpect(incantations.allSatisfy { $0.kind == .spell && index.spellsByID[$0.entryID]?.kind == "incantation" },
+                     "祷告档只有 spells[].kind=incantation 的法术（不混进魔法）", counter: &count)
+    let spellCount = index.outputs.filter { $0.kind == .spell }.count
+    try rankerExpect(sorceries.count + incantations.count == spellCount,
+                     "魔法 \(sorceries.count) + 祷告 \(incantations.count) 恰好是全部 \(spellCount) 个法术", counter: &count)
+    let allIDs = (skills + sorceries + incantations).map(\.id)
+    try rankerExpect(Set(allIDs).count == allIDs.count && Set(allIDs) == Set(index.outputs.map(\.id)),
+                     "三档互不重叠，合起来恰好是全部输出手段", counter: &count)
+    try rankerExpect(sorceries.allSatisfy { index.spellsByID[$0.entryID]?.kindZh == "魔法" }
+                        && incantations.allSatisfy { index.spellsByID[$0.entryID]?.kindZh == "祷告" },
+                     "档名与 spells[].kindZh 一致（魔法／祷告）", counter: &count)
+    // 档内搜索：名字搜得到，但换到别的档就搜不到
+    for (kind, list) in [(OutputMeansKind.sorcery, sorceries), (.incantation, incantations), (.skill, skills)] {
+        guard let sample = list.first(where: { !$0.nameZh.isEmpty && !$0.nameEn.isEmpty }) else { continue }
+        for other in OutputMeansKind.allCases {
+            let hitZh = index.outputs(matching: sample.nameZh, kind: other).contains { $0.id == sample.id }
+            let hitEn = index.outputs(matching: sample.nameEn, kind: other).contains { $0.id == sample.id }
+            try rankerExpect(hitZh == (other == kind) && hitEn == (other == kind),
+                             "「\(sample.nameZh)」只在「\(LoadoutText.meansKindTitle(kind))」档搜得到（查的是「\(LoadoutText.meansKindTitle(other))」档）",
+                             counter: &count)
+        }
     }
 }
 
@@ -4604,8 +4649,10 @@ private func loadoutBriefDigest(_ notes: [String]) -> String {
 
 /// 两端同一个常量：改了任何一句文案，两端都要改、两个常量都要更新（Windows 端 TEXT_TABLE_DIGEST / BRIEF_DIGEST）。
 /// 道具等级（学者「携物知识」）新增 goodsLevel.tag / hint / note 三个键：336 → 339 条，07a69c5e → 41e2ae25。
-private let loadoutTextTableCount = 339
-private let loadoutTextTableDigest = "41e2ae25"
+/// 输出手段选择器拆成 战技 / 魔法 / 祷告 三档：新增 meansKind.skill / sorcery / incantation、meansCard.subtitle、
+/// meansSearch.placeholder / empty、meansSpellFlatNote 七个键，改 pageSubtitle 与 otherInnateNoWeapon：339 → 346 条，41e2ae25 → 446c874b。
+private let loadoutTextTableCount = 346
+private let loadoutTextTableDigest = "446c874b"
 private let loadoutBriefNotesDigest = "ad04314d"
 
 private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {
@@ -4616,6 +4663,25 @@ private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int
     for (key, value) in LoadoutText.table {
         try rankerExpect(!value.isEmpty, "文案 \(key) 应是非空文案", counter: &count)
     }
+    // 输出手段选择器三档（战技 / 魔法 / 祷告）的文案：三端 TEXT / LoadoutText.table / 安卓文案表同名同值、逐字相同。
+    let meansTexts: [(String, String)] = [
+        ("meansKind.skill", "战技"),
+        ("meansKind.sorcery", "魔法"),
+        ("meansKind.incantation", "祷告"),
+        ("meansCard.subtitle", "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器"),
+        ("meansSearch.placeholder", "搜索战技 / 魔法 / 祷告名称"),
+        ("meansSearch.empty", "没有匹配的输出手段"),
+        ("meansSpellFlatNote", "魔法／祷告的段只用固定值"),
+        ("pageSubtitle", "选一个战技、魔法或祷告，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤"),
+        ("otherInnateNoWeapon", "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果"),
+    ]
+    for (key, value) in meansTexts {
+        try rankerExpect(LoadoutText.table[key] == value, "文案 \(key) 应逐字为「\(value)」（实际「\(LoadoutText.table[key] ?? "缺")」）",
+                         counter: &count)
+    }
+    try rankerExpect(!["meansCard.subtitle", "meansSearch.placeholder", "meansSearch.empty", "meansSpellFlatNote", "pageSubtitle",
+                       "otherInnateNoWeapon"].contains { LoadoutText.t($0).contains("法术") },
+                     "选择器与页头文案不再把魔法、祷告并称「法术」", counter: &count)
     // 源码里 LoadoutText.t / f 用到的键都必须在表里（缺键会原样显示键名）。
     let sources = ["Sources/RelicCore/BuffLoadout.swift"] + [
         "BuffRankerView.swift", "BuffRankerModel.swift", "BuffRankerLoadoutSection.swift", "BuffRankerRelicSection.swift",

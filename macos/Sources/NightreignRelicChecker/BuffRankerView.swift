@@ -1,7 +1,7 @@
 import RelicCore
 import SwiftUI
 
-/// 增伤排名页（配置版）：选一个输出手段（战技 / 法术）→ 勾选它实际打出的段 → 看伤害构成 →
+/// 增伤排名页（配置版）：选一个输出手段（战技 / 魔法 / 祷告）→ 勾选它实际打出的段 → 看伤害构成 →
 /// 自己组一套配置（常规／深夜、局内武器词条、遗物、护符、其它增益）→ 汇总成一个总倍率。
 /// 纯计算在 RelicCore 的 BuffLoadout.swift，文案集中在 `LoadoutText`。
 ///
@@ -154,13 +154,25 @@ struct BuffRankerOutputSection: View {
         VStack(alignment: .leading, spacing: 13) {
             SectionHeading(
                 title: "输出手段",
-                subtitle: "搜索战技（中文 / 英文名）或法术（魔法 · 祷告）；战技可选具体武器",
+                subtitle: LoadoutText.t("meansCard.subtitle"),
                 symbol: "scope"
             )
 
-            RankerSearchField(placeholder: "搜索战技或法术，例如「尸横遍野」「Corpse Piler」「帚星」", text: $model.outputQuery)
+            HStack(spacing: 10) {
+                // 三档：战技 / 魔法 / 祷告（游戏里魔法与祷告是两类），搜索列表只列当前档。
+                Picker("输出手段类型", selection: $model.outputKind) {
+                    ForEach(OutputMeansKind.allCases) { kind in
+                        Text(LoadoutText.meansKindTitle(kind)).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 180)
 
-            if !model.outputQuery.isEmpty || model.selectedOutput == nil {
+                RankerSearchField(placeholder: LoadoutText.t("meansSearch.placeholder"), text: $model.outputQuery)
+            }
+
+            if model.showsOutputResults {
                 resultList
             }
 
@@ -175,7 +187,7 @@ struct BuffRankerOutputSection: View {
     private var resultList: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.outputResults.isEmpty {
-                Text("没有匹配的战技或法术")
+                Text(LoadoutText.t("meansSearch.empty"))
                     .font(.caption)
                     .foregroundStyle(AppTheme.tertiaryText)
             } else {
@@ -187,10 +199,8 @@ struct BuffRankerOutputSection: View {
                                 model.outputQuery = ""
                             } label: {
                                 HStack(spacing: 8) {
-                                    Pill(
-                                        text: output.kind == .skill ? "战技" : "法术",
-                                        color: output.kind == .skill ? AppTheme.purpleSoft : Color(red: 0.55, green: 0.78, blue: 0.99)
-                                    )
+                                    let kind = model.meansKind(of: output)
+                                    Pill(text: LoadoutText.meansKindTitle(kind), color: Self.kindColor(kind))
                                     Text(output.displayName)
                                         .font(.system(size: 12, weight: .semibold))
                                     Text(output.nameEn)
@@ -244,9 +254,10 @@ struct BuffRankerOutputSection: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
                         Pill(
-                            text: spell.kindZh.isEmpty ? (spell.isSorcery ? "魔法" : "祷告") : spell.kindZh,
-                            color: AppTheme.green
+                            text: spell.kindZh.isEmpty ? LoadoutText.meansKindTitle(spell.isSorcery ? .sorcery : .incantation) : spell.kindZh,
+                            color: Self.kindColor(spell.isSorcery ? .sorcery : .incantation)
                         )
+                        Pill(text: LoadoutText.t("meansSpellFlatNote"), color: AppTheme.secondaryText)
                         Spacer(minLength: 0)
                         // 施法器同样占左右手之一，按 appliesToDetail.requires.hand 判定（与 Windows 端一致）。
                         handPicker
@@ -266,6 +277,15 @@ struct BuffRankerOutputSection: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.03))
         )
+    }
+
+    /// 三档的 pill 颜色：战技紫、魔法蓝、祷告琥珀（与 Windows 端 badgeColor 同一分配）。
+    static func kindColor(_ kind: OutputMeansKind) -> Color {
+        switch kind {
+        case .skill: return AppTheme.purpleSoft
+        case .sorcery: return Color(red: 0.55, green: 0.78, blue: 0.99)
+        case .incantation: return AppTheme.amber
+        }
     }
 
     /// 武器槽（左右手）：战技与法术都要，appliesToDetail.requires.hand 按它判定。

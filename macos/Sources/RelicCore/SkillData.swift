@@ -1133,6 +1133,16 @@ public struct SkillOutput: Sendable, Hashable, Identifiable {
     }
 }
 
+/// 输出手段选择器的三档：战技 / 魔法 / 祷告（与 Windows 端 state.meansKind、安卓端的三档开关同一口径）。
+/// 只是界面层的过滤：`SkillOutput.kind` 仍只分战技与法术，生效判定另按 `LoadoutOutputClass` 走。
+public enum OutputMeansKind: String, Sendable, Hashable, CaseIterable, Identifiable {
+    case skill
+    case sorcery
+    case incantation
+
+    public var id: String { rawValue }
+}
+
 /// 战技的武器选择：按武器类别分组。组内固定带这个战技的武器排前、其余按 id。
 public struct SkillWeaponGroup: Sendable, Hashable, Identifiable {
     public let wepTypeZh: String
@@ -1276,6 +1286,22 @@ public struct SkillDataIndex: Sendable {
         let needle = query.foldedForSearch
         guard !needle.isEmpty else { return outputs }
         return outputs.filter { $0.matches(foldedQuery: needle) }
+    }
+
+    /// 选择器当前档的搜索结果：只列这一档（战技 / 魔法 / 祷告），档内再按关键字过滤。
+    public func outputs(matching query: String, kind: OutputMeansKind) -> [SkillOutput] {
+        outputs(matching: query).filter { meansKind(of: $0) == kind }
+    }
+
+    /// 这条输出手段落在选择器的哪一档：战技；法术按 spells[].kind 分——sorcery＝魔法，
+    /// 其余（incantation／pyromancy）＝祷告，与生效判定的 outputClass（isSorcery ? 魔法 : 祷告）同一口径。
+    public func meansKind(of output: SkillOutput) -> OutputMeansKind {
+        switch output.kind {
+        case .skill:
+            return .skill
+        case .spell:
+            return spellsByID[output.entryID]?.isSorcery == true ? .sorcery : .incantation
+        }
     }
 
     // MARK: 武器

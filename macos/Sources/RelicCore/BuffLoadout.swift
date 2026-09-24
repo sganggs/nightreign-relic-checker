@@ -2619,6 +2619,13 @@ public enum LoadoutText {
         "innateRestore": "计入",
         "ladderTierCount": "共 {0} 层，选中后选层",
         "loadoutMissing": "增益数据缺少配置页需要的字段（slotRules／appliesTo，需 schemaVersion 6）",
+        "meansCard.subtitle": "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器",
+        "meansKind.incantation": "祷告",
+        "meansKind.skill": "战技",
+        "meansKind.sorcery": "魔法",
+        "meansSearch.empty": "没有匹配的输出手段",
+        "meansSearch.placeholder": "搜索战技 / 魔法 / 祷告名称",
+        "meansSpellFlatNote": "魔法／祷告的段只用固定值",
         "modeTrimmed": "切到常规：已去掉 {0} 条深夜专属／超出常规上限的武器词条，深夜遗物格已清空",
         "noData": "数据未内置",
         "noteCopiesSingle": "装了 {0} 份：同一 spEffectId 多份只算一份（stackingRules：只有按 ID 互斥的 stackSelf 才各份相乘）",
@@ -2637,7 +2644,7 @@ public enum LoadoutText {
         "otherGroups.weaponInnate": "武器固有",
         "otherGroups.weaponSkill": "战技自增益",
         "otherInnateHint": "当前武器的固有效果自动列入（取消勾选可排除）：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数",
-        "otherInnateNoWeapon": "法术没有出手武器，这里只有需手动勾选的固有效果",
+        "otherInnateNoWeapon": "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果",
         "otherIntro": "不占槽位，按需勾选；勾选即视为条件成立，叠层类勾选后先填一局实际上限、累积阶梯先选最高层（都可以改）",
         "otherSearch": "搜索增益名称、来源或 SpEffect 行号",
         "outputClass.incantation": "祷告",
@@ -2654,7 +2661,7 @@ public enum LoadoutText {
         "overviewPrev": "上一页",
         "overviewSearch": "搜索增益名称、来源或 Paramdex 行名",
         "overviewTitle": "全部增益一览",
-        "pageSubtitle": "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
+        "pageSubtitle": "选一个战技、魔法或祷告，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
         "pageTitle": "增伤排名",
         "pickerDone": "完成",
         "potentialOneStack": "条件成立时（未设上限，按 1 层）{0}",
@@ -2875,6 +2882,9 @@ public enum LoadoutText {
     }
 
     public static func handName(_ hand: Int) -> String { t(hand == 2 ? "hand.2" : "hand.1") }
+
+    /// 输出手段选择器的档名：战技 / 魔法 / 祷告（meansKind.*）。
+    public static func meansKindTitle(_ kind: OutputMeansKind) -> String { t("meansKind." + kind.rawValue) }
 
     /// 遗物格标题：「普通遗物 N」「深夜遗物 N」（深夜格从 1 数起，与 Windows relicCardLabel 同一口径）。
     public static func relicCardTitle(_ cardIndex: Int, normalCount: Int, deep: Bool) -> String {
