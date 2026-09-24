@@ -3707,7 +3707,7 @@
     if (!hits.length) {
       var why = skill
         ? "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariants 里没有这个战技）。"
-        : "这条法术没有带数值的命中段。";
+        : "这条魔法／祷告没有带数值的命中段。";
       return "<div class='section-heading'><div class='section-icon'>≡</div>" +
         "<div><h2>分段命中</h2><p>这把武器打不出任何段</p></div></div>" +
         "<p class='ranker-empty' data-testid='ranker-hits-empty'>" + esc(why) + "</p>";
