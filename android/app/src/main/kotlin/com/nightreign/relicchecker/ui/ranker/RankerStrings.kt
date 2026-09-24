@@ -4,21 +4,18 @@ package com.nightreign.relicchecker.ui.ranker
 // 逐字取自桌面端的写死文案（Windows renderer/pages/ranker.js 的 pickerHtml / weaponPickerHtml / hitsHtml /
 // compositionHtml / footerHtml，macOS BuffRankerView.swift / BuffRankerComponents.swift / BuffRankerRankingSection.swift），
 // 不另起说法。配置部分（武器词条、遗物、护符、其它增益、汇总、口径说明）一律走 RankerText.t / f 与 LoadoutText。
+// 例外：输出手段的类型开关三档（战技 / 魔法 / 祷告，MeansKind.titleZh ← meansKind.*）、卡片与抽屉的副标题
+// （meansCard.subtitle）、检索框与空列表（meansSearch.placeholder / empty）、选中魔法／祷告时的标记（meansSpellFlatNote）
+// 三端同名同值，放在文案常量表里，这里不再写死。
 internal object RankerStrings {
     const val LOADING = "正在载入战技与增益数据…"
 
     // ---- 输出手段（Windows pickerHtml / weaponPickerHtml）
     const val OUTPUT_TITLE = "输出手段"
-    const val OUTPUT_SUBTITLE = "搜索战技或法术（中文／英文名都可）；战技再选一把武器"
-    const val KIND_SKILL = "战技"
-    const val KIND_SPELL = "法术（魔法／祷告）"
-    const val OUTPUT_SEARCH = "搜索战技 / 法术名称"
-    const val OUTPUT_EMPTY = "没有匹配的战技／法术"
     const val NO_SELECTION = "尚未选择输出手段。"
     const val WEAPON_LABEL = "武器"
     const val NO_WEAPON = "这个战技没有可用武器"
     const val SPARRING = "训练场可用"
-    const val SPELL_FLAT_ONLY = "法术段只用固定值"
     const val PHYS_ATTACK_TYPE = "物理攻击类型"
     const val POISE_BASE = "削韧基础"
     const val NO_BASE_ATTACK = "无基础攻击力"

@@ -9,7 +9,7 @@ data class SkillOutput(
     val entryId: Int,
     val nameZh: String,
     val nameEn: String,
-    /** 徽标：「战技」／「魔法」／「祷告」。 */
+    /** 徽标：「战技」／「魔法」／「祷告」（法术取 spells[].kindZh，与类型开关的三档同名）。 */
     val badgeZh: String,
     /** 法术为「魔法 · 专注值 7」，战技为「战技 · N 把武器」（macOS 端 SkillOutput.subtitleZh）。 */
     val subtitleZh: String,
@@ -96,7 +96,7 @@ class SkillDataIndex(val dataset: SkillDataset) {
                 entryId = skill.id,
                 nameZh = skill.nameZh,
                 nameEn = skill.nameEn,
-                badgeZh = "战技",
+                badgeZh = MeansKind.SKILL.titleZh,
                 subtitleZh = "战技 · $weapons 把武器",
                 weaponCount = weapons,
                 segmentCount = skill.hits.count { !it.notInvoked },
@@ -150,6 +150,12 @@ class SkillDataIndex(val dataset: SkillDataset) {
         val needle = query.foldedForSearch()
         return outputs.filter { (outputClass == null || it.outputClass == outputClass) && it.matches(needle) }
     }
+
+    /**
+     * 输出手段抽屉的列表（Windows filterMeans）：类型开关当前档 [kind]（战技 / 魔法 / 祷告）里匹配 [query] 的条目，
+     * 数据顺序。只在当前档里搜，三档不重不漏。
+     */
+    fun outputsOfKind(kind: MeansKind, query: String = ""): List<SkillOutput> = outputsMatching(query, kind.outputClass)
 
     /** 至少有一把能带它的武器（固定或局内战技池）能打出非 0 相对值（Windows 端 skillHasDamage）。 */
     fun skillHasDamage(skill: SkillEntry): Boolean = skill.weaponIds.any { id ->

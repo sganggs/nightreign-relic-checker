@@ -4,13 +4,18 @@ package com.nightreign.relicchecker.gamedata.ranker
 //
 // 与 Windows 端 windows/renderer/pages/ranker.js 的 TEXT（按点号路径展开，flattenText）、macOS 端
 // RelicCore/BuffLoadout.swift 的 LoadoutText.table **逐键逐字相同**（本表由 ranker.js 的 TEXT 原样导出，按键排序）。
-// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 41e2ae25，共 339 条
+// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 446c874b，共 346 条
 // （:gamedata 测试 RankerTextTest 断言；两端的常量见 ranker_crosscheck.test.mjs 的 TEXT_TABLE_DIGEST）。
 // 改任何一句文案都必须三端同时改、同时更新摘要。带 {0} {1} 的是格式串，由 RankerText.fmt 按位置替换。
 // skills schemaVersion 3 起多了武器来源标记 weaponSource.*（fixed / pool / poolHint / note，332 → 336 条）：
 // 它们属于上半部分的武器选择器，但三端同名同值，也放在这张表里。
 // buffs v6 修订的道具等级又多了 goodsLevel.*（tag / hint / note，336 → 339 条，07a69c5e → 41e2ae25）：「道具」分栏里
 // 携物知识 2／3 级的行在名字旁标 tag（长按看 hint），分栏说明区给 note。
+// 输出手段的类型开关拆成三档（战技 / 魔法 / 祷告，游戏里魔法与祷告是两类）又多了七个键：meansKind.skill / sorcery /
+// incantation（开关三档）、meansCard.subtitle（卡片与抽屉的副标题）、meansSearch.placeholder / empty（检索框与空列表）、
+// meansSpellFlatNote（选中魔法／祷告时的标记）；pageSubtitle 与 otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），
+// 339 → 346 条，41e2ae25 → 446c874b。三档只是界面层的过滤，输出手段与生效判定（appliesTo 的 skill / sorcery /
+// incantation）不变；技术说明区（brief.*）里作为统称的「法术」不改。
 
 internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "accEffectCount" to "{0} 条效果",
@@ -133,6 +138,13 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "innateRestore" to "计入",
     "ladderTierCount" to "共 {0} 层，选中后选层",
     "loadoutMissing" to "增益数据缺少配置页需要的字段（slotRules／appliesTo，需 schemaVersion 6）",
+    "meansCard.subtitle" to "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器",
+    "meansKind.incantation" to "祷告",
+    "meansKind.skill" to "战技",
+    "meansKind.sorcery" to "魔法",
+    "meansSearch.empty" to "没有匹配的输出手段",
+    "meansSearch.placeholder" to "搜索战技 / 魔法 / 祷告名称",
+    "meansSpellFlatNote" to "魔法／祷告的段只用固定值",
     "modeTrimmed" to "切到常规：已去掉 {0} 条深夜专属／超出常规上限的武器词条，深夜遗物格已清空",
     "noData" to "数据未内置",
     "noteCopiesSingle" to "装了 {0} 份：同一 spEffectId 多份只算一份（stackingRules：只有按 ID 互斥的 stackSelf 才各份相乘）",
@@ -151,7 +163,7 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "otherGroups.weaponInnate" to "武器固有",
     "otherGroups.weaponSkill" to "战技自增益",
     "otherInnateHint" to "当前武器的固有效果自动列入（取消勾选可排除）：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数",
-    "otherInnateNoWeapon" to "法术没有出手武器，这里只有需手动勾选的固有效果",
+    "otherInnateNoWeapon" to "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果",
     "otherIntro" to "不占槽位，按需勾选；勾选即视为条件成立，叠层类勾选后先填一局实际上限、累积阶梯先选最高层（都可以改）",
     "otherSearch" to "搜索增益名称、来源或 SpEffect 行号",
     "outputClass.incantation" to "祷告",
@@ -168,7 +180,7 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "overviewPrev" to "上一页",
     "overviewSearch" to "搜索增益名称、来源或 Paramdex 行名",
     "overviewTitle" to "全部增益一览",
-    "pageSubtitle" to "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
+    "pageSubtitle" to "选一个战技、魔法或祷告，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
     "pageTitle" to "增伤排名",
     "pickerDone" to "完成",
     "potentialOneStack" to "条件成立时（未设上限，按 1 层）{0}",

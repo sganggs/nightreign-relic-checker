@@ -49,23 +49,25 @@ import androidx.compose.ui.unit.dp
 import com.nightreign.relicchecker.gamedata.ranker.BuffFormat
 import com.nightreign.relicchecker.gamedata.ranker.DamageComposition
 import com.nightreign.relicchecker.gamedata.ranker.HitAction
+import com.nightreign.relicchecker.gamedata.ranker.MeansKind
 import com.nightreign.relicchecker.gamedata.ranker.RankerText
 import com.nightreign.relicchecker.gamedata.ranker.ResolvedMeans
+import com.nightreign.relicchecker.gamedata.ranker.SkillDataIndex
 import com.nightreign.relicchecker.gamedata.ranker.SkillElement
 import com.nightreign.relicchecker.gamedata.ranker.SkillHit
+import com.nightreign.relicchecker.gamedata.ranker.SkillOutput
 import com.nightreign.relicchecker.gamedata.ranker.SkillSegment
 import com.nightreign.relicchecker.gamedata.ranker.SkillWeapon
 import com.nightreign.relicchecker.gamedata.ranker.SkillWeaponGroup
 import com.nightreign.relicchecker.gamedata.ranker.WeaponSourceKind
-import com.nightreign.relicchecker.rules.foldedForSearch
 import com.nightreign.relicchecker.ui.NightPanel
 import com.nightreign.relicchecker.ui.NightPill
 import com.nightreign.relicchecker.ui.NightSearchField
 import com.nightreign.relicchecker.ui.NightSegmentedControl
 import com.nightreign.relicchecker.ui.theme.NightColors
 
-// ① 输出手段：战技／法术（底部抽屉搜索）、战技的武器（底部抽屉，按类别分组）、武器槽、武器基础攻击力；
-// 分段命中（小标签勾选 + 明细）；伤害构成（条形图 + 占比）。
+// ① 输出手段：战技／魔法／祷告（底部抽屉：类型开关三档 + 搜索，只列当前档）、战技的武器（底部抽屉，按类别分组）、
+// 武器槽、武器基础攻击力；分段命中（小标签勾选 + 明细）；伤害构成（条形图 + 占比）。
 
 @Composable
 internal fun OutputCard(
@@ -86,13 +88,13 @@ internal fun OutputCard(
     }
     RankerSectionCard(
         title = RankerStrings.OUTPUT_TITLE,
-        subtitle = RankerStrings.OUTPUT_SUBTITLE,
+        subtitle = RankerText.t("meansCard.subtitle"),
         summary = summary,
         expanded = expanded,
         onToggle = onToggle,
     ) {
         RankerPickerField(
-            text = output?.displayName ?: RankerStrings.OUTPUT_SEARCH,
+            text = output?.displayName ?: RankerText.t("meansSearch.placeholder"),
             subtitle = output?.nameEn,
             placeholder = output == null,
             onClick = onPickOutput,
@@ -106,7 +108,7 @@ internal fun OutputCard(
         if (skill != null) {
             RankerPills(
                 buildList {
-                    add(RankerText.t("outputClass.skill") to NightColors.PurpleSoft)
+                    add(MeansKind.SKILL.titleZh to NightColors.PurpleSoft)
                     add(RankerStrings.weaponsAvailable(resolved.weaponGroups.sumOf { it.weapons.size }) to NightColors.TextSecondary)
                     if (skill.sparring) add(RankerStrings.SPARRING to NightColors.Green)
                 },
@@ -124,11 +126,12 @@ internal fun OutputCard(
                 )
             }
         } else if (spell != null) {
+            // 类别标记沿用 spells[].kindZh（魔法／祷告），不写「法术」。
             RankerPills(
                 listOf(
-                    spell.kindLabelZh to (if (spell.isIncantation) NightColors.Amber else RankerPalette.Blue),
+                    spell.kindLabelZh to meansKindColor(MeansKind.of(spell.outputClass)),
                     RankerStrings.mpCost(spell.mp) to NightColors.TextSecondary,
-                    RankerStrings.SPELL_FLAT_ONLY to NightColors.TextSecondary,
+                    RankerText.t("meansSpellFlatNote") to NightColors.TextSecondary,
                 ),
             )
         }
@@ -441,48 +444,71 @@ private fun LegendRow(name: String, color: androidx.compose.ui.graphics.Color, s
 
 // ============================================================ 抽屉：输出手段 / 武器
 
+/** 类别标记的颜色：战技＝紫，魔法＝蓝，祷告＝琥珀（Windows 的 purple / blue / amber pill）。 */
+private fun meansKindColor(kind: MeansKind): androidx.compose.ui.graphics.Color = when (kind) {
+    MeansKind.SKILL -> NightColors.PurpleSoft
+    MeansKind.SORCERY -> RankerPalette.Blue
+    MeansKind.INCANTATION -> NightColors.Amber
+}
+
+/** 类型开关三档的文字（展示顺序＝[MeansKind.entries]，默认第一档「战技」）。 */
+internal fun meansKindLabels(): List<String> = MeansKind.entries.map { it.titleZh }
+
+/**
+ * 输出手段抽屉里的一行（纯数据，页面测试直接校对）：名称、「英文名 · N 把武器／专注值 N」、类别标记（战技 / 魔法 / 祷告，
+ * 法术取 spells[].kindZh）与它所在的档。
+ */
+internal data class OutputPickRowModel(
+    val output: SkillOutput,
+    val title: String,
+    val subtitle: String,
+    val badge: String,
+    val kind: MeansKind,
+)
+
+/** 抽屉的列表：只列类型开关当前档 [kind] 里匹配 [query] 的条目（数据顺序；SkillDataIndex.outputsOfKind）。 */
+internal fun outputPickRows(skills: SkillDataIndex, kind: MeansKind, query: String): List<OutputPickRowModel> =
+    skills.outputsOfKind(kind, query).map { output ->
+        OutputPickRowModel(
+            output = output,
+            title = output.displayName,
+            subtitle = listOf(
+                output.nameEn,
+                if (output.isSkill) RankerStrings.weaponCount(output.weaponCount) else RankerStrings.mpCost(output.mp ?: 0),
+            ).filter { it.isNotEmpty() }.joinToString(" · "),
+            badge = output.badgeZh,
+            kind = MeansKind.of(output),
+        )
+    }
+
 @Composable
 internal fun OutputPickerSheet(state: RankerPageState, onDone: () -> Unit) {
     val current = state.resolved.output
-    var spellKind by rememberSaveable { mutableStateOf(current?.isSkill == false) }
+    // 类型开关三档（战技 / 魔法 / 祷告，默认战技）：档位在页面状态里（RankerPageState.meansKind），只换列表。
+    val kind = state.meansKind
     var query by rememberSaveable { mutableStateOf("") }
-    val list = remember(spellKind, query) {
-        val needle = query.foldedForSearch()
-        state.skills.outputs.filter { it.isSkill != spellKind && it.matches(needle) }
-    }
+    val rows = remember(kind, query) { state.meansRows(query) }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        RankerSheetHeader(RankerStrings.OUTPUT_TITLE, RankerStrings.OUTPUT_SUBTITLE, RankerStrings.countPill(list.size))
+        RankerSheetHeader(RankerStrings.OUTPUT_TITLE, RankerText.t("meansCard.subtitle"), RankerStrings.countPill(rows.size))
         NightSegmentedControl(
-            items = listOf(RankerStrings.KIND_SKILL, RankerStrings.KIND_SPELL),
-            selectedIndex = if (spellKind) 1 else 0,
-            onSelect = { spellKind = it == 1 },
+            items = meansKindLabels(),
+            selectedIndex = kind.ordinal,
+            onSelect = { state.updateMeansKind(MeansKind.entries[it]) },
             height = 38.dp,
         )
-        NightSearchField(query, { query = it }, placeholder = RankerStrings.OUTPUT_SEARCH)
+        NightSearchField(query, { query = it }, placeholder = RankerText.t("meansSearch.placeholder"))
         LazyColumn(Modifier.heightIn(min = 300.dp, max = 590.dp)) {
-            if (list.isEmpty()) item(key = "empty") { RankerNote(RankerStrings.OUTPUT_EMPTY, Modifier.padding(vertical = 12.dp)) }
-            items(list, key = { it.id }) { output ->
+            if (rows.isEmpty()) item(key = "empty") { RankerNote(RankerText.t("meansSearch.empty"), Modifier.padding(vertical = 12.dp)) }
+            items(rows, key = { it.output.id }) { row ->
                 RankerPickRow(
-                    title = output.displayName,
-                    subtitle = listOf(
-                        output.nameEn,
-                        if (output.isSkill) RankerStrings.weaponCount(output.weaponCount) else RankerStrings.mpCost(output.mp ?: 0),
-                    ).filter { it.isNotEmpty() }.joinToString(" · "),
-                    selected = output.id == current?.id,
+                    title = row.title,
+                    subtitle = row.subtitle,
+                    selected = row.output.id == current?.id,
                     onClick = {
-                        state.selectOutput(output)
+                        state.selectOutput(row.output)
                         onDone()
                     },
-                    trailing = {
-                        NightPill(
-                            output.badgeZh,
-                            when {
-                                output.isSkill -> NightColors.PurpleSoft
-                                output.outputClass.key == "incantation" -> NightColors.Amber
-                                else -> RankerPalette.Blue
-                            },
-                        )
-                    },
+                    trailing = { NightPill(row.badge, meansKindColor(row.kind)) },
                 )
                 HorizontalDivider(color = NightColors.Border.copy(alpha = .6f))
             }

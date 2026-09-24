@@ -21,6 +21,7 @@ import com.nightreign.relicchecker.gamedata.ranker.LoadoutEvaluation
 import com.nightreign.relicchecker.gamedata.ranker.LoadoutEvaluator
 import com.nightreign.relicchecker.gamedata.ranker.LoadoutIndex
 import com.nightreign.relicchecker.gamedata.ranker.LoadoutText
+import com.nightreign.relicchecker.gamedata.ranker.MeansKind
 import com.nightreign.relicchecker.gamedata.ranker.MeansSelection
 import com.nightreign.relicchecker.gamedata.ranker.OtherRowScore
 import com.nightreign.relicchecker.gamedata.ranker.OutputClass
@@ -51,6 +52,8 @@ internal const val RANKER_LOADOUT_PARSER_ID = "ranker.loadout.v1"
  *   * 各栏候选的排序分数（每条候选单独评估两次）放到后台线程算，见 [rememberRankerRows]。
  * 派生量都是 derivedStateOf：同一输入只算一次，重组时直接取缓存。
  * 状态经 [saver] 存进 rememberSaveable（输出手段与配置编码成字符串），切底栏、返回枢纽再进入都保留。
+ * 输出手段抽屉的类型开关（[meansKind]：战技 / 魔法 / 祷告三档，默认战技）也在这里，与 Windows 的 state.meansKind 同一口径：
+ * 只换抽屉列出的那一档，不改已选的输出手段。
  */
 @Stable
 internal class RankerPageState(
@@ -62,6 +65,7 @@ internal class RankerPageState(
     initialShowInactive: Boolean,
     initialWaFilterAll: Boolean,
     initialNotice: String?,
+    initialMeansKind: MeansKind = MeansKind.DEFAULT,
 ) {
     var means: MeansSelection by mutableStateOf(initialMeans)
         private set
@@ -78,6 +82,13 @@ internal class RankerPageState(
 
     /** 武器词条栏：true＝全部类别，false＝当前出手武器的类别。 */
     var waFilterAll: Boolean by mutableStateOf(initialWaFilterAll)
+        private set
+
+    /**
+     * 输出手段抽屉的类型开关当前档（战技 / 魔法 / 祷告，默认「战技」；游戏里魔法与祷告是两类）。
+     * 只是界面层的过滤：换档不改 [means]，已选的输出手段（哪怕在另一档）原样保留。
+     */
+    var meansKind: MeansKind by mutableStateOf(initialMeansKind)
         private set
 
     /** 「按推荐填满」正在后台计算。 */
@@ -130,6 +141,12 @@ internal class RankerPageState(
     fun updateWaFilterAll(value: Boolean) = mutate { waFilterAll = value }
 
     // ---- 输出手段
+
+    /** 类型开关换档：只换抽屉的列表。 */
+    fun updateMeansKind(kind: MeansKind) = mutate { meansKind = kind }
+
+    /** 输出手段抽屉的列表：只列类型开关当前档里匹配 [query] 的条目（数据顺序）。 */
+    fun meansRows(query: String): List<OutputPickRowModel> = outputPickRows(skills, meansKind, query)
 
     fun selectOutput(output: SkillOutput) = mutate {
         means = means.select(skills, output)
@@ -255,20 +272,29 @@ internal class RankerPageState(
             initialShowInactive = false, initialWaFilterAll = false, initialNotice = null,
         )
 
-        /** rememberSaveable 用：输出手段与配置编码成字符串；读不回来时退回默认。 */
+        /**
+         * rememberSaveable 用：输出手段与配置编码成字符串，类型开关存档位的键；读不回来时退回默认
+         * （没存档位时落在所选输出手段的那一档，认不出的档位回落到「战技」）。
+         */
         fun saver(skills: SkillDataIndex, index: LoadoutIndex): Saver<RankerPageState, Any> = listSaver(
             save = { state ->
-                listOf(state.means.encode(), state.config.encode(), state.showInactive, state.waFilterAll, state.notice.orEmpty())
+                listOf(
+                    state.means.encode(), state.config.encode(), state.showInactive, state.waFilterAll, state.notice.orEmpty(),
+                    state.meansKind.key,
+                )
             },
             restore = { saved ->
+                val means = MeansSelection.decode(saved.getOrNull(0) as? String)?.sanitized(skills) ?: MeansSelection.initial(skills)
                 RankerPageState(
                     skills = skills,
                     index = index,
-                    initialMeans = MeansSelection.decode(saved.getOrNull(0) as? String)?.sanitized(skills) ?: MeansSelection.initial(skills),
+                    initialMeans = means,
                     initialConfig = LoadoutConfig.decode(saved.getOrNull(1) as? String) ?: LoadoutConfig(),
                     initialShowInactive = saved.getOrNull(2) as? Boolean ?: false,
                     initialWaFilterAll = saved.getOrNull(3) as? Boolean ?: false,
                     initialNotice = (saved.getOrNull(4) as? String)?.takeIf { it.isNotEmpty() },
+                    initialMeansKind = (saved.getOrNull(5) as? String)?.let { MeansKind.fromKey(it) }
+                        ?: MeansKind.of(means.outputId?.let { skills.output(it) }),
                 )
             },
         )

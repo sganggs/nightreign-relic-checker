@@ -56,6 +56,78 @@ class MeansSelectionTest {
         assertEquals(OutputClass.SKILL, resolved.outputClass)
     }
 
+    // ------------------------------------------------------------------ 类型开关三档（战技 / 魔法 / 祷告）
+
+    @Test
+    fun `类型开关三档：战技、魔法、祷告各自只列本类，三档合起来正好是整张列表`() {
+        val byKind = MeansKind.entries.associateWith { skills.outputsOfKind(it) }
+        MeansKind.entries.forEach { kind ->
+            val listed = byKind.getValue(kind)
+            assertTrue(listed.isNotEmpty(), "${kind.key} 一档应当有条目")
+            assertTrue(listed.all { it.outputClass == kind.outputClass && kind.includes(it) && MeansKind.of(it) == kind }, "${kind.key} 一档只列同类")
+        }
+        assertEquals(skills.skillOutputCount, byKind.getValue(MeansKind.SKILL).size)
+        assertEquals(skills.spellOutputCount, byKind.getValue(MeansKind.SORCERY).size + byKind.getValue(MeansKind.INCANTATION).size)
+
+        // 魔法／祷告两档按 spells[].kind 分开，徽标取数据集的 kindZh（魔法／祷告），不出现「法术」。
+        byKind.getValue(MeansKind.SORCERY).forEach { output ->
+            val spell = assertNotNull(skills.spellsById[output.entryId])
+            assertEquals("sorcery", spell.kind, "${output.displayName} 不该出现在魔法档")
+            assertEquals(spell.kindZh.ifEmpty { "魔法" }, output.badgeZh)
+            assertEquals("魔法", output.badgeZh)
+        }
+        byKind.getValue(MeansKind.INCANTATION).forEach { output ->
+            val spell = assertNotNull(skills.spellsById[output.entryId])
+            assertEquals("incantation", spell.kind, "${output.displayName} 不该出现在祷告档")
+            assertEquals(spell.kindZh.ifEmpty { "祷告" }, output.badgeZh)
+            assertEquals("祷告", output.badgeZh)
+        }
+        assertTrue(byKind.getValue(MeansKind.SKILL).all { it.badgeZh == "战技" && it.isSkill })
+        assertTrue(skills.outputs.none { it.badgeZh.contains("法术") })
+
+        // 三档不重不漏，保持数据顺序。
+        val union = MeansKind.entries.flatMap { byKind.getValue(it) }.map { it.id }
+        assertEquals(union.size, union.toSet().size, "同一条不会出现在两档")
+        assertEquals(skills.outputs.map { it.id }.sorted(), union.sorted(), "三档合起来是整张列表")
+        MeansKind.entries.forEach { kind ->
+            assertEquals(skills.outputs.filter { it.outputClass == kind.outputClass }.map { it.id }, byKind.getValue(kind).map { it.id })
+        }
+
+        // 已知条目落在该落的档：帚星（魔法 4021）、死亡雷击（祷告 5040，对拍用例）、尸横遍野（战技 1177）。
+        fun has(kind: MeansKind, query: String, id: String) = skills.outputsOfKind(kind, query).any { it.id == id }
+        assertTrue(has(MeansKind.SORCERY, "帚星", "sorcery-4021"))
+        assertFalse(has(MeansKind.INCANTATION, "帚星", "sorcery-4021"))
+        assertFalse(has(MeansKind.SKILL, "帚星", "sorcery-4021"))
+        assertTrue(has(MeansKind.INCANTATION, "", "incantation-5040"), "死亡雷击在祷告档")
+        assertFalse(has(MeansKind.SORCERY, "", "incantation-5040"), "死亡雷击不在魔法档")
+        assertTrue(has(MeansKind.SKILL, "尸横遍野", "skill-1177"))
+        assertFalse(has(MeansKind.SORCERY, "尸横遍野", "skill-1177"))
+
+        // 搜索只在当前档里搜：拿一条祷告的英文名，祷告档搜得到（忽略大小写），魔法／战技档搜不到。
+        val incant = byKind.getValue(MeansKind.INCANTATION).first { it.nameEn.isNotEmpty() }
+        assertTrue(has(MeansKind.INCANTATION, incant.nameEn.lowercase(), incant.id))
+        assertFalse(has(MeansKind.SORCERY, incant.nameEn, incant.id))
+        assertFalse(has(MeansKind.SKILL, incant.nameEn, incant.id))
+        // 类别名本身也能搜：魔法档搜「魔法」列出整档，搜「祷告」一条都没有。
+        assertEquals(byKind.getValue(MeansKind.SORCERY), skills.outputsOfKind(MeansKind.SORCERY, "魔法"))
+        assertTrue(skills.outputsOfKind(MeansKind.SORCERY, "祷告").isEmpty())
+    }
+
+    @Test
+    fun `类型开关只是界面层的过滤：选中的输出手段、对拍口径与生效类别不变`() {
+        // 选中后所在的档就是它的输出类别；MeansSelection 不带档位，编码不变。
+        for (case in RankerCrossCheck.CASES) {
+            val selection = select(case)
+            val output = assertNotNull(skills.output(assertNotNull(selection.outputId)))
+            val kind = MeansKind.of(output)
+            assertEquals(case.outputClass, kind.outputClass, case.key)
+            assertTrue(skills.outputsOfKind(kind).any { it.id == output.id }, case.key)
+            assertEquals(case.outputClass, selection.resolve(skills).rankerOutput().outputClass, case.key)
+            assertFalse("kind" in selection.encode(), "状态编码里没有档位")
+        }
+        assertEquals(MeansKind.SKILL, MeansKind.of(skills.output(assertNotNull(MeansSelection.initial(skills).outputId))), "默认选中的是战技，开关默认战技档")
+    }
+
     @Test
     fun `战技带武器类别，法术按施法器，换招保留手与攻击情境`() {
         val corpse = select(RankerCrossCheck.CASES[0]).withHand(2).toggleContext("criticalHit")

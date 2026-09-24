@@ -6,6 +6,7 @@ import com.nightreign.relicchecker.gamedata.GameDataKey
 import com.nightreign.relicchecker.gamedata.ranker.EntryState
 import com.nightreign.relicchecker.gamedata.ranker.LoadoutConfig
 import com.nightreign.relicchecker.gamedata.ranker.LoadoutIndex
+import com.nightreign.relicchecker.gamedata.ranker.MeansKind
 import com.nightreign.relicchecker.gamedata.ranker.MeansSelection
 import com.nightreign.relicchecker.gamedata.ranker.OutputClass
 import com.nightreign.relicchecker.gamedata.ranker.RankerParsers
@@ -31,7 +32,8 @@ import org.junit.Test
 //   · rememberSaveable 的存取往返不丢状态；
 //   · 页面用到的 RankerText 键都在文案表里（缺键时 RankerText.t 会原样显示键名）；
 //   · skills schemaVersion 3：武器抽屉每行带「固定战技 / 局内可抽到」标记与说明，底部说明引用 usage 的两节新原文；
-//   · buffs v6 修订的道具等级：「道具」分栏里携物知识 2／3 级的行标等级，分栏说明区给出等级来源。
+//   · buffs v6 修订的道具等级：「道具」分栏里携物知识 2／3 级的行标等级，分栏说明区给出等级来源；
+//   · 输出手段抽屉的类型开关三档（战技 / 魔法 / 祷告，默认战技）：每档只列本类，换档不改已选的输出手段，文案读表。
 class RankerPageStateTest {
     private object Data {
         private fun read(name: String): String {
@@ -239,11 +241,96 @@ class RankerPageStateTest {
         assertTrue(restored.showInactive)
         assertTrue(restored.waFilterAll)
         assertEquals(state.evaluation.totalMultiplier, restored.evaluation.totalMultiplier)
+        assertEquals(MeansKind.SKILL, restored.meansKind)
+
+        // 类型开关的档位一并存取；换档不动已选的输出手段。
+        state.updateMeansKind(MeansKind.INCANTATION)
+        val kindRestored = requireNotNull(saver.restore(requireNotNull(with(saver) { scope.save(state) })))
+        assertEquals(MeansKind.INCANTATION, kindRestored.meansKind)
+        assertEquals(state.means, kindRestored.means)
 
         // 读不回来时退回默认
         val broken = requireNotNull(saver.restore(listOf("{bad", "{bad", false, false, "")))
         assertEquals(MeansSelection.initial(Data.skills), broken.means)
         assertEquals(LoadoutConfig(), broken.config)
+        assertEquals(MeansKind.SKILL, broken.meansKind)
+        // 旧的存档没有档位：落在所选输出手段的那一档；认不出的档位（旧的二档取值 spell）回落到战技。
+        val prayer = MeansSelection().select(Data.skills, requireNotNull(Data.skills.output("incantation-5040")))
+        val legacy = requireNotNull(saver.restore(listOf(prayer.encode(), "{bad", false, false, "")))
+        assertEquals(MeansKind.INCANTATION, legacy.meansKind)
+        val unknown = requireNotNull(saver.restore(listOf(prayer.encode(), "{bad", false, false, "", "spell")))
+        assertEquals(MeansKind.SKILL, unknown.meansKind)
+        assertEquals(prayer, unknown.means)
+    }
+
+    @Test
+    fun outputPickerFiltersByThreeKinds() {
+        val state = newState()
+        // 默认战技档；开关三档的文字读表。
+        assertEquals(MeansKind.SKILL, state.meansKind)
+        assertEquals(listOf("战技", "魔法", "祷告"), meansKindLabels())
+        assertEquals(MeansKind.entries.map { RankerText.t("meansKind.${it.key}") }, meansKindLabels())
+
+        val all = Data.skills.outputs.map { it.id }
+        val seen = ArrayList<String>()
+        val selected = state.means
+        for (kind in MeansKind.entries) {
+            state.updateMeansKind(kind)
+            assertEquals(kind, state.meansKind)
+            assertEquals("换档不改已选的输出手段", selected, state.means)
+            val rows = state.meansRows("")
+            assertTrue("${kind.key} 一档应当有条目", rows.isNotEmpty())
+            assertEquals(outputPickRows(Data.skills, kind, ""), rows)
+            assertTrue("${kind.key} 一档只列本类", rows.all { it.kind == kind && it.output.outputClass == kind.outputClass })
+            // 类别标记：战技「战技」，魔法／祷告取 spells[].kindZh，与开关同名，不写「法术」。
+            assertTrue(rows.all { it.badge == kind.titleZh })
+            assertTrue(rows.none { "法术" in it.badge })
+            assertTrue(rows.all { it.title == it.output.displayName })
+            rows.forEach { row ->
+                val tail = if (kind == MeansKind.SKILL) RankerStrings.weaponCount(row.output.weaponCount) else RankerStrings.mpCost(row.output.mp ?: 0)
+                assertTrue(row.subtitle, row.subtitle.endsWith(tail))
+            }
+            seen += rows.map { it.output.id }
+        }
+        assertEquals("三档不重不漏", all.sorted(), seen.sorted())
+
+        // 搜索只在当前档里搜：帚星只在魔法档，死亡雷击只在祷告档。
+        state.updateMeansKind(MeansKind.SORCERY)
+        assertTrue(state.meansRows("帚星").any { it.output.id == "sorcery-4021" })
+        state.updateMeansKind(MeansKind.INCANTATION)
+        assertTrue(state.meansRows("帚星").isEmpty())
+        assertTrue(state.meansRows("死亡雷击").any { it.output.id == "incantation-5040" })
+        state.updateMeansKind(MeansKind.SKILL)
+        assertTrue(state.meansRows("死亡雷击").isEmpty())
+
+        // 在祷告档选死亡雷击：档位不变，选中项是祷告、名字旁的标记是「祷告」。
+        state.updateMeansKind(MeansKind.INCANTATION)
+        state.selectOutput(requireNotNull(Data.skills.output("incantation-5040")))
+        assertEquals(MeansKind.INCANTATION, state.meansKind)
+        assertEquals(MeansKind.INCANTATION, MeansKind.of(state.resolved.output))
+        assertEquals("祷告", state.resolved.spell?.kindLabelZh)
+        state.selectOutput(requireNotNull(Data.skills.output("sorcery-4021")))
+        assertEquals("魔法", state.resolved.spell?.kindLabelZh)
+    }
+
+    @Test
+    fun outputTextsReadTheTable() {
+        assertEquals("搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器", RankerText.t("meansCard.subtitle"))
+        assertEquals("搜索战技 / 魔法 / 祷告名称", RankerText.t("meansSearch.placeholder"))
+        assertEquals("没有匹配的输出手段", RankerText.t("meansSearch.empty"))
+        assertEquals("魔法／祷告的段只用固定值", RankerText.t("meansSpellFlatNote"))
+        // 原来写死在页面上的二档文案不能再出现。
+        val dir = listOf(
+            File("src/main/kotlin/com/nightreign/relicchecker/ui/ranker"),
+            File("app/src/main/kotlin/com/nightreign/relicchecker/ui/ranker"),
+        ).first { it.isDirectory }
+        val source = dir.listFiles { file -> file.extension == "kt" }!!.joinToString("\n") { it.readText() }
+        listOf("法术（魔法／祷告）", "搜索战技或法术", "搜索战技 / 法术名称", "没有匹配的战技／法术", "法术段只用固定值").forEach { text ->
+            assertFalse("「$text」应改为读表", source.contains(text))
+        }
+        listOf("meansCard.subtitle", "meansSearch.placeholder", "meansSearch.empty", "meansSpellFlatNote").forEach { key ->
+            assertTrue("页面应读 $key", source.contains("RankerText.t(\"$key\")"))
+        }
     }
 
     @Test

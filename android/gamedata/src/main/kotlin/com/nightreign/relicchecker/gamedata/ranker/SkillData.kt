@@ -259,8 +259,8 @@ data class SpellEntry(
     /** 输出类别：魔法以外一律按祷告（macOS：`spell.isSorcery ? .sorcery : .incantation`）。 */
     val outputClass: OutputClass get() = if (isSorcery) OutputClass.SORCERY else OutputClass.INCANTATION
 
-    /** 「魔法」「祷告」：数据集的 kindZh，缺失时按类别补上。 */
-    val kindLabelZh: String get() = kindZh.ifEmpty { if (isSorcery) "魔法" else "祷告" }
+    /** 「魔法」「祷告」：数据集的 kindZh，缺失时按类别补上（类型开关同一档的文案 meansKind.*）。 */
+    val kindLabelZh: String get() = kindZh.ifEmpty { MeansKind.of(outputClass).titleZh }
 }
 
 /** skills 数据集（只含页面用到的字段）。 */

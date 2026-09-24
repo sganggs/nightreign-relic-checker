@@ -100,6 +100,38 @@ enum class OutputClass(val key: String, val casterWepType: Int?) {
     }
 }
 
+/**
+ * 输出手段类型开关的三档（展示顺序即声明顺序，默认第一档「战技」；Windows 端 MEANS_KINDS）：游戏里魔法与祷告是两类，
+ * 开关分成战技 / 魔法 / 祷告，抽屉的列表只列当前档（[SkillDataIndex.outputsOfKind]）。
+ * 只是界面层的过滤：输出手段条目（[SkillOutput]）、所选的 [MeansSelection] 与生效判定（appliesTo 的 skill / sorcery /
+ * incantation）都不变；法术按 spells[].kind 落在魔法或祷告一档（[SpellEntry.outputClass]）。文案取 meansKind.*。
+ */
+enum class MeansKind(val key: String, val outputClass: OutputClass) {
+    SKILL("skill", OutputClass.SKILL),
+    SORCERY("sorcery", OutputClass.SORCERY),
+    INCANTATION("incantation", OutputClass.INCANTATION),
+    ;
+
+    /** 「战技」「魔法」「祷告」（文案常量表 meansKind.*，三端同名同值）。 */
+    val titleZh: String get() = RankerText.t("meansKind.$key")
+
+    /** 这条输出手段落在这一档吗。 */
+    fun includes(output: SkillOutput): Boolean = output.outputClass == outputClass
+
+    companion object {
+        /** 默认档：战技。 */
+        val DEFAULT: MeansKind = SKILL
+
+        fun of(outputClass: OutputClass): MeansKind = entries.first { it.outputClass == outputClass }
+
+        /** 输出手段所在的档；没有选中时为默认的「战技」。 */
+        fun of(output: SkillOutput?): MeansKind = output?.let { of(it.outputClass) } ?: DEFAULT
+
+        /** 按键读回（抽屉的 rememberSaveable 存键）：只认三档，其余（含旧的二档取值 spell）回落到默认的「战技」。 */
+        fun fromKey(key: String?): MeansKind = entries.firstOrNull { it.key == key } ?: DEFAULT
+    }
+}
+
 /** 9 格表（按 [DamageType.ordinal] 索引）的小工具。内部计算用 DoubleArray，对外一律给只读 List。 */
 internal object TypeTables {
     fun filled(value: Double): DoubleArray = DoubleArray(DamageType.COUNT) { value }
