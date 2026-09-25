@@ -67,6 +67,7 @@
     libraryQuery: "",
     libraryCategory: "全部",
     libraryOnlyEligible: true,
+    libraryIncludeCurses: true,
     busy: false,
     save: {
       relicData: null,
@@ -313,19 +314,29 @@
   }
 
   function eligibleModePills(affix) {
+    // 负面词条不进任何正面口径，只出现在深夜遗物的诅咒池里，可用模式一栏直接标明
+    if (affix.isCurse) return pill("负面词条 · 深夜诅咒池", "red");
     var html = modeKeys.slice(0, 3).filter(function (key) { return Core.isEligible(affix, key); }).map(function (key) { return pill(Core.MODES[key].shortTitle, "green"); }).join("");
     return html + (affix.requiresCurse ? pill("需诅咒", "amber") : "");
   }
 
+  // 词条库列出正面与负面词条：「仅当前口径」只过滤正面词条（负面词条本来就不属于任何正面口径），
+  // 「含负面词条」关掉时才把负面词条藏起来。词条检查的选择器仍只列正面词条。
+  function libraryAffixes() {
+    return state.catalog.affixes.filter(function (affix) {
+      if (affix.isCurse) return state.libraryIncludeCurses;
+      return !state.libraryOnlyEligible || Core.isEligible(affix, state.mode);
+    });
+  }
+
   function renderLibrary() {
     var needle = Core.foldForSearch(state.libraryQuery);
-    var rows = positiveAffixes().filter(function (affix) {
-      if (state.libraryOnlyEligible && !Core.isEligible(affix, state.mode)) return false;
+    var rows = libraryAffixes().filter(function (affix) {
       if (state.libraryCategory !== "全部" && affix.category !== state.libraryCategory) return false;
       return !needle || Core.searchableText(affix).indexOf(needle) !== -1;
     }).sort(function (a, b) { return a.sortId - b.sortId || a.effectId - b.effectId; });
     test("library-table-body").innerHTML = rows.map(function (affix) {
-      return "<tr data-effect-id='" + affix.effectId + "'><td class='id-cell'><strong>" + affix.sortId + "</strong><span>" + affix.effectId + "</span></td><td class='affix-cell'><strong>" + esc(affix.name) + "</strong>" + (affix.explanation ? "<p>" + esc(affix.explanation) + "</p>" : "") + "</td><td class='category-cell'>" + esc(affix.category) + "</td><td class='number-cell'>" + affix.compatibilityId + "</td><td class='modes-cell'>" + eligibleModePills(affix) + "</td></tr>";
+      return "<tr data-effect-id='" + affix.effectId + "'" + (affix.isCurse ? " class='is-curse'" : "") + "><td class='id-cell'><strong>" + affix.sortId + "</strong><span>" + affix.effectId + "</span></td><td class='affix-cell'><strong>" + esc(affix.name) + "</strong>" + (affix.isCurse ? pill("负面", "red") : "") + (affix.explanation ? "<p>" + esc(affix.explanation) + "</p>" : "") + "</td><td class='category-cell'>" + esc(affix.category) + "</td><td class='number-cell'>" + affix.compatibilityId + "</td><td class='modes-cell'>" + eligibleModePills(affix) + "</td></tr>";
     }).join("");
     test("library-empty").hidden = rows.length > 0;
     test("library-count").textContent = "当前显示 " + rows.length + " 条";
@@ -1347,6 +1358,7 @@
   test("library-category").addEventListener("change", function (event) { state.libraryCategory = event.target.value; renderLibrary(); });
   test("library-mode").addEventListener("change", function (event) { setMode(event.target.value); });
   test("library-eligible-toggle").addEventListener("change", function (event) { state.libraryOnlyEligible = event.target.checked; renderLibrary(); });
+  test("library-curse-toggle").addEventListener("change", function (event) { state.libraryIncludeCurses = event.target.checked; renderLibrary(); });
   test("picker-search").addEventListener("input", function (event) { state.pickerQuery = event.target.value; renderPicker(); });
   test("save-search").addEventListener("input", function (event) { state.save.query = event.target.value; renderSaveRelics(); });
   // 对比卡是动态渲染的，搜索框只能用委托监听；只重绘列表，输入时不掉焦点。

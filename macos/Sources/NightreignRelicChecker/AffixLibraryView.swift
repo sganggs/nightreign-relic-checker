@@ -6,11 +6,14 @@ struct AffixLibraryView: View {
     @State private var query = ""
     @State private var category = "全部"
     @State private var onlyEligible = true
+    @State private var includeCurses = true
 
+    /// 词条库列出正面与负面词条：「仅当前口径」只过滤正面词条（负面词条本来就不属于任何正面口径），
+    /// 「含负面词条」关掉时才把负面词条藏起来。词条检查的选择器仍只列正面词条。
     private var filtered: [Affix] {
         let needle = query.foldedForSearch
-        return model.positiveAffixes
-            .filter { !onlyEligible || $0.isEligible(for: model.mode) }
+        return model.catalog.affixes
+            .filter { $0.isCurse ? includeCurses : (!onlyEligible || $0.isEligible(for: model.mode)) }
             .filter { category == "全部" || $0.category == category }
             .filter { needle.isEmpty || $0.searchableText.contains(needle) }
             .sorted {
@@ -59,6 +62,10 @@ struct AffixLibraryView: View {
                     .frame(width: 150)
 
                     Toggle("仅当前口径", isOn: $onlyEligible)
+                        .toggleStyle(.switch)
+                        .font(.caption)
+
+                    Toggle("含负面词条", isOn: $includeCurses)
                         .toggleStyle(.switch)
                         .font(.caption)
                 }
@@ -131,8 +138,12 @@ private struct LibraryRow: View {
             .frame(width: 150, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(affix.name)
-                    .font(.system(size: 13, weight: .semibold))
+                HStack(spacing: 8) {
+                    Text(affix.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(affix.isCurse ? AppTheme.red : .primary)
+                    if affix.isCurse { Pill(text: "负面", color: AppTheme.red) }
+                }
                 if !affix.explanation.isEmpty {
                     Text(affix.explanation)
                         .font(.caption)
@@ -152,8 +163,13 @@ private struct LibraryRow: View {
                 .frame(width: 90, alignment: .trailing)
 
             HStack(spacing: 5) {
-                ForEach(modes, id: \.self) { Pill(text: $0, color: AppTheme.green) }
-                if affix.requiresCurse { Pill(text: "需诅咒", color: AppTheme.amber) }
+                if affix.isCurse {
+                    // 负面词条不进任何正面口径，只出现在深夜遗物的诅咒池里
+                    Pill(text: "负面词条 · 深夜诅咒池", color: AppTheme.red)
+                } else {
+                    ForEach(modes, id: \.self) { Pill(text: $0, color: AppTheme.green) }
+                    if affix.requiresCurse { Pill(text: "需诅咒", color: AppTheme.amber) }
+                }
             }
             .frame(width: 210, alignment: .trailing)
         }

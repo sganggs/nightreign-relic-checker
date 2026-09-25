@@ -77,6 +77,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .pill--green { color: var(--green); background: var(--green-faint); border-color: rgba(85, 214, 165, .22); }
 .pill--amber { color: var(--amber); background: rgba(238, 193, 109, .09); border-color: rgba(238, 193, 109, .24); }
 .pill--red { color: var(--red); background: var(--red-faint); border-color: rgba(237, 108, 125, .22); }
+.library-table tr.is-curse .affix-cell strong { color: var(--red); }
+.library-table .affix-cell .pill { margin-left: 8px; vertical-align: 1px; }
 .pill--blue { color: #7ab8f5; background: rgba(122, 184, 245, .09); border-color: rgba(122, 184, 245, .24); }
 .pill--gray { color: #cfcedd; background: rgba(207, 206, 221, .08); border-color: rgba(207, 206, 221, .22); }
 
