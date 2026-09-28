@@ -46,6 +46,9 @@ Bullet，再加 Paramdex 行名匹配。但参数表里存着的行不一定被�
    所以法术段的「是否打出」= 它所在的 refId 槽是否被施法动画的事件 64 用到；
    refCategory 2 槽里带 stateInfo 的 SpEffect（因果性原理 1676000，stateInfo 170）是触发型，
    它触发时发射同一 Magic 里施法动画不用的子弹槽（spEffectDerived）。
+   判定打包在 TaeVerifier.check_spell()：不在任何 refId 槽里、不是 Magic.atkParamId 锚点、也没有 SpEffect
+   触发的段记 noSlot（没有任何施法动画的 refSlot 会发射它；本版本 21 段全部在全部参数表里无人引用，
+   兽爪 68201 / 68206 的 Paramdex 行名直接标 UNUSED）。generate_skills.py v4 起把 noSlot 段标 hits[].notInvoked。
 6. 动画头为 ImportOtherAnim 的动画（598 个）整段从另一个动画导入事件，本脚本跟随
    （导入号 = TAE 号 * 1000000 + 动画号）。
 7. 战技 TAE 的 4xxxx 动画按百位分「套」：400xx 默认套、402xx 大型武器套、403xx 长柄套、
@@ -63,6 +66,23 @@ Bullet，再加 Paramdex 行名匹配。但参数表里存着的行不一定被�
    落在个位 0–4 上。所以一段若只被无 FP 版动画调用，它就是无 FP 分支，即使行名没写 "No FP"（风暴刃
    300000411–413 只在 a659 的 40005/40015/40025，狩猎巨人 301700915 只在 a616 的 40005）；两边动画都调用的
    段是共用段。fp_evidence() 给出一段的依据分支，generate_skills.py 据此补标 hits[].noFp / fpBoth。
+9. 蓄力 / 不蓄力是**不同的动画**，分侧要按动画判，不能只看段的子类别（AtkParam_Pc.subCategory 100 蓄力强攻击 /
+   110 蓄力法术攻击 / 111 蓄力战技攻击）：蓄力动画里常有子类别不带蓄力的前段。一个动画只要打出任一带蓄力子类别的段，
+   它就是蓄力动画，它打出的全部段都属于蓄力放法；与它同「族」的其它动画是不蓄力放法；族里没有蓄力动画的动画与蓄力无关，
+   打出的段两侧都打。族：战技 = 同一位置（战技 TAE / 吼叫类的武器 R2 动画）、同一百位套、同一 FP 侧（skill_charge_family）；
+   法术 = 同一施法 TAE 的同一百位（450xx / 451xx，spell_charge_family）。例：突击 a605 蓄力 40000 打 301701900–904
+   （900–903 子类别只有 [112, 130]）、不蓄力 40001 打 903 / 905（903 两侧共用）；古雷电枪 a849 的 303400002 两个动画都打；
+   王者嘶吼 a831 的吼叫本体 40000 / 40005 所在的 400 套里没有蓄力动画（蓄力分支在 306 / 326 套的 R2 里），两侧都打；
+   风暴管束者 a860 蓄力 40100 与不蓄力三连 40110–40112 同在 401 套。法术不必只核到「槽」：每个施法动画的事件 64 只发射它
+   自己用到的 refSlot（check_spell 的 castAnims 与 hits[].anims），熔炉百相之尾 a470 蓄力 45010 在 0.8s 发槽 2（75000）、
+   1.77s 发槽 1（75005），不蓄力 45011 只发槽 0（75000）——75000 两侧都打。anim_evidence() / castAnims 给出逐动画依据，
+   charge_sides() 分侧、charge_branch() 归成 generate_skills.py 的 hits[].chargeBranch（charged / uncharged / both / partial）。
+   例外（CHARGE_ANIM_OVERRIDES，逐战技逐动画、按游戏文本 + 动画结构列出，self_check 逐段断言）：TAE 只有事件、没有动画之间的
+   跳转（在 HKS 里），族规则分不开「同族里的中间蓄力阶段放法」「两种放法之后都能接的追加动画」与真正的不蓄力放法——三者在
+   事件结构上与风暴管束者 1200 的不蓄力三连同构。伟哉卡利亚 218（a666，说明「借由蓄力发动，能提升两个阶段」）的 40002 / 40007
+   是一段蓄力的放招，与轻按 40001 / 40006、满蓄力 40000 / 40005 三者互斥 → partial（蓄力开关两侧都不取）；辉石彗砾 1017
+   （a817，说明「发动后接着使出重攻击，能大幅向前跨出，再突刺攻击」）的 40010 / 40015 是蓄力 / 不蓄力放法之后都能接的重攻击
+   追加突刺 → 与蓄力无关（both）。
 
 判定
 ----
@@ -91,6 +111,12 @@ Bullet，再加 Paramdex 行名匹配。但参数表里存着的行不一定被�
   TaeVerifier（本文件）把上面的判定打包：generate_skills.py 生成数据集时逐 (战技, 武器) 调用 check()，
   variants[].atkIds 只留 KEEP_STATUSES（invoked / weaponTae / spEffect / conditional / noJudge），
   并按规律 8 用 fp_evidence() 补标 hits[].noFp（noFpSource="tae"）/ fpBoth。
+  （数据集 schemaVersion 4）法术同样经 TaeVerifier.check_spell() 核实：status=noSlot 的段标 hits[].notInvoked
+  （notInvokedReason="noCastSlot"），其余状态照旧保留；对 v4 数据集再跑本脚本，法术的 noSlot 段仍列在报告里
+  （报告按段判状态，不看数据集上的 notInvoked 标记），应与数据集 notInvoked 的法术段逐段相同。
+  （v4 审查修正）蓄力分侧按规律 9 逐动画判：战技用 check() 结果的 matches[].anim（anim_evidence），法术用
+  check_spell() 的 castAnims / hits[].anims，charge_sides() + charge_branch() 得出数据集的 hits[].chargeBranch；
+  战技另按 CHARGE_ANIM_OVERRIDES 处理两处例外（218 伟哉卡利亚的一段蓄力放招 → partial、1017 辉石彗砾的重攻击追加 → both）。
   所以对 TAE 核实后的数据集再跑本脚本，数据集 variant 里应当只剩这几种状态（自洽检查）；
   核实前的对照报告可用 --skills 指向 A 阶段的数据集另跑一份。
   「打得出」不等于「打敌人」：AtkParam 的 opposeTarget=0 且 selfTarget / friendlyTarget=1 的行只打自己 / 队友
@@ -674,11 +700,12 @@ def fp_branch(anim: int) -> str:
     return "neutral"
 
 
-def fp_evidence(r: dict, roar_skill: bool, chosen_block: int | None = None) -> dict[str, set[int]]:
-    """一段（match_events / check 的结果）被哪些分支的动画调用：{"fp" / "noFp" / "neutral": {动画号}}。
-    只看让它留下的依据：战技 TAE 里的事件（187 这种玩家拿不到的门控不算）与吼叫类战技的 R2 动画（不分 FP，记
-    neutral）；有互斥动画套时只看这把武器播的那一套（chosen_block）。没有动画依据（spEffect / noJudge）时返回空。"""
-    out: dict[str, set[int]] = defaultdict(set)
+def anim_evidence(r: dict, roar_skill: bool, chosen_block: int | None = None) -> set[tuple[str, int]]:
+    """一段（match_events / check 的结果）的动画依据：{(loc, 动画号)}，loc = "skill"（战技 TAE）/ "weaponRoar"
+    （吼叫类战技改写 R2 后的武器动作组动画）。只看让它留下的依据：战技 TAE 里的事件（187 这种玩家拿不到的门控不算）
+    与吼叫类战技的 R2 动画；有互斥动画套时只看这把武器播的那一套（chosen_block）。没有动画依据（spEffect / noJudge）
+    时返回空。fp_evidence()（规律 8）与蓄力分侧（规律 9，charge_sides）共用这一份依据。"""
+    out: set[tuple[str, int]] = set()
     lo, hi = SKILL_ANIM_RANGE
     for m in r.get("matches", []):
         if m["stateInfo"] in UNREACHABLE_GATES:
@@ -686,10 +713,94 @@ def fp_evidence(r: dict, roar_skill: bool, chosen_block: int | None = None) -> d
         if m["loc"] == "skill":
             if chosen_block is not None and lo <= m["anim"] <= hi and m["anim"] // 100 != chosen_block:
                 continue
-            out[fp_branch(m["anim"])].add(m["anim"])
+            out.add(("skill", m["anim"]))
         elif m["loc"] == "weaponRoar" and roar_skill:
-            out["neutral"].add(m["anim"])
+            out.add(("weaponRoar", m["anim"]))
+    return out
+
+
+def fp_evidence(r: dict, roar_skill: bool, chosen_block: int | None = None) -> dict[str, set[int]]:
+    """一段（match_events / check 的结果）被哪些分支的动画调用：{"fp" / "noFp" / "neutral": {动画号}}。
+    依据同 anim_evidence()；吼叫类战技的 R2 动画不分 FP，记 neutral。没有动画依据（spEffect / noJudge）时返回空。"""
+    out: dict[str, set[int]] = defaultdict(set)
+    for loc, anim in anim_evidence(r, roar_skill, chosen_block):
+        out[fp_branch(anim) if loc == "skill" else "neutral"].add(anim)
     return dict(out)
+
+
+# 规律 9 的例外：{战技 ID: {(loc, 动画号): 侧}}。族规则（skill_charge_family）把同族里没打出蓄力子类别段的动画一律判为不蓄力放法，
+# 但 TAE 只有事件、没有动画之间的跳转（在 HKS 里），下面两类动画在事件结构上与真正的不蓄力放法（风暴管束者 1200 的 R1 三连
+# 40110–40112）分不开，只能按游戏文本 + 动画结构逐个列出（generate_skills.py 的 self_check 逐段断言它们的分侧与取段，
+# 并断言每一项都真的用上了，游戏更新后动画号变了会立刻报错）：
+#   "partial"：中间蓄力阶段的放招——与轻按放招、满蓄力放招三者互斥，蓄力开关两侧都不取（hits[].chargeBranch="partial"）；
+#   "neutral"：蓄力 / 不蓄力两种放法之后都能接的追加动画——与蓄力无关，两侧都打（→ both）。
+CHARGE_ANIM_OVERRIDES: dict[int, dict[tuple[str, int], str]] = {
+    # 伟哉卡利亚（a666）：一段蓄力的放招 40002（无 FP 40007）
+    218: {("skill", 40002): "partial", ("skill", 40007): "partial"},
+    # 辉石彗砾（a817）：重攻击追加的突刺 40010（无 FP 40015）
+    1017: {("skill", 40010): "neutral", ("skill", 40015): "neutral"},
+}
+# 例外的依据（generate_skills.py 写进 diagnostics.chargeBranch.overrides）
+CHARGE_ANIM_OVERRIDE_EVIDENCE: dict[int, str] = {
+    218: ("ArtsCaption 218「借由蓄力发动，能提升两个阶段」（\"Can be charged to increase its power by up to two levels\"，"
+          "可蓄力战技里唯一说「两个阶段」的）；a666 的 40001 与 40002 结构相同——都在 0.50s 打一段并带事件 330（扣 FP），"
+          "取消窗口 87 / 106 从 0.83 / 0.80s、103 / 104 从 1.80s 起（无 FP 版 40006 / 40007 同样在 0.50s 打一段），"
+          "是两个平级的放招动画，不是前后相接；伤害按 40001 → 40002 → "
+          "40000 递增（魔力 flat 220 → 315 → 400，无 FP 侧 MV 140 → 155 → 170）。所以 40002 / 40007 是一段蓄力的放招，"
+          "与轻按 40001 / 40006、满蓄力 40000 / 40005 互斥：蓄力开（满蓄力）与关（轻按）都不取 300200871 / 300200876。"),
+    1017: ("ArtsCaption 1017「借由蓄力发动，能变成“辉石彗砾”。发动后接着使出重攻击，能大幅向前跨出，再突刺攻击」"
+           "（\"Follow up with a strong attack to chain this skill into a lunging thrust\"）；a817 的 40010 / 40015（打 "
+           "300107910–912）是重攻击追加的突刺：40010 自带事件 330（0.70s，追加另扣 FP），蓄力 40000 与不蓄力 40001 之后都能接，"
+           "不属于任何一种放法；同结构的 203 辉石魔砾追加段 300200895 在它的 variant 里本来就计入。所以 910 / 911 / 912 两侧都打（both）。"),
+}
+
+
+def skill_charge_family(key: tuple[str, int]) -> tuple:
+    """规律 9：战技动画 (loc, 动画号) 的蓄力「族」——同一位置（战技 TAE / 武器 R2）、同一百位套、同一 FP 侧的动画互为
+    替代放法（突击 a605：40000 蓄力 / 40001 不蓄力；风暴管束者 a860：40100 蓄力 / 40110–40112 不蓄力三连；
+    吼叫类 R2：30600 / 30610 蓄力、30605 / 30615 不蓄力）。"""
+    loc, anim = key
+    return loc, anim // 100, fp_branch(anim) if loc == "skill" else "neutral"
+
+
+def spell_charge_family(anim: int) -> int:
+    """规律 9：施法动画的蓄力「族」——同一施法 TAE 里同一百位（450xx / 451xx）的动画互为替代放法（45010 / 45011…）。"""
+    return anim // 100
+
+
+def charge_sides(fired: dict, family_of, charged_atks: set[str],
+                 overrides: dict | None = None) -> dict[str, dict[str, set]]:
+    """规律 9：逐动画判蓄力分侧。fired：动画键 → 这个动画打出的段（atkId 字符串）；family_of：动画键 → 族；
+    charged_atks：带蓄力子类别（100 / 110 / 111）的段。打出任一 charged_atks 的动画 = 蓄力动画；族里有蓄力动画时，
+    族内其余动画 = 不蓄力动画；族里没有蓄力动画 = 与蓄力无关（neutral，两侧都打）。
+    overrides：动画键 → "partial" / "neutral"（CHARGE_ANIM_OVERRIDES[战技 ID]），这些动画不参与上面的判定、直接归到给定的侧。
+    返回 {atkId: {"charged" / "uncharged" / "neutral" / "partial": {动画键}}}（只含 fired 里出现的段）。"""
+    overrides = overrides or {}
+    charged_anims = {k for k, atks in fired.items() if k not in overrides and set(atks) & charged_atks}
+    chargeable = {family_of(k) for k in charged_anims}
+    out: dict[str, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    for k, atks in fired.items():
+        if k in overrides:
+            side = overrides[k]
+        elif family_of(k) in chargeable:
+            side = "charged" if k in charged_anims else "uncharged"
+        else:
+            side = "neutral"
+        for a in atks:
+            out[a][side].add(k)
+    return out
+
+
+def charge_branch(sides) -> str:
+    """规律 9：一段的依据分侧（charge_sides 值的键，可跨武器合并）→ hits[].chargeBranch：只在蓄力动画 → "charged"，
+    只在不蓄力动画 → "uncharged"，两侧都有、或在与蓄力无关的动画里 → "both"；只在中间蓄力阶段的放招里（CHARGE_ANIM_OVERRIDES
+    的 partial）→ "partial"（蓄力开关两侧都不取）。partial 与 charged / uncharged 同在时不影响结果（开 = 满蓄力、关 = 轻按）。"""
+    sides = set(sides)
+    if "neutral" in sides or {"charged", "uncharged"} <= sides:
+        return "both"
+    if "charged" in sides:
+        return "charged"
+    return "uncharged" if "uncharged" in sides else "partial"
 
 
 # ------------------------------------------------------------------ 供 generate_skills.py 调用
@@ -771,6 +882,88 @@ class TaeVerifier:
         motions = {to_int(self.wep(w)["wepmotionCategory"]) for w in weapon_ids if self.wep(w)}
         info = resolve_exclusive_blocks(results, var, motions, wep_types, self.row_var, self.params.atk)
         return results, info
+
+    def check_spell(self, magic_id, hit_atks) -> dict | None:
+        """一个法术的施法动画核实（规律 5 / 8）：施法 TAE = a(400 + Magic.refType)，事件 64 只带 refSlot（0 → refId1 …
+        9 → refId10），所以一段「打不打得出」= 它所在的 refId 槽有没有被施法动画的事件 64 用到。
+        返回 {tae, taeFound, castSlotsUsed, castAnims, slotsPopulated, triggerSpEffects?, hits: {atkId(str): hrec}}，
+        Magic 表没有这一行时返回 None。castSlotsUsed = 全部施法动画用到的槽（并集，判 noSlot / slotUnused 用）；
+        castAnims = {动画号(str): 这个动画的事件 64 发射的槽}——同一次施放打出的段 = 该动画用到的槽，蓄力 / 不蓄力是
+        不同的动画（规律 9；兽爪 a440：45010 发槽 1 / 4 / 5、45011 发槽 0 / 2 / 3）。
+        hrec = {atkId, slots, status, anims?, derivedFrom? / spEffects?}，anims = 发射这段的施法动画（invoked：用到
+        它所在槽的动画；spEffectDerived：用到触发型 SpEffect 槽的动画），status：
+          invoked         段所在的槽被施法动画用到；
+          spEffectDerived 段在施法动画不用的子弹槽里，但施法动画用到的 SpEffect 槽带 stateInfo（触发型，如因果性原理），
+                          触发时发射的正是这个槽；
+          slotUnused      段在某个槽里，但施法动画不用这个槽（例：卡利亚大剑 / 亚杜拉的月光剑 / 卡利亚迅剑的槽 4–5）；
+          anchorOnly      不在任何槽里，只是 Magic.atkParamId 锚点；
+          spEffect / spEffectNoSource  不在任何槽里，由 SpEffectParam.behaviorId 触发（有 / 没有来源）；
+          noSlot          不在任何槽里、不是锚点、也没有 SpEffect 触发它——没有任何施法动画的 refSlot 会发射它
+                          （generate_skills.py v4 起把这种段标 notInvoked，见 PROVENANCE「v4：逐段子类别与蓄力、法术施法槽核实」）。
+        本脚本的 main() 与 generate_skills.py 共用这一个实现。"""
+        params, idx, enum = self.params, self.idx, self.enum
+        m = params.magic.get(str(magic_id))
+        if not m:
+            return None
+        tae = MAGIC_TAE_BASE + to_int(m["refType"])
+        cast_anims = {aid: set(slots) for aid, slots in idx.cast_slots.get(tae, {}).items()}
+        slots_used: set[int] = set()
+        for slots in cast_anims.values():
+            slots_used |= slots
+        slot_atks: dict[int, set[str]] = {}
+        bullet_slots: set[int] = set()
+        trigger_sps: list[dict] = []   # 施法动画用到的 SpEffect 槽里带 stateInfo 的（触发型：反击 / 吸收成功…）
+        for n in range(1, 11):
+            ref, cat = m.get(f"refId{n}", "-1"), to_int(m.get(f"refCategory{n}"))
+            if ref in ("-1", "0", ""):
+                continue
+            if cat == 0 and ref in params.atk:
+                slot_atks[n - 1] = {ref}
+            elif cat == 1 and ref in params.bullets:
+                slot_atks[n - 1] = set(params.bullet_atks(ref))
+                bullet_slots.add(n - 1)
+            elif cat == 2 and ref in params.sp_rows and (n - 1) in slots_used:
+                si = to_int(params.sp_rows[ref].get("stateInfo"))
+                if si:
+                    trigger_sps.append({"slot": n - 1, "spEffectId": to_int(ref), "name": params.sp_rows[ref].get("Name", ""),
+                                        "stateInfo": state_name(si, params, enum)})
+        out = {"tae": tae, "taeFound": tae in idx.anims, "castSlotsUsed": sorted(slots_used),
+               "castAnims": {str(aid): sorted(s) for aid, s in sorted(cast_anims.items())},
+               "slotsPopulated": sorted(slot_atks), "hits": {}}
+        if trigger_sps:
+            out["triggerSpEffects"] = trigger_sps
+        anchor = m.get("atkParamId", "-1")
+        for atk in hit_atks:
+            a = str(atk)
+            slots = sorted(n for n, atks in slot_atks.items() if a in atks)
+            hrec: dict = {"atkId": to_int(a), "slots": slots}
+            if slots:
+                if any(n in slots_used for n in slots):
+                    st = "invoked"
+                    hrec["anims"] = sorted(aid for aid, s in cast_anims.items() if s & set(slots))
+                elif trigger_sps and any(n in bullet_slots for n in slots):
+                    st = "spEffectDerived"
+                    hrec["derivedFrom"] = trigger_sps
+                    trigger_slots = {x["slot"] for x in trigger_sps}
+                    hrec["anims"] = sorted(aid for aid, s in cast_anims.items() if s & trigger_slots)
+                else:
+                    st = "slotUnused"
+            elif a == anchor:
+                st = "anchorOnly"
+            else:
+                sp_rows = params.speffect_rows_for_atk(a)
+                if sp_rows:
+                    hrec["spEffects"] = [{"behaviorId": to_int(row["ID"]), "spEffectId": to_int(s),
+                                          "name": params.sp_rows.get(s, {}).get("Name", ""),
+                                          "sources": params.sp_sources.get(s, [])[:6],
+                                          "taeEvents": [f"a{t}" for t in sorted(idx.speffect_taes.get(to_int(s), ()))[:6]]}
+                                         for row, sps in sp_rows for s in sps]
+                    st = "spEffect" if any(r["sources"] or r["taeEvents"] for r in hrec["spEffects"]) else "spEffectNoSource"
+                else:
+                    st = "noSlot"
+            hrec["status"] = st
+            out["hits"][a] = hrec
+        return out
 
 
 def reason_text(r: dict) -> str:
@@ -1067,63 +1260,22 @@ def main() -> int:
     spell_stats = Counter()
     spells_out = []
     for spell in ds["spells"]:
-        m = params.magic.get(str(spell["id"]))
-        if not m:
+        res = verifier.check_spell(spell["id"], [h["atkId"] for h in spell["hits"]])
+        if res is None:
             continue
-        tae = MAGIC_TAE_BASE + to_int(m["refType"])
-        slots_used: set[int] = set()
-        for aid, slots in idx.cast_slots.get(tae, {}).items():
-            slots_used |= slots
-        slot_atks: dict[int, set[str]] = {}
-        bullet_slots: set[int] = set()
-        trigger_sps: list[dict] = []   # 施法动画用到的 SpEffect 槽里带 stateInfo 的（触发型：反击 / 吸收成功…）
-        for n in range(1, 11):
-            ref, cat = m.get(f"refId{n}", "-1"), to_int(m.get(f"refCategory{n}"))
-            if ref in ("-1", "0", ""):
-                continue
-            if cat == 0 and ref in params.atk:
-                slot_atks[n - 1] = {ref}
-            elif cat == 1 and ref in params.bullets:
-                slot_atks[n - 1] = set(params.bullet_atks(ref))
-                bullet_slots.add(n - 1)
-            elif cat == 2 and ref in params.sp_rows and (n - 1) in slots_used:
-                si = to_int(params.sp_rows[ref].get("stateInfo"))
-                if si:
-                    trigger_sps.append({"slot": n - 1, "spEffectId": to_int(ref), "name": params.sp_rows[ref].get("Name", ""),
-                                        "stateInfo": state_name(si, params, enum)})
-        rec = {"id": spell["id"], "nameZh": spell["nameZh"], "tae": f"a{tae}", "taeFound": tae in idx.anims,
-               "castSlotsUsed": sorted(slots_used), "slotsPopulated": sorted(slot_atks), "hits": []}
-        if trigger_sps:
-            rec["triggerSpEffects"] = trigger_sps
+        rec = {"id": spell["id"], "nameZh": spell["nameZh"], "tae": f"a{res['tae']}", "taeFound": res["taeFound"],
+               "castSlotsUsed": res["castSlotsUsed"], "castAnims": res["castAnims"],
+               "slotsPopulated": res["slotsPopulated"], "hits": []}
+        if res.get("triggerSpEffects"):
+            rec["triggerSpEffects"] = res["triggerSpEffects"]
         spell_stats["spells"] += 1
-        if tae in idx.anims:
+        if res["taeFound"]:
             spell_stats["spellsWithTae"] += 1
-        anchor = m.get("atkParamId", "-1")
         for h in spell["hits"]:
-            a = str(h["atkId"])
-            slots = sorted(n for n, atks in slot_atks.items() if a in atks)
-            hrec: dict = {"atkId": h["atkId"], "slots": slots, "damaging": hit_damaging(h)}
-            if slots:
-                if any(n in slots_used for n in slots):
-                    st = "invoked"
-                elif trigger_sps and any(n in bullet_slots for n in slots):
-                    st = "spEffectDerived"
-                    hrec["derivedFrom"] = trigger_sps
-                else:
-                    st = "slotUnused"
-            elif a == anchor:
-                st = "anchorOnly"
-            else:
-                sp_rows = params.speffect_rows_for_atk(a)
-                if sp_rows:
-                    hrec["spEffects"] = [{"behaviorId": to_int(row["ID"]), "spEffectId": to_int(s),
-                                          "name": params.sp_rows.get(s, {}).get("Name", ""),
-                                          "sources": params.sp_sources.get(s, [])[:6],
-                                          "taeEvents": [f"a{t}" for t in sorted(idx.speffect_taes.get(to_int(s), ()))[:6]]}
-                                         for row, sps in sp_rows for s in sps]
-                    st = "spEffect" if any(r["sources"] or r["taeEvents"] for r in hrec["spEffects"]) else "spEffectNoSource"
-                else:
-                    st = "noSlot"
+            r = res["hits"][str(h["atkId"])]
+            st = r["status"]
+            hrec: dict = {"atkId": h["atkId"], "slots": r["slots"], "damaging": hit_damaging(h)}
+            hrec.update({k: v for k, v in r.items() if k not in ("atkId", "slots", "status")})
             hrec["status"] = st
             rec["hits"].append(hrec)
             spell_stats["hits"] += 1

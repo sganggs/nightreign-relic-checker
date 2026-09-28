@@ -114,7 +114,7 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 | 数据集 | 生成器 | 当前 schemaVersion | 供哪一页使用 |
 | --- | --- | --- | --- |
 | `data/nightreign-bosses-v1.03.5.json` | `generate_bosses.py` | `bossesSchemaVersion` 4 | 首领数据 |
-| `data/nightreign-skills-v1.03.5.json` | `generate_skills.py` | 3（v3 起含局内战技池，命中段按 TAE 核实，无 FP 段与只打自己 / 队友的段按审查意见补标；三端界面仍按 2 读取，待界面车道跟进） | 增伤排名（选段与伤害构成） |
+| `data/nightreign-skills-v1.03.5.json` | `generate_skills.py` | 4（v3 起含局内战技池，命中段按 TAE 核实，无 FP 段与只打自己 / 队友的段按审查意见补标；v4 起逐段带 subCategories / charged / chargeBranch（蓄力分侧按 TAE 逐动画判）、法术段按施法槽核实——三端界面与 `windows/renderer/pages/README.md` 仍写 3，待界面车道跟进，见文末 v4 小节） | 增伤排名（选段与伤害构成） |
 | `data/nightreign-buffs-v1.03.5.json` | `generate_buffs.py` | 6 | 增伤排名（倍率、叠加与配置槽位） |
 | `data/nightreign-heroes-v1.03.5.json` | `generate_heroes.py` | 1 | 角色属性 |
 
@@ -180,7 +180,8 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 （**勘误**：上面的体积与 schemaVersion 是初版数据的口径；经后续两轮修复，当前文件为
 `schemaVersion 2`、1,559,196 B ≈ 1.49 MiB，见本节末尾的第二轮补充与上方
 「游戏数据集」总览表。原文保留不删。**再勘误**：2026-09-24 起为 `schemaVersion 3`、2,474,443 B ≈ 2.36 MiB，
-见本节末尾「战技池（v3）」。）
+见本节末尾「战技池（v3）」。**三勘误**：2026-09-28 起为 `schemaVersion 4`、2,807,542 B ≈ 2.68 MiB，
+见文末「v4：逐段子类别与蓄力、法术施法槽核实」。）
 
 #### 来源表
 
@@ -1463,3 +1464,320 @@ schemaChangelog v6 ⑫ (d)(e) 随之更新。显示名中英文仍全表唯一�
 macOS `RelicCoreChecks` 仍在上一节所说的 `BuffRankerChecks.swift:1686`（hits 2201 → 2197）处中止，临时把 1686 / 1712 行改成新值试跑
 22459 项全过（试跑后已还原）；Android `:gamedata:test` 420 项 3 败，与上一节相同（SkillDataTest 两处、RankerCrossCheckTest 的 spells=121 → 119），
 没有新增失败——这 3 处与 macOS 两处要由界面车道按新 skills 数据更新测试并重出 Windows dump。
+
+## v4：逐段子类别与蓄力、法术施法槽核实（skills schemaVersion 4，2026-09-28）
+
+**起因**：用户实测局内武器词条「强化祷告的蓄力执行」在游戏里三档是 +18% / +13% / +9%（SpEffect 8330302 / 8330301 / 8330300，
+五项 *AttackRate 各 1.18 / 1.13 / 1.09，requires.subCategoriesAny = [110]，参数没错），但三端页面在兽爪（祷告 6820）上显示
+×1.09 / ×1.065 / ×1.045、标「部分段生效」。核实到两处数据侧的根因：
+
+1. 页面把一次施放不可能同时打出的段都勾上了。兽爪 4 段：68200 子弹、68201「UNUSED」、68205 蓄力子弹、68206「UNUSED [Charged]」。
+   68201 / 68206 不在 Magic 6820 的任何 refId 槽里（槽里的子弹链也到不了），施法动画 a440 的事件 64 refSlot 没有任何一个指向它们
+   （车道 B 报告 spells[] 里 status=noSlot）——v3 只对战技做了 TAE 核实，法术段全部照收。
+2. 子类别限定的增益按 buffs attackIndex 的「整招里带该子类别的段数 ÷ 总段数」近似加权（兽爪 2/4 → 1 + 0.18 × 0.5 = 1.09），
+   占比不随勾选的段变化。AtkParam_Pc 每一行自带 subCategory1..5（兽爪 68205 / 68206 = 110 蓄力法术攻击，68200 / 68201 = 0），
+   数据集之前没把它逐段写出来，页面只能用 attackIndex 的汇总。
+
+**做法**（`generate_skills.py`，schemaVersion 3 → 4；schemaChangelog v4 条目写明 added / changed）：
+
+- `hits[].subCategories`：AtkParam_Pc.subCategory1..5 的非 0 值，去重升序，全为 0 时省略（与 generate_buffs.subcategory_set 同一口径）；
+  `hits[].charged`：subCategories 与 {100 蓄力强攻击, 110 蓄力法术攻击, 111 蓄力战技攻击} 有交集时为 true，否则省略。
+  判定只看子类别、不看行名。`enums.atkSubCategory`（Smithbox NR Param Enums ATK_SUB_CATEGORY，中英文标签与 buffs 数据集
+  enums.atkSubCategory 同一份转写，self_check 逐项比对；蓄力三项带 charged: true）、`enums.chargedSubCategories`。
+  hits 里出现、枚举没收录的值只有 **115**（使者号角类战技 1003 神谕泡泡 / 1004 倾注泡泡 / 1005 神谕大泡泡的泡泡段，7 行），
+  标 `unlisted: true` 并列 usedBy，不编名字。
+- **法术施法槽核实**：把 `verify_skill_hits.py` main() 里的法术判定原样搬进 `TaeVerifier.check_spell()`（报告与生成器共用一份代码；
+  搬家前后对当前数据集跑出的 hit-invocation-report.json 除 generatedAt 外逐字相同），生成器逐法术调用：
+  status=noSlot（不在任何 refId 槽里、不是 Magic.atkParamId 锚点、也没有 SpEffect 触发——没有任何施法动画的 refSlot 会发射它）
+  的段标 `notInvoked: true` + `notInvokedReason: "noCastSlot"`（`enums.notInvokedReason.noCastSlot`，法术专用）；其余状态
+  （invoked / spEffect / spEffectDerived / anchorOnly / slotUnused）照旧保留、不标。施法 TAE 缺失的法术不标（本版本没有）。
+  清单与各段槽位写进 `diagnostics.spellCastVerification`（约 12 KB）。`counts.hitsNotInvoked` 仍只数战技（34），法术另计
+  `spellHitsNotInvoked`（21）；审查后另加 `counts.hitsNotInvokedAll` / `hitsNotInvokedDamagingAll`（战技 + 法术 = 55 / 42，
+  与「按 notInvoked 过滤全部 hits」的结果一致，界面车道的计数断言应改用它）。
+- **蓄力分侧 `hits[].chargeBranch`（审查修正，见下面「审查修正：蓄力分侧按动画判」）**：`charged` / `uncharged` / `both`
+  （第二轮审查修正后另有 `partial`：中间蓄力阶段的放招，蓄力开关两侧都不取，本版本只有伟哉卡利亚 300200871 / 876），
+  按 TAE 逐动画判，不按段的子类别判；`hits[].charged` 只说明这段的子类别带蓄力（吃不吃蓄力类增益），不再用来分侧。
+- 新增 counts：spellHitsNotInvoked 21 / spellHitsNotInvokedDamaging 18 / spellsWithHitsNotInvoked 15 / spellHitsKeptWithoutCastSlot 21 /
+  hitsWithSubCategories 1900 / hitsCharged 429 / hitsChargedDamaging 416 / skillsWithChargedHits 15 / spellsWithChargedHits 47；
+  `diagnostics.chargedSubCategory`（按子类别列条目、行名与子类别不一致的段）；fieldNotes.subCategories / charged，
+  fieldNotes.notInvoked / notInvokedReason / taeVerified / 法术与 TAE / 省略即默认值、coverage.hitsNotInvokedNote 改写；
+  usage「命中段已按 TAE 核实（v3）」**键名不变**（三端按键名引用），内容改成战技 + 法术两部分；新增 usage「蓄力段（v4）」。
+- **页面取段规则**（usage.蓄力段（v4），审查修正后）：① 先按选段规则拿段（战技 variants[下标].atkIds / 法术 spells[].hits），去掉 notInvoked 与 noDamage；
+  ② noFp 同侧（fpBoth 两侧都算）；③ 蓄力开关与 noFp 同理是互斥两侧——看 ② 剩下的段，一段 chargeBranch=charged 都没有（包括整招没有
+  chargeBranch）时开关不适用、取 ② 的全部段；否则开取 chargeBranch 为 charged / both 的段，关取 uncharged / both 的段，
+  partial 两侧都不取（第二轮审查修正）。
+  「攻击情境」里的 蓄力法术 / 蓄力战技 / 蓄力强攻击 勾选应当就是这个开关，改的是取哪些段，不只是放行 attackContexts 门控。
+  **子类别限定的增益**（buffs requires.subCategoriesAny，全表 93 条）按 ③ 之后**选中的每一段**判定：该段 subCategories（法术并上
+  Magic.subCategory1..2 流派 = buffs attackIndex.spells[id].magicSubCategories）与 subCategoriesAny 有交集才乘，否则该段 ×1，
+  不再按 attackIndex 的段数占比加权。兽爪例：蓄力开只取 68205（[110]）→ 整段 ×1.18 / ×1.13 / ×1.09；蓄力关只取 68200 → 这条词条不生效。
+  （首版 v4 写的是「开只算 charged 段、关只算不带 charged 的段，① 里没有 charged 段时不适用」，审查指出是错的，见下。）
+
+**结果**（regulation 10350000，本机 1.03.5 c0000 动画包）：
+
+- 法术 158 个、415 段的施法槽状态：invoked 373、noSlot 21、anchorOnly 6、slotUnused 6、spEffect 8、spEffectDerived 1（与车道 B 报告一致）。
+  **标 notInvoked 的 21 段（15 个法术，带伤害 18 段）**：4360 蕾娜菈的满月 43601；4361 菈妮的暗月 43611；4380 罗蕾塔的大弓 43805（蓄力）、43810；
+  4381 罗蕾塔的绝招 43815（蓄力）；4910 责罚荆棘 49101；5001 古老死亡怨魂 50015（蓄力）；5040 死亡雷击 50402、50407（蓄力）；
+  6210 黑焰 62105（蓄力）；6240 黑焰仪式 62501、62505（蓄力）、62506（蓄力）；6270 贵族气场 62405（蓄力）；6420 紧急恢复 64201（无伤害）；
+  6500 黑夜女巫烟雾 65000（无伤害）、65005（蓄力，无伤害）；6810 古兰格的岩石 68101；6820 兽爪 68201、68206（蓄力）；6921 冰雷枪 69212。
+  其中 20 段在全部参数表里无人引用（名字为 atkId / atkParamId 的列、BehaviorParam_PC.refId、Magic.refIdN 都不指向它，只有 Paramdex 行名
+  把它归给这个法术）；唯一有引用的 43810 是 4381 罗蕾塔的绝招的 Magic.atkParamId 锚点，但不在 4380 自己的任何槽里。
+  每个法术核实后仍至少剩一段可取（self_check 断言）。
+- 用户点名的几段：
+  - 兽爪 6820：68200 子弹（无子类别，charged 否）；68201 未使用（无子类别，notInvoked）；68205 子弹（蓄力）（[110]，charged）；
+    68206 未使用（蓄力）（[110]，charged，notInvoked）。
+  - 死亡雷击 5040：50400 / 50401（无子类别）、50402（无子类别，notInvoked）；50405 / 50406（[110]，charged）、50407（[110]，charged，notInvoked）。
+  - 狮子斩 100：300300820 / 300300821（无FP版）都是 [112 战技攻击, 130 近战武器攻击]，不是蓄力。
+- 蓄力段：429 段 charged（带伤害 416）。有可取蓄力段（不含 notInvoked / noVariant）的**战技 15 个**（105 突击、117 火把攻击、218 伟哉卡利亚、
+  219 卡利亚大剑、650 野蛮咆哮、651 战吼、1009 志留亚的漩涡、1012 欧赫剑舞、1015 灭洛斯的狂嚎、1017 辉石彗砾、1031 王者嘶吼、1049 古雷电枪、
+  1055 欧赫剑舞、1198 奥陶琵斯的漩涡、1200 风暴管束者）、**法术 47 个**（带 110 的法术 48 个，6500 黑夜女巫烟雾唯一的蓄力段 65005 是
+  notInvoked 的无伤害行）。按子类别：100 蓄力强攻击 = 战技 117 / 650 / 651 / 1015 / 1031（多是吼叫类改写后的蓄力 R2）；
+  110 蓄力法术攻击 = 只在法术上；111 蓄力战技攻击 = 战技 105 / 218 / 219 / 1009 / 1012 / 1017 / 1049 / 1055 / 1198 / 1200。
+- 行名与子类别不一致（diagnostics.chargedSubCategory，按子类别处理）：行名写 Charged 却没有蓄力子类别的 2 段——1052 黄金剑技
+  303401007 / 303401008「Golden Tempering - Charged Right / Left」（[125, 130]）；带蓄力子类别但行名没写的：战技 296 段（野蛮咆哮 168、
+  战吼 84 等，吼叫类 R2 的蓄力版行名不区分）、法术 8 段（4050 流星雨 40510、4370 天降魔力 43707–43710、6020 火焰啊，倾注吧 60206 / 60207、
+  7310 癫火 73106）。
+- 与 v3 产物逐项比对：weapons / swordArtsPools / magicPools / 全部 variants 与每个条目的非 hits 字段不变；hits 上只多了
+  subCategories（战技 1772 段、法术 128 段）、charged（战技 326、法术 103）与法术的 notInvoked / notInvokedReason（21 段），
+  没有任何已有字段被改；caveats 不变。产物紧凑 2,807,542 字节（v3 2,716,069），三份副本 sha256 `916978462014970e130042162fd66201379df9b772db5aa73efed74a3170589a`（首版；审查修正后的产物见文末）。
+
+**buffs 重生成**（generate_buffs.py，schemaVersion 仍为 6，changelog ⑬）：AttackPopulations 本来就排除 notInvoked 段（只补了注释），
+随 skills v4 重生成后 **attackIndex.spells 的段数变化**：13 个法术的 17 个 subCategorySets 项共少 18 段——4360 [1] 2→1、4361 [1,13] 2→1、
+4380 [] 3→2 与 [110] 2→1、4381 [110] 2→1、4910 [9] 2→1、5001 [10,110] 2→1、5040 [22] 3→2 与 [22,110] 3→2、6210 [20,110] 2→1、
+6240 [20] 4→3 与 [20,110] 4→2、6270 [27,110] 2→1、6810 [21] 2→1、6820 [23] 2→1 与 [23,110] 2→1、6921 [22] 3→2（方括号为子类别集合，
+含法术流派）。子类别集合的种类没变，所以 appliesTo / appliesToDetail（含 matchShare）/ counts 全部不变；其余 3 个新标段
+（64201、65000、65005）本来就是 noDamage。文字：attackIndex.zh 与 notes.appliesTo ⑥ 改写为「逐段判定改读 skills 的 hits[].subCategories、
+只对所选段判、不要按段数占比加权」。与上一版比对只差这 17 处段数、这 3 段文字与 generatedAt。产物 indent=1，3,039,453 字节，
+三份副本 sha256 `76534611d07387657e62574d7836470be85db2b806b3cdf0692e2dfee7035e51`（首版；审查修正后的产物见文末）。
+
+**验证**
+
+- `self_check` 新增：schemaVersion 4 与 changelog [1,2,3,4]；每一段的 subCategories 等于 AtkParam_Pc 原表重算（空则省略、升序无 0、取值都在 enums）、
+  charged 与子类别一致且只写 true；enums.atkSubCategory 与本脚本常量一致、蓄力三项带 charged；兽爪四段的 charged / notInvoked / subCategories
+  逐段断言；死亡雷击 50405–50407 charged、50402 / 50407 notInvoked；狮子斩两段 [112, 130] 非蓄力；spellsWithChargedHits ≥ 40 且与数据一致；
+  110 只在法术、100 / 111 只在战技；法术 notInvoked 只能是 noCastSlot、必须在 diagnostics 清单里，计数三处一致，战技不能出现 noCastSlot；
+  每个法术至少剩一段。
+- `check_attack_index`（self_check 之后）：对每个战技 / 法术，按 attackIndex 的口径（去掉 noDamage / noVariant / notInvoked）把
+  hits[].subCategories（法术并上 Magic.subCategory1..2）展开成多重集合 A，notInvoked 段为 N，attackIndex 展开为 X，断言 A ⊆ X ⊆ A + N、
+  带蓄力子类别的段数两边一致、attackIndex.spells[].magicSubCategories 与 Magic 原表一致、attackIndex 没有数据集之外的条目，并核对
+  enums.atkSubCategory 与 buffs 同一份标签。buffs 重生成前跑：278 个条目一致，旧 attackIndex 多出 18 段、13 个条目，全部是本次新标的
+  notInvoked 段（打印出来、不写进产物，避免产物依赖生成顺序）；重生成后再跑：差异 0。`--no-tae` 时不对照（口径不同）。
+- 另做 14 种篡改，全部被拦下：68201 丢 notInvoked、68205 丢 charged、68200 误标 charged、50407 原因不是 noCastSlot、spellHitsNotInvoked 计数不符、
+  狮子斩 subCategories 被改、空 subCategories 未省略、战技段出现 noCastSlot、enums 标签被改、50405 丢子类别与 charged、notInvokedHits 清单少一条、
+  invoked 法术段误标 notInvoked（self_check 12 种）；68205 子类别清空、狮子斩子类别被改（check_attack_index 2 种）。
+- 连续两次生成除 generatedAt 外一致；`--no-tae` 通过 self_check（法术段不标 notInvoked，subCategories / charged 照常）。
+- `verify_skill_hits.py --out <临时目录>` 对 v4 数据集重跑：报告里 status=noSlot 的法术段与数据集 spells[] 的 notInvoked 段逐段相同（21 段），
+  战技部分与 v3 数据集的报告逐项相同。
+
+**三端测试**（未改界面与测试；改动前用 v3 数据：Windows 397 项 396 过 / 0 败 / 1 TODO，macOS 22543 项全过，Android `:gamedata:test` 429 项 0 败）：
+
+- Windows `node --test tests/*.test.mjs`：397 项 395 过 / **1 败** / 1 TODO——not ok 196「两份数据集都带着页面真正依赖的结构」
+  （ranker.test.mjs:86 `assert.equal(skills.schemaVersion, 3)`，实际 4）。
+- macOS `swift run RelicCoreChecks`：在 BuffRankerChecks.swift:1735–1740「notInvoked 34 段（带伤害 24 段）」处中止（allHits 含法术，
+  现在 55 段 / 带伤害 42 段；counts.hitsNotInvoked 仍是 34）。临时把这两个数和下面 usage 键数（9 → 10）改掉试跑，22543 项全过（试跑后已还原）。
+- Android `:gamedata:test`：429 项 **100 败**——全部因为 GameDataFiles.kt:39 `SKILLS(..., "schemaVersion", 3)` 的精确版本门控拒绝解码 v4
+  （GameDataJson.requireVersion 要求相等），用到真实 skills 数据的测试连带失败。临时把门控改成 4 试跑，只剩 6 败（试跑后已还原）：
+  GameDataFilesTest「every dataset parses and declares the expected schema version」（SKILLS 期望 3）、SkillDataTest「dataset parses with version…」
+  （期望 3）与「wrong schema version is rejected」（文案随门控变）、SkillDataTest「without variants selectHits falls back…」（4360 蕾娜菈的满月
+  期望含 43601，现为 notInvoked）、RankerCrossCheckTest「every CASE line of the desktop dump matches field by field」与「dump line format…」
+  （ranker-crosscheck-dump.txt 的 death-lightning 选段仍是 50400,50401,50402,50405,50406,50407，要由 Windows 重出 dump）。
+- 这些都要由界面车道按 v4 更新：版本门控 / 版本断言、macOS 的 notInvoked 计数与 usage 键数、Android 4360 用例、Windows 重出对拍 dump；
+  以及页面按 usage.蓄力段（v4）改取段（蓄力开关两侧互斥、子类别限定逐段判定）。
+
+**局限**
+
+- （审查后改写）法术不只核到「槽」：每个施法动画的事件 64 只发射它自己用到的槽，同一次施放打出哪些段逐动画分得出，蓄力分侧已按它做
+  （chargeBranch，见下）；首版这里写的「事件 64 回答不了、靠 hits[].charged 分两侧」不对。notInvoked 判定仍按全部动画用到的槽的并集。
+  slotUnused 的 6 段（4430 卡利亚大剑、4431 亚杜拉的月光剑、4440 卡利亚迅剑的槽 4–5，车道 B 记为本体骑乘版残留）
+  与 anchorOnly 的 6 段按任务口径保留、未标 notInvoked。
+- charged 只按子类别：黄金剑技 303401007 / 303401008 行名写 Charged 却没有蓄力子类别，游戏判增益也只看子类别，所以不标。
+- 吼叫类战技（野蛮咆哮 / 战吼 / 灭洛斯的狂嚎）的 R2 段同一 variant 里还有 1H / 2H（124 双手持攻击）两套，它们同样是互斥分支、
+  本版没有加开关，页面若整套勾选仍会把 1H 与 2H 的段一起算（与蓄力开关正交，留待后续核实）。
+- 115 子类别在 Smithbox NR 枚举里没有名字，只标 unlisted。
+
+### 审查修正：蓄力分侧按动画判（hits[].chargeBranch，2026-09-28，schemaVersion 仍为 4）
+
+**起因**（审查意见，high）：首版 v4 的取段规则是「蓄力开只算 charged 段、关只算不带 charged 的段」，charged 只看 AtkParam 子类别。
+但蓄力 / 不蓄力是**不同的动画**，有几招的蓄力施放本身就会打出子类别不带蓄力的段：
+
+1. 105 突击（87 把武器）：蓄力动画 a605/40000 依次打 301701900–903（[112, 130]，MV 各 35）与 904（[111, 112, 130]，MV 145）；
+   不蓄力 40001 只打 903 / 905。无 FP 侧 40005 / 40006 的 906–911 同理。按首版规则，蓄力开只剩 904（丢掉 140 / 285 的 MV），
+   用 330900「强化魔法、祷告、战技的蓄力使用」（+18%，requires [110, 111]）算成 ×1.18，按 TAE 应为 (140 + 145 × 1.18) / 285 ≈ ×1.092；
+   蓄力关又会把只在蓄力动画里的 900–902 加进去。
+2. 7500 熔炉百相之尾（祷告，正是「强化祷告的蓄力执行」的作用范围）：蓄力施法 a470/45010 在 0.8s 发 refSlot 2（75000，无子类别，flat 270）、
+   1.77s 发 refSlot 1（75005，[110]，flat 274）；不蓄力 45011 只发 slot 0（75000）。首版蓄力开只剩 75005，8330302 显示 ×1.18；
+   应为 (270 + 274 × 1.18) / 544 ≈ ×1.091。
+3. 1049 古雷电枪：303400002 在蓄力 40000 与不蓄力 40001 里都打，首版蓄力开时丢掉。
+4. 1031 王者嘶吼：吼叫本体 302305905–910（a831/40000、40005）不属于任何 R2 分支，首版蓄力开时整段丢掉；而且「开关不适用」
+   在 noFp 分侧之前判（low），无 FP 侧只有 302305910（不带 charged），无 FP 开 + 蓄力开时一段不剩。
+
+另外首版 usage「命中段已按 TAE 核实（v3）」第 (6) 条说「同一施法动画用到的几个槽是否在同一次施放里都打出，事件 64 回答不了」——
+不对：逐动画看分得出（a440 的 45010 只发 slot 1 / 4 / 5、45011 只发 slot 0 / 2 / 3；a470 的 45010 同时发 slot 2 与 slot 1），
+是生成器把 castSlotsUsed 取成了全部动画的并集，把这条信息丢了。
+
+**做法**（verify_skill_hits.py 规律 9 + generate_skills.py）：
+
+- `verify_skill_hits.anim_evidence()`：一段的动画依据 {(loc, 动画号)}（loc = 战技 TAE `skill` / 吼叫类武器 R2 `weaponRoar`；187 门控不算、
+  互斥套只看这把武器播的那一套）。`fp_evidence()` 改为在它上面按规律 8 分 FP 侧（输出不变：数据集 noFp / fpBoth 与报告战技部分逐项相同）。
+- `check_spell()` 新增 `castAnims`（每个施法动画各自发射的槽）与 `hits[].anims`（发射这段的施法动画；spEffectDerived 取发射触发型
+  SpEffect 槽的动画）。`castSlotsUsed`（并集）仍只用来判 noSlot / slotUnused。
+- `charge_sides(fired, family_of, charged_atks)`：打出任一带蓄力子类别段的动画 = 蓄力动画；同「族」其余动画 = 不蓄力动画；族里没有
+  蓄力动画 = 与蓄力无关（neutral）。族：战技 `skill_charge_family` = (位置, 动画号 // 100, FP 侧)，法术 `spell_charge_family` = 动画号 // 100。
+  按百位不按十位：风暴管束者 a860 的蓄力 40100 与不蓄力三连 40110–40112（Light #1–#3）同在 401 套（self_check 断言，按十位分会把三连判成 both）。
+  `charge_branch()`：只在蓄力动画 → charged，只在不蓄力动画 → uncharged，两侧都有或 neutral → both。
+- 生成器：战技在 TAE 核实循环里逐武器（这把武器留下的段 × 它们的动画依据）分侧、各武器合并（每把武器单独归出的结果也记下，
+  不一致即 weaponConflicts，本版本 0）；法术按 castAnims 逐施法动画分侧。`hits[].chargeBranch` 只写在「有可取蓄力段」的条目
+  （skillsWithChargedHits 15 / spellsWithChargedHits 47）的可取段上（不含 notInvoked / noVariant）；没有动画依据的段按子类别归侧，
+  逐段列在 `diagnostics.chargeBranch.bySubCategoryOnly`；`--no-tae` / taeUnmatched 时全部按子类别归侧（= 首版口径）。
+- 取段规则（usage.蓄力段（v4））改为：③ 看 ② 之后的段，没有 chargeBranch=charged 的段则开关不适用、取全部；否则开取 charged / both，
+  关取 uncharged / both。增益仍按每段 subCategories 逐段判——蓄力开时蓄力动画里的前段照样计入、但不吃蓄力类增益。
+  生成器里的 `charge_pick()` / `sub_category_multiplier()` 就是这条规则的参考实现（self_check 与说明文字的例子用它）。
+- 文字：fieldNotes.charged（只说明吃不吃蓄力类增益，**不是**分侧依据）、新增 fieldNotes.chargeBranch、usage.蓄力段（v4）与
+  「命中段已按 TAE 核实（v3）」第 (6) 条、changelog v4（summary / added / changed）、fieldNotes.省略即默认值、
+  diagnostics.spellCastVerification.rule、diagnostics.chargedSubCategory.note 同步改写。
+- 其余审查意见：counts 新增 `hitsNotInvokedAll` / `hitsNotInvokedDamagingAll`（55 / 42，战技 + 法术；hitsNotInvoked 仍只数战技 34）；
+  `.gitignore` 加一条不带斜杠的 `macos/DataSources/raw`（工作树里 raw 是符号链接，带斜杠的规则只匹配目录）；anchorOnly 与同槽
+  invoked 段重复（6210 黑焰 62100 + 62101 等 6 个法术）本轮不改，见局限。
+
+**结果**：
+
+- chargeBranch 共 991 段——战技 800（charged 433、uncharged 352、both 15）、法术 191（charged 93、uncharged 95、both 3）；
+  带伤害的 842 段里 charged 399、uncharged 437、both 6。与首版「只按子类别分侧」不同的 139 段，其中**带伤害 12 段**：
+  105 突击 301701900–902 → charged、903 → both（无 FP 侧 906–908 → charged、909 → both）；1031 王者嘶吼 302305908 / 302305910 → both；
+  1049 古雷电枪 303400002 → both；7500 熔炉百相之尾 75000 → both。不带伤害的 127 段：651 战吼蓄力 R2 里 motion 为 0 的 114 段（→ charged）、
+  650 / 651 / 1015 / 1031 的吼叫本体（→ both）、1031 302305935（→ charged）、7310 癫火 73109 / 7900 火焰重罪 79009（两侧施法动画都发，→ both）。
+- 没有动画依据、按子类别归侧的 7 段：4380 / 5001 / 6210 / 6240 / 6270 / 7900 的 Magic.atkParamId 锚点（anchorOnly → uncharged）与
+  7900 火焰重罪 79005（由蓄力侧的 SpEffect 1790010 → 1790011 触发，[110] → charged）。武器间分侧冲突 0。
+- 例子（diagnostics.chargeBranch.examples，按取段规则实算，+18%，按 motion / flat 之和加权）：兽爪 6820 ×1.18、
+  熔炉百相之尾 7500 ×1.090662、突击 105 ×1.091579；蓄力关时三者都是 ×1。
+- 每个可蓄力条目的每个动作套 × FP 侧：开关适用时开 / 关两侧都不空；唯一「不适用」的是 1031 王者嘶吼无 FP 侧（只剩 302305910，both）。
+- 与首版 v4 产物逐项比对：只多了 hits[].chargeBranch（战技 800、法术 191 段）、counts 8 项、fieldNotes.chargeBranch、
+  diagnostics.chargeBranch（约 6.5 KB），改了上面列的几段文字与 generatedAt；其余字段（含 charged / subCategories / notInvoked /
+  noFp / fpBoth / variants）一字不差。产物紧凑 2,847,297 字节，三份副本 sha256 `0bddaaa07e910757919cf617650a54c1d0a50aaf85577e868301697e2407a382`。
+- buffs 重生成（schemaVersion 仍为 6）：attackIndex.zh 与 changelog ⑬ 里「蓄力开关按 hits[].charged 分两侧」改成按 chargeBranch；
+  与首版比对只差这两段文字与 generatedAt。3,039,710 字节，三份副本 sha256 `1f51c4ea58305a74065874946f7bf53b36467ebdd9c78ff75d88349330db7b74`。
+- `verify_skill_hits.py` 重跑报告：与首版报告相比只多了 spells[].castAnims（158）与 spells[].hits[].anims（374 段），其余逐字相同。
+
+**验证**
+
+- self_check 新增：chargeBranch 只出现在可蓄力条目的可取段上、取值合法、带蓄力子类别的段不会是 uncharged、`--no-tae` 时等于按子类别归侧；
+  counts（chargeBranch 各项、hitsNotInvokedAll / DamagingAll）与数据、diagnostics 三方一致；reclassified / reclassifiedNoDamage 清单与数据一致；
+  逐段断言 105（12 段）、1049、1031（吼叫本体 both、R2 两侧）、1200（每套 200 / 205 charged、220–245 uncharged）、7500、6820、5040 的分侧；
+  用 `charge_pick` 断言取段：105 开 900–904 / 关 903 + 905（无 FP 侧 906–910 / 909 + 911）、1049 开 001 + 002 / 关 000 + 002、
+  1031 无 FP 侧开关都只剩 302305910、7500 开 75000 + 75005 / 关 75000、6820 开 68205 / 关 68200、5040 开 50405 + 50406 / 关 50400 + 50401；
+  三个例子倍率等于公式值（误差 1e-6）；所有可蓄力条目 × 动作套 × FP 侧开 / 关两侧同空同不空；weaponConflicts 为空。
+- 5 种篡改全部在写文件前被拦下：分侧退回只看子类别（105 断言）、族按十位分（1200 断言）、法术取全部施法动画的并集（7500 断言）、
+  不记 both（105 断言）、取段「不适用」在分 noFp 之前判且开侧只取 charged（105 取段断言）。
+- `--no-tae` 通过 self_check；连续两次生成除 generatedAt 外一致；check_attack_index 278 个条目差异 0。
+
+**三端测试**（界面与测试仍未改）：Windows `node --test tests/*.test.mjs` 397 项 395 过 / 1 败（not ok 196，schemaVersion 期望 3）/ 1 TODO；
+macOS `swift run RelicCoreChecks` 仍在 BuffRankerChecks「notInvoked 34 段（带伤害 24 段）」处中止（可改用 counts.hitsNotInvokedAll 55 / 42）；
+Android `:gamedata:test` 429 项 100 败（版本门控）——与首版相同，没有新增失败。`NR_RANKER_DUMP=1` 重出的 Windows 对拍行与
+android 资源里的 ranker-crosscheck-dump.txt 逐行相同（TEXT count=346 digest=446c874b brief=ad04314d）：Windows 对拍用例
+（ranker_crosscheck.test.mjs 的 runCase）对法术直接取 spell.hits、不剔 notInvoked，也还没读 chargeBranch，death-lightning 选段
+仍含 50402 / 50407。
+
+**界面车道要跟进**：蓄力开关按 chargeBranch 取段（开 charged / both、关 uncharged / both，partial 两侧都不取（第二轮审查修正），
+② 之后没有 charged 段则不适用），
+不要再用 charged 分侧；子类别限定增益逐段判（charged 段吃蓄力增益、both / 前段不吃）；notInvoked 合计改读 hitsNotInvokedAll；
+对拍 dump 的法术选段剔掉 notInvoked 后重出。
+
+**局限**
+
+- 族的划分（战技按百位套 + FP 侧、法术按百位）是从本版本的动画号规律归纳的（15 个可蓄力战技、47 个可蓄力法术的逐动画分布都看过）。
+  TAE 只有事件、没有动画之间的跳转（那在 HKS 里），所以同一族里「不蓄力放法」「中间蓄力阶段的放招」与「两种放法之后都会接的
+  追加动画」靠事件结构分不开。（第二轮审查后改写）本轮原写的「1017 / 218 都判不蓄力侧，实机确认是追加再改 both」两处都不对，
+  游戏说明文本已经回答了：218 伟哉卡利亚「借由蓄力发动，能提升两个阶段」——40002 / 40007（300200871 / 876）是一段蓄力的放招，
+  与轻按、满蓄力互斥，改 both 会把它加到两侧，方向反了，现标 partial（两侧都不取）；1017 辉石彗砾「发动后接着使出重攻击……
+  再突刺攻击」——40010 / 40015（300107910–912）是两种放法之后都能接的追加，现标 both。两处都进了例外表
+  `verify_skill_hits.CHARGE_ANIM_OVERRIDES`，见下面「第二轮审查修正」。
+- anchorOnly 段（Magic.atkParamId 锚点）没有动画依据，按子类别归到不蓄力侧，与同槽 invoked 段数值重复（6210 黑焰 62100 与 62101 各 fire 210），
+  绝对伤害会被算两遍（逐段增益比例不受影响）；是否标 notInvoked 或另加 anchorDuplicate 标记，留待下一轮决定。
+
+### 第二轮审查修正：蓄力分侧的两处例外（partial / 追加 both）与突击的建模说明（2026-09-28，schemaVersion 仍为 4）
+
+**起因**（审查意见）：
+
+1. （high）族规则把伟哉卡利亚 218 两个互斥的放招放在同一侧。a666 的 40002 / 40007（300200871 / 876）是一段蓄力的放招：
+   它与轻按 40001 / 40006（870 / 875）、满蓄力 40000 / 40005（872 / 877）三者互斥。规则把它判成不蓄力侧，于是蓄力关时
+   `charge_pick` 把一次放招不可能同时打出的两段相加：带 FP 侧 870 + 871 = 魔力 flat 220 + 315 = 535，比满蓄力 872 的 400 还高；
+   无 FP 侧 875 + 876 = MV 140 + 155。与上一轮根因 1（一次放招打不出的段一起勾）同类。依据：
+   - ArtsCaption 218「借由蓄力发动，能提升两个阶段」/ "Can be charged to increase its power by up to two levels"，
+     是可蓄力战技里唯一说「两个阶段」的；
+   - a666 的 40001 与 40002 结构相同：都在 0.50s 打一段并带事件 330（扣 FP），取消窗口 87 / 106 从 0.83 / 0.80s、103 / 104 从
+     1.80s 起（无 FP 版 40006 / 40007 同样在 0.50s 打一段），是两个平级的放招动画，不是前后相接；
+   - 伤害逐级递增：带 FP 侧魔力 flat 220 → 315 → 400，无 FP 侧 MV 140 → 155 → 170。
+   上一轮局限里写的「若实机确认是追加，应改为 both」方向反了：both 会把 871 / 876 加到两侧。
+2. （medium）辉石彗砾 1017：a817 的 40010 / 40015（300107910 / 911 / 912）被判成不蓄力侧，但它们是重攻击触发的追加突刺，
+   蓄力 / 不蓄力两种放法之后都能接。依据：ArtsCaption 1017「借由蓄力发动，能变成“辉石彗砾”。发动后接着使出重攻击，能大幅
+   向前跨出，再突刺攻击」/ "Follow up with a strong attack to chain this skill into a lunging thrust"；40010 自带事件 330
+   （0.70s，追加另扣 FP）；同结构的 203 辉石魔砾追加段 300200895（MV 160）在它的 variant 里本来就计入。旧口径下蓄力开只取
+   900（魔力 190）、丢掉追加，蓄力关取 901（魔力 155）+ 910（MV 170），两侧不对称，330900 在开侧显示成不被追加稀释的 ×1.18。
+3. （low）突击 105 的蓄力关是建模假设，文字没说：a605/40001（不蓄力）没有事件 330——其余可蓄力战技的不蓄力放招动画都有
+   （a666、a667、a809、a812、a817、a849、a798、a860），且 40001 在 blend 后 0.23s 就打出 903；说明文本「持续发动能增加移动距离」。
+   这说明 40001 大概是 40000 在 0.97s 扣过 FP 之后才切进去的：按住后中途放开时，冲刺段 301701900–902 已经打出 0–3 段。
+
+**做法**：
+
+- `verify_skill_hits.py`：新增例外表 `CHARGE_ANIM_OVERRIDES`（{战技 ID: {(loc, 动画号): 侧}}）与依据 `CHARGE_ANIM_OVERRIDE_EVIDENCE`；
+  218 → {40002, 40007: "partial"}，1017 → {40010, 40015: "neutral"}。TAE 事件结构分不开这两种情况与风暴管束者 1200 的 R1
+  不蓄力三连、所以不改族规则，按「游戏说明文本 + 动画结构」逐个列出。`charge_sides()` 新增 `overrides` 参数：表里的动画不参与
+  「蓄力动画 / 同族不蓄力」的判定，直接归到给定的侧；`charge_branch()` 新增 `"partial"`（只在中间蓄力阶段的放招里；与
+  charged / uncharged 同在时不影响结果，开 = 满蓄力、关 = 轻按）。规律 9 的模块文档补上例外一段。
+- `generate_skills.py`：战技分侧时传 `vsh.CHARGE_ANIM_OVERRIDES.get(战技 ID)`，记下每条例外实际用上的动画与段；
+  `hits[].chargeBranch` 取值多一个 `"partial"`；`counts.hitsChargeBranchPartial`；`diagnostics.chargeBranch.overrides`（逐战技列出
+  动画 → 侧与打出的段、依据）与 `counts.overrideAnims`。`charge_pick()` 不用改：它的保留集是 charged / both 或 uncharged / both，
+  本来就不取 partial。文字：fieldNotes.chargeBranch（取值、例外一段、105 例子补一句「开 / 关按按满 / 轻按两端建模，中途放开还会有
+  301701900–902 的 0–3 段」）、usage.蓄力段（v4）（③ 加「partial 两侧都不取」、218 与 1017 的取段）、changelog v4（summary /
+  added / changed）、diagnostics.chargeBranch.rule / note、模块文档、`--no-tae` 说明（例外表此时不生效）同步改写。
+  例外表在 `--no-tae` 时也要列进 diagnostics，self_check 也要读，所以新增 `load_verify_module()`（同目录 verify_skill_hits，只用标准库）。
+- `generate_buffs.py`：attackIndex.zh 与 changelog ⑬ 的「开取 charged／both、关取 uncharged／both」后补「partial 两侧都不取」。
+
+**结果**：
+
+- 数据只变了 5 段：218 伟哉卡利亚 300200871 / 300200876 uncharged → partial；1017 辉石彗砾 300107910 / 300107911 / 300107912
+  uncharged → both（912 是 noDamage）。chargeBranch 仍是 991 段——战技 800（charged 433、uncharged 347、both 18、partial 2）、
+  法术 191（不变：charged 93、uncharged 95、both 3）；带伤害的 842 段里 charged 399、uncharged 433、both 8、partial 2。与「只按子类别
+  分侧」不同的段 139 → 144，其中带伤害 12 → 16（多了 871 / 876 → partial、910 / 911 → both）。
+- 取段（`charge_pick`）：218 带 FP 侧开 = [300200872]、关 = [300200870]；无 FP 侧开 = [300200872（fpBoth）, 300200877]、关 = [300200875]。
+  1017 带 FP 侧开 = [300107900, 300107910]、关 = [300107901, 300107910]；无 FP 侧开 = [300107905, 300107911]、关 = [300107906, 300107911]。
+  三个例子不变：兽爪 ×1.18、熔炉百相之尾 ×1.090662、突击 ×1.091579。
+- 与上一轮产物逐项比对：上面 5 段的 chargeBranch、counts 4 项（Both / Uncharged / Reclassified 改值、新增 Partial）、
+  diagnostics.chargeBranch（counts、reclassified 多 4 条、reclassifiedNoDamage 多 1017 一条、新增 overrides、rule / note）、
+  fieldNotes.chargeBranch、usage.蓄力段（v4）、changelog v4 的 5 段文字与 generatedAt；其余字段一字不差。
+  产物紧凑 2,853,090 字节，三份副本 sha256 `982b162ba2861939f037530c269021f67d0fad4aba2fcb63a108a78098ab94e6`。
+- buffs 重生成（schemaVersion 仍为 6）：与上一轮只差 attackIndex.zh、changelog ⑬ 两段文字与 generatedAt；3,039,765 字节，
+  三份副本 sha256 `d84210ff089c400d7e7cc7d19182e0ff5cbeb66683dacaeeafd720731e0ddda2`。
+- `verify_skill_hits.py --out <临时目录>` 重跑：报告与上一轮除 generatedAt 外逐字相同（报告本身不做蓄力分侧）。
+
+**验证**
+
+- self_check 新增：chargeBranch 取值含 partial；带蓄力子类别的段不会是 uncharged 或 partial；partial 只出现在例外表里标 partial 的战技上；
+  counts.hitsChargeBranchPartial 与数据一致；diagnostics.chargeBranch.overrides 的战技与例外表一一对应，TAE 核实时例外表的
+  每一个动画都真的用上（overrideAnims = 4，动画号随游戏更新变了会中止），没有 TAE 时一个都不用、partial 为 0；
+  逐段断言 218（870 / 875 uncharged、871 / 876 partial、872 / 877 charged，overrides 里 40002 → [871]、40007 → [876]）与
+  1017（900 / 905 charged、901 / 906 uncharged、910 / 911 / 912 both，overrides 里 40010 → [910, 912]、40015 → [911, 912]），
+  并用 `charge_pick` 断言上面「结果」里的 8 组取段。原有断言（105 / 1049 / 1031 / 1200 / 7500 / 6820 / 5040、三个例子、
+  每个可蓄力条目开 / 关同空同不空）照旧通过。
+- 新做 7 种篡改，全部在写文件前被拦下：去掉 218 的例外、把 218 改成「两侧都打」（上一轮局限里设想的 both）、去掉 1017 的例外、
+  例外表动画号过时（40002 → 40003，overrides 断言）、`charge_branch` 把只在 partial 放招里的段归到不蓄力侧、取段把 partial 算进
+  关侧（218 取段断言）、`charge_sides` 忽略 overrides。上一轮的篡改（族按十位分、法术取并集、不记 both、「不适用」在分 noFp 之前判）
+  重跑也都被拦下。
+- `--no-tae` 通过 self_check（chargeBranch 全部按子类别归侧，1014 段，例外表列出但 atkIds 为空）；连续两次生成除 generatedAt 外一致；
+  check_attack_index 278 个条目差异 0。
+
+**三端测试**（界面与测试仍未改）：Windows `node --test tests/*.test.mjs` 397 项 395 过 / 1 败（not ok 196，schemaVersion 期望 3）/ 1 TODO；
+macOS `swift run RelicCoreChecks` 仍在 BuffRankerChecks「notInvoked 34 段（带伤害 24 段）」处中止；Android `:gamedata:test` 429 项
+100 败（版本门控），失败用例清单与上一轮逐条相同——都没有新增失败。`NR_RANKER_DUMP=1` 重出的 Windows 对拍行（12 行）与 android
+资源里的 ranker-crosscheck-dump.txt 逐行相同（TEXT count=346 digest=446c874b brief=ad04314d）：页面还没读 chargeBranch。
+
+**界面车道要跟进**（在上一轮清单上补）：蓄力开关的保留集只写 charged / both 与 uncharged / both，不要写成「不是 charged 就算关侧」——
+那样会把 partial 算进蓄力关（伟哉卡利亚关侧 870 + 871）。若以后要加「一段蓄力」一档，取 partial / both。
+
+**局限**
+
+- 例外表是逐个列的：TAE 没有动画之间的跳转，族规则本身仍分不开「中间蓄力阶段的放招」「两种放法之后都能接的追加」与真正的不蓄力
+  放法。本轮按审查逐一看过的可蓄力战技（15 个）里只有 218、1017 两处；新战技或游戏更新后要按说明文本 + 动画结构重看，self_check
+  只保证表里列的动画还在、分侧与取段不变，不会自动发现新的例外。
+- 突击 105 的开 / 关是按「按满 / 轻按」两端建模的，不是动画互斥的实证：a605/40001 没有事件 330，大概是 40000 扣过 FP 之后才切进去的，
+  按住后中途放开时冲刺段 301701900–902 已经打出 0–3 段；数据的关侧只算轻按放招 903 + 905，开侧算按满 900–904。数据未改。
+- 上一轮其余局限不变（anchorOnly 与同槽 invoked 段数值重复，留待下一轮）。

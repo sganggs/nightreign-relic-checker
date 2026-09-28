@@ -88,12 +88,33 @@
   在所有武器上都被移除的段在 hits[] 里标 notInvoked + notInvokedReason；动画完全匹配不到的战技（弓系）标
   taeUnmatched、不过滤。invoked.json 缺失或 --no-tae 时保持行为表口径（counts.taeVerified=false），
   weapons / skills / spells / swordArtsPools 与 TAE 核实前逐项相同（审查修正后只差 hits[].selfOrAllyOnly 标记，其中带数值的几段另加 noDamage）。
-  法术不做 TAE 过滤。判定规律见 PROVENANCE「TAE 动画事件与命中核实」，
+  法术 v3 不做 TAE 过滤（v4 起按施法槽核实，见下）。判定规律见 PROVENANCE「TAE 动画事件与命中核实」，
   本步骤的结果见 PROVENANCE「命中段 TAE 核实（v3）」与产物的 diagnostics.taeVerification。
   同一趟 TAE 还用来分带 FP / 无 FP：战技 TAE 的 4xxxx 动画个位 0–4 是带 FP 版、5–9 是无 FP 版，行名没写 "No FP"
   但只被无 FP 版动画调用的段补标 hits[].noFp（noFpSource="tae"），两侧共用的段标 fpBoth。
   AtkParam 只打自己 / 队友的行（opposeTarget=0 且 selfTarget / friendlyTarget=1，祈祷一击的回血子弹）标
   noDamage + selfOrAllyOnly，不算对敌伤害。
+
+逐段子类别与蓄力、法术施法槽核实（v4）
+------------------------------------
+  * hits[].subCategories = 这一段 AtkParam_Pc 自己的 subCategory1..5（非 0、去重升序），hits[].charged = 其中含
+    100 蓄力强攻击 / 110 蓄力法术攻击 / 111 蓄力战技攻击。子类别限定的增益（buffs requires.subCategoriesAny）要按
+    **所选的每一段**判定（usage.蓄力段（v4））——v3 页面按 buffs attackIndex 的「整招段数占比」加权，兽爪上的
+    「强化祷告的蓄力执行」+18% 被摊成 ×1.09。
+  * hits[].chargeBranch（审查修正）= 这一段在蓄力开关的哪一侧（charged / uncharged / both），**按动画判**
+    （verify_skill_hits 规律 9）：打出带蓄力子类别段的动画是蓄力动画，它打出的全部段都在蓄力侧（突击 a605/40000 的
+    301701900–903 子类别只有 [112, 130]），同族其余动画是不蓄力侧，两侧都打或与蓄力无关（王者嘶吼的吼叫本体）的段 both。
+    战技用 TAE 核实时逐武器的 matches[].anim，法术用每个施法动画各自发射的 refSlot（check_spell 的 castAnims，
+    熔炉百相之尾 a470：蓄力 45010 发槽 2 + 1、不蓄力 45011 只发槽 0）。蓄力开关与 noFp 同理是互斥两侧：开取 charged / both，
+    关取 uncharged / both。首版 v4 只按 charged 分侧，会丢掉蓄力动画的前段、把蓄力增益按全额算。
+    第二轮审查修正：族规则有两处例外（verify_skill_hits.CHARGE_ANIM_OVERRIDES，按游戏说明文本 + 动画结构列出）——伟哉卡利亚 218
+    的一段蓄力放招 a666/40002、40007（300200871 / 876，「能提升两个阶段」）与轻按、满蓄力三者互斥，标 "partial"，蓄力开关两侧
+    都不取；辉石彗砾 1017 的重攻击追加突刺 a817/40010、40015（300107910–912）两种放法之后都能接，标 both。
+  * 法术段用 verify_skill_hits.TaeVerifier.check_spell 按施法动画的 refSlot 核实：不在任何 Magic.refId 槽里、
+    不是锚点、没有 SpEffect 触发（noSlot）的段标 notInvoked（notInvokedReason="noCastSlot"），例：兽爪 68201 / 68206
+    （Paramdex 行名 UNUSED）、死亡雷击 50402 / 50407；其余状态照旧保留，见 diagnostics.spellCastVerification。
+  * self_check 另用 buffs 数据集（--buffs，只读）的 attackIndex 对照 hits[].subCategories（check_attack_index）：
+    蓄力 / 非蓄力的划分必须一致，只允许「本次新标 notInvoked、buffs 还没重生成」的段不同（打印出来）。
 
 动作套（variants）为什么必须存在
 ------------------------------
@@ -129,6 +150,8 @@
   cd "<repo>/macos/DataSources" && python3 generate_skills.py
   可选： --params <dir> --msg <dir> --out <file> --pretty
         --invoked raw/tae/invoked.json --sp-enum raw/paramdex/SP_EFFECT_TYPE.json --no-tae
+        --buffs ../../data/nightreign-buffs-v1.03.5.json（v4 self_check 对照 attackIndex 用，缺失时跳过）
+  重生成顺序：本脚本 → generate_buffs.py（attackIndex 读本数据集）→ scripts/sync-data.sh
 """
 
 import argparse
@@ -140,7 +163,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 3   # v3：局内战技池（SwordArtsTableParam）进 weaponIds，新增 weaponSources / skillIds / skillVariants
+SCHEMA_VERSION = 4   # v4：hits[].subCategories / charged（逐段子类别与蓄力）、法术段按施法动画的 refSlot 核实（notInvoked）
 
 # 结构变更记录：消费方可以程序化地知道每一版加了 / 改了什么（同 generate_buffs.py 的 schemaChangelog 惯例）。
 SCHEMA_CHANGELOG = [
@@ -216,6 +239,59 @@ SCHEMA_CHANGELOG = [
          "casterSources。counts.spells 160→158、spellsWithHits 139→137，hits / uniqueAtkIds 等全局计数少了这两行的段。"
          "schemaVersion 仍为 3：没有改名或改语义的字段，只删了两条死行、其余只增字段。",
      ]},
+    {"version": 4,
+     "summary": "逐段子类别与蓄力、法术施法槽核实：(1) 每段命中带上 AtkParam_Pc 自己的 subCategory1..5（hits[].subCategories）"
+                "与 charged（含 100 蓄力强攻击 / 110 蓄力法术攻击 / 111 蓄力战技攻击）；(2) 法术段按施法动画的 refSlot 核实，"
+                "没有任何施法动画槽位会发射的段标 notInvoked（v3 只核实了战技）；(3) 每段带上蓄力分侧 hits[].chargeBranch"
+                "（charged / uncharged / both / partial），按 TAE 逐动画判：蓄力与不蓄力是不同的动画，蓄力动画里子类别不带蓄力的前段也在蓄力侧，"
+                "两侧动画都打的段 both，伟哉卡利亚的一段蓄力放招 partial（两侧都不取）；(4) 页面取段规则随之收紧：蓄力开关与「专注值不足」"
+                "同理是同一招的互斥两侧（开取 charged / both，关取 uncharged / both），子类别限定的增益按所选段逐段判定，不再按整招的段数占比加权。"
+                "起因：局内武器词条「强化祷告的蓄力执行」（SpEffect 8330302/301/300，+18% / +13% / +9%）在兽爪（6820）上"
+                "被显示成 ×1.09 / ×1.065 / ×1.045——页面把一次施放不可能同时打出的 4 段都算上（68200 子弹、68201 未使用、"
+                "68205 蓄力子弹、68206 蓄力未使用），又按 buffs attackIndex 的「整招 2/4 段带 110」把 +18% 摊成 ×1.09。",
+     "added": [
+         "hits[].subCategories：AtkParam_Pc.subCategory1..5 的非 0 值，去重升序，全为 0 时省略（取值见 enums.atkSubCategory）",
+         "hits[].charged：subCategories 与 {100, 110, 111}（enums.chargedSubCategories）有交集时为 true，否则省略——"
+         "只说明这段的子类别带蓄力（游戏判蓄力类增益看它），**不是**取段分侧的依据，分侧读 chargeBranch",
+         "hits[].chargeBranch：\"charged\" / \"uncharged\" / \"both\" / \"partial\"，这一段在蓄力开关的哪一侧（verify_skill_hits 规律 9：打出带蓄力"
+         "子类别段的动画 = 蓄力动画，它打出的段都在蓄力侧；同族其余动画 = 不蓄力侧；两侧都打、或所在动画族没有蓄力动画 → both；"
+         "例外表 CHARGE_ANIM_OVERRIDES 里的中间蓄力阶段放招 → partial，蓄力开关两侧都不取，本版本只有伟哉卡利亚 300200871 / 300200876）。"
+         "只写在有可取蓄力段的条目的可取段上（不含 notInvoked / noVariant），缺失 = 该条目不能蓄力或该段不可取",
+         "counts.hitsChargeBranch / hitsChargeBranchCharged / hitsChargeBranchUncharged / hitsChargeBranchBoth / hitsChargeBranchPartial / "
+         "hitsChargeBranchReclassified / hitsChargeBranchBySubCategoryOnly；counts.hitsNotInvokedAll / hitsNotInvokedDamagingAll"
+         "（战技 + 法术，= 全部 hits 里 notInvoked 的段；hitsNotInvoked / hitsNotInvokedDamaging 仍只数战技）",
+         "diagnostics.chargeBranch（规则、计数、与「只按子类别」分侧不同的段及其动画依据、没有动画依据按子类别归侧的段、"
+         "规律 9 的例外 overrides 及其依据）",
+         "verify_skill_hits.TaeVerifier.check_spell 的 castAnims（每个施法动画各自发射的槽）与 hits[].anims",
+         "enums.atkSubCategory（Smithbox NR Param Enums ATK_SUB_CATEGORY 的中英文标签，与 buffs 数据集 enums.atkSubCategory "
+         "同一份转写；蓄力三项另带 charged: true；hits 里出现、枚举没收录的值（本版本 115，使者号角类战技的泡泡段）"
+         "标 unlisted: true 并列出 usedBy，不编名字）、enums.chargedSubCategories",
+         "enums.notInvokedReason.noCastSlot（法术段专用：施法动画没有槽位调用）",
+         "counts.spellHitsNotInvoked / spellHitsNotInvokedDamaging / spellsWithHitsNotInvoked / spellHitsKeptWithoutCastSlot / "
+         "hitsWithSubCategories / hitsCharged / hitsChargedDamaging / skillsWithChargedHits / spellsWithChargedHits",
+         "diagnostics.spellCastVerification（法术施法槽核实：规则、按状态计数、notInvoked 清单、槽外但保留的段）与 "
+         "diagnostics.chargedSubCategory（子类别与行名「Charged / 蓄力」不一致的段）",
+         "fieldNotes.subCategories / charged / chargeBranch；usage.蓄力段（v4）",
+     ],
+     "changed": [
+         "spells[].hits[].notInvoked：v3 只出现在战技上；v4 起法术段也会标——TaeVerifier.check_spell 判为 noSlot（不在 Magic.refId1–10 "
+         "任何一个槽里、不是 Magic.atkParamId 锚点、也没有 SpEffect 触发它，于是没有任何施法动画的事件 64 refSlot 会发射它）的段标 "
+         "notInvoked=true + notInvokedReason=\"noCastSlot\"。例：兽爪 68201 / 68206（Paramdex 行名标 UNUSED）、死亡雷击 50402 / 50407。"
+         "其余状态（invoked / spEffect / spEffectDerived / anchorOnly / slotUnused）照旧保留、不标。页面直接读 spells[].hits 时"
+         "剔掉 notInvoked 的写法三端都已具备，不用改；counts.hitsNotInvoked 仍只数战技（法术另见 spellHitsNotInvoked）。",
+         "usage「命中段已按 TAE 核实（v3）」键名不变（三端按键名引用），内容改写为战技 + 法术两部分（第 (6) 条改为：法术按施法动画"
+         "逐个核，每个动画只发射自己用到的槽，蓄力 / 不蓄力是不同的动画）；fieldNotes.notInvoked / "
+         "法术与 TAE / taeVerified、coverage.hitsNotInvokedNote 随之改写。",
+         "页面取段规则（usage.蓄力段（v4））：(a) 蓄力开关与 noFp 同理，是同一招的互斥两侧——蓄力开取 chargeBranch 为 charged 或 both "
+         "的段，关取 uncharged 或 both 的段，partial（中间蓄力阶段的放招）两侧都不取；按 noFp 分侧之后若一段 chargeBranch=charged 都没有（包括整招没有 chargeBranch），开关不适用、"
+         "取全部（审查修正：首版 v4 按 hits[].charged 分侧、并在分 noFp 之前判「不适用」，会丢掉蓄力动画里子类别不带蓄力的前段"
+         "（突击 301701900–902、熔炉百相之尾 75000、古雷电枪 303400002、王者嘶吼的吼叫本体），把蓄力增益按全额算，"
+         "且王者嘶吼无 FP 侧蓄力开时一段不剩）；(b) 带 requires.subCategoriesAny 的增益（buffs 数据集，"
+         "全表 93 条：蓄力法术 110、蓄力战技 111、蓄力强攻击 100、远程武器攻击 105、战技攻击 112、跳跃 102、防御反击 103、"
+         "连段最后一击 104…）按**当前选中的段**逐段判定：该段的 subCategories（法术再并上 Magic.subCategory1..2 流派）与 "
+         "subCategoriesAny 有交集，这一段才乘它；不再用 buffs attackIndex 的「整招带该子类别的段数 ÷ 总段数」近似加权。"
+         "attackIndex 仍然保留，给 appliesTo 的人口统计用；它现在也排除 notInvoked 的法术段（buffs 数据集随之重生成）。",
+     ]},
 ]
 GAME_VERSION = "v1.03.5 + DLC1"
 DATA_VERSION = "regulation 10350000"
@@ -227,6 +303,8 @@ DEFAULT_OUT = HERE.parents[1] / "data" / "nightreign-skills-v1.03.5.json"
 # TAE 核实（v3 第二部分）：extract_tae.py 解出的动画事件 + Paramdex 的 SP_EFFECT_TYPE（可选，只影响门控名的显示）
 DEFAULT_INVOKED = HERE / "raw" / "tae" / "invoked.json"
 DEFAULT_SP_ENUM = HERE / "raw" / "paramdex" / "SP_EFFECT_TYPE.json"
+# （v4）只读：self_check 用 buffs 数据集的 attackIndex 对照 hits[].subCategories（本脚本不依赖它生成任何字段）
+DEFAULT_BUFFS = HERE.parents[1] / "data" / "nightreign-buffs-v1.03.5.json"
 
 ELEMENTS = ("physical", "magic", "fire", "lightning", "holy")
 # AtkParam_Pc 动作值字段（百分比，作用于武器对应属性攻击力）
@@ -329,6 +407,71 @@ ATK_ATTR_ZH = {
     254: ("None", "无"),
 }
 
+# （v4）Paramdex 枚举 ATK_SUB_CATEGORY（AtkParam_Pc.subCategory1..5 / Magic.subCategory1..2 共用）：值 → (英文, 中文)。
+# 与 generate_buffs.py 的 ATK_SUB_CATEGORY 是同一份转写（Smithbox NR "Param Enums"，commit f5969c0；中文标签沿用 buffs
+# 数据集 enums.atkSubCategory），self_check 在 buffs 数据集存在时逐项比对两边一致。
+ATK_SUB_CATEGORY = {
+    0: ("None", "无"),
+    1: ("Full Moon Sorcery", "满月魔法"),
+    2: ("Carian Sword Sorcery", "卡利亚剑魔法"),
+    3: ("Glintblade Sorcery", "辉剑魔法"),
+    4: ("Stonedigger Sorcery", "掘石魔法"),
+    5: ("Crystalian Sorcery", "结晶人魔法"),
+    6: ("Comet Sorcery", "彗星魔法"),
+    7: ("Star Sorcery", "星星魔法"),
+    8: ("Magma Sorcery", "熔岩魔法"),
+    9: ("Thorn Sorcery", "荆棘魔法"),
+    10: ("Death Sorcery", "死之魔法"),
+    11: ("Gravity Sorcery", "重力魔法"),
+    12: ("Night Sorcery", "夜之魔法"),
+    13: ("Cold Sorcery", "冷气魔法"),
+    14: ("Comet Azur", "亚兹勒彗星"),
+    15: ("Stars of Ruin", "破灭之星"),
+    20: ("Godslayer Incantation", "弑神祷告"),
+    21: ("Giantsflame Incantation", "巨人火焰祷告"),
+    22: ("Dragon Cult Incantation", "古龙信仰祷告"),
+    23: ("Bestial Incantation", "兽祷告"),
+    24: ("Golden Order Incantation", "黄金律法祷告"),
+    25: ("Dragon Communion Incantation", "龙餐祷告"),
+    26: ("Frenzied Flame Incantation", "癫火祷告"),
+    27: ("Noble Presence", "贵人威势"),
+    28: ("Aspect of the Crucible Incantation", "坩埚相关祷告"),
+    100: ("Charged Heavy Attack", "蓄力强攻击"),
+    101: ("Horseback Attack", "骑马攻击"),
+    102: ("Jump Attack", "跳跃攻击"),
+    103: ("Guard Counter Attack", "防御反击"),
+    104: ("Final Chain Attack", "连段最后一击"),
+    105: ("Ranged Weapon Attack", "远程武器攻击"),
+    106: ("Roar Attack", "咆哮攻击"),
+    107: ("Breath Attack", "吐息攻击"),
+    108: ("Thrown Pot Item Attack", "投掷壶道具攻击"),
+    109: ("Perfume Item Attack", "香水道具攻击"),
+    110: ("Charged Spell Attack", "蓄力法术攻击"),
+    111: ("Charged Skill Attack", "蓄力战技攻击"),
+    112: ("Skill Attack", "战技攻击"),
+    113: ("Radahn's Spear", "拉塔恩之枪"),
+    114: ("Ancestral Infant's Head", "祖灵婴儿头"),
+    116: ("Wraith Roar", "亡灵咆哮"),
+    117: ("Wraith Attack", "亡灵攻击"),
+    118: ("Golden Arrow", "黄金箭"),
+    119: ("Initial Standard Attack", "起手普通攻击"),
+    120: ("Throwing Knife Item Attack", "投掷小刀道具攻击"),
+    121: ("Throwing Stone Item Attack", "投石道具攻击"),
+    122: ("Character Skill", "角色技艺"),
+    123: ("Ultimate Art", "绝招"),
+    124: ("Two-handed Attack", "双手持攻击"),
+    125: ("Dual Wield Attack", "双持攻击"),
+    126: ("No-Damage Sudden Death", "无伤骤死"),
+    127: ("Dash Attack", "冲刺攻击"),
+    128: ("Rolling Attack", "翻滚攻击"),
+    129: ("Backstep Attack", "后跳攻击"),
+    130: ("Melee Weapon Attack", "近战武器攻击"),
+}
+ATK_SUB_FIELDS = tuple(f"subCategory{i}" for i in range(1, 6))   # AtkParam_Pc 的五个子类别列
+# （v4）「蓄力」子类别：带其中任一个的段 hits[].charged=true（吃 requires 含 100 / 110 / 111 的蓄力类增益）。
+# 取段分侧不看它、看 hits[].chargeBranch（按动画判，verify_skill_hits 规律 9）：蓄力动画里常有子类别不带蓄力的前段。
+CHARGED_SUB_CATEGORIES = (100, 110, 111)
+
 # Paramdex 枚举 MAGIC_CATEGORY（Magic.ezStateBehaviorType）
 MAGIC_KIND = {0: "sorcery", 1: "incantation", 2: "pyromancy"}
 MAGIC_KIND_ZH = {"sorcery": "魔法", "incantation": "祷告", "pyromancy": "火焰术"}
@@ -401,7 +544,15 @@ NOT_INVOKED_REASON_ZH = {
     "spEffectNoSource": "由 SpEffectParam.behaviorId 触发，但该 SpEffect 在全部参数表与全部 TAE 事件里都没有来源",
     "rowForOtherWeapon": "产出它的 BehaviorParam_PC 行只属于别的 behaviorVariationId，这些武器解不到",
     "unreferenced": "没有任何 BehaviorParam_PC 行、子弹、Magic 或其它参数列引用它",
+    # （v4）法术段专用，不在 verify_skill_hits.STATUS_ORDER 里（那是战技的判定），由 TaeVerifier.check_spell 的 noSlot 得出
+    "noCastSlot": "（法术）施法动画没有槽位调用：施法 TAE a(400+Magic.refType) 的事件 64 只按 refSlot 发射 Magic.refId1–10，"
+                  "而这段不在任何一个 refId 槽里（槽里的子弹链也到不了它），也不是 Magic.atkParamId 锚点、没有 SpEffect 触发它"
+                  "——这类段多半在全部参数表里无人引用（逐段见 diagnostics.spellCastVerification.notInvokedHits[].unreferenced）；"
+                  "兽爪 68201 / 68206 的 Paramdex 行名直接标 UNUSED",
 }
+# （v4）法术施法槽核实：TaeVerifier.check_spell 的状态 → notInvokedReason。只有 noSlot 表示「任何施法动画都发射不了」，
+# 其余状态（invoked / spEffect / spEffectDerived / anchorOnly / slotUnused / spEffectNoSource）照旧保留、不标。
+SPELL_NOT_INVOKED_STATUSES = {"noSlot": "noCastSlot"}
 
 # v3 修订（法术可施放口径）：不可施放的 Magic 行里，逐个核过「全部参数表」的那几个补充证据
 # （生成器只程序化检查 MagicTableParam 与 custom 行；全表引用扫描是一次性的人工核查，见 PROVENANCE「法术可施放口径」）。
@@ -797,6 +948,16 @@ def bullet_chain(bullets: dict[str, dict], root: str, limit: int = 64) -> list[s
 
 
 # ------------------------------------------------------------------- hit 构造
+def atk_sub_categories(atk_row: dict) -> list[int]:
+    """（v4）AtkParam_Pc.subCategory1..5 的非 0 值，去重升序（与 generate_buffs.subcategory_set 同一口径）。"""
+    out = set()
+    for field in ATK_SUB_FIELDS:
+        value = to_int(atk_row.get(field, "0"))
+        if value:
+            out.add(value)
+    return sorted(out)
+
+
 def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
               bullet_ids: list[str], ctx: str = "", ctx_zh: str = "",
               ctx_kind: str = "", aec_ids: frozenset[str] = frozenset(),
@@ -853,6 +1014,13 @@ def build_hit(atk_row: dict, label: str, no_fp: bool, sources: set[str],
         hit["staminaMv"] = stamina_mv
     hit["attribute"] = attr_en
     hit["attributeZh"] = attr_zh
+    # （v4）这一段自己的子类别（AtkParam_Pc.subCategory1..5 的非 0 值，去重升序）与是否蓄力分支。
+    # 子类别限定的增益（buffs requires.subCategoriesAny）按所选段逐段判定时读它；charged 是蓄力开关的取段依据。
+    subs = atk_sub_categories(atk_row)
+    if subs:
+        hit["subCategories"] = subs
+        if set(subs) & set(CHARGED_SUB_CATEGORIES):
+            hit["charged"] = True
     if bullet_ids:
         hit["isBullet"] = True
         hit["bulletIds"] = [to_int(b) for b in sorted(set(bullet_ids), key=int)][:8]
@@ -883,9 +1051,47 @@ def hit_has_damage(hit: dict) -> bool:
     return bool(hit.get("motion") or hit.get("flat")) and not hit.get("noDamage")
 
 
+def load_verify_module():
+    """同目录的 verify_skill_hits（只用标准库）。TAE 核实时 main() 自己 import 它（vsh）；蓄力分侧的例外表
+    CHARGE_ANIM_OVERRIDES 在 --no-tae 时（diagnostics 清单）与 self_check 里也要读，从这里取。"""
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    import verify_skill_hits  # noqa: E402
+    return verify_skill_hits
+
+
+def charge_pick(hits: list[dict], atk_ids=None, no_fp: bool = False, charge_on: bool = True) -> list[dict]:
+    """usage.蓄力段（v4）的取段规则（self_check 与说明文字里的例子共用；页面应与之一致）：
+    ① atk_ids 给定时取这些段（战技 = variants[下标].atkIds），否则取全部 hits（法术），去掉 notInvoked 与 noDamage；
+    ② 专注值开关：取 noFp 与 no_fp 同侧的段（fpBoth 两侧都算）；
+    ③ 蓄力开关：② 之后没有 chargeBranch="charged" 的段时不适用（原样返回），否则开取 charged / both、关取 uncharged / both
+    （partial = 中间蓄力阶段的放招，两侧都不取）。"""
+    by_id = {h["atkId"]: h for h in hits}
+    sel = [by_id[a] for a in atk_ids] if atk_ids is not None else list(hits)
+    sel = [h for h in sel if not h.get("notInvoked") and not h.get("noDamage")]
+    sel = [h for h in sel if h.get("fpBoth") or bool(h.get("noFp")) == no_fp]
+    if not any(h.get("chargeBranch") == "charged" for h in sel):
+        return sel
+    keep = ("charged", "both") if charge_on else ("uncharged", "both")
+    return [h for h in sel if h.get("chargeBranch") in keep]
+
+
+def sub_category_multiplier(sel: list[dict], rate: float, requires, extra_subs=(), weight: str = "motion") -> float:
+    """子类别限定的增益按所选段逐段判定后的整招倍率（说明文字的例子与 self_check 用）：
+    Σ w × (rate，若该段 subCategories ∪ extra_subs 与 requires 有交集；否则 1) ÷ Σ w，w = 该段 motion（战技）或 flat（法术）各属性之和。"""
+    req = set(requires)
+    num = den = 0.0
+    for h in sel:
+        w = float(sum((h.get(weight) or {}).values()))
+        num += w * (rate if (set(h.get("subCategories", ())) | set(extra_subs)) & req else 1.0)
+        den += w
+    return num / den if den else 1.0
+
+
 # hits[] 元素的键顺序（build_hit 的写出顺序，再接后面各步追加的标记）；后补字段时按它重排，保证输出稳定可读
 HIT_KEY_ORDER = ("atkId", "ctx", "ctxKind", "ctxZh", "label", "labelZh", "motion", "flat", "poise", "poiseMv",
-                 "stamina", "staminaMv", "attribute", "attributeZh", "isBullet", "bulletIds", "noFp", "noFpSource",
+                 "stamina", "staminaMv", "attribute", "attributeZh", "subCategories", "charged", "chargeBranch",
+                 "isBullet", "bulletIds", "noFp", "noFpSource",
                  "fpBoth", "noDamage", "selfOrAllyOnly", "addBaseAtk", "overrideAecId", "source",
                  "noVariant", "notInvoked", "notInvokedReason")
 
@@ -938,6 +1144,8 @@ def main() -> None:
                     help="extract_tae.py 的 raw/tae/invoked.json；缺失时不做 TAE 核实（counts.taeVerified=false）")
     ap.add_argument("--sp-enum", type=Path, default=DEFAULT_SP_ENUM, help="Paramdex SP_EFFECT_TYPE.json（可选）")
     ap.add_argument("--no-tae", action="store_true", help="跳过 TAE 核实（等同 invoked.json 缺失，保持 A 阶段口径）")
+    ap.add_argument("--buffs", type=Path, default=DEFAULT_BUFFS,
+                    help="（v4）buffs 数据集，只用于 self_check 对照 attackIndex 的子类别集合；缺失时跳过这项对照")
     args = ap.parse_args()
 
     weapons_raw = read_param(args.params, "EquipParamWeapon")
@@ -1764,6 +1972,13 @@ def main() -> None:
     # (战技, atkId) → {"fp" / "noFp" / "neutral": {战技 TAE 动画号}}：这段在「留下它的武器」上由哪一侧的动画调用
     # （verify_skill_hits 规律 8：4xxxx 个位 0–4 带 FP、5–9 无 FP）。用来补标行名没写 "No FP" 的无 FP 段。
     tae_fp: dict[tuple[int, str], dict[str, set[int]]] = defaultdict(lambda: defaultdict(set))
+    # （v4 审查修正）(战技, atkId) → {"charged" / "uncharged" / "neutral": {(loc, 动画号)}}：蓄力分侧的逐动画依据
+    # （verify_skill_hits 规律 9，charge_sides），各武器合并；tae_charge_by_weapon 记每把武器单独归出的 chargeBranch，
+    # 用来发现「同一段在不同武器上分侧不同」（本版本没有，self_check 断言）。
+    tae_charge: dict[tuple[int, str], dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    tae_charge_by_weapon: dict[tuple[int, str], set[str]] = defaultdict(set)
+    # （v4 第二轮审查修正）规律 9 的例外（verify_skill_hits.CHARGE_ANIM_OVERRIDES）实际用上的动画 → 它打出的段（diagnostics 与 self_check 用）
+    charge_overrides_applied: dict[tuple[int, tuple[str, int]], set[str]] = defaultdict(set)
     skill_tae_of: dict[int, str] = {}
 
     for skill in skills:
@@ -1837,6 +2052,7 @@ def main() -> None:
         final: dict[int, set[str]] = {wid: atks for wid, _v, _var, atks in selections}
         if tae is not None:
             sctx = tae.skill_context(skill["id"], pool)
+            charged_atks = {str(h["atkId"]) for h in skill["hits"] if h.get("charged")}
             skill_tae_of[skill["id"]] = f'a{sctx["skillTae"]}' if sctx["skillTae"] is not None else None
             checked: dict[int, tuple[dict, dict | None]] = {}
             cache: dict[tuple, tuple[dict, dict | None]] = {}
@@ -1874,6 +2090,22 @@ def main() -> None:
                         for branch, anims in vsh.fp_evidence(res[a], sctx["roar"],
                                                              info["chosenBlock"] if info else None).items():
                             tae_fp[(skill["id"], a)][branch] |= anims
+                    # （v4 审查修正）蓄力分侧：这把武器上每个动画打出哪些段，打出带蓄力子类别段的动画 = 蓄力动画，
+                    # 同族（同位置、同百位套、同 FP 侧）其余动画 = 不蓄力动画，族里没有蓄力动画 = 与蓄力无关
+                    if charged_atks:
+                        fired: dict[tuple[str, int], set[str]] = defaultdict(set)
+                        for a in kept:
+                            for key in vsh.anim_evidence(res[a], sctx["roar"], info["chosenBlock"] if info else None):
+                                fired[key].add(a)
+                        # 例外（第二轮审查修正）：218 伟哉卡利亚的一段蓄力放招 → partial，1017 辉石彗砾的重攻击追加 → neutral
+                        overrides = vsh.CHARGE_ANIM_OVERRIDES.get(skill["id"])
+                        for key in overrides or ():
+                            if key in fired:
+                                charge_overrides_applied[(skill["id"], key)] |= fired[key]
+                        for a, sides in vsh.charge_sides(fired, vsh.skill_charge_family, charged_atks, overrides).items():
+                            for side, keys in sides.items():
+                                tae_charge[(skill["id"], a)][side] |= keys
+                            tae_charge_by_weapon[(skill["id"], a)].add(vsh.charge_branch(sides))
                     for a in atks:
                         st = res[a]["status"]
                         if a not in kept:
@@ -2056,6 +2288,193 @@ def main() -> None:
             elif hit.get("noFp") and "fp" in branches:
                 no_fp_conflicts.append(f'{skill["id"]} {skill["nameZh"]} {hit["atkId"]}（行名 No FP，动画 {anims}）')
     no_fp_tae_damaging = sum(1 for r in no_fp_tae if r["damaging"])
+
+    # ---- （v4）法术段按施法动画核实 ------------------------------------------------------
+    # 施法 TAE a(400 + Magic.refType) 的事件 64「Cast Selected Magic」只带 refSlot（0 → refId1 … 9 → refId10），
+    # 所以一段「打不打得出」= 它所在的 refId 槽有没有被施法动画用到（verify_skill_hits 规律 5 / 8，TaeVerifier.check_spell）。
+    # v3 只核实了战技，法术段全部照收：兽爪 6820 的 68201 / 68206（Paramdex 行名 "UNUSED"）、死亡雷击 5040 的 50402 / 50407
+    # 这类不在任何槽里的行被页面当成同一次施放的段一起算。v4 起：status=noSlot（不在任何槽里、不是 Magic.atkParamId 锚点、
+    # 也没有 SpEffect 触发——没有任何施法动画的 refSlot 会发射它）的段标 notInvoked + notInvokedReason="noCastSlot"；
+    # 其余状态照旧保留，清单写进 diagnostics.spellCastVerification。施法 TAE 缺失的法术不标（本版本没有）。
+    spell_cast_status: Counter = Counter()
+    spell_cast_status_damaging: Counter = Counter()
+    spell_not_invoked: list[dict] = []
+    spell_kept_outside_cast: list[dict] = []
+    spells_without_cast_tae: list[str] = []
+    spells_cast_checked = 0
+    # （v4 审查修正）法术 id → {atkId: {"charged" / "uncharged" / "neutral": {施法动画号}}}：逐施法动画的蓄力分侧
+    # （verify_skill_hits 规律 9：check_spell 的 castAnims / hits[].anims，不取并集）
+    spell_charge: dict[int, dict[str, dict[str, set]]] = {}
+    spell_cast_tae: dict[int, str] = {}
+    spell_cast_status_of: dict[tuple[int, str], str] = {}
+    if tae is not None:
+        for entry in spells:
+            res = tae.check_spell(entry["id"], [h["atkId"] for h in entry["hits"]])
+            if res is None:
+                spells_without_cast_tae.append(f'{entry["id"]} {entry["nameZh"]}（Magic 表没有这一行）')
+                continue
+            spells_cast_checked += 1
+            if not res["taeFound"]:
+                spells_without_cast_tae.append(f'{entry["id"]} {entry["nameZh"]}（施法 TAE a{res["tae"]} 缺失）')
+            spell_cast_tae[entry["id"]] = f'a{res["tae"]}'
+            fired_by_anim: dict[int, set[str]] = defaultdict(set)
+            for a, r in res["hits"].items():
+                spell_cast_status_of[(entry["id"], a)] = r["status"]
+                for aid in r.get("anims", ()):
+                    fired_by_anim[aid].add(a)
+            spell_charge[entry["id"]] = vsh.charge_sides(
+                fired_by_anim, vsh.spell_charge_family, {str(h["atkId"]) for h in entry["hits"] if h.get("charged")})
+            for hit in entry["hits"]:
+                r = res["hits"][str(hit["atkId"])]
+                st = r["status"]
+                spell_cast_status[st] += 1
+                if hit_has_damage(hit):
+                    spell_cast_status_damaging[st] += 1
+                rec = {"spellId": entry["id"], "nameZh": entry["nameZh"], "atkId": hit["atkId"]}
+                if hit.get("label"):
+                    rec["label"] = hit["label"]
+                rec["rowName"] = atk_by_id[str(hit["atkId"])].get("Name", "")
+                rec["damaging"] = hit_has_damage(hit)
+                if hit.get("charged"):
+                    rec["charged"] = True
+                rec.update({"status": st, "castTae": f'a{res["tae"]}', "castSlotsUsed": res["castSlotsUsed"],
+                            "slotsPopulated": res["slotsPopulated"]})
+                if r["slots"]:
+                    rec["slots"] = r["slots"]
+                if st in SPELL_NOT_INVOKED_STATUSES and res["taeFound"]:
+                    set_hit_fields(hit, notInvoked=True, notInvokedReason=SPELL_NOT_INVOKED_STATUSES[st])
+                    rec["notInvokedReason"] = SPELL_NOT_INVOKED_STATUSES[st]
+                    rec["unreferenced"] = not tae.params.atk_refs.get(str(hit["atkId"]))
+                    spell_not_invoked.append(rec)
+                elif st != "invoked":
+                    if st == "spEffectDerived":
+                        rec["derivedFrom"] = [x["spEffectId"] for x in r.get("derivedFrom", [])]
+                    elif st in ("spEffect", "spEffectNoSource"):
+                        rec["spEffects"] = sorted({x["spEffectId"] for x in r.get("spEffects", [])})
+                    spell_kept_outside_cast.append(rec)
+    spell_hits_not_invoked_damaging = sum(1 for r in spell_not_invoked if r["damaging"])
+    spell_not_invoked_unreferenced = sum(1 for r in spell_not_invoked if r["unreferenced"])
+
+    # ---- （v4 审查修正）蓄力分侧 hits[].chargeBranch ---------------------------------------------------
+    # 首版 v4 只按子类别分侧（蓄力开只算 charged 段、关只算不带 charged 的段），但蓄力 / 不蓄力是**不同的动画**，
+    # 蓄力动画里常有子类别不带蓄力的前段：突击 105 蓄力动画 a605/40000 依次打 301701900–903（[112, 130]）再打 904（[111, …]），
+    # 不蓄力 40001 只打 903 / 905；熔炉百相之尾 7500 蓄力施法 a470/45010 先发槽 2（75000，无子类别）再发槽 1（75005，[110]），
+    # 不蓄力 45011 只发槽 0（75000）。按子类别分侧会把 900–902 / 75000 这类段判到不蓄力侧（蓄力开时丢掉、关时白加），
+    # 蓄力增益也被按全额算（105 + 330900：×1.18，应为 ≈×1.092；7500 + 8330302：×1.18，应为 ≈×1.091）。
+    # 现在按动画分（verify_skill_hits 规律 9）：打出带蓄力子类别段的动画 = 蓄力动画，它打出的段都在蓄力侧；同族其余动画 =
+    # 不蓄力侧；族里没有蓄力动画的（王者嘶吼的吼叫本体 a831/40000）两侧都打。只在蓄力动画里 → "charged"，只在不蓄力动画里 →
+    # "uncharged"，两侧都有或与蓄力无关 → "both"。只写在「有可取蓄力段」的条目的可取段（不含 notInvoked / noVariant）上；
+    # 没有动画依据的段（战技 spEffect / noJudge、法术 anchorOnly / spEffect / slotUnused、--no-tae、taeUnmatched）按子类别归侧，
+    # 逐段列进 diagnostics.chargeBranch.bySubCategoryOnly。
+    def playable(hit: dict) -> bool:
+        return not hit.get("notInvoked") and not hit.get("noVariant")
+
+    def fmt_charge_keys(bucket: str, keys) -> list[str]:
+        if bucket == "spells":
+            return [str(k) for k in sorted(keys)]
+        return [f"{a}" if loc == "skill" else f"R2 {a}" for loc, a in sorted(keys, key=lambda k: (k[0] != "skill", k[1]))]
+
+    charge_reclassified: list[dict] = []    # chargeBranch 与「只看子类别」的归侧不同的段
+    charge_by_sub_only: list[dict] = []     # 没有动画依据、按子类别归侧的段
+    charge_weapon_conflicts: list[dict] = []   # 同一段在不同武器上分侧不同（合并后记 both）
+    charge_branch_counts: dict[str, Counter] = {"skills": Counter(), "spells": Counter()}
+    charge_branch_damaging: Counter = Counter()
+    for bucket, entries in (("skills", skills), ("spells", spells)):
+        for entry in entries:
+            if not any(h.get("charged") and playable(h) for h in entry["hits"]):
+                continue
+            for hit in entry["hits"]:
+                if not playable(hit):
+                    continue
+                a = str(hit["atkId"])
+                if bucket == "skills":
+                    sides = None if entry.get("taeUnmatched") else tae_charge.get((entry["id"], a))
+                else:
+                    sides = spell_charge.get(entry["id"], {}).get(a)
+                by_sub = "charged" if hit.get("charged") else "uncharged"
+                rec = {"kind": bucket[:-1], "id": entry["id"], "nameZh": entry["nameZh"], "atkId": hit["atkId"],
+                       "subCategories": hit.get("subCategories", []), "damaging": hit_has_damage(hit)}
+                if sides:
+                    branch = vsh.charge_branch(sides)
+                    if branch != by_sub:
+                        rec["chargeBranch"] = branch
+                        if bucket == "spells":
+                            rec["castTae"] = spell_cast_tae.get(entry["id"])
+                        else:
+                            rec["skillTae"] = skill_tae_of.get(entry["id"])
+                        rec["anims"] = {side: fmt_charge_keys(bucket, keys) for side, keys in sorted(sides.items())}
+                        charge_reclassified.append(rec)
+                    if bucket == "skills" and len(tae_charge_by_weapon.get((entry["id"], a), ())) > 1:
+                        charge_weapon_conflicts.append(dict(rec, perWeapon=sorted(tae_charge_by_weapon[(entry["id"], a)])))
+                else:
+                    branch = by_sub
+                    rec["chargeBranch"] = branch
+                    if bucket == "spells":
+                        rec["status"] = spell_cast_status_of.get((entry["id"], a), "noTae")
+                    elif entry.get("taeUnmatched"):
+                        rec["status"] = "taeUnmatched"
+                    elif tae is None:
+                        rec["status"] = "noTae"
+                    else:
+                        rec["status"] = "/".join(sorted(tae_kept_special.get(entry["id"], {}).get(a, {}))) or "noAnimEvidence"
+                    charge_by_sub_only.append(rec)
+                set_hit_fields(hit, chargeBranch=branch)
+                charge_branch_counts[bucket][branch] += 1
+                if hit_has_damage(hit):
+                    charge_branch_damaging[branch] += 1
+    hits_charge_branch = sum(sum(c.values()) for c in charge_branch_counts.values())
+
+    # ---- （v4）逐段子类别与蓄力：统计与「行名说蓄力 / 子类别说蓄力」不一致的段 -------------------------------
+    # charged 只看 AtkParam_Pc 的子类别（游戏判「蓄力法术攻击」等增益用的就是它），不看行名；两者不一致的段列出来备查：
+    # 行名写 [Charged] 却没有蓄力子类别的（如天降魔力 43707 一类），与带蓄力子类别但行名没写的（吼叫类战技改写后的蓄力 R2 等）。
+    charged_by_sub: dict[str, dict[int, list[int]]] = {"skills": defaultdict(list), "spells": defaultdict(list)}
+    label_charged_no_sub: list[dict] = []
+    sub_charged_no_label: dict[str, Counter] = {"skills": Counter(), "spells": Counter()}
+    sub_charged_no_label_spell_rows: list[dict] = []
+    for bucket, entries in (("skills", skills), ("spells", spells)):
+        for entry in entries:
+            for hit in entry["hits"]:
+                subs_set = set(hit.get("subCategories", ()))
+                for sub in sorted(subs_set & set(CHARGED_SUB_CATEGORIES)):
+                    if entry["id"] not in charged_by_sub[bucket][sub]:
+                        charged_by_sub[bucket][sub].append(entry["id"])
+                row_name = atk_by_id[str(hit["atkId"])].get("Name", "")
+                label_says = bool(re.search(r"\bcharged\b", f'{hit.get("label", "")} {row_name}', flags=re.I))
+                if label_says and not hit.get("charged"):
+                    label_charged_no_sub.append({"bucket": bucket, "id": entry["id"], "nameZh": entry["nameZh"],
+                                                 "atkId": hit["atkId"], "rowName": row_name,
+                                                 "subCategories": hit.get("subCategories", [])})
+                elif hit.get("charged") and not label_says:
+                    sub_charged_no_label[bucket][f'{entry["id"]} {entry["nameZh"]}'] += 1
+                    if bucket == "spells":
+                        sub_charged_no_label_spell_rows.append({"id": entry["id"], "nameZh": entry["nameZh"],
+                                                                "atkId": hit["atkId"], "rowName": row_name,
+                                                                "subCategories": hit["subCategories"]})
+    hits_with_subs = sum(1 for e in skills + spells for h in e["hits"] if h.get("subCategories"))
+    hits_charged = sum(1 for e in skills + spells for h in e["hits"] if h.get("charged"))
+    hits_charged_damaging = sum(1 for e in skills + spells for h in e["hits"] if h.get("charged") and hit_has_damage(h))
+    skills_with_charged = sorted(sk["id"] for sk in skills if any(h.get("charged") and playable(h) for h in sk["hits"]))
+    spells_with_charged = sorted(sp["id"] for sp in spells if any(h.get("charged") and playable(h) for h in sp["hits"]))
+    # enums.atkSubCategory：Paramdex 枚举全表；hits 里出现、枚举却没有的值（本版本 115：使者号角类战技的泡泡段）
+    # 另外列出并标 unlisted，不编造名字
+    unlisted_subs: dict[int, list[str]] = defaultdict(list)
+    for entry in skills + spells:
+        for hit in entry["hits"]:
+            for value in hit.get("subCategories", ()):
+                label = f'{entry["id"]} {entry["nameZh"]}'
+                if value not in ATK_SUB_CATEGORY and label not in unlisted_subs[value]:
+                    unlisted_subs[value].append(label)
+    sub_category_enum: dict[str, dict] = {}
+    for value in sorted(set(ATK_SUB_CATEGORY) | set(unlisted_subs)):
+        if value in ATK_SUB_CATEGORY:
+            en, zh = ATK_SUB_CATEGORY[value]
+            item = {"en": en, "zh": zh}
+            if value in CHARGED_SUB_CATEGORIES:
+                item["charged"] = True
+        else:
+            item = {"en": f"(not in Paramdex ATK_SUB_CATEGORY: {value})", "zh": f"（Paramdex 枚举未收录：{value}）",
+                    "unlisted": True, "usedBy": sorted(unlisted_subs[value], key=lambda s: int(s.split()[0]))}
+        sub_category_enum[str(value)] = item
 
     skills.sort(key=lambda e: e["id"])
     spells.sort(key=lambda e: e["id"])
@@ -2246,6 +2665,71 @@ def main() -> None:
         "noFpConflicts": no_fp_conflicts,
     }
 
+    # （v4 审查修正）usage.蓄力段（v4）里的例子：按取段规则 charge_pick 取蓄力开的段，再按子类别逐段乘 +18%（self_check 另核这三个数）
+    def charge_example(bucket: str, entry_id: int, requires) -> float:
+        entry = (skills_by_id if bucket == "skills" else {e["id"]: e for e in spells}).get(entry_id)
+        if not entry:
+            return 1.0
+        atk_ids = entry["variants"][0]["atkIds"] if bucket == "skills" and entry.get("variants") else None
+        return sub_category_multiplier(charge_pick(entry["hits"], atk_ids, charge_on=True), 1.18, requires,
+                                       weight="motion" if bucket == "skills" else "flat")
+
+    charge_examples = {"6820": charge_example("spells", 6820, [110]), "7500": charge_example("spells", 7500, [110]),
+                       "105": charge_example("skills", 105, [110, 111])}
+    # diagnostics.chargeBranch：不带伤害的改判段只按条目列 atkId，带伤害的逐段列动画依据
+    charge_reclassified_damaging = [r for r in charge_reclassified if r["damaging"]]
+    charge_reclassified_no_damage: dict[str, list[int]] = defaultdict(list)
+    for r in charge_reclassified:
+        if not r["damaging"]:
+            charge_reclassified_no_damage[f'{r["id"]} {r["nameZh"]}（{r["chargeBranch"]}）'].append(r["atkId"])
+    vmod = vsh or load_verify_module()
+    charge_overrides_diag = []
+    for sid, anims in vmod.CHARGE_ANIM_OVERRIDES.items():
+        entry = skills_by_id.get(sid)
+        charge_overrides_diag.append({
+            "id": sid, "nameZh": entry["nameZh"] if entry else None, "skillTae": skill_tae_of.get(sid),
+            "anims": {fmt_charge_keys("skills", [key])[0]: {"side": side, "atkIds": sorted(
+                int(a) for a in charge_overrides_applied.get((sid, key), ()))} for key, side in sorted(anims.items())},
+            "evidence": vmod.CHARGE_ANIM_OVERRIDE_EVIDENCE[sid],
+        })
+    charge_diagnostics = {
+        "rule": ("hits[].chargeBranch 按动画判（verify_skill_hits 规律 9）：一个动画打出任一带蓄力子类别（100 / 110 / 111）的段 = 蓄力动画，"
+                 "它打出的全部段都在蓄力侧；同族其余动画 = 不蓄力侧；族里没有蓄力动画 = 与蓄力无关。族：战技 = (位置 skill / weaponRoar, "
+                 "动画号 // 100, FP 侧)，法术 = 施法动画号 // 100。只在蓄力动画 → charged，只在不蓄力动画 → uncharged，两侧都有或与蓄力无关 → both。"
+                 "例外（verify_skill_hits.CHARGE_ANIM_OVERRIDES，按游戏文本 + 动画结构逐个列出，见 overrides）：族规则分不开同族里的"
+                 "中间蓄力阶段放招与两种放法之后都能接的追加动画——218 伟哉卡利亚 a666 的 40002 / 40007（一段蓄力的放招，与轻按、满蓄力"
+                 "三者互斥）→ partial（蓄力开关两侧都不取），1017 辉石彗砾 a817 的 40010 / 40015（重攻击追加的突刺）→ 与蓄力无关（both）。"
+                 "战技按 TAE 核实时每把武器留下的段与它们的 matches[].anim（187 门控不算、互斥套只看这把武器播的那一套，同 fp_evidence）"
+                 "逐武器分侧后合并；法术按 check_spell 的 castAnims（每个施法动画各自发射的槽）与 hits[].anims。"
+                 "只写在有可取蓄力段的条目的可取段上（不含 notInvoked / noVariant）。没有动画依据的段按子类别归侧（bySubCategoryOnly）。"),
+        "counts": {
+            "skills": dict(sorted(charge_branch_counts["skills"].items())),
+            "spells": dict(sorted(charge_branch_counts["spells"].items())),
+            "damaging": dict(sorted(charge_branch_damaging.items())),
+            "reclassified": len(charge_reclassified),
+            "reclassifiedDamaging": len(charge_reclassified_damaging),
+            "bySubCategoryOnly": len(charge_by_sub_only),
+            "weaponConflicts": len(charge_weapon_conflicts),
+            "overrideAnims": sum(1 for keys in charge_overrides_applied.values() if keys),
+        },
+        "overrides": charge_overrides_diag,
+        "reclassified": charge_reclassified_damaging,
+        "reclassifiedNoDamage": dict(sorted(charge_reclassified_no_damage.items(), key=lambda kv: int(kv[0].split()[0]))),
+        "bySubCategoryOnly": charge_by_sub_only,
+        "weaponConflicts": charge_weapon_conflicts,
+        "examples": {k: round(v, 6) for k, v in charge_examples.items()},
+        "note": ("reclassified：chargeBranch 与「只按 hits[].charged 分侧」（首版 v4 口径）不同、且带伤害的段，anims 按侧列出依据动画"
+                 "（战技：数字 = 战技 TAE skillTae 的动画号，「R2 」前缀 = 吼叫类战技在武器动作组 TAE 的 R2 动画；法术：castTae 的施法动画号）；"
+                 "reclassifiedNoDamage：同样改判、但不带伤害的段（多是战吼蓄力 R2 里 motion 为 0 的段与吼叫本体），按条目列 atkId。"
+                 "bySubCategoryOnly：没有动画依据、按子类别归侧的段，status 为战技的保留状态（spEffect / noJudge…）或法术的施法槽状态"
+                 "（anchorOnly / spEffect / slotUnused…）。weaponConflicts：同一段在不同武器上单独归侧的结果不同（合并记 both），本版本应为空。"
+                 "overrides：规律 9 的例外（verify_skill_hits.CHARGE_ANIM_OVERRIDES），逐战技列出动画（skillTae 的动画号）→ 归到的侧与它打出的段、"
+                 "依据（游戏说明文本 + 动画结构）；atkIds 为空说明这条例外没用上（没做 TAE 核实时全部为空；TAE 核实时为空说明游戏更新后动画号变了，"
+                 "self_check 会中止）。"
+                 "examples：usage.蓄力段（v4）里三个例子按取段规则算出的整招倍率（6820 / 7500 用 8330302 +18% requires [110]，"
+                 "105 用 330900 +18% requires [110, 111]，按 motion / flat 之和加权）。"),
+    }
+
     payload = {
         "schemaVersion": SCHEMA_VERSION,
         "gameVersion": GAME_VERSION,
@@ -2333,6 +2817,25 @@ def main() -> None:
             "hitsFpBoth": len(fp_both_list),
             "hitsSelfOrAllyOnly": hits_self_or_ally,
             "hitsSelfOrAllyOnlyWithValues": hits_self_or_ally_with_values,
+            # v4：法术施法槽核实（hitsNotInvoked 仍只数战技；hitsNotInvokedAll = 战技 + 法术）与逐段子类别 / 蓄力
+            "hitsNotInvokedAll": hits_not_invoked + len(spell_not_invoked),
+            "hitsNotInvokedDamagingAll": hits_not_invoked_damaging + spell_hits_not_invoked_damaging,
+            "spellHitsNotInvoked": len(spell_not_invoked),
+            "spellHitsNotInvokedDamaging": spell_hits_not_invoked_damaging,
+            "spellsWithHitsNotInvoked": len({r["spellId"] for r in spell_not_invoked}),
+            "spellHitsKeptWithoutCastSlot": len(spell_kept_outside_cast),
+            "hitsWithSubCategories": hits_with_subs,
+            "hitsCharged": hits_charged,
+            "hitsChargedDamaging": hits_charged_damaging,
+            "skillsWithChargedHits": len(skills_with_charged),
+            "spellsWithChargedHits": len(spells_with_charged),
+            "hitsChargeBranch": hits_charge_branch,
+            "hitsChargeBranchCharged": charge_branch_counts["skills"]["charged"] + charge_branch_counts["spells"]["charged"],
+            "hitsChargeBranchUncharged": charge_branch_counts["skills"]["uncharged"] + charge_branch_counts["spells"]["uncharged"],
+            "hitsChargeBranchBoth": charge_branch_counts["skills"]["both"] + charge_branch_counts["spells"]["both"],
+            "hitsChargeBranchPartial": charge_branch_counts["skills"]["partial"] + charge_branch_counts["spells"]["partial"],
+            "hitsChargeBranchReclassified": len(charge_reclassified),
+            "hitsChargeBranchBySubCategoryOnly": len(charge_by_sub_only),
         },
         "coverage": {
             "note": "下面这些战技 / 法术在参数里找不到任何带数值的攻击行，"
@@ -2377,7 +2880,13 @@ def main() -> None:
                 + "，都是互斥动画套），不标 notInvoked，逐武器以 variants 为准；"
                   f"战技动画匹配不到、未做过滤的 {len(tae_unmatched_ids)} 个战技标 taeUnmatched。"
                   "原因的中文说明与涉及武器见 diagnostics.taeVerification。"
-                if tae_verified else "（v3 TAE 核实）本文件生成时没有做 TAE 核实（counts.taeVerified=false）。"),
+                  f"（v4 法术施法槽核实）另有 {len(spell_not_invoked)} 个法术段（{len({r['spellId'] for r in spell_not_invoked})} 个法术，"
+                  f"其中带 motion / flat 的 {spell_hits_not_invoked_damaging} 段）不在任何施法动画会发射的 refId 槽里，"
+                  "标 notInvoked（notInvokedReason=\"noCastSlot\"）："
+                + "；".join(f'{sid} {nm} ' + "、".join(str(r["atkId"]) for r in spell_not_invoked if r["spellId"] == sid)
+                           for sid, nm in sorted({(r["spellId"], r["nameZh"]) for r in spell_not_invoked}))
+                + "。清单与各段的槽位见 diagnostics.spellCastVerification。"
+                if tae_verified else "（v3 TAE 核实）本文件生成时没有做 TAE 核实（counts.taeVerified=false），战技与法术段都没有 notInvoked。"),
             "skillsWithoutWeapons": skills_without_weapons,
             "skillsWithoutFixedWeapons": skills_without_fixed,
             "skillsPoolOnly": skills_pool_only,
@@ -2414,7 +2923,10 @@ def main() -> None:
                         "（v3 审查修正）hits.noFpSource 缺失 = noFp 来自行名（或 noFp=false），hits.fpBoth 缺失 = false，"
                         "hits.selfOrAllyOnly 缺失 = false；"
                         "（v3 修订）weapons.customMagicTables 缺失 = 没有可达的施法器 custom 行以它为基础武器；"
-                        "spells.casterWeaponIds / casterSources 恒存在且非空（不可施放的 Magic 行不进 spells）。",
+                        "spells.casterWeaponIds / casterSources 恒存在且非空（不可施放的 Magic 行不进 spells）；"
+                        "（v4）hits.subCategories 缺失 = AtkParam_Pc.subCategory1..5 全为 0，hits.charged 缺失 = false，"
+                        "hits.chargeBranch 缺失 = 该条目没有可取的蓄力段（蓄力开关对它不适用）或这一段是 notInvoked / noVariant，"
+                        "spells.hits.notInvoked 缺失 = false（此时也没有 notInvokedReason）。",
             "weaponIds": "（v3 取值扩大）skills[].weaponIds = 能带这个战技的全部武器 ="
                          "EquipParamWeapon.swordArtsParamId 固定引用 ∪ 局内战技池"
                          "（可达的 EquipParamCustomWeapon 行，其 swordArtsTableId 指向的池里含该战技且 chanceWeight>0，"
@@ -2585,28 +3097,97 @@ def main() -> None:
                          "v3 起「武器」含战技池来源，所以标记范围与 v2 不同。"
                          "（v3 TAE 核实后）判定基于 TAE 核实**之前**的行为表选段，与 notInvoked 互斥。"
                          "详见 coverage.hitsWithoutVariantNote。",
-            "notInvoked": "hits[].notInvoked=true（v3 TAE 核实）：行为表（BehaviorParam_PC）给至少一把武器解出了这段，"
+            "notInvoked": "hits[].notInvoked=true：这一段本作永远打不出，任何取段路径都不要算它（hits[] 里保留，只在"
+                          "「显示全部段」时出现）。两处来源："
+                          "(a)（v3 TAE 核实，skills[]）行为表（BehaviorParam_PC）给至少一把武器解出了这段，"
                           "但逐武器核对动画事件（TAE）后，它在所有这些武器上都不会被该战技的动画调用，"
-                          "已从 variants[].atkIds 移除；hits[] 里保留，只在「显示该战技的全部段」时出现。"
+                          "已从 variants[].atkIds 移除。"
                           "notInvokedReason 给原因，取值见 enums.notInvokedReason；不同武器原因不同时取 enums 里靠前的那个，"
                           "完整分布见 diagnostics.taeVerification.removedHits[].reasons。"
                           "只在**部分**武器上打不出的段不标（" + (partial_example or "本版本没有这种段")
                           + "），逐武器结论一律看 variants，清单见 diagnostics.taeVerification.partiallyRemoved。"
-                          "与 noVariant 互斥（noVariant = 行为表层就没有武器用到）。",
-            "notInvokedReason": "与 notInvoked 同时出现，取值是 enums.notInvokedReason 的键。",
+                          "与 noVariant 互斥（noVariant = 行为表层就没有武器用到）。"
+                          "(b)（v4 法术施法槽核实，spells[]）施法动画 a(400+Magic.refType) 的事件 64 只按 refSlot 发射 Magic.refId1–10，"
+                          "这一段不在任何一个 refId 槽里（也不是 Magic.atkParamId 锚点、没有 SpEffect 触发它），notInvokedReason=\"noCastSlot\"。"
+                          + (f"本版本 {len(spell_not_invoked)} 段（{len({r['spellId'] for r in spell_not_invoked})} 个法术，"
+                             f"其中 {spell_not_invoked_unreferenced} 段在全部参数表里无人引用），例：兽爪 68201 / 68206（Paramdex 行名 UNUSED，"
+                             "兽爪一次施放只打 68200 或蓄力的 68205）、死亡雷击 50402 / 50407；清单见 diagnostics.spellCastVerification.notInvokedHits。"
+                             "法术没有 variants，页面直接读 spells[].hits，所以必须自己剔掉 notInvoked（三端已有这条过滤）。"
+                             if tae_verified else "本文件没有做 TAE 核实，法术段没有 notInvoked。"),
+            "notInvokedReason": "与 notInvoked 同时出现，取值是 enums.notInvokedReason 的键；战技段取 verify_skill_hits 的判定状态，"
+                                "法术段（v4）一律是 \"noCastSlot\"。",
             "taeUnmatched": "skills[].taeUnmatched=true（v3 TAE 核实）：该战技的动画匹配不到——战技 TAE a(600+swordArtsType) "
                             "缺失，或它的段在任何武器上都没有事件调用（本版本："
                             + ("、".join(f'{sid} {skills_by_id[sid]["nameZh"]}' for sid in tae_unmatched_ids) or "无")
                             + "；弓系战技的段只有 SwordArtsParam.atkParamId 锚点、伤害走箭矢，不经 BehaviorParam_PC）。"
                             "这类战技的 hits 与 variants 不做 TAE 过滤，与 TAE 核实前相同，页面照旧。缺失 = false。",
-            "taeVerified": "counts.taeVerified=true 表示本文件的 variants[].atkIds 已按 TAE 核实"
+            "taeVerified": "counts.taeVerified=true 表示本文件的 variants[].atkIds 已按 TAE 核实，且（v4）法术段已按施法动画的 refSlot 核实"
                            "（生成时 raw/tae/invoked.json 存在，由 extract_tae.py 从本机 c0000 动画包解出）；"
-                           "false 表示生成时没有 TAE 数据，variants 是行为表口径，notInvoked / taeUnmatched 一律不出现，"
-                           "diagnostics.taeVerification.skippedReason 说明原因。",
-            "法术与 TAE": "spells[] 不做 TAE 过滤：法术的子弹 / 攻击行由 Magic.refId1–10 决定，施法动画 a(400+Magic.refType) "
-                         "的事件 64 只带 refSlot，没有逐段的 judgeId 可核；按「段所在的 refId 槽是否被施法动画用到」的核实结果"
-                         "（raw/tae/hit-invocation-report.json 的 spells[]）绝大多数段都在被用到的槽里，其余是锚点、触发型 SpEffect "
-                         "发射的子弹或未用槽，与本数据集对法术段的用法（只看 flat 做相对排名）不冲突，所以本版不改 spells。",
+                           "false 表示生成时没有 TAE 数据，variants 是行为表口径，notInvoked / taeUnmatched 一律不出现"
+                           "（法术段也不标），diagnostics.taeVerification.skippedReason 说明原因。",
+            "法术与 TAE": "（v4 改写）法术没有逐段的 judgeId：施法动画 a(400+Magic.refType) 的事件 64「Cast Selected Magic」只带 refSlot"
+                         "（0 → Magic.refId1 … 9 → refId10），子弹 / 攻击行由 refId 决定。所以法术段按「它所在的 refId 槽有没有被施法动画用到」"
+                         "核实（verify_skill_hits.TaeVerifier.check_spell，与 raw/tae/hit-invocation-report.json 的 spells[] 同一实现）："
+                         "invoked（槽被用到）照收；spEffectDerived（施法动画用到的触发型 SpEffect 槽发射的子弹，如因果性原理 67601）、"
+                         "spEffect（由 SpEffectParam.behaviorId 触发，如卡利亚式奉还的 6 段）、anchorOnly（只是 Magic.atkParamId 锚点）、"
+                         "slotUnused（在槽里但施法动画不用该槽，卡利亚大剑 / 亚杜拉的月光剑 / 卡利亚迅剑的槽 4–5）照旧保留、不标；"
+                         "noSlot（不在任何槽里、不是锚点、没有 SpEffect 触发）标 notInvoked + notInvokedReason=\"noCastSlot\"。"
+                         "v3 不做这一步，兽爪 68201 / 68206 这类「UNUSED」行因此被页面当成同一次施放的段相加。"
+                         + (f"本版本按状态：{dict(spell_cast_status)}（带伤害：{dict(spell_cast_status_damaging)}）；"
+                            "清单见 diagnostics.spellCastVerification。" if tae_verified else "本文件没有做这一步。"),
+            "subCategories": "hits[].subCategories（v4）= 这一段 AtkParam_Pc 行自己的 subCategory1..5 里的非 0 值，去重升序，全为 0 时省略；"
+                             "取值见 enums.atkSubCategory（100+ 是攻击情境：112 战技攻击、130 近战武器攻击、110 蓄力法术攻击…；"
+                             "1–28 是魔法 / 祷告流派，AtkParam 行上少见；Paramdex 枚举没收录的值标 unlisted）。游戏判「子类别限定」的增益（SpEffect 的 "
+                             "magicSubCategoryChange1..3，buffs 数据集整理为 requires.subCategoriesAny）用的就是**每一段自己的**子类别："
+                             "页面应对当前选中的每一段判定（法术再并上 Magic.subCategory1..2 的流派，buffs 数据集 attackIndex.spells[id]."
+                             "magicSubCategories），而不是按整招里带该子类别的段数占比加权，见 usage.蓄力段（v4）。"
+                             f"本版本 {hits_with_subs} 段带子类别。",
+            "charged": "hits[].charged=true（v4）：subCategories 含 enums.chargedSubCategories 之一——"
+                       "100 蓄力强攻击（Charged Heavy Attack：按住强攻击蓄力后的段；本数据集里是吼叫类战技改写后的蓄力 R2"
+                       "（野蛮咆哮 / 战吼 / 灭洛斯的狂嚎等）与少数战技的蓄力段）、"
+                       "110 蓄力法术攻击（Charged Spell Attack：按住施法键蓄力后发射的段，只出现在法术上，例：兽爪 68205、死亡雷击 50405–50407）、"
+                       "111 蓄力战技攻击（Charged Skill Attack：按住战技键蓄力后的段，例：卡利亚大剑 300200911 / 913、突击 301701904 / 910）。"
+                       "charged 只看 AtkParam 的子类别、不看行名（两者不一致的段见 diagnostics.chargedSubCategory），它回答的是"
+                       "「这一段吃不吃蓄力类增益」（requires.subCategoriesAny 含 100 / 110 / 111 的增益逐段按 subCategories 判），"
+                       "**不是**「蓄力开关开 / 关时取不取这一段」：蓄力动画里常有子类别不带蓄力的前段（突击 301701900–903 [112, 130]、"
+                       "熔炉百相之尾 75000 无子类别），也有两种放法都打的段——取段分侧读 hits[].chargeBranch（fieldNotes.chargeBranch、"
+                       "usage.蓄力段（v4）），不要用 charged。"
+                       + f"本版本 {hits_charged} 段（带伤害 {hits_charged_damaging} 段）；有可取蓄力段（不含 notInvoked / noVariant）的战技 "
+                       + f"{len(skills_with_charged)} 个、法术 {len(spells_with_charged)} 个。按子类别："
+                       + "；".join(f'{sub} {ATK_SUB_CATEGORY[sub][1]}：战技 {len(charged_by_sub["skills"].get(sub, ()))} 个、'
+                                  f'法术 {len(charged_by_sub["spells"].get(sub, ()))} 个' for sub in CHARGED_SUB_CATEGORIES) + "。",
+            "chargeBranch": "hits[].chargeBranch（v4 审查修正）∈ \"charged\" / \"uncharged\" / \"both\" / \"partial\"：这一段在蓄力开关的哪一侧——"
+                            "蓄力开取 charged 与 both，关取 uncharged 与 both，partial 两侧都不取（usage.蓄力段（v4））。按**动画**判，不按段的子类别判"
+                            "（verify_skill_hits 规律 9）：一个动画只要打出任一带蓄力子类别（hits[].charged）的段就是蓄力动画，它打出的全部段"
+                            "（包括子类别不带蓄力的前段）都在蓄力侧；同「族」的其余动画是不蓄力侧（战技：同一位置——战技 TAE 或吼叫类的武器 R2——、"
+                            "同一百位动画套、同一 FP 侧；法术：同一施法 TAE 的同一百位，450xx / 451xx）；族里没有蓄力动画的动画与蓄力无关。"
+                            "只在蓄力动画里 → charged，只在不蓄力动画里 → uncharged，两侧都打或与蓄力无关 → both。"
+                            "例外（第二轮审查修正，verify_skill_hits.CHARGE_ANIM_OVERRIDES，逐项依据见 diagnostics.chargeBranch.overrides）："
+                            "TAE 只有事件、没有动画之间的跳转，族规则分不开同族里的「中间蓄力阶段的放招」「两种放法之后都能接的追加动画」与"
+                            "真正的不蓄力放法，这两类按游戏说明文本 + 动画结构逐个列出——伟哉卡利亚 218（a666，说明「借由蓄力发动，能提升两个阶段」）"
+                            "的 40002 / 40007 与轻按 40001 / 40006 同构（都在 0.50s 出招、伤害 220 → 315 → 400 逐级递增），是一段蓄力的放招，"
+                            "与轻按、满蓄力三者互斥 → 300200871 / 300200876 为 partial：蓄力开 = 满蓄力（300200872 / 877）、关 = 轻按（300200870 / 875），"
+                            "两侧都不取 partial（页面若要「一段蓄力」可另加一档，取 partial / both）；辉石彗砾 1017（a817，说明「发动后接着使出重攻击，"
+                            "能大幅向前跨出，再突刺攻击」）的 40010 / 40015 是蓄力 / 不蓄力放法之后都能接的追加突刺 → 300107910–912 为 both。"
+                            "依据：战技是 TAE 核实时"
+                            "每把武器的 matches[].anim（各武器合并），法术是每个施法动画的事件 64 各自发射的 refSlot（check_spell 的 castAnims，"
+                            "不取并集）。例：突击 105（a605）蓄力 40000 打 301701900–904、不蓄力 40001 打 903 / 905 → 900–902 与 904 charged、"
+                            "903 both、905 uncharged（无 FP 侧 906–911 同理；开 / 关按「按满 / 轻按」两端建模——按住后中途放开时，40000 里"
+                            "已打出的冲刺段 301701900–902 还会有 0–3 段计入，关侧只算轻按放招 903 + 905）；古雷电枪 1049 的 303400002 两个动画都打 → both；"
+                            "王者嘶吼 1031 的吼叫本体 302305905–910（a831/40000、40005；所在的 400 套没有蓄力动画，蓄力分支在 306 / 326 套的 R2）→ both；"
+                            "熔炉百相之尾 7500（a470）蓄力 45010 发槽 2（75000）与槽 1（75005）、不蓄力 45011 只发槽 0（75000）→ 75000 both、"
+                            "75005 charged；兽爪 6820：68205 charged、68200 uncharged。"
+                            "只写在有可取蓄力段的条目（counts.skillsWithChargedHits / spellsWithChargedHits）的可取段上（不含 notInvoked / "
+                            "noVariant）；缺失 = 该条目不能蓄力（开关对它不适用）或这一段不可取。没有动画依据的段（战技 spEffect / noJudge，"
+                            "法术 anchorOnly / spEffect / slotUnused，生成时没有 TAE 或 taeUnmatched）按子类别归侧（charged → charged，否则 "
+                            "uncharged），逐段列在 diagnostics.chargeBranch.bySubCategoryOnly。"
+                            + f"本版本 {hits_charge_branch} 段：charged {charge_branch_counts['skills']['charged'] + charge_branch_counts['spells']['charged']}、"
+                            + f"uncharged {charge_branch_counts['skills']['uncharged'] + charge_branch_counts['spells']['uncharged']}、"
+                            + f"both {charge_branch_counts['skills']['both'] + charge_branch_counts['spells']['both']}、"
+                            + f"partial {charge_branch_counts['skills']['partial'] + charge_branch_counts['spells']['partial']}；"
+                            + f"与「只按子类别分侧」不同的 {len(charge_reclassified)} 段（带伤害 "
+                            + f"{sum(1 for r in charge_reclassified if r['damaging'])} 段）见 diagnostics.chargeBranch.reclassified"
+                            + "（带伤害，逐段附动画依据）与 reclassifiedNoDamage。",
         },
         "usage": {
             "选段（必读）": "先确定这把武器用哪一套：v = skills[i].variants[weapon.skillVariants[str(skills[i].id)]]"
@@ -2665,8 +3246,17 @@ def main() -> None:
                           "要给出概率，读 spells[].casterSources 的 pool 项并配合 magicPools 求池内占比。"
                           "施法器每个 custom 行有两个法术槽，各从自己的池里抽一个，所以同一行的两个槽要分开算。"
                           "不要再按「Magic 表里有名字」列法术——那样会把风暴管束者（8100 / 8101，本作是战技 1200）当成玩家法术。",
+            # 键名不变（三端按这个键引用）；v4 起内容含战技与法术两部分
             "命中段已按 TAE 核实（v3）": (
-                ("counts.taeVerified=true：skills[].variants[].atkIds 在行为表选段之上又逐武器核对了动画事件（TAE），"
+                ("counts.taeVerified=true：战技（v3）与法术（v4）的命中段都按本机动画事件表 TAE 核实过，"
+                 "本作永远打不出的段在 hits[] 里标 notInvoked，任何取段路径都不算它们。"
+                 f"**法术（v4）**：施法动画 a(400+Magic.refType) 的事件 64 只按 refSlot 发射 Magic.refId1–10，法术段按「所在的 refId 槽"
+                 f"有没有被施法动画用到」核实；不在任何槽里（也不是 Magic.atkParamId 锚点、没有 SpEffect 触发）的 {len(spell_not_invoked)} 段"
+                 f"（{len({r['spellId'] for r in spell_not_invoked})} 个法术，例：兽爪 68201 / 68206——Paramdex 行名 UNUSED，一次施放只打 68200 "
+                 "或蓄力的 68205；死亡雷击 50402 / 50407）标 notInvoked（notInvokedReason=\"noCastSlot\"），"
+                 "锚点、未用槽与 SpEffect 触发的段照旧保留（fieldNotes.法术与 TAE、diagnostics.spellCastVerification）。"
+                 "法术没有 variants，取段 = spells[].hits 去掉 notInvoked 与 noDamage，再按 usage.蓄力段（v4）分蓄力两侧。"
+                 "**战技（v3）**：skills[].variants[].atkIds 在行为表选段之上又逐武器核对了动画事件（TAE），"
                  "只留下这把武器用这个战技时动画真会打出的段，取段写法不变（仍是 variants[下标].atkIds）。留下的状态："
                  "invoked（战技 TAE a(600+swordArtsType) 里有无门控事件调用它）、weaponTae（野蛮咆哮 / 战吼 / 灭洛斯的狂嚎"
                  "改写 R2 后，段在武器动作组 TAE 的 30600 系动画里）、spEffect（由本战技的 SpEffect 触发，如祈祷一击的回血子弹、"
@@ -2691,13 +3281,59 @@ def main() -> None:
                  f"（4xxxx 个位 5–9 = 无 FP 版）补标了 {len(no_fp_tae)} 段（noFpSource=\"tae\"，{len({r['skillId'] for r in no_fp_tae})} 个战技，"
                  "例：风暴刃 300000411–413、狩猎巨人 301700915），"
                  f"两侧动画都调用的 {len(fp_both_list)} 段标 fpBoth（两侧都该计入），见 fieldNotes.noFp / fpBoth；"
-                 "(5) skills[].taeUnmatched=true 的战技不过滤；(6) 法术不过滤（fieldNotes.法术与 TAE）；"
+                 "(5) skills[].taeUnmatched=true 的战技不过滤；(6)（v4）法术按施法动画逐个核：每个施法动画的事件 64 只发射它自己用到的"
+                 "refSlot，同一次施放打出的段 = 该动画用到的槽里的段；蓄力 / 不蓄力是不同的施法动画（兽爪 a440：45010 发槽 1 / 4 / 5 = "
+                 "蓄力子弹 68205，45011 发槽 0 / 2 / 3 = 68200；熔炉百相之尾 a470：蓄力 45010 先发槽 2（75000）再发槽 1（75005），"
+                 "不蓄力 45011 只发槽 0（75000）），据此写 hits[].chargeBranch（usage.蓄力段（v4））；notInvoked 判定仍看全部动画用到的槽"
+                 "（castSlotsUsed）；slotUnused / anchorOnly 的段保留未标；"
                  "(7) 结论以本机 1.03.5 的 c0000 动画包为准，游戏更新后要重跑 extract_tae.py 再重生成。")
                 if tae_verified else
                 ("counts.taeVerified=false：生成时没有 raw/tae/invoked.json（" + tae_skip_reason + "），"
                  "variants[].atkIds 是行为表口径，可能包含本作动画并不调用的段（例：狩猎大蛇的 Beam of Light），"
                  "也可能把几套互斥动画的段相加；hits[].noFp 只来自行名，行名没写 No FP 的无 FP 段（风暴刃 300000411–413 等）"
-                 "没有标记。先跑 extract_tae.py 再重生成即可得到核实过的版本。")),
+                 "没有标记；法术段也没有按施法槽核实（兽爪 68201 / 68206 这类 UNUSED 行没有 notInvoked）；"
+                 "hits[].chargeBranch 没有动画依据、退回按子类别归侧（蓄力动画里子类别不带蓄力的前段会被判到不蓄力侧，"
+                 "例外表也不生效：伟哉卡利亚 300200871 / 876 此时是 uncharged、辉石彗砾 300107910–912 也是 uncharged）。"
+                 "先跑 extract_tae.py 再重生成即可得到核实过的版本。")),
+            "蓄力段（v4）": (
+                "蓄力与不蓄力是同一招的两种放法（不同的动画），一次只打其中一侧，**不要相加**。每段在哪一侧读 hits[].chargeBranch"
+                "（charged / uncharged / both / partial，按动画判，见 fieldNotes.chargeBranch）；**不要**用 hits[].charged 分侧——charged 只说明"
+                "这段的子类别带蓄力（吃不吃蓄力类增益看它），蓄力动画里常有子类别不带蓄力的前段、也有两种放法都打的段。取段顺序："
+                "① 先按选段规则拿到这一招会打出的段（战技 = variants[下标].atkIds；法术 = spells[].hits），去掉 notInvoked 与 noDamage；"
+                "② 再按专注值开关取 noFp 同侧（fpBoth 段两侧都算）；"
+                "③ 再按蓄力开关分侧：看 ② 剩下的段，一段 chargeBranch=\"charged\" 都没有（包括整招没有 chargeBranch）时，蓄力开关对它"
+                "不适用，取 ② 的全部段（例：王者嘶吼 1031 的无 FP 侧只剩吼叫本体 302305910）；否则蓄力开 → 取 chargeBranch 为 charged "
+                "或 both 的段，关 → 取 uncharged 或 both 的段，**partial 两侧都不取**。「不适用」必须在 ② 之后判，否则无 FP 开 + 蓄力开会一段不剩。"
+                "partial = 中间蓄力阶段的放招（本版本只有伟哉卡利亚 218 的 300200871 / 300200876：说明「借由蓄力发动，能提升两个阶段」，"
+                "轻按 / 一段蓄力 / 满蓄力是三个互斥的放招动画）：蓄力开只取满蓄力 300200872，关只取轻按 300200870（无 FP 侧开取 300200872"
+                "（fpBoth）+ 300200877、关取 300200875）；把 partial 算进任一侧都会把一次放招不可能同时打出的两段相加"
+                "（关侧 220 + 315 = 535，比满蓄力的 400 还高）。辉石彗砾 1017 的重攻击追加突刺 300107910 / 300107911 两种放法之后都能接，"
+                "是 both（开 / 关两侧都计入）。"
+                "页面「攻击情境」里的「蓄力法术 / 蓄力战技 / 蓄力强攻击」勾选应当就是这个开关——"
+                "它改的是**取哪些段**，而不只是放行 buffs 的 attackContexts 门控。"
+                "**子类别限定的增益**（buffs 数据集 appliesToDetail.*.requires.subCategoriesAny，如蓄力法术 110、蓄力战技 111、"
+                "蓄力强攻击 100、远程武器攻击 105、战技攻击 112、跳跃 102、防御反击 103、连段最后一击 104、双手持 124…）"
+                "按第 ③ 步之后**选中的每一段**判定：这一段的 hits[].subCategories（法术再并上该法术的流派 Magic.subCategory1..2，"
+                "即 buffs 数据集 attackIndex.spells[id].magicSubCategories）与 subCategoriesAny 有交集，这一段才乘这条增益，否则这一段按 ×1"
+                "——所以蓄力开时，蓄力动画里子类别不带蓄力的前段照样计入、但不吃蓄力类增益。"
+                "**不要**再用 buffs 数据集 attackIndex 的「整招里带该子类别的段数 ÷ 总段数」近似加权——那个占比不随勾选的段变化。"
+                "例（按段的 motion / flat 之和加权）：局内武器词条「强化祷告的蓄力执行」SpEffect 8330302 / 8330301 / 8330300（五项 *AttackRate 各 "
+                "1.18 / 1.13 / 1.09，只作用于祷告，requires [110]）——用在兽爪 6820 上：蓄力开只取 68205（charged，[110]），"
+                "整段 ×1.18 / ×1.13 / ×1.09；蓄力关只取 68200，不生效。用在熔炉百相之尾 7500 上：蓄力开取 "
+                "75000（both，无子类别，flat 270）+ 75005（charged，[110]，flat 274）→ (270 + 274 × 1.18) / 544 "
+                f"≈ ×{(270 + 274 * 1.18) / 544:.3f}；关只取 75000，不生效。「强化魔法、祷告、战技的蓄力使用」SpEffect 330900（+18%，requires [110, 111]）"
+                "用在突击 105 上：蓄力开取 301701900–904（900–903 [112, 130] 各 MV 35，904 [111, 112, 130] MV 145）→ "
+                f"(140 + 145 × 1.18) / 285 ≈ ×{(140 + 145 * 1.18) / 285:.3f}；关取 903 + 905，不生效"
+                "（diagnostics.chargeBranch.examples 是按本文件的 chargeBranch 实算的这三个数，self_check 断言两者一致）。"
+                + ("" if tae_verified else "（本文件没有做 TAE 核实，chargeBranch 退回按子类别归侧，75000 / 301701900–903 这类段此时"
+                   "被判成 uncharged，examples 与上面的数不同；先跑 extract_tae.py 再重生成。）")
+                +
+                "错误口径对照：首版 v4 按 charged 分侧（蓄力开只算 charged 段），会丢掉 75000 / 301701900–902 这类段、把两例都算成 ×1.18；"
+                "v3 把兽爪 68200 / 68201 / 68205 / 68206 四段都算上、再按 2/4 摊成 ×1.09 / ×1.065 / ×1.045。"
+                + f"本版本有可取蓄力段的战技 {len(skills_with_charged)} 个、法术 {len(spells_with_charged)} 个（counts.skillsWithChargedHits / "
+                  "spellsWithChargedHits），这些条目的可取段都带 chargeBranch。"
+                + "注意：charged 只看 AtkParam 子类别，不看行名；少数行名写 [Charged] 却没有蓄力子类别的段（与反过来的段）列在 "
+                  "diagnostics.chargedSubCategory，增益按子类别判（游戏判增益也只看子类别）。"),
         },
         "caveats": [
             "103 回旋斩是唯一一个 BehaviorParam_PC 分不出来的战技：它的 4 套动作"
@@ -2786,9 +3422,68 @@ def main() -> None:
                 if norm_key(en) not in {norm_key(v[0]) for v in WEP_TYPE_ZH.values()}
             },
             "notInvokedReason": NOT_INVOKED_REASON_ZH,
+            # v4：AtkParam 子类别（hits[].subCategories 的取值），蓄力三项带 charged: true
+            "atkSubCategory": sub_category_enum,
+            "chargedSubCategories": list(CHARGED_SUB_CATEGORIES),
         },
         "diagnostics": {
             "taeVerification": tae_diagnostics,
+            # v4：法术施法槽核实
+            "spellCastVerification": {
+                "verified": tae_verified,
+                "rule": ("施法 TAE = a(400 + Magic.refType)，事件 64「Cast Selected Magic」的 refSlot 0–9 对应 Magic.refId1–10"
+                         "（refCategory 0 = AtkParam_Pc、1 = Bullet（沿 HitBulletID / intervalCreateBulletId 展开子弹链取 atkId_Bullet）、"
+                         "2 = SpEffect）。castSlotsUsed = 该 TAE 全部动画的事件 64 用到的槽（并集，只用来判下面的 status；每个施法动画"
+                         "各自发射哪些槽见 check_spell 的 castAnims，蓄力分侧 hits[].chargeBranch 用的是它，见 diagnostics.chargeBranch）。"
+                         "status：invoked（段在被用到的槽里）/ "
+                         "spEffectDerived（段在未用的子弹槽里，由被用到的触发型 SpEffect 槽（带 stateInfo）发射）/ slotUnused（段在槽里，"
+                         "但施法动画不用这个槽）/ anchorOnly（不在任何槽里，只是 Magic.atkParamId 锚点）/ spEffect、spEffectNoSource"
+                         "（不在任何槽里，由 SpEffectParam.behaviorId 触发）/ noSlot（不在任何槽里、不是锚点、没有 SpEffect 触发——"
+                         "没有任何施法动画的 refSlot 会发射它）。只有 noSlot 标 hits[].notInvoked（notInvokedReason=\"noCastSlot\"），"
+                         "其余照旧保留。实现：verify_skill_hits.TaeVerifier.check_spell（与 raw/tae/hit-invocation-report.json 的 spells[] 同一份代码）。"),
+                "counts": {
+                    "spellsChecked": spells_cast_checked,
+                    "hits": sum(spell_cast_status.values()),
+                    "byStatus": dict(sorted(spell_cast_status.items())),
+                    "damagingByStatus": dict(sorted(spell_cast_status_damaging.items())),
+                    "notInvoked": len(spell_not_invoked),
+                    "notInvokedDamaging": spell_hits_not_invoked_damaging,
+                    "notInvokedUnreferenced": spell_not_invoked_unreferenced,
+                    "keptWithoutCastSlot": len(spell_kept_outside_cast),
+                },
+                "notInvokedHits": spell_not_invoked,
+                "keptWithoutCastSlot": spell_kept_outside_cast,
+                "spellsWithoutCastTae": spells_without_cast_tae,
+                "note": ("notInvokedHits[].unreferenced=true：全部参数表里名字为 atkId / atkParamId 的列、BehaviorParam_PC.refId"
+                         "（refType 0）与 Magic.refIdN（refCategory 0）都不引用这段（verify_skill_hits.Params.atk_refs），"
+                         "只有 Paramdex 行名把它归给这个法术；unreferenced=false 的："
+                         + ("、".join(f'{r["spellId"]} {r["nameZh"]} {r["atkId"]}（被 '
+                                     + "、".join(tae.params.atk_refs.get(str(r["atkId"]), [])[:3]) + " 引用，但不在本法术的任何槽里）"
+                                     for r in spell_not_invoked if not r["unreferenced"]) or "无")
+                         + "。keptWithoutCastSlot 是不在被用到的槽里、但按规则保留的段（锚点、未用槽、SpEffect 触发），页面照常计入；"
+                         f"其中 slotUnused 的 {spell_cast_status.get('slotUnused', 0)} 段（"
+                         + ("、".join(sorted({f'{r["spellId"]} {r["nameZh"]}' for r in spell_kept_outside_cast
+                                             if r["status"] == "slotUnused"})) or "无")
+                         + "，PROVENANCE 记为本体骑乘版残留的槽）多半也打不出，v4 只标 noSlot，未标它们。"
+                         if tae_verified else "本文件没有做 TAE 核实，法术段未核。"),
+            },
+            # v4 审查修正：蓄力分侧（按动画判）
+            "chargeBranch": charge_diagnostics,
+            # v4：charged 只看子类别；与行名不一致的段（备查）
+            "chargedSubCategory": {
+                "rule": "hits[].charged = subCategories ∩ enums.chargedSubCategories 非空；不看行名 / label。",
+                "chargedBySubCategory": {str(sub): {"skills": sorted(charged_by_sub["skills"].get(sub, [])),
+                                                    "spells": sorted(charged_by_sub["spells"].get(sub, []))}
+                                         for sub in CHARGED_SUB_CATEGORIES},
+                "labelChargedWithoutSubCategory": label_charged_no_sub,
+                "chargedWithoutLabel": {"skills": dict(sorted(sub_charged_no_label["skills"].items(),
+                                                              key=lambda kv: int(kv[0].split()[0]))),
+                                        "spells": sub_charged_no_label_spell_rows},
+                "note": ("labelChargedWithoutSubCategory：行名 / 段标签写了 Charged（蓄力）但 AtkParam 没有蓄力子类别的段——"
+                         "游戏判「蓄力法术攻击」等增益只看子类别，所以这些段不吃蓄力类增益，charged 也不标（取段分蓄力两侧读 "
+                         "chargeBranch，不看行名也不看 charged）。chargedWithoutLabel：带蓄力子类别但行名没写 Charged 的段，战技按条目计数（多是野蛮咆哮 / 战吼 / "
+                         "灭洛斯的狂嚎改写后的 R2：同一套 R2 里一半是 100 蓄力强攻击，行名不区分），法术逐段列出。"),
+            },
             # v3 修订：法术可施放口径的中间量
             "spellCasting": {
                 "rule": "spells[] = 可达施法器 custom 行（ItemTableParam itemCategory=6 / ItemLotParam lotItemCategory0N=6 / "
@@ -2827,7 +3522,13 @@ def main() -> None:
         "spells": spells,
     }
 
-    self_check(payload, {row["ID"]: row for row in custom_raw}, reachable_custom, pre_sel, magic_table_raw)
+    self_check(payload, {row["ID"]: row for row in custom_raw}, reachable_custom, pre_sel, magic_table_raw, atk_by_id)
+    # v4：hits[].subCategories 与 buffs 数据集 attackIndex 的子类别集合逐条目对照（buffs 由本文件生成，所以允许
+    # 「本次新标 notInvoked 的段」还留在旧 attackIndex 里，差异打印出来；其它任何差异都中止）
+    magic_subs = {int(row["ID"]): frozenset(v for v in (to_int(row.get("subCategory1", "0")), to_int(row.get("subCategory2", "0"))) if v)
+                  for row in magic_raw}
+    # --no-tae 时没有 notInvoked，而 buffs 的 attackIndex 按 TAE 核实后的数据生成，两边口径不同，不对照
+    attack_index_diff = check_attack_index(payload, args.buffs, magic_subs) if tae_verified else None
     print("self_check 通过")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -2906,8 +3607,44 @@ def main() -> None:
         print(f"  带 FP / 无 FP 分支（4xxxx 个位 5–9 = 无 FP 版）：TAE 补标 noFp {len(no_fp_tae)} 段"
               f"（带伤害 {no_fp_tae_damaging}，{len({r['skillId'] for r in no_fp_tae})} 个战技），"
               f"两侧共用标 fpBoth {len(fp_both_list)} 段，行名 No FP 与 TAE 冲突 {len(no_fp_conflicts)} 段")
+        print(f"法术施法槽核实（v4）：检查法术 {spells_cast_checked}，段按状态 {dict(sorted(spell_cast_status.items()))}；"
+              f"标 notInvoked {len(spell_not_invoked)} 段（带伤害 {spell_hits_not_invoked_damaging}，"
+              f"{len({r['spellId'] for r in spell_not_invoked})} 个法术，全表无人引用 {spell_not_invoked_unreferenced}）：")
+        for r in spell_not_invoked:
+            print(f"  - {r['spellId']} {r['nameZh']} {r['atkId']} {r['rowName']}"
+                  f"{'（蓄力）' if r.get('charged') else ''}{'' if r['damaging'] else '（无伤害）'}"
+                  f"{'' if r['unreferenced'] else '（有参数引用）'}")
+        for r in spell_kept_outside_cast:
+            print(f"  · 保留 {r['spellId']} {r['nameZh']} {r['atkId']} → {r['status']}")
+        if spells_without_cast_tae:
+            print(f"⚠ 没有施法 TAE 的法术（段不标）：{spells_without_cast_tae}")
     else:
         print(f"⚠ 未做 TAE 核实：{tae_skip_reason}（counts.taeVerified=false）")
+    print(f"逐段子类别（v4）：带子类别 {hits_with_subs} 段；charged {hits_charged} 段（带伤害 {hits_charged_damaging}）；"
+          f"有可取蓄力段的战技 {len(skills_with_charged)} 个 {skills_with_charged}、法术 {len(spells_with_charged)} 个；"
+          f"行名写 Charged 却无蓄力子类别 {len(label_charged_no_sub)} 段，带蓄力子类别但行名没写：战技 "
+          f"{sum(sub_charged_no_label['skills'].values())} 段 / 法术 {len(sub_charged_no_label_spell_rows)} 段")
+    print(f"蓄力分侧（v4 审查修正，按动画判）：chargeBranch {hits_charge_branch} 段 战技 {dict(sorted(charge_branch_counts['skills'].items()))}"
+          f" / 法术 {dict(sorted(charge_branch_counts['spells'].items()))}；与只按子类别分侧不同 {len(charge_reclassified)} 段"
+          f"（带伤害 {len(charge_reclassified_damaging)}），按子类别兜底 {len(charge_by_sub_only)} 段，武器间冲突 {len(charge_weapon_conflicts)} 段；"
+          f"例：兽爪 ×{charge_examples['6820']:.4f}、熔炉百相之尾 ×{charge_examples['7500']:.4f}、突击 ×{charge_examples['105']:.4f}")
+    for r in charge_reclassified_damaging:
+        print(f"  ± {r['kind']} {r['id']} {r['nameZh']} {r['atkId']} {r['subCategories']} → {r['chargeBranch']} {r['anims']}")
+    for label, atks in charge_reclassified_no_damage.items():
+        print(f"  ± （无伤害）{label}：{atks[:8]}{' …' if len(atks) > 8 else ''}（{len(atks)} 段）")
+    for r in charge_by_sub_only:
+        print(f"  · 按子类别 {r['kind']} {r['id']} {r['nameZh']} {r['atkId']} → {r['chargeBranch']}（{r['status']}）")
+    for o in charge_overrides_diag:
+        print(f"  ◇ 例外 {o['id']} {o['nameZh']}（{o['skillTae']}）：" + "、".join(
+            f"{k} → {v['side']} {v['atkIds']}" for k, v in o["anims"].items()))
+    if attack_index_diff is None:
+        print("attackIndex 对照（v4）：跳过（" + ("buffs 数据集不存在" if tae_verified else "没有做 TAE 核实，与 attackIndex 口径不同") + "）")
+    else:
+        print(f"attackIndex 对照（v4）：{attack_index_diff['entries']} 个条目逐一核对，hits[].subCategories 与 attackIndex 一致；"
+              f"旧 attackIndex 里仍含本次新标 notInvoked 的段 {sum(d['hits'] for d in attack_index_diff['diffs'])} 段"
+              f"（{len(attack_index_diff['diffs'])} 个条目，重生成 buffs 后应为 0）")
+        for d in attack_index_diff["diffs"]:
+            print(f"  ~ {d['kind']} {d['id']} {d['nameZh']}：attackIndex 多出 {d['sets']}（均为 notInvoked 段）")
     print(f"AtkParam 行名匹配 {stats['atkRowsMatched']}，未匹配 {stats['atkRowsUnmatched']}；"
           f"Bullet 行名匹配 {stats['bulletRowsMatched']}")
     if unnamed_weapon_type:
@@ -2925,12 +3662,75 @@ def main() -> None:
 
 
 # ------------------------------------------------------------------ self_check
+def check_attack_index(payload: dict, buffs_path: Path, magic_subs: dict[int, frozenset[int]]) -> dict | None:
+    """（v4）hits[].subCategories 与 buffs 数据集 attackIndex 的子类别集合逐条目对照。
+    attackIndex（generate_buffs.AttackPopulations）= 每个战技 / 法术里「不是 noDamage / noVariant / notInvoked」的段，按
+    AtkParam_Pc.subCategory1..5（法术再并上 Magic.subCategory1..2）的集合计段数。所以对每个条目：
+      A = 这些段按 subCategories（∪ 法术流派）的多重集合，N = 同口径下 notInvoked 段的多重集合，X = attackIndex 展开；
+    必须 A ⊆ X ⊆ A + N：蓄力 / 非蓄力的划分与 attackIndex 完全一致，唯一允许的差异是「本次新标 notInvoked、而 buffs 还没
+    重生成」的段（buffs 由本文件生成，重生成后差异为 0）。差异逐条目返回（只打印、不写进数据集，避免产物依赖生成顺序）。
+    同时核对 enums.atkSubCategory 与 buffs 数据集的 enums.atkSubCategory 同一份标签。buffs 数据集不存在时返回 None。"""
+    if not buffs_path.exists():
+        return None
+    buffs = json.loads(buffs_path.read_text(encoding="utf-8"))
+    ours = payload["enums"]["atkSubCategory"]
+    theirs = buffs.get("enums", {}).get("atkSubCategory", {})
+    assert ({k: (v["en"], v["zh"]) for k, v in ours.items() if not v.get("unlisted")}
+            == {k: (v["en"], v["zh"]) for k, v in theirs.items()}), "enums.atkSubCategory 与 buffs 数据集不一致"
+    index = buffs.get("attackIndex", {})
+    diffs: list[dict] = []
+    entries = 0
+    for kind, key, extra_of in (("skill", "skills", lambda _e: frozenset()),
+                                ("spell", "spells", lambda e: magic_subs.get(e["id"], frozenset()))):
+        by_id = index.get(key, {})
+        ours_ids = set()
+        for entry in payload[key]:
+            extra = extra_of(entry)
+            a: Counter = Counter()
+            n: Counter = Counter()
+            for h in entry["hits"]:
+                if h.get("noDamage") or h.get("noVariant"):
+                    continue
+                subs = frozenset(h.get("subCategories", ())) | extra
+                (n if h.get("notInvoked") else a)[subs] += 1
+            x: Counter = Counter()
+            item = by_id.get(str(entry["id"]))
+            if item:
+                for s in item["subCategorySets"]:
+                    x[frozenset(s["subs"])] += s["hits"]
+                if kind == "spell":
+                    assert frozenset(item.get("magicSubCategories", ())) == extra, (entry["id"], item.get("magicSubCategories"))
+            if a or x:
+                entries += 1
+            if a or n:
+                ours_ids.add(str(entry["id"]))
+            missing = a - x            # 我们有、attackIndex 没有：不允许
+            extra_x = x - a            # attackIndex 多出来的：只能是 notInvoked 段
+            assert not missing, (kind, entry["id"], entry["nameZh"], {tuple(sorted(k)): v for k, v in missing.items()})
+            assert not (extra_x - n), (kind, entry["id"], entry["nameZh"],
+                                       {tuple(sorted(k)): v for k, v in (extra_x - n).items()})
+            # 蓄力 / 非蓄力的划分：两边带蓄力子类别的段数一致（扣掉允许的 notInvoked 差异）
+            charged = set(CHARGED_SUB_CATEGORIES)
+            assert (sum(v for k, v in a.items() if k & charged)
+                    == sum(v for k, v in x.items() if k & charged) - sum(v for k, v in extra_x.items() if k & charged)), entry["id"]
+            if extra_x:
+                diffs.append({"kind": kind, "id": entry["id"], "nameZh": entry["nameZh"],
+                              "hits": sum(extra_x.values()),
+                              "sets": {",".join(str(v) for v in sorted(k)) or "-": c for k, c in sorted(extra_x.items(), key=lambda kv: sorted(kv[0]))}})
+        # attackIndex 里不该有数据集没有的条目
+        stray = set(by_id) - ours_ids
+        assert not stray, (key, sorted(stray)[:10])
+    return {"entries": entries, "diffs": diffs}
+
+
 def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str],
-               pre_sel: dict[tuple[int, int], frozenset[str]], magic_table_rows: list[dict]) -> None:
-    """生成后立刻校验 v3 的战技池字段、法术可施放口径与 TAE 核实结果（任何一条不成立都直接中止，不写文件）。
-    pre_sel：行为表层（TAE 核实前）每个 (战技, 武器) 解出的段；magic_table_rows：原始 MagicTableParam。"""
-    assert payload["schemaVersion"] == SCHEMA_VERSION == 3, payload["schemaVersion"]
-    assert [c["version"] for c in payload["schemaChangelog"]] == [1, 2, 3]
+               pre_sel: dict[tuple[int, int], frozenset[str]], magic_table_rows: list[dict],
+               atk_by_id: dict[str, dict]) -> None:
+    """生成后立刻校验 v3 的战技池字段、法术可施放口径与 TAE 核实结果，以及 v4 的逐段子类别 / 蓄力与法术施法槽核实
+    （任何一条不成立都直接中止，不写文件）。
+    pre_sel：行为表层（TAE 核实前）每个 (战技, 武器) 解出的段；magic_table_rows：原始 MagicTableParam；atk_by_id：原始 AtkParam_Pc。"""
+    assert payload["schemaVersion"] == SCHEMA_VERSION == 4, payload["schemaVersion"]
+    assert [c["version"] for c in payload["schemaChangelog"]] == [1, 2, 3, 4]
     weapons = {w["id"]: w for w in payload["weapons"]}
     skills = {s["id"]: s for s in payload["skills"]}
     pools = payload["swordArtsPools"]
@@ -3114,6 +3914,7 @@ def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str]
                 n_not_invoked += 1
                 assert verified and not sk.get("taeUnmatched"), (sid, a)
                 assert h["notInvokedReason"] in reasons, (sid, a, h.get("notInvokedReason"))
+                assert h["notInvokedReason"] not in SPELL_NOT_INVOKED_STATUSES.values(), (sid, a, "法术专用原因出现在战技上")
                 assert a not in in_variants and a in pre_cov, (sid, a)
                 assert not h.get("noVariant"), (sid, a, "noVariant 与 notInvoked 互斥")
             else:
@@ -3201,6 +4002,240 @@ def self_check(payload: dict, custom_by_id: dict[str, dict], reachable: set[str]
     assert len(cov["skillsWithoutWeapons"]) == sum(1 for sk in skills.values() if not sk["weaponIds"])
     assert (len(cov["skillsWithoutFixedWeapons"]) - len(cov["skillsWithoutWeapons"])
             == len(cov["skillsPoolOnly"]) == counts["skillsPoolOnly"])
+
+    # ---- v4：逐段子类别与蓄力 ---------------------------------------------------------
+    sub_enum = payload["enums"]["atkSubCategory"]
+    charged_set = set(payload["enums"]["chargedSubCategories"])
+    assert charged_set == {100, 110, 111}, charged_set
+    assert {k: (v["en"], v["zh"]) for k, v in sub_enum.items() if not v.get("unlisted")} == {str(k): v for k, v in ATK_SUB_CATEGORY.items()}
+    assert {int(k) for k, v in sub_enum.items() if v.get("charged")} == charged_set
+    assert all(int(k) not in ATK_SUB_CATEGORY and v["usedBy"] for k, v in sub_enum.items() if v.get("unlisted"))
+    n_subs = n_charged = 0
+    for entry in list(skills.values()) + payload["spells"]:
+        for h in entry["hits"]:
+            expect = atk_sub_categories(atk_by_id[str(h["atkId"])])
+            subs = h.get("subCategories")
+            assert subs is None or subs, (entry["id"], h["atkId"], "空 subCategories 应省略")
+            assert (subs or []) == expect, (entry["id"], h["atkId"], subs, expect)
+            assert subs is None or (subs == sorted(set(subs)) and 0 not in subs), (entry["id"], h["atkId"], subs)
+            assert all(str(v) in sub_enum for v in (subs or ())), (entry["id"], h["atkId"], subs)
+            is_charged = bool(set(subs or ()) & charged_set)
+            assert bool(h.get("charged")) == is_charged, (entry["id"], h["atkId"])
+            assert "charged" not in h or h["charged"] is True, (entry["id"], h["atkId"], "charged 只写 true")
+            n_subs += bool(subs)
+            n_charged += is_charged
+    assert counts["hitsWithSubCategories"] == n_subs and counts["hitsCharged"] == n_charged, (n_subs, n_charged)
+
+    def hit_of_entry(entry: dict, atk: int) -> dict:
+        return next(h for h in entry["hits"] if h["atkId"] == atk)
+
+    # 用户点名的兽爪（祷告 6820）：68200 子弹 / 68205 蓄力子弹是一次施放的两种放法，68201 / 68206 是 UNUSED 行
+    beast_claw = spells[6820]
+    assert [h["atkId"] for h in beast_claw["hits"]] == [68200, 68201, 68205, 68206], beast_claw["hits"]
+    for atk, charged, not_invoked in ((68200, False, False), (68201, False, True), (68205, True, False), (68206, True, True)):
+        h = hit_of_entry(beast_claw, atk)
+        assert bool(h.get("charged")) is charged, (6820, atk, h)
+        assert bool(h.get("notInvoked")) is (not_invoked and verified), (6820, atk, h)
+        assert h.get("subCategories", []) == ([110] if charged else []), (6820, atk, h.get("subCategories"))
+        if not_invoked and verified:
+            assert h["notInvokedReason"] == "noCastSlot", (6820, atk, h)
+    # 死亡雷击（祷告 5040）：50405 / 50406 / 50407 是蓄力段，50402 / 50407 不在任何施法槽里
+    death_lightning = spells[5040]
+    for atk in (50405, 50406, 50407):
+        assert hit_of_entry(death_lightning, atk).get("charged") is True, (5040, atk)
+    for atk in (50400, 50401, 50402):
+        assert not hit_of_entry(death_lightning, atk).get("charged"), (5040, atk)
+    for atk in (50400, 50401, 50402, 50405, 50406, 50407):
+        assert bool(hit_of_entry(death_lightning, atk).get("notInvoked")) is (verified and atk in (50402, 50407)), (5040, atk)
+    # 狮子斩（战技 100）：战技攻击 112 + 近战 130，不是蓄力
+    for h in skills[100]["hits"]:
+        assert h.get("subCategories") == [112, 130] and not h.get("charged"), (100, h)
+    # 法术蓄力段：v3 口径行名含「蓄力」的法术 43 个，按子类别至少 40 个有可取的蓄力段
+    assert counts["spellsWithChargedHits"] >= 40, counts["spellsWithChargedHits"]
+    assert counts["spellsWithChargedHits"] == sum(
+        1 for sp in payload["spells"] if any(h.get("charged") and not h.get("notInvoked") for h in sp["hits"]))
+    assert counts["skillsWithChargedHits"] == sum(
+        1 for sk in skills.values() if any(h.get("charged") and not h.get("notInvoked") and not h.get("noVariant") for h in sk["hits"]))
+    # 蓄力子类别的归属：110 只在法术上，100 / 111 只在战技上
+    for sp in payload["spells"]:
+        for h in sp["hits"]:
+            assert not (set(h.get("subCategories", ())) & {100, 111}), (sp["id"], h["atkId"])
+    for sk in skills.values():
+        for h in sk["hits"]:
+            assert 110 not in h.get("subCategories", ()), (sk["id"], h["atkId"])
+
+    # ---- v4：法术施法槽核实 ---------------------------------------------------------------
+    cast = payload["diagnostics"]["spellCastVerification"]
+    assert cast["verified"] == verified
+    n_spell_ni = n_spell_ni_dmg = 0
+    listed = {(r["spellId"], r["atkId"]) for r in cast["notInvokedHits"]}
+    for sp in payload["spells"]:
+        for h in sp["hits"]:
+            assert not h.get("noVariant") and "fpBoth" not in h, (sp["id"], h["atkId"])
+            if h.get("notInvoked"):
+                assert verified, (sp["id"], h["atkId"], "没做 TAE 核实却标了 notInvoked")
+                assert h["notInvokedReason"] == "noCastSlot", (sp["id"], h["atkId"], h.get("notInvokedReason"))
+                assert (sp["id"], h["atkId"]) in listed, (sp["id"], h["atkId"])
+                n_spell_ni += 1
+                n_spell_ni_dmg += hit_has_damage(h)
+            else:
+                assert "notInvokedReason" not in h, (sp["id"], h["atkId"])
+    assert n_spell_ni == counts["spellHitsNotInvoked"] == cast["counts"]["notInvoked"] == len(cast["notInvokedHits"]), n_spell_ni
+    assert n_spell_ni_dmg == counts["spellHitsNotInvokedDamaging"] == cast["counts"]["notInvokedDamaging"]
+    assert counts["spellsWithHitsNotInvoked"] == len({sid for sid, _a in listed})
+    assert all(r["status"] == "noSlot" for r in cast["notInvokedHits"])
+    assert all(r["status"] not in ("noSlot", "invoked") for r in cast["keptWithoutCastSlot"])
+    assert counts["spellHitsKeptWithoutCastSlot"] == len(cast["keptWithoutCastSlot"])
+    if verified:
+        assert sum(cast["counts"]["byStatus"].values()) == sum(len(sp["hits"]) for sp in payload["spells"])
+        assert cast["counts"]["byStatus"].get("noSlot", 0) == n_spell_ni
+        assert not cast["spellsWithoutCastTae"], cast["spellsWithoutCastTae"]
+        # notInvoked 之后每个法术仍至少剩一段可取（没有「整个法术都打不出」的误伤）
+        for sp in payload["spells"]:
+            if sp["hits"]:
+                assert any(not h.get("notInvoked") for h in sp["hits"]), (sp["id"], sp["nameZh"])
+    else:
+        assert not cast["notInvokedHits"] and not cast["keptWithoutCastSlot"]
+
+    # ---- v4 审查修正：蓄力分侧 hits[].chargeBranch（按动画判）与合计 notInvoked ----------------------------
+    all_entries = [("skills", sk) for sk in skills.values()] + [("spells", sp) for sp in payload["spells"]]
+    n_ni_all = sum(1 for _b, e in all_entries for h in e["hits"] if h.get("notInvoked"))
+    n_ni_all_dmg = sum(1 for _b, e in all_entries for h in e["hits"] if h.get("notInvoked") and hit_has_damage(h))
+    assert counts["hitsNotInvokedAll"] == n_ni_all == counts["hitsNotInvoked"] + counts["spellHitsNotInvoked"], n_ni_all
+    assert counts["hitsNotInvokedDamagingAll"] == n_ni_all_dmg == (counts["hitsNotInvokedDamaging"]
+                                                                  + counts["spellHitsNotInvokedDamaging"]), n_ni_all_dmg
+    cb_diag = payload["diagnostics"]["chargeBranch"]
+    overrides_table = load_verify_module().CHARGE_ANIM_OVERRIDES
+    branch_n: Counter = Counter()
+    reclassified = set()
+    for bucket, entry in all_entries:
+        playable_hits = [h for h in entry["hits"] if not h.get("notInvoked") and not h.get("noVariant")]
+        chargeable = any(h.get("charged") for h in playable_hits)
+        for h in entry["hits"]:
+            if not (chargeable and h in playable_hits):
+                assert "chargeBranch" not in h, (entry["id"], h["atkId"], "不可取的段 / 不能蓄力的条目不写 chargeBranch")
+                continue
+            br = h.get("chargeBranch")
+            assert br in ("charged", "uncharged", "both", "partial"), (entry["id"], h["atkId"], br)
+            # 带蓄力子类别的可取段一定在蓄力动画里（打出它的动画按定义是蓄力动画），不会落到不蓄力侧，也不是中间蓄力阶段的放招
+            assert not (h.get("charged") and br in ("uncharged", "partial")), (entry["id"], h["atkId"], br)
+            # partial 只来自例外表（verify_skill_hits.CHARGE_ANIM_OVERRIDES 里标 partial 的战技）
+            assert br != "partial" or (bucket == "skills" and "partial" in overrides_table.get(entry["id"], {}).values()), (
+                entry["id"], h["atkId"], "partial 只能来自例外表")
+            if not verified:
+                assert br == ("charged" if h.get("charged") else "uncharged"), (entry["id"], h["atkId"], "没有 TAE 时按子类别归侧")
+            branch_n[br] += 1
+            if br != ("charged" if h.get("charged") else "uncharged"):
+                reclassified.add((bucket[:-1], entry["id"], h["atkId"]))
+    assert counts["hitsChargeBranch"] == sum(branch_n.values()), (counts["hitsChargeBranch"], branch_n)
+    assert (counts["hitsChargeBranchCharged"], counts["hitsChargeBranchUncharged"], counts["hitsChargeBranchBoth"],
+            counts["hitsChargeBranchPartial"]) == (
+        branch_n["charged"], branch_n["uncharged"], branch_n["both"], branch_n["partial"]), branch_n
+    assert counts["hitsChargeBranchReclassified"] == len(reclassified) == cb_diag["counts"]["reclassified"]
+    listed_rc = ({(r["kind"], r["id"], r["atkId"]) for r in cb_diag["reclassified"]}
+                 | {("skill" if int(k.split()[0]) in skills else "spell", int(k.split()[0]), a)
+                    for k, atks in cb_diag["reclassifiedNoDamage"].items() for a in atks})
+    assert listed_rc == reclassified, sorted(listed_rc ^ reclassified)[:10]
+    assert all(r["damaging"] for r in cb_diag["reclassified"])
+    assert counts["hitsChargeBranchBySubCategoryOnly"] == len(cb_diag["bySubCategoryOnly"]) == cb_diag["counts"]["bySubCategoryOnly"]
+    assert cb_diag["counts"]["weaponConflicts"] == len(cb_diag["weaponConflicts"])
+    assert counts["skillsWithChargedHits"] == sum(1 for b, e in all_entries if b == "skills" and any("chargeBranch" in h for h in e["hits"]))
+    assert counts["spellsWithChargedHits"] == sum(1 for b, e in all_entries if b == "spells" and any("chargeBranch" in h for h in e["hits"]))
+
+    def branches(entry: dict) -> dict[int, str]:
+        return {h["atkId"]: h["chargeBranch"] for h in entry["hits"] if "chargeBranch" in h}
+
+    def picked(entry: dict, **kw) -> list[int]:
+        atk_ids = entry["variants"][0]["atkIds"] if entry.get("variants") else None
+        return [h["atkId"] for h in charge_pick(entry["hits"], atk_ids, **kw)]
+
+    # 例外表（第二轮审查修正）：diagnostics 逐战技列出，TAE 核实时每一项都必须真的用上（动画号随游戏更新变了会在这里中止）
+    assert [o["id"] for o in cb_diag["overrides"]] == list(overrides_table), cb_diag["overrides"]
+    assert cb_diag["counts"]["overrideAnims"] == sum(1 for o in cb_diag["overrides"] for v in o["anims"].values() if v["atkIds"])
+    if verified:
+        assert cb_diag["counts"]["overrideAnims"] == sum(len(v) for v in overrides_table.values()), cb_diag["overrides"]
+    else:
+        assert cb_diag["counts"]["overrideAnims"] == 0 and branch_n["partial"] == 0
+    if verified:
+        assert not cb_diag["weaponConflicts"], cb_diag["weaponConflicts"][:3]
+        # 伟哉卡利亚 218（a666，「能提升两个阶段」）：轻按 40001 / 40006、一段蓄力 40002 / 40007（例外表 partial）、
+        # 满蓄力 40000 / 40005 三者互斥——开只取满蓄力、关只取轻按，一段蓄力的 871 / 876 两侧都不取
+        assert branches(skills[218]) == {300200870: "uncharged", 300200871: "partial", 300200872: "charged",
+                                         300200875: "uncharged", 300200876: "partial", 300200877: "charged"}, branches(skills[218])
+        assert {o["id"]: o["anims"] for o in cb_diag["overrides"]}[218] == {
+            "40002": {"side": "partial", "atkIds": [300200871]}, "40007": {"side": "partial", "atkIds": [300200876]}}
+        assert picked(skills[218]) == [300200872] and picked(skills[218], charge_on=False) == [300200870], (
+            picked(skills[218]), picked(skills[218], charge_on=False))
+        assert picked(skills[218], no_fp=True) == [300200872, 300200877], picked(skills[218], no_fp=True)
+        assert picked(skills[218], no_fp=True, charge_on=False) == [300200875], picked(skills[218], no_fp=True, charge_on=False)
+        # 辉石彗砾 1017（a817，「发动后接着使出重攻击……再突刺攻击」）：重攻击追加 40010 / 40015（例外表 neutral）两侧都打
+        assert branches(skills[1017]) == {300107900: "charged", 300107901: "uncharged", 300107905: "charged",
+                                          300107906: "uncharged", 300107910: "both", 300107911: "both",
+                                          300107912: "both"}, branches(skills[1017])
+        assert {o["id"]: o["anims"] for o in cb_diag["overrides"]}[1017] == {
+            "40010": {"side": "neutral", "atkIds": [300107910, 300107912]},
+            "40015": {"side": "neutral", "atkIds": [300107911, 300107912]}}
+        assert picked(skills[1017]) == [300107900, 300107910], picked(skills[1017])
+        assert picked(skills[1017], charge_on=False) == [300107901, 300107910], picked(skills[1017], charge_on=False)
+        assert picked(skills[1017], no_fp=True) == [300107905, 300107911], picked(skills[1017], no_fp=True)
+        assert picked(skills[1017], no_fp=True, charge_on=False) == [300107906, 300107911]
+        # 突击 105（a605）：蓄力 40000 打 900–904、不蓄力 40001 打 903 / 905；无 FP 侧 40005 打 906–910、40006 打 909 / 911
+        b105 = branches(skills[105])
+        expect105 = {0: "charged", 1: "charged", 2: "charged", 3: "both", 4: "charged", 5: "uncharged",
+                     6: "charged", 7: "charged", 8: "charged", 9: "both", 10: "charged", 11: "uncharged"}
+        assert b105 == {301701900 + k: v for k, v in expect105.items()}, b105
+        assert picked(skills[105]) == [301701900, 301701901, 301701902, 301701903, 301701904], picked(skills[105])
+        assert picked(skills[105], charge_on=False) == [301701903, 301701905]
+        assert picked(skills[105], no_fp=True) == [301701906, 301701907, 301701908, 301701909, 301701910]
+        assert picked(skills[105], no_fp=True, charge_on=False) == [301701909, 301701911]
+        # 古雷电枪 1049（a849）：303400002 蓄力 40000 与不蓄力 40001 都打
+        assert branches(skills[1049]) == {303400000: "uncharged", 303400001: "charged", 303400002: "both"}, branches(skills[1049])
+        assert picked(skills[1049]) == [303400001, 303400002] and picked(skills[1049], charge_on=False) == [303400000, 303400002]
+        # 王者嘶吼 1031（a831）：吼叫本体 905–910 在 400 套（没有蓄力动画）→ both；R2 在 306 / 326 套分蓄力两侧
+        b1031 = branches(skills[1031])
+        for k in (5, 6, 7, 8, 9, 10):
+            assert b1031[302305900 + k] == "both", (1031, k, b1031)
+        for k in (15, 16, 17, 18, 20, 35, 36, 37, 38):
+            assert b1031[302305900 + k] == "charged", (1031, k, b1031)
+        for k in (25, 26, 27, 28, 30, 40):
+            assert b1031[302305900 + k] == "uncharged", (1031, k, b1031)
+        on1031, off1031 = picked(skills[1031]), picked(skills[1031], charge_on=False)
+        assert 302305908 in on1031 and 302305908 in off1031 and 302305938 in on1031 and 302305940 in off1031
+        assert not set(on1031) & {302305927, 302305930, 302305940} and not set(off1031) & {302305917, 302305920, 302305938}
+        # 无 FP 侧只剩吼叫本体 302305910（both）：「开关不适用」在 noFp 分侧之后判，蓄力开 / 关都不会一段不剩
+        assert picked(skills[1031], no_fp=True) == picked(skills[1031], no_fp=True, charge_on=False) == [302305910]
+        # 风暴管束者 1200（a860）：蓄力 40100 与不蓄力三连 40110–40112 同在 401 套（族按百位分，不按十位）
+        b1200 = branches(skills[1200])
+        for v in skills[1200]["variants"]:
+            base = min(v["atkIds"]) // 1000 * 1000
+            for k, want in ((200, "charged"), (205, "charged"), (220, "uncharged"), (230, "uncharged"), (240, "uncharged"),
+                            (225, "uncharged"), (235, "uncharged"), (245, "uncharged")):
+                if base + k in b1200:
+                    assert b1200[base + k] == want, (1200, base + k, b1200[base + k])
+        assert sum(1 for a, br in b1200.items() if a % 1000 in (220, 230, 240) and br == "uncharged") >= 10, b1200
+        # 熔炉百相之尾 7500（a470）：蓄力 45010 发槽 2（75000）+ 槽 1（75005），不蓄力 45011 只发槽 0（75000）
+        assert branches(spells[7500]) == {75000: "both", 75005: "charged"}, branches(spells[7500])
+        assert picked(spells[7500]) == [75000, 75005] and picked(spells[7500], charge_on=False) == [75000]
+        # 兽爪 6820 / 死亡雷击 5040：蓄力 / 不蓄力两组子弹各在自己的施法动画里，notInvoked 段不写 chargeBranch
+        assert branches(spells[6820]) == {68200: "uncharged", 68205: "charged"}, branches(spells[6820])
+        assert picked(spells[6820]) == [68205] and picked(spells[6820], charge_on=False) == [68200]
+        assert branches(spells[5040]) == {50400: "uncharged", 50401: "uncharged", 50405: "charged", 50406: "charged"}
+        assert picked(spells[5040]) == [50405, 50406] and picked(spells[5040], charge_on=False) == [50400, 50401]
+        # 说明文字里的三个例子（+18%，按 motion / flat 之和加权）
+        ex = cb_diag["examples"]
+        assert abs(ex["6820"] - 1.18) < 1e-6, ex
+        assert abs(ex["7500"] - (270 + 274 * 1.18) / 544) < 1e-6, ex
+        assert abs(ex["105"] - (140 + 145 * 1.18) / 285) < 1e-6, ex
+        # 每个可蓄力条目的每一侧：开关适用时，开 / 关两侧都不空（没有「只能蓄力」的条目）
+        for bucket, entry in all_entries:
+            if not any("chargeBranch" in h for h in entry["hits"]):
+                continue
+            id_sets = [v["atkIds"] for v in entry.get("variants", ())] if bucket == "skills" else [None]
+            for ids in id_sets:
+                for no_fp in (False, True):
+                    on = charge_pick(entry["hits"], ids, no_fp=no_fp)
+                    off = charge_pick(entry["hits"], ids, no_fp=no_fp, charge_on=False)
+                    assert bool(on) == bool(off), (entry["id"], no_fp, [h["atkId"] for h in on], [h["atkId"] for h in off])
 
 
 if __name__ == "__main__":

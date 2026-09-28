@@ -3,11 +3,11 @@
  "datasetId": "nightreign-buffs",
  "gameVersion": "v1.03.5 + DLC1",
  "dataVersion": "regulation 10350000",
- "generatedAt": "2026-09-24T01:36:26Z",
+ "generatedAt": "2026-09-28T07:17:42Z",
  "schemaChangelog": [
   {
    "version": 6,
-   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）：(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)：上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)：算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。⑫ **道具等级（携物知识）修订**（仍是 v6，只增字段与改名）：(a) **新增 buffs[].goodsLevel（2／3）／goodsLevelSource（\"学者能力「携物知识」（CL_MenuText 20020）\"）／goodsBaseSpEffectId（对应的 1 级行）／goodsLevels（被几级共用时列出）／goodsLevelPaths**，enums.goodsLevel、notes.goodsLevel、diagnostics.goodsLevelRows(+Note)、counts.buffsWithGoodsLevel／buffsByGoodsLevel／buffsWithGoodsLevels／buffsWithGoodsBaseSpEffectId／goodsLevelRenamed。EquipParamGoods.level2RefId／level3RefId（＋_1）是道具被学者能力『携物知识』提到 2／3 级后的效果行，本版本 72 条 buff（57 条经 sources 里的 level 列到达，另 15 条壶类异常状态行只挂在 2／3 级子弹的子子弹上）；500925 粪便壶的自身中毒被 1–3 级共用，只写 goodsLevels=[1,2,3]。(b) **改名**：这些行 displayNameZh 的『档位N』→『携物知识N级』（2、3 级共用的写『携物知识2–3级』），displayNameEn 的『LvN』→『Bagcraft LvN』，并一律带道具名：15 条壶类行补上了道具名（粪便壶／苍蝇壶／结冰壶／毒壶／催眠壶／腐败壶），708680『魅惑树枝』→『魅惑树枝（携物知识3级）』；**708421『提升物理攻击力（勇者肉块・档位3）』→『提升物理与属性攻击力（勇者肉块・携物知识3级）』**（英文 Improved Physical and Affinity Attack Power）——它是物理 ×1.3＋魔力／火／雷／圣 ×1.2，1 级 3950／2 级 708420 只有物理（道具等级行里只有这一条要改；同一规则推广到全表见 (d)）。同族消歧连带：500930／500931（苍蝇壶 1 级的两行）补了类别与数值限定词。(c) 随 skills 数据集法术可施放口径（8100／8101 风暴管束者不再是法术）：attackIndex.spells 少这两项、attackIndex.populationCounts.sorcery 与 counts.attackPopulation.sorcery 61→59，14 条 buff 的 appliesToDetail.sorcery 的 reason 分母与 matchShare 随之变化（appliesTo 取值不变）。notes.displayName、stackingRules 与 diagnostics.displayNameZhIdFallbackNote／activationNote／exclusiveKeyEvidenceNote 里举的道具等级例子改用新写法。(d) **名字前缀写真推广到全表**（复核）：显示名开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』，英文 Improved X Attack Power／X Attack (Power) Up）比 rates 实际提高的攻击类型少时，只把前缀换成按实际覆盖的写法，限定词沿用按原名消歧的结果。除 708421 外另有 9 条（(b) 的『只有这一条』只就道具等级行而言）：1605000『火焰啊，赐予我力量！』与 99565 火星蝶是物理与火（→『提升物理与火属性攻击力』／Improved Physical and Fire Attack Power），7031202、7031302、7032202、7032704、7032706、7032903（隐士遗物）、7260803 是物理与魔力／火／雷／圣同倍率（→『提升物理与属性攻击力』）。除 99565 外它们的 appliesTo.sorcery／incantation 都是 yes，页面对纯魔法构成按 ×1.05–×1.25 计入，旧名字只说物理。新增 diagnostics.attackTypeHeadRenames(+Note)、counts.attackTypeHeadRenamed（10）；notes.goodsLevel／displayName 写明规则，notes.displayName 另写明『档位N』只留给遗物／武器词条的强度档位（刻意保留）。(e) **壶类 1 级行也写道具名**（复核）：显示名的道具名兜底（sources 里没有道具名、只被一种道具到达时取重走结果里的道具名）从 2／3 级行扩到 1 级行，500900／500901 毒壶、500910／500911 结冰壶、500920／500921 粪便壶、500931 苍蝇壶、500940／500941 腐败壶、500950 催眠壶这 10 条 1 级异常状态行由只写『道具』改为带壶名，与各自的 2／3 级行一致；同族消歧连带 500925、708350 的限定词变化。新增 diagnostics.goodsOriginNameRows(+Note)、counts.buffsWithGoodsOriginName。⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。"
+   "zh": "为『增伤排名』改成按槽位组装（局内武器词条／遗物／护符／道具／法术／局内叠层…）而加的字段；只增字段、只增取值，没有改名或删字段。① **新增 buffs[].sourceSlot／sourceSlots／sourceSlotReason** 与 enums.sourceSlot（11 种）：v5 的 sources[].kind 把所有进了 AttachEffectTableParam 池的 AttachEffectParam 行都叫 relicAffix，局内武器词条（8100000–8889999，经 EquipParamCustomWeapon 挂到武器上）与遗物词条分不开。sourceSlot 按词条真正所在的池判：EquipParamAntique 的池＝relicAffix、可掉落的 EquipParamCustomWeapon 行引用的池＝weaponAffix、EquipParamWeapon.attachEffectId＝weaponInnate。任务清单外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果）。sources[].kind 口径不变。② **新增 buffs[].appliesTo（skill／sorcery／incantation／melee／ranged／throw → yes／no／conditional）与 appliesToDetail（reason／requires／matchShare）**，配套 enums.outputClass／appliesToValue、顶层 attackIndex（各类输出的实测子类别人口）、counts.appliesToByOutput。页面不再需要按 scope 猜。③ **修正 scope.attackContexts 的推导（值变化，5 条）**：magicSubCategoryChange1..3 是『命中任一即生效』，只有全部子类别都是情境类才构成限制。312300／7006700／8350000／8350001／8350002『提升战技攻击力』的 [112, 111] 在 v4/v5 被标成 attackContexts=[\"chargedSkill\"]，页面因此把它们藏到『蓄力战技』后面；v6 删除这 5 条的 attackContexts（diagnostics.droppedAttackContexts），counts.buffsWithAttackContext 60→55、buffsByAttackContext.chargedSkill 6→1；diagnostics.contextGatedMultipliers 里抄录的这 5 条同样没有了 attackContexts 键。④ **局内武器词条**：buffs[].weaponAffixIds／weaponAffixRoles／weaponAffixDeepOnly、scope.rollableWeaponTypes，顶层 weaponAffixes（按词条列出常规／深夜可出现的 wepType）与 weaponAffixPools；**遗物**：buffs[].relicAffixes[]（catalogEffectId 对齐词条库、isDeepRelicAffix／requiresCurse／isCurse／compatibilityId／inNormalRelicPools／fixedRelicOnly）与顶层 fixedRelics（官方固定词条遗物 120 种）；顶层 slotRules（武器 6 把、常规每把 1 条、深夜诅咒武器每把 2 条＋1 条诅咒；遗物 3＋3、每件 3 条；护符 2 个），数字附实测依据。⑤ **新增 scope.weaponTypes**（{mode: attackWith|equippedCount, wepTypes, namesZh, count?}）与 scope.attachedWeaponOnly（本版本 0 条），enums.wepType（中文取自 CL_MenuText）。⑥ **新增 buffs[].stackInput**（5 条：封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑、赐福王的余威）与 enums.stackInputMode；activationSource 新增取值 stackInputRequired。**值变化（1 条）**：8970000『赐福王的余威』activation passive→conditional、activationSource noEvidence→stackInputRequired（一局开始是 0 层，不得默认乘进排名）；counts.buffsByActivation passive 354→353、conditional 363→364。⑦ **名字**：nameSource 新增取值 permanentBuffNameById（本版本 2 条：8161600『提升长矛攻击力』、8390000『强化投掷壶』在 PermanentBuffName 里有同 ID 的游戏文本；8390000 在 AttachEffectName 里也有同一文本，按 PermanentBuffName 优先记）与 attachEffectNameById（备用：PermanentBuffName 没有同 ID 文本时才取 AttachEffectName，本版本 0 条）；这 2 条 nameZh／nameEn 由 null／英文行名改为游戏文本（counts.buffsWithoutChineseName 82→80）。其余 80 条无任何自身文本的新增 suggestedNameZh（＋suggestedNameZhSource／suggestedNameZhInferred），displayNameZh 改用它；脚本挂载的战技来源新增 sources[].artsNameZh／artsId（90 条 buff；『Barbaric/Milos Roar』这类『A/B C』行名拆开查 ArtsName）。displayNameZh 的消歧限定词不再用英文 Paramdex 行名，改用行名的中文拼写（所属词条名／战技名／角色技艺・绝招・能力名／道具与 SpEffect 名＋TAIL_PHRASES_ZH），拼不全就落到『#spEffectId』。**displayNameZh 变 180 条**：v5 有 150 条 displayNameZh 带英文，现在 0 条（80 条改用建议名、2 条用同 ID 文本、68 条的英文限定词换成中文）；另有 26 条补写了战技名，1940 不再显示武器名『短弓』而是『短弓等13把武器的固有效果：黄金箭』，3 条因消歧重排而变化（322100 多了来源限定词、1660000 少了倍率限定词、1722000 多了类别限定词）。displayNameEn 变 4 条（8161600、8390000 换成游戏英文名，322100 因与 8390000 同名补了来源，1940 同上改写）；唯一性保证不变，新增 self_check：displayNameZh 除 NPC／HP／FP 外不得有拉丁字母。diagnostics.selfInflictedStatus／topUnconditionalMultipliers／contextGatedMultipliers 里抄录的 displayNameZh 随之变化。⑧ notes 新增 userQuestions（Q1–Q5 的参数依据）、sourceSlot、appliesTo、weaponAffix、relicAffix、stackInput、suggestedName。⑨ **核验补充**（仍是 v6，只增字段）：slotRules.weaponAffix 新增 deepOnlyPerWeaponMax=1／maxDeepOnlyAffixes=6（每把深夜诅咒武器的 2 条正面词条里最多 1 条是深夜专属词条，2950 行实测）、slotRules.modes.*.deepOnlyAffixesPerWeapon，evidence 新增 deepOnlyPositiveSlotsPerRow／deepOnlyAttachEffectIds／distinctAttachEffectIdsInReachablePools／slotLayouts／blessingPools／blessingPoolsBySubsetOf81x；weaponAffixRoles 的 blessing 改按池族判（81x＋成员是其子集的 603000x00），『[Unique] X+2』角色武器的 603 池由 affix 改为 blessing（weaponAffixPools 3 个、weaponAffixes 16 个、buffs 24 条的 roles 变化）；buffs[].weaponInnate 扩到全部 42 条 sourceSlots 含 weaponInnate 的条目，新增 wepTypes／inferredFromRowName／rowCategory，[Weapon Power] 行按同百位 SpEffect＋同名前缀归到庇佑 AE（8980002 等 → 9021400『夜与火的庇佑』）；7050301『道具效用能扩及我方人物（勇者肉块）』归到遗物词条 AE 7050100（relicAffixes），sourceSlots 加 consumable，新增 buffs[].requiresGoodsIds；permanent／runStack 条目新增 descZh（取 PermanentBuffInfo，9 条）与 descZhSource；8970000『赐福王的余威』的层数单位改为『本局新发现的赐福数』（PermanentBuffInfo#8970000），不是打倒的首领数；顶层 sources[] 的新条目移到末尾（v5 的 4 条位置不变）；新增 diagnostics.displayNameZhLatinResidue／displayNameZhDetailUntranslated／displayNameZhDetailNote／displayNameZhWeaponNamed／weaponInnateWithoutWeaponIds(+Note)／meleePopulationCheck(+Note)，counts.buffsWithWeaponInnate／buffsWithRequiresGoodsIds／buffsWithDescZhSource。⑩ **复核二轮**（仍是 v6，只增字段；取值变化逐条如下）：(a) **新增 buffs[].stacking.exclusiveKey／exclusiveScope 与 enums.exclusiveScope**——页面去重应改用它：perSpEffect（none／stackSelf／resetOnApply…按 ID）、category（removePrevious 100–199、applyHighest、applyFirst 按类别）、categoryPriority（200–299 按类别＋categoryPriority）、accumulatorLadder（连续攻击类累积阶梯各档共用一键）；新增 buffs[].accumulatorLadder（15 条：连刺破露滴 3558–3561、米莉森的义手 312505–312508、带翼剑徽章 320804–320807、遗物『连续攻击时，提升攻击力』7037604–7037606）与 diagnostics.exclusiveKeyEvidence(+Note)／accumulatorLadderConflicts、counts.buffsByExclusiveScope／exclusiveKeys／exclusiveKeysShared／buffsWithAccumulatorLadder。**值变化**：stacking.group 对 spCategoryBehavior=resetOnApply 的 77 条由 \"sp20\" 改为 \"sp20#<spEffectId>\"（spCategory 20＝Paramdex『Reset on Apply』，是同一效果重复获得的规则，不是跨 ID 互斥；v6 之前 77 条互不相干的遗物／护符／战技增益被并成一组、只剩一条）；enums.spCategoryBehavior 的 resetOnApply 与 removePrevious 说明文字；stackingRules 第 1、2 条。(b) **7020002／7020004**（追踪者遗物『发动技艺时，轻攻击能使出缠绕火焰的追加攻击』的火属性 +20 右／左手，descZh『遗物带来的效果』）归到遗物词条 AE 7020000：sourceSlot／sourceSlots character→relicAffix，新增 relicAffixes；fixedRelics『深灰色砥石』的 spEffectIds 加上这 2 条；counts.buffsBySourceSlot character −2／relicAffix +2、buffsWithRelicAffixes 256→258。(c) **深夜专属上限只数正面词条**：新增 buffs[].weaponAffixDeepOnlyPositive（152 条有值、30 条 true）、weaponAffixes[].deepOnlyPositive、slotRules.weaponAffix.deepOnlyCapField／deepOnlyCapCountsCurses／duplicateWithinWeapon（同一把武器两条正面词条能否相同：未知），evidence 新增 deepOnlyPositiveAttachEffectIds（52）／deepOnlyCurseAttachEffectIds（44）／deepOnlyPositivePotencyByPoolFamily／potencyCountsByPoolTier／deepPositivePairRows／deepPositivePairRowsWithSharedAffix；weaponAffixDeepOnly／deepOnly 的取值不变（诅咒仍为 true），上限的说明文字改为只数正面词条。(d) **stateInfo=197（强化突刺反击）**：320600、7034702、8430000、8851800、8851850 的 appliesTo.sorcery／incantation／ranged conditional→no（矛护符 AccessoryInfo#2060『能强化突刺攻击特有的反击攻击』），这 15 处的 appliesToDetail.reason 改写、requires 随之消失；counts.appliesToByOutput 三类各 conditional −5／no +5。(e) **displayNameZh 变 55 条、displayNameEn 变 45 条**：累积阶梯 15 条各档写『第N层』（其中 11 条原来落到『#spEffectId』）；只由 PermanentBuffParam 授予的 [Weapon] 行 17 条写『永久强化』而不是『武器』；行名没有档位时取所属词条的档位 6 条（8810301／8810351／8810401／8810451／8821000／8821050）；1731002／1731003 补上『自身累积』『蓄力・自身累积』；另 15 条只因消歧重排少了倍率限定词（其中 7610800–7610802、8850600／8850650 同时去掉了『#spEffectId』）。counts.displayNameZhFallingBackToSpEffectId 58→32（剩下的见 diagnostics.displayNameZhIdFallback／Note）；suggestedNameZh 变 2 条（3560／3561『第3层加成』→『第3层』）。(f) 7069001『封印监牢』的 stackInput.practicalMaxSource 注明只覆盖有行名的 320 个 patternId（另 200 个无行名的未核）；notes.stackInput／Q5 写明四条 204 阶梯（封印监牢、黑夜入侵者、玛雷家的庇佑、复仇的庇佑）categoryPriority 各不相同，按 exclusiveKey 彼此独立；notes.appliesTo 写明 throw=0 的读法与 Paramdex 字面相反及其依据；slotRules.weaponAffix.zh 改正『按稀有度的档位』的说法并写明深夜专属词条在 505 池只有档位1；slotRules.consumable／spellBuff 的 zh 改为『同 stacking.exclusiveKey 的只取一份』。⑪ **复核三轮**（仍是 v6，只增字段、只增取值；取值变化逐条如下）：(a) **exclusiveScope 新增取值 affixVariant，exclusiveKey 新增取值 \"affix#<attachEffectId>\"**，新增 buffs[].affixVariant（key／attachEffectId／variant／variants／variantSpEffectIds／dispatcherSpEffectIds／dispatcherStateInfo／differingRateKeys／differingChainFields）：『出击时的武器，附加魔力／火／雷／圣属性攻击力』『…附加异常状态冻伤／中毒／出血』7 条遗物词条各 4 档（7120001–7120004、7120101–7120104、7120201–7120204、7120301–7120304、7120401–7120404、7120501–7120504、7120601–7120604）由词条的派发行（stateInfo=2101）按出击武器选一档，同一时刻只生效一档。**值变化 28 条**：stacking.exclusiveKey \"sp10#<id>\"→\"affix#<attachEffectId>\"、exclusiveScope perSpEffect→affixVariant（stacking.group 不变）；counts.buffsByExclusiveScope perSpEffect 428→400（新增 affixVariant 28）、exclusiveKeys 463→442、exclusiveKeysShared 27→34。新增 diagnostics.affixVariantScan(+Note)（合并的 7 组与没合并的近似组及原因）。(b) **relicAffixes[] 新增 exclusivityId**（AttachEffectParam 原值；262 处）与 diagnostics.relicAffixExclusivityGroups(+Note)：上面 7 条词条共用 exclusivityId=100（同时装备时游戏亮红色感叹号），只作提示，没有并键。(c) **新增 buffs[].accumulatorStages**（3 条：8885220–8885222，武器词条 8885200『维持防御时，强化魔法、祷告与缩短咏唱时间』经累积器→行为→子弹依次达到的三个阶段，各 ×1.1，同时存在、逐段相乘，键仍各自一个）。(d) **accumulatorLadder 新增 shippedTierSpEffectIds**（15 条；7037604–7037606 的 tiers=4 但第 4 档 7037607 没有倍率、不在 buffs 里），新增 notes.accumulatorLadder 写明各键口径（tierSpEffectIds 含第 1 档，与 stackLadder 相反）与 \"sp120\" 让不同物品互斥的结论；enums.exclusiveScope.accumulatorLadder、notes.stackLadder 的说明文字随之补充。(e) **新增 buffs[].selfAllyPair**（6 条＝3 对：1835／1836、1870／1871、1876／1877）与 diagnostics.selfAllyPairs(+Note)：算施放者自己的伤害时不计同一战技的 Allies 行（共享圣律 1877 只由 AtkParam_Pc 300000820 交给队友）；两行的键不变。(f) **displayNameZh／displayNameEn 各变 16 条**：7039900–7039909『提升攻击力（档位N）』→『出现异常状态量表时，能缓慢提升攻击力（第N层）』（行名 Stack N 的叠层行写『第N层』并带上所属词条名；英文去掉行名里重复的 Stack N）；7500801–7500803 的『档位N』→『第N层』（英文 LvN→Stack N）；8885220–8885222『强化魔法、祷告（武器・×1.1・…・命中时武器效果N）』→『维持防御时，强化魔法、祷告与缩短咏唱时间（第N阶段）』（英文改用词条名＋Stage N）。(g) 新增 notes.affixVariant／accumulatorLadder／accumulatorStages／selfAllyPair，enums.exclusiveScope.affixVariant，counts.buffsWithAffixVariant／affixVariantGroups／buffsWithAccumulatorStages／buffsWithSelfAllyPair；notes.ranking／relicAffix／stackLadder／suggestedName、stackingRules.zh 第 2 条的文字有补充。⑫ **道具等级（携物知识）修订**（仍是 v6，只增字段与改名）：(a) **新增 buffs[].goodsLevel（2／3）／goodsLevelSource（\"学者能力「携物知识」（CL_MenuText 20020）\"）／goodsBaseSpEffectId（对应的 1 级行）／goodsLevels（被几级共用时列出）／goodsLevelPaths**，enums.goodsLevel、notes.goodsLevel、diagnostics.goodsLevelRows(+Note)、counts.buffsWithGoodsLevel／buffsByGoodsLevel／buffsWithGoodsLevels／buffsWithGoodsBaseSpEffectId／goodsLevelRenamed。EquipParamGoods.level2RefId／level3RefId（＋_1）是道具被学者能力『携物知识』提到 2／3 级后的效果行，本版本 72 条 buff（57 条经 sources 里的 level 列到达，另 15 条壶类异常状态行只挂在 2／3 级子弹的子子弹上）；500925 粪便壶的自身中毒被 1–3 级共用，只写 goodsLevels=[1,2,3]。(b) **改名**：这些行 displayNameZh 的『档位N』→『携物知识N级』（2、3 级共用的写『携物知识2–3级』），displayNameEn 的『LvN』→『Bagcraft LvN』，并一律带道具名：15 条壶类行补上了道具名（粪便壶／苍蝇壶／结冰壶／毒壶／催眠壶／腐败壶），708680『魅惑树枝』→『魅惑树枝（携物知识3级）』；**708421『提升物理攻击力（勇者肉块・档位3）』→『提升物理与属性攻击力（勇者肉块・携物知识3级）』**（英文 Improved Physical and Affinity Attack Power）——它是物理 ×1.3＋魔力／火／雷／圣 ×1.2，1 级 3950／2 级 708420 只有物理（道具等级行里只有这一条要改；同一规则推广到全表见 (d)）。同族消歧连带：500930／500931（苍蝇壶 1 级的两行）补了类别与数值限定词。(c) 随 skills 数据集法术可施放口径（8100／8101 风暴管束者不再是法术）：attackIndex.spells 少这两项、attackIndex.populationCounts.sorcery 与 counts.attackPopulation.sorcery 61→59，14 条 buff 的 appliesToDetail.sorcery 的 reason 分母与 matchShare 随之变化（appliesTo 取值不变）。notes.displayName、stackingRules 与 diagnostics.displayNameZhIdFallbackNote／activationNote／exclusiveKeyEvidenceNote 里举的道具等级例子改用新写法。(d) **名字前缀写真推广到全表**（复核）：显示名开头点名的攻击类型（『提升物理攻击力』『提升X属性攻击力』『提升属性攻击力』，英文 Improved X Attack Power／X Attack (Power) Up）比 rates 实际提高的攻击类型少时，只把前缀换成按实际覆盖的写法，限定词沿用按原名消歧的结果。除 708421 外另有 9 条（(b) 的『只有这一条』只就道具等级行而言）：1605000『火焰啊，赐予我力量！』与 99565 火星蝶是物理与火（→『提升物理与火属性攻击力』／Improved Physical and Fire Attack Power），7031202、7031302、7032202、7032704、7032706、7032903（隐士遗物）、7260803 是物理与魔力／火／雷／圣同倍率（→『提升物理与属性攻击力』）。除 99565 外它们的 appliesTo.sorcery／incantation 都是 yes，页面对纯魔法构成按 ×1.05–×1.25 计入，旧名字只说物理。新增 diagnostics.attackTypeHeadRenames(+Note)、counts.attackTypeHeadRenamed（10）；notes.goodsLevel／displayName 写明规则，notes.displayName 另写明『档位N』只留给遗物／武器词条的强度档位（刻意保留）。(e) **壶类 1 级行也写道具名**（复核）：显示名的道具名兜底（sources 里没有道具名、只被一种道具到达时取重走结果里的道具名）从 2／3 级行扩到 1 级行，500900／500901 毒壶、500910／500911 结冰壶、500920／500921 粪便壶、500931 苍蝇壶、500940／500941 腐败壶、500950 催眠壶这 10 条 1 级异常状态行由只写『道具』改为带壶名，与各自的 2／3 级行一致；同族消歧连带 500925、708350 的限定词变化。新增 diagnostics.goodsOriginNameRows(+Note)、counts.buffsWithGoodsOriginName。⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。⑬ **随 skills 数据集 schemaVersion 4 重生成**（仍是 v6，没有新字段）：skills v4 把「施法动画没有槽位调用」的 21 个法术段标了 notInvoked（兽爪 68201／68206、死亡雷击 50402／50407 等，notInvokedReason=noCastSlot），attackIndex 本来就排除 notInvoked 段，于是 **attackIndex.spells 的段数变化**：13 个法术的 17 个 subCategorySets 项、共少 18 段（4360 蕾娜菈的满月、4361 菈妮的暗月、4380 罗蕾塔的大弓、4381 罗蕾塔的绝招、4910 责罚荆棘、5001 古老死亡怨魂、5040 死亡雷击、6210 黑焰、6240 黑焰仪式、6270 贵族气场、6810 古兰格的岩石、6820 兽爪、6921 冰雷枪；例：兽爪 [23]×2／[23,110]×2 → [23]×1／[23,110]×1）；子类别集合的种类不变，所以 appliesTo／appliesToDetail（含 matchShare）与 counts 全部不变。其余 3 个新标的段（6420 紧急恢复 64201、6500 黑夜女巫烟雾 65000／65005）本来就是 noDamage，原先就不在 attackIndex 里。文字：attackIndex.zh 与 notes.appliesTo ⑥ 改写——子类别限定的增益要对**所选的段**逐段判定（读 skills 的 hits[].subCategories），蓄力开关按 skills 的 hits[].chargeBranch 分两侧（开取 charged／both、关取 uncharged／both，partial 两侧都不取；按动画判，蓄力动画里子类别不带蓄力的前段也在蓄力侧，hits[].charged 只决定这一段吃不吃蓄力类增益），不要再按 attackIndex 的段数占比给所选条目加权。"
   },
   {
    "version": 5,
@@ -96,7 +96,7 @@
    }
   },
   "sourceSlot": "**v6 新增** `sourceSlot`（主槽位）／`sourceSlots`（全部槽位，按 enums.sourceSlot 顺序）：这条 buff 该放进页面的哪一栏。取值与中文说明见 enums.sourceSlot；除任务清单的九种外新增 weaponSkill（战技发动后的自身增益）与 weaponInnate（武器固有效果、传说武器的庇佑）。判定用的是**全部**来源（不止导出的 40 条）：AttachEffectParam 行按它真正所在的池判——在 EquipParamAntique 的池里＝relicAffix，在可掉落的 EquipParamCustomWeapon 行引用的池里＝weaponAffix，被 EquipParamWeapon.attachEffectId 引用＝weaponInnate；只能靠 Paramdex 行名找到的脚本挂载行，先按『同族 AttachEffectParam』（同 ID 十位／百位、同词干）归，找不到再按 [...] 前缀归。sourceSlot=\"other\" 的条目一定带 sourceSlotReason。**sources[].kind 保持 v5 口径不变**（局内武器词条仍是 kind=\"relicAffix\"），页面分栏请改用 sourceSlot。",
-  "appliesTo": "**v6 新增** `appliesTo`：{skill, sorcery, incantation, melee, ranged, throw} → \"yes\"／\"no\"／\"conditional\"，`appliesToDetail`：非 yes 的类别的 {reason, requires?, matchShare?}。判定只看 SpEffectParam 自己的列，按顺序叠加：① target 为 enemy／summon → 全 no；② 只有消耗／射程类字段 → 按字段归属（战技消耗→skill、魔法消耗→sorcery、祷告消耗→incantation、射程衰减→ranged）；③ stateInfo=367（强化致命一击）只对 throw；④ 投递方式：武器类（skill／melee／ranged）看 wepParamChange（0 不限、1／2 限右／左手→conditional、3 自身→no、4 踢击→no）且 throwAttackParamChange=1 的行只作用于致命一击；sorcery 看 magParamChange、incantation 看 miracleParamChange；⑤ triggerOnWepType（出手武器类别）、triggerAttachedWeapon（只对带词条的那把武器）、spAttribute（附加属性负载，只对被附加的武器）、atkAttribute、stateInfo=197（突刺反击）；⑥ magicSubCategoryChange1..3（命中任一即可）对照 attackIndex 里各类输出的实测子类别：全部命中→yes、全不命中→no、部分→conditional（matchShare＝战技／法术按条目、其余按 AtkParam 行的命中比例，requires.subCategoriesAny 给出需要的子类别，页面用 attackIndex.skills／spells 对所选条目逐段判定）。取最严的一关。**requires 的键**：hand（1 右手／2 左手）、attackWeaponTypes（出手武器 wepType）、attachedWeaponOnly、imbuedWeaponOnly、physicalType、attackContexts、subCategoriesAny。**推断与未实测**：throw（致命一击）对 throwAttackParamChange=0 的武器增益判 yes 是推断，**而且与 Paramdex 的字面说明相反**：Paramdex 对 throwAttackParamChange 的说明是『Set whether or not it is effective against throwing attacks』（与 magParamChange 同一写法），按字面 0＝不作用于致命一击；magParamChange=0 本数据集确实判 no，throw 却反着读成『1＝只作用于致命一击、0＝通用』。依据：带无条件伤害倍率且 throw=1 的 buff 只有 10 条（1694、1704、1711、1713、320900、7040200、7040201、8130000、8130001、8130002），全是『强化致命一击』类或专门修正致命一击的行（stateInfo=367 或行名 Critical／Throw），没有一条是通用增益——若 0 才是『不作用于致命一击』，所有通用增益都会漏掉致命一击、而只作用于致命一击的行反而写成 1，与这批行的用途对不上；反证是战技『决心』1691（右手 ×1.6，throw=0）另配 1694（throw=1，×0.75『Throw Damage Adjust』）专门压低致命一击，说明 throw=0 的增益本来就作用于致命一击、throw=1 的行只作用于致命一击；wepParamChange=3 判『不作用于武器攻击』的依据是它只出现在『强化魔法／祷告』类（magParamChange 或 miracleParamChange=1）与命中负载上。appliesTo 与 activation 正交：activation 回答『这份 buff 在不在身上』，appliesTo 回答『在身上时哪类输出吃得到』。",
+  "appliesTo": "**v6 新增** `appliesTo`：{skill, sorcery, incantation, melee, ranged, throw} → \"yes\"／\"no\"／\"conditional\"，`appliesToDetail`：非 yes 的类别的 {reason, requires?, matchShare?}。判定只看 SpEffectParam 自己的列，按顺序叠加：① target 为 enemy／summon → 全 no；② 只有消耗／射程类字段 → 按字段归属（战技消耗→skill、魔法消耗→sorcery、祷告消耗→incantation、射程衰减→ranged）；③ stateInfo=367（强化致命一击）只对 throw；④ 投递方式：武器类（skill／melee／ranged）看 wepParamChange（0 不限、1／2 限右／左手→conditional、3 自身→no、4 踢击→no）且 throwAttackParamChange=1 的行只作用于致命一击；sorcery 看 magParamChange、incantation 看 miracleParamChange；⑤ triggerOnWepType（出手武器类别）、triggerAttachedWeapon（只对带词条的那把武器）、spAttribute（附加属性负载，只对被附加的武器）、atkAttribute、stateInfo=197（突刺反击）；⑥ magicSubCategoryChange1..3（命中任一即可）对照 attackIndex 里各类输出的实测子类别：全部命中→yes、全不命中→no、部分→conditional（matchShare＝战技／法术按条目、其余按 AtkParam 行的命中比例，requires.subCategoriesAny 给出需要的子类别，页面对所选条目**当前选中的段**逐段判定——skills 数据集 schemaVersion 4 起读 skills 的 hits[].subCategories（法术并上 attackIndex.spells[id].magicSubCategories），不再用 attackIndex 的段数占比加权）。取最严的一关。**requires 的键**：hand（1 右手／2 左手）、attackWeaponTypes（出手武器 wepType）、attachedWeaponOnly、imbuedWeaponOnly、physicalType、attackContexts、subCategoriesAny。**推断与未实测**：throw（致命一击）对 throwAttackParamChange=0 的武器增益判 yes 是推断，**而且与 Paramdex 的字面说明相反**：Paramdex 对 throwAttackParamChange 的说明是『Set whether or not it is effective against throwing attacks』（与 magParamChange 同一写法），按字面 0＝不作用于致命一击；magParamChange=0 本数据集确实判 no，throw 却反着读成『1＝只作用于致命一击、0＝通用』。依据：带无条件伤害倍率且 throw=1 的 buff 只有 10 条（1694、1704、1711、1713、320900、7040200、7040201、8130000、8130001、8130002），全是『强化致命一击』类或专门修正致命一击的行（stateInfo=367 或行名 Critical／Throw），没有一条是通用增益——若 0 才是『不作用于致命一击』，所有通用增益都会漏掉致命一击、而只作用于致命一击的行反而写成 1，与这批行的用途对不上；反证是战技『决心』1691（右手 ×1.6，throw=0）另配 1694（throw=1，×0.75『Throw Damage Adjust』）专门压低致命一击，说明 throw=0 的增益本来就作用于致命一击、throw=1 的行只作用于致命一击；wepParamChange=3 判『不作用于武器攻击』的依据是它只出现在『强化魔法／祷告』类（magParamChange 或 miracleParamChange=1）与命中负载上。appliesTo 与 activation 正交：activation 回答『这份 buff 在不在身上』，appliesTo 回答『在身上时哪类输出吃得到』。",
   "weaponAffix": "**v6 新增**：局内武器词条（sourceSlot=weaponAffix）带 `weaponAffixIds`（AttachEffectParam id）、`weaponAffixRoles`（affix 普通词条／curse 负面诅咒／blessing 武器赐福／fixed 某类武器固定带的词条）、`weaponAffixDeepOnly`（只在深夜池出现）与 `scope.rollableWeaponTypes`（能出现在哪些 wepType 上，常规∪深夜）。按词条（而不是按 SpEffect）列出的**有增伤 buff 的词条清单**在顶层 `weaponAffixes`（normalWepTypes／deepWepTypes 分开给）：只收能对应到 buffs[] 里某条 buff 的 AttachEffect id（本版本 146 个）；可掉落武器的池里一共有 310 个带权重的 AttachEffect id（slotRules.weaponAffix.evidence.distinctAttachEffectIdsInReachablePools，含诅咒、恢复、减伤、攻击时释放X等不改输出的词条），不在本数据集范围内的请查词条库。池的概览在 `weaponAffixPools`。武器类别中文名见 enums.wepType（取自 CL_MenuText 60010–60175）。组装规则见 slotRules.weaponAffix／slotRules.modes；深夜诅咒武器每把最多 1 条**正面的**深夜专属词条（`weaponAffixDeepOnlyPositive`=true，slotRules.weaponAffix.deepOnlyPerWeaponMax／deepOnlyCapField）。`weaponAffixDeepOnly` 的口径是『只在深夜池出现』，诅咒（weaponAffixRoles 含 curse）也只出现在深夜，所以同样为 true——**上限只数 weaponAffixDeepOnlyPositive**，诅咒另按每把 1 条（slotRules.weaponAffix.deepCursePerWeapon）算，6 条诅咒＋6 条深夜专属正面词条是合法组合。evidence：深夜专属 AttachEffect id 共 96 个，正面 52 个（deepOnlyPositiveAttachEffectIds）、诅咒 44 个（deepOnlyCurseAttachEffectIds）。同一把武器的两条正面词条能否相同：见 slotRules.weaponAffix.duplicateWithinWeapon（参数表里查不到，按未知处理）。",
   "relicAffix": "**v6 新增**：遗物词条（sourceSlot=relicAffix）带 `relicAffixes[]`：attachEffectId；catalogEffectId（=attachEffectId，且保证在 data/nightreign-affixes-v1.03.4.json 的 affixes 里，否则为 null）；catalog（\"affixes\"／\"extraAffixes\"——后者是只出现在固定词条遗物上的特殊词条，在 data/nightreign-relics-v1.03.4.json 的 extraAffixes 里）；isDeepRelicAffix、requiresCurse、isCurse（按 EquipParamAntique 的池实测：深夜池、与负面槽配对的深夜池、负面池 3000000）；compatibilityId（AttachEffectParam 原值，-1 不互斥）；inNormalRelicPools；fixedRelicOnly。self_check 保证与词条库的 requiresCurse／isCurse／compatibilityId 完全一致。官方固定词条遗物（名字相同、词条不同的算不同条目）在顶层 `fixedRelics`，页面可整件选入占一个遗物格。`requiresGoodsIds`（可缺）：这条遗物效果只在使用这些道具时才出现——7050301 是遗物词条 7050100『道具效用能扩及我方人物』把『勇者肉块』（GoodsName 1210）的效果分给队友的那一行，target=ally，sourceSlots=[relicAffix, consumable]，要同时选了遗物词条与道具才成立。**v6 复核三轮**：relicAffixes[] 新增 `exclusivityId`（AttachEffectParam 原值，-1＝无）。compatibilityId 管『同一件遗物上能否并存』，exclusivityId 管『已装备的几件遗物之间亮不亮红色感叹号』（Smithbox 注释）。本版本带 buff 的词条里只有 100 一组：『出击时的武器，附加…』7 条（魔力／火／雷／圣／冻伤／中毒／出血），compatibilityId 同为 200，同一件遗物上只能有一条；分装在两件遗物上会亮感叹号，按参数推断只有一条生效（未实测）。它们各自的 4 档由词条自己的派发行按出击武器选一档，4 档共用一个 exclusiveKey（\"affix#<attachEffectId>\"，见 notes.affixVariant）；不同词条之间没有并键，页面同时选中两条同 exclusivityId 的词条时应提示，分组见 diagnostics.relicAffixExclusivityGroups。",
   "stackInput": "**v6 新增** `stackInput`（可缺）：需要用户填层数的叠层增益。mode=\"ladder\"＝叠层阶梯（与 stackLadder 同一批，第 n 层用 tierMultipliers[n-1]，各层互斥不可相乘）；mode=\"copies\"＝同一效果可多份共存（spCategory=10），N 层＝perStackMultiplier^N。paramMaxStacks＝参数表的层数上限（copies 为 null）；practicalMaxStacks＝一局实际能叠到的上限及其来源（practicalMaxSource 写明是实测还是用户反馈）；uiLabelMax＝游戏文本备好的『＋N』标签数。层数数的是什么，以游戏文本为准：8970000『赐福王的余威』的 descZh（descZhSource=PermanentBuffInfo#8970000）是『根据新发现的赐福数量，提升攻击力』——页面的输入框应提示『本局新发现的赐福数』，不是打倒的首领数。**阶梯之间**：7069001 封印监牢、7069201 黑夜入侵者、8988200 玛雷家的庇佑、8998000 复仇的庇佑同为 spCategory 204，但各自的 categoryPriority 不同（stacking.exclusiveKey 分别为 \"sp204@p11\"、\"sp204@p13\"、\"sp204@p5\"、\"sp204@p4\"），按 200 系列『同优先度才顶替』的规则彼此独立，可以同时填层数、结果相乘；同一阶梯内各层才互斥。旧 stacking.group 把四条都给成 \"sp204\"，页面若仍按 group 去重，用户同时填监牢与入侵者时只会算其中一条。这是按参数结构推断（204 的 12 条阶梯各占一个优先度），未实测，页面可在这四条同时启用时给个提示。",
@@ -24373,7 +24373,7 @@
   }
  ],
  "attackIndex": {
-  "zh": "appliesTo 的『人口』：每个战技／法术实际命中段的 AtkParam 子类别集合（法术再并上 Magic.subCategory1..2 流派），以及近战／射击／致命一击的 AtkParam_Pc 行分布。appliesTo=conditional 且 requires.subCategoriesAny 存在时，页面用所选战技／法术在这里的 subCategorySets 判定：某一段的 subs 与 requires.subCategoriesAny 有交集，这一段才吃这条 buff（hits 是段数，可按段加权）。",
+  "zh": "appliesTo 的『人口』：每个战技／法术实际命中段的 AtkParam 子类别集合（法术再并上 Magic.subCategory1..2 流派），以及近战／射击／致命一击的 AtkParam_Pc 行分布。appliesTo=conditional 且 requires.subCategoriesAny 存在时，某一段的 subs 与 requires.subCategoriesAny 有交集，这一段才吃这条 buff。**skills 数据集 schemaVersion 4 起，逐段判定请改读 skills 数据集的 hits[].subCategories，只对当前选中的段判**（法术再并上这里的 magicSubCategories；蓄力开关按 hits[].chargeBranch 分两侧取段（partial 两侧都不取）——按动画判，不是按 hits[].charged，见 skills usage.蓄力段（v4））；这里的 subCategorySets 是整招全部可打出段（不含 noDamage／noVariant／notInvoked，v4 起法术的 notInvoked 段也排除）的汇总，供 appliesTo／matchShare 的人口统计用，**不要**按其中的段数占比给所选条目加权——占比不随所选的段与蓄力开关变化（兽爪按 v3 口径 2/4 段带 110，把『强化祷告的蓄力执行』+18% 摊成了 ×1.09）。",
   "populationCounts": {
    "skill": 155,
    "sorcery": 59,
@@ -26807,7 +26807,7 @@
       "subs": [
        1
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -26824,7 +26824,7 @@
        1,
        13
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -26852,13 +26852,13 @@
     "subCategorySets": [
      {
       "subs": [],
-      "hits": 3
+      "hits": 2
      },
      {
       "subs": [
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -26875,7 +26875,7 @@
       "subs": [
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27336,7 +27336,7 @@
       "subs": [
        9
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27380,7 +27380,7 @@
        10,
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27425,14 +27425,14 @@
       "subs": [
        22
       ],
-      "hits": 3
+      "hits": 2
      },
      {
       "subs": [
        22,
        110
       ],
-      "hits": 3
+      "hits": 2
      }
     ]
    },
@@ -27634,7 +27634,7 @@
        20,
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27686,14 +27686,14 @@
       "subs": [
        20
       ],
-      "hits": 4
+      "hits": 3
      },
      {
       "subs": [
        20,
        110
       ],
-      "hits": 4
+      "hits": 2
      }
     ]
    },
@@ -27715,7 +27715,7 @@
        27,
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27916,7 +27916,7 @@
       "subs": [
        23
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -27931,14 +27931,14 @@
       "subs": [
        23
       ],
-      "hits": 2
+      "hits": 1
      },
      {
       "subs": [
        23,
        110
       ],
-      "hits": 2
+      "hits": 1
      }
     ]
    },
@@ -28027,7 +28027,7 @@
       "subs": [
        22
       ],
-      "hits": 3
+      "hits": 2
      }
     ]
    },

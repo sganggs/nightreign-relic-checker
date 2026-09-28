@@ -325,7 +325,17 @@ SCHEMA_CHANGELOG: list[dict[str, Any]] = [
               "从 2／3 级行扩到 1 级行，500900／500901 毒壶、500910／500911 结冰壶、500920／500921 粪便壶、500931 苍蝇壶、500940／500941 腐败壶、"
               "500950 催眠壶这 10 条 1 级异常状态行由只写『道具』改为带壶名，与各自的 2／3 级行一致；同族消歧连带 500925、708350 的限定词变化。"
               "新增 diagnostics.goodsOriginNameRows(+Note)、counts.buffsWithGoodsOriginName。"
-              "⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。",
+              "⑫ 合计 displayNameZh 变 93 条、displayNameEn 81 条（相对 ⑫ 之前）；nameZh／statusLabelsZh 不变。diagnostics 里抄录 displayNameZh 的几处随之变化。"
+              "⑬ **随 skills 数据集 schemaVersion 4 重生成**（仍是 v6，没有新字段）：skills v4 把「施法动画没有槽位调用」的 21 个法术段标了 "
+              "notInvoked（兽爪 68201／68206、死亡雷击 50402／50407 等，notInvokedReason=noCastSlot），attackIndex 本来就排除 notInvoked 段，"
+              "于是 **attackIndex.spells 的段数变化**：13 个法术的 17 个 subCategorySets 项、共少 18 段（4360 蕾娜菈的满月、4361 菈妮的暗月、"
+              "4380 罗蕾塔的大弓、4381 罗蕾塔的绝招、4910 责罚荆棘、5001 古老死亡怨魂、5040 死亡雷击、6210 黑焰、6240 黑焰仪式、6270 贵族气场、"
+              "6810 古兰格的岩石、6820 兽爪、6921 冰雷枪；例：兽爪 [23]×2／[23,110]×2 → [23]×1／[23,110]×1）；子类别集合的种类不变，"
+              "所以 appliesTo／appliesToDetail（含 matchShare）与 counts 全部不变。其余 3 个新标的段（6420 紧急恢复 64201、"
+              "6500 黑夜女巫烟雾 65000／65005）本来就是 noDamage，原先就不在 attackIndex 里。"
+              "文字：attackIndex.zh 与 notes.appliesTo ⑥ 改写——子类别限定的增益要对**所选的段**逐段判定（读 skills 的 hits[].subCategories），"
+              "蓄力开关按 skills 的 hits[].chargeBranch 分两侧（开取 charged／both、关取 uncharged／both，partial 两侧都不取；按动画判，蓄力动画里子类别"
+              "不带蓄力的前段也在蓄力侧，hits[].charged 只决定这一段吃不吃蓄力类增益），不要再按 attackIndex 的段数占比给所选条目加权。",
     },
     {
         "version": 5,
@@ -2487,7 +2497,9 @@ class AttackPopulations:
         def hit_sets(hits: list[dict[str, Any]], extra: frozenset[int]) -> Counter:
             sets: Counter = Counter()
             for hit in hits:
-                # v3：TAE 判定永远打不出的段（notInvoked）不进实测人口，与三端页面的取段口径一致
+                # v3：TAE 判定永远打不出的段（notInvoked）不进实测人口，与三端页面的取段口径一致。
+                # skills schemaVersion 4 起法术段也有 notInvoked（施法动画没有槽位调用，如兽爪 68201 / 68206），同样排除。
+                # 这里的 subs 与 skills 数据集 hits[].subCategories 同一口径（generate_skills.py 的 self_check 逐条目对照）。
                 if hit.get("noDamage") or hit.get("noVariant") or hit.get("notInvoked"):
                     continue
                 atk = atk_pc.get(str(hit.get("atkId")))
@@ -6382,8 +6394,13 @@ def build() -> dict[str, Any]:
     payload["attackIndex"] = {
         "zh": "appliesTo 的『人口』：每个战技／法术实际命中段的 AtkParam 子类别集合（法术再并上 Magic.subCategory1..2 流派），"
               "以及近战／射击／致命一击的 AtkParam_Pc 行分布。appliesTo=conditional 且 requires.subCategoriesAny 存在时，"
-              "页面用所选战技／法术在这里的 subCategorySets 判定：某一段的 subs 与 requires.subCategoriesAny 有交集，"
-              "这一段才吃这条 buff（hits 是段数，可按段加权）。",
+              "某一段的 subs 与 requires.subCategoriesAny 有交集，这一段才吃这条 buff。"
+              "**skills 数据集 schemaVersion 4 起，逐段判定请改读 skills 数据集的 hits[].subCategories，只对当前选中的段判**"
+              "（法术再并上这里的 magicSubCategories；蓄力开关按 hits[].chargeBranch 分两侧取段（partial 两侧都不取）——按动画判，不是按 hits[].charged，"
+              "见 skills usage.蓄力段（v4））；"
+              "这里的 subCategorySets 是整招全部可打出段（不含 noDamage／noVariant／notInvoked，v4 起法术的 notInvoked 段也排除）的汇总，"
+              "供 appliesTo／matchShare 的人口统计用，**不要**按其中的段数占比给所选条目加权——占比不随所选的段与蓄力开关变化"
+              "（兽爪按 v3 口径 2/4 段带 110，把『强化祷告的蓄力执行』+18% 摊成了 ×1.09）。",
         "populationCounts": populations.counts(),
         "skills": populations.skill_index,
         "spells": populations.spell_index,
@@ -6600,7 +6617,8 @@ def build() -> dict[str, Any]:
         "spAttribute（附加属性负载，只对被附加的武器）、atkAttribute、stateInfo=197（突刺反击）；"
         "⑥ magicSubCategoryChange1..3（命中任一即可）对照 attackIndex 里各类输出的实测子类别："
         "全部命中→yes、全不命中→no、部分→conditional（matchShare＝战技／法术按条目、其余按 AtkParam 行的命中比例，"
-        "requires.subCategoriesAny 给出需要的子类别，页面用 attackIndex.skills／spells 对所选条目逐段判定）。"
+        "requires.subCategoriesAny 给出需要的子类别，页面对所选条目**当前选中的段**逐段判定——skills 数据集 schemaVersion 4 起"
+        "读 skills 的 hits[].subCategories（法术并上 attackIndex.spells[id].magicSubCategories），不再用 attackIndex 的段数占比加权）。"
         "取最严的一关。**requires 的键**：hand（1 右手／2 左手）、attackWeaponTypes（出手武器 wepType）、"
         "attachedWeaponOnly、imbuedWeaponOnly、physicalType、attackContexts、subCategoriesAny。"
         "**推断与未实测**：throw（致命一击）对 throwAttackParamChange=0 的武器增益判 yes 是推断，"

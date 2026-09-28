@@ -22,6 +22,8 @@ android/**/*.iml
 
 # 从本机游戏导出的原始参数表（体积大、受游戏权利方约束，不入库）
 macos/DataSources/raw/
+# 工作树里 raw 常是指向主检出的符号链接：带斜杠的规则只匹配目录，不匹配链接本身
+macos/DataSources/raw
 
 # Python
 __pycache__/
