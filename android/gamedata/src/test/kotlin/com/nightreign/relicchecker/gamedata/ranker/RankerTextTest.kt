@@ -18,6 +18,12 @@ class RankerTextTest {
                 "占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、" +
                 "没有逐段对应，所以占比不随上方的分段勾选变化。"
 
+        /** 收尾那一版改值的两句（requireSubsPartial / brief.appliesTo）的旧值（Windows 的 SUBS_RESTORE）。 */
+        val SUBS_RESTORE = mapOf(
+            "requireSubsPartial" to "所选{0}只有 {1}/{2} 段带子类别 {3}：按 1＋(倍率−1)×{1}/{2} 近似加权（段数取 attackIndex 对整招的统计，与上方分段勾选无关）",
+            "brief.appliesTo" to "生效判定一律按数据的 appliesTo：战技（含战技射出的子弹段）看 skill、魔法看 sorcery、祷告看 incantation。conditional 的机读条件里，持武器的手、出手武器类别（法术按施法器：魔法＝手杖、祷告＝圣印记）、物理攻击类型按当前输出自动判定；子类别按 attackIndex 对所选战技／法术判定；攻击情境用上方的情境勾选；附魔武器限定、需同时使用道具等无法自动判定的要手动确认。",
+        )
+
         /** 那一版改值的两句的旧值（Windows ranker_crosscheck.test.mjs 的 MEANS_KIND_RESTORE）。 */
         val MEANS_KIND_RESTORE = mapOf(
             "pageSubtitle" to "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
@@ -26,20 +32,23 @@ class RankerTextTest {
     }
 
     @Test
-    fun `text table is the same table as both desktop ends - 350 entries, digest 591c0f7f`() {
+    fun `text table is the same table as both desktop ends - 350 entries, digest 43bf0705`() {
         // skills schemaVersion 3 多了武器来源标记 weaponSource.*（332 → 336 条，854da404 → 07a69c5e）；
         // buffs v6 修订的道具等级再多 goodsLevel.*（336 → 339 条，07a69c5e → 41e2ae25）；
         // 输出手段类型开关拆成三档（战技 / 魔法 / 祷告）再多七个键、改两句「法术」（339 → 346 条，41e2ae25 → 446c874b）；
         // skills v4 的蓄力开关再多 chargedToggle.* 四个键、brief.partial 改值（346 → 350 条，446c874b → 591c0f7f）。
         assertEquals(350, RankerText.table.size)
-        assertEquals("591c0f7f", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
+        // 收尾：requireSubsPartial / brief.appliesTo 改为逐段判定的说法（条数不变，591c0f7f → 43bf0705）。
+        assertEquals("43bf0705", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
+        val beforeSubs = RankerText.table + SUBS_RESTORE
+        assertEquals("591c0f7f", RankerCrossCheck.textTableDigest(beforeSubs))
         assertEquals(RankerText.table.keys.sorted(), RankerText.table.keys.toList(), "按点号路径排序存放")
         RankerText.table.forEach { (key, value) -> assertTrue(value.isNotEmpty(), "$key 应是非空文案") }
         // 任何一处改动都会让摘要分叉。
         val tampered = RankerText.table + ("reasonNeutral" to RankerText.t("reasonNeutral") + "。")
-        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "591c0f7f")
+        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "43bf0705")
         // 蓄力开关那一版：去掉 chargedToggle.*、换回 brief.partial 旧值回到上一版（其余文案一字未动）。
-        val beforeCharged = RankerText.table.filterKeys { !it.startsWith("chargedToggle.") } +
+        val beforeCharged = beforeSubs.filterKeys { !it.startsWith("chargedToggle.") } +
             ("brief.partial" to BRIEF_PARTIAL_BEFORE_CHARGED)
         assertEquals(346, beforeCharged.size)
         assertEquals("446c874b", RankerCrossCheck.textTableDigest(beforeCharged))

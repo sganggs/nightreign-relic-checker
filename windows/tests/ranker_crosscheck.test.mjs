@@ -857,8 +857,11 @@ function briefDigest(notes) {
 //   otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），339 → 346 条，41e2ae25 → 446c874b；
 //   skills v4 蓄力开关：多四个 chargedToggle.* 键（label / hint / unavailable / onlyCharged），brief.partial 改值
 //   （子类别限定改按勾选的段逐段判定），346 → 350 条，446c874b → 591c0f7f；说明区 ad04314d → 34e5dacb。
-const TEXT_TABLE_DIGEST = "591c0f7f";
+//   收尾：requireSubsPartial 与 brief.appliesTo 两句里的「attackIndex 整招统计」改为逐段判定，条数不变，
+//   591c0f7f → 43bf0705；说明区 34e5dacb → 1023d329。
+const TEXT_TABLE_DIGEST = "43bf0705";
 const TEXT_TABLE_COUNT = 350;
+const TEXT_TABLE_DIGEST_BEFORE_SUBS = "591c0f7f";
 const TEXT_TABLE_DIGEST_BEFORE_CHARGED = "446c874b";
 const TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND = "41e2ae25";
 const TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL = "07a69c5e";
@@ -873,7 +876,13 @@ const CHARGED_ADDED = ["chargedToggle."];
 const CHARGED_RESTORE = {
   "brief.partial": "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、没有逐段对应，所以占比不随上方的分段勾选变化。"
 };
-const BRIEF_DIGEST = "34e5dacb";
+// 收尾那一版改值的两句的旧值。
+const SUBS_RESTORE = {
+  requireSubsPartial: "所选{0}只有 {1}/{2} 段带子类别 {3}：按 1＋(倍率−1)×{1}/{2} 近似加权（段数取 attackIndex 对整招的统计，与上方分段勾选无关）",
+  "brief.appliesTo": "生效判定一律按数据的 appliesTo：战技（含战技射出的子弹段）看 skill、魔法看 sorcery、祷告看 incantation。conditional 的机读条件里，持武器的手、出手武器类别（法术按施法器：魔法＝手杖、祷告＝圣印记）、物理攻击类型按当前输出自动判定；子类别按 attackIndex 对所选战技／法术判定；攻击情境用上方的情境勾选；附魔武器限定、需同时使用道具等无法自动判定的要手动确认。"
+};
+const BRIEF_DIGEST = "1023d329";
+const BRIEF_DIGEST_BEFORE_SUBS = "34e5dacb";
 const BRIEF_DIGEST_BEFORE_CHARGED = "ad04314d";
 
 test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
@@ -881,11 +890,15 @@ test("两端逐字一致：配置部分的文案常量表（点号路径 + 文�
   assert.equal(count, TEXT_TABLE_COUNT, "文案条数");
   assert.equal(digest, TEXT_TABLE_DIGEST, "文案常量表摘要（macOS 端 checkLoadoutParity 断言同一个值）");
   // 这一版只多了四个 chargedToggle.* 键、改了 brief.partial：去掉新增键、换回旧值，摘要回到上一版（其余文案一字未动）。
-  const beforeCharged = textTableDigest(CHARGED_ADDED, CHARGED_RESTORE);
+  const beforeSubs = textTableDigest([], SUBS_RESTORE);
+  assert.equal(beforeSubs.count, TEXT_TABLE_COUNT);
+  assert.equal(beforeSubs.digest, TEXT_TABLE_DIGEST_BEFORE_SUBS, "除 requireSubsPartial / brief.appliesTo 两句外文案不变");
+  const chargedRestore = Object.assign({}, SUBS_RESTORE, CHARGED_RESTORE);
+  const beforeCharged = textTableDigest(CHARGED_ADDED, chargedRestore);
   assert.equal(beforeCharged.count, TEXT_TABLE_COUNT - 4);
   assert.equal(beforeCharged.digest, TEXT_TABLE_DIGEST_BEFORE_CHARGED, "除 chargedToggle.* 四个新键与 brief.partial 外文案不变");
   // 再往前一版只多了七个输出手段类型开关的键、改了两句「法术」：再去掉、换回，摘要回到那一版。
-  const meansRestore = Object.assign({}, CHARGED_RESTORE, MEANS_KIND_RESTORE);
+  const meansRestore = Object.assign({}, SUBS_RESTORE, CHARGED_RESTORE, MEANS_KIND_RESTORE);
   const beforeMeans = textTableDigest(CHARGED_ADDED.concat(MEANS_KIND_ADDED), meansRestore);
   assert.equal(beforeMeans.count, TEXT_TABLE_COUNT - 4 - 7);
   assert.equal(beforeMeans.digest, TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND, "除 meansKind.* 等七个新键与两句改值外文案不变");
@@ -913,8 +926,11 @@ test("文案常量表：ranker.js 里引用到的每个 TEXT.路径 都真的存
 test("两端逐字一致：说明区（口径说明）的正文与 macOS 端 LoadoutText.briefNotes 同一个摘要", () => {
   const notes = R.briefNotes(buffs, cfgIndex);
   assert.equal(briefDigest(notes), BRIEF_DIGEST);
-  // 这一版只改了 brief.partial 那一段：换回旧文案，摘要回到上一版。
-  assert.equal(briefDigest(notes.map((note) => (note === R.TEXT.brief.partial ? CHARGED_RESTORE["brief.partial"] : note))),
+  // 收尾那一版只改了 brief.appliesTo 那一段：换回旧文案，摘要回到上一版。
+  const restoreApplies = (note) => (note === R.TEXT.brief.appliesTo ? SUBS_RESTORE["brief.appliesTo"] : note);
+  assert.equal(briefDigest(notes.map(restoreApplies)), BRIEF_DIGEST_BEFORE_SUBS);
+  // 再往前一版只改了 brief.partial 那一段：再换回旧文案，摘要回到那一版。
+  assert.equal(briefDigest(notes.map(restoreApplies).map((note) => (note === R.TEXT.brief.partial ? CHARGED_RESTORE["brief.partial"] : note))),
     BRIEF_DIGEST_BEFORE_CHARGED);
 });
 

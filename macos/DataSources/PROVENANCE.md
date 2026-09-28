@@ -120,7 +120,7 @@ Oodle DLL 的 Kraken 解压器）。产物写到 `raw/`（已 .gitignore，不�
 
 > 表里的 schemaVersion 是写死的：重新生成任何一套数据集时，请同步更新本表与
 > [`windows/renderer/pages/README.md`](../../windows/renderer/pages/README.md) 的
-> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 3 / buffs 6 / heroes 1）。
+> 「3. `ctx.getGameData(name)`」一节（那里也写了 `bossesSchemaVersion` 4 / skills 4 / buffs 6 / heroes 1）。
 
 「词条反查」页不使用新数据集，只用既有的 `affixes.json` 与 `relics.json`。原计划里的
 「削韧」没有单独成集：削韧数值（`atkSuperArmor` / `atkSuperArmorCorrection` /

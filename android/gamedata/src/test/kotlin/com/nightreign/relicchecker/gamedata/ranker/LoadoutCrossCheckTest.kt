@@ -532,11 +532,16 @@ class LoadoutCrossCheckTest {
         val text = dumpLines.single { it.startsWith("TEXT ") }
         val notes = LoadoutText.briefNotes(index)
         assertEquals(field(text, "brief"), RankerCrossCheck.briefDigest(notes), "说明区摘要（两端 BRIEF_DIGEST）")
-        assertEquals("34e5dacb", RankerCrossCheck.briefDigest(notes))
-        // skills v4 只改了 brief.partial 一句（子类别限定改按勾选的段逐段判定）：换回旧值回到上一版的摘要。
+        assertEquals("1023d329", RankerCrossCheck.briefDigest(notes))
+        // 收尾只改了 brief.appliesTo 一句：换回旧值回到上一版的摘要（34e5dacb）。
+        val appliesIndex = notes.indexOf(RankerText.t("brief.appliesTo"))
+        assertTrue(appliesIndex >= 0, "brief.appliesTo 在说明区里")
+        val beforeSubs = notes.toMutableList().also { it[appliesIndex] = "生效判定一律按数据的 appliesTo：战技（含战技射出的子弹段）看 skill、魔法看 sorcery、祷告看 incantation。conditional 的机读条件里，持武器的手、出手武器类别（法术按施法器：魔法＝手杖、祷告＝圣印记）、物理攻击类型按当前输出自动判定；子类别按 attackIndex 对所选战技／法术判定；攻击情境用上方的情境勾选；附魔武器限定、需同时使用道具等无法自动判定的要手动确认。" }
+        assertEquals("34e5dacb", RankerCrossCheck.briefDigest(beforeSubs))
+        // skills v4 只改了 brief.partial 一句（子类别限定改按勾选的段逐段判定）：再换回旧值回到那一版的摘要。
         val partialIndex = notes.indexOf(RankerText.t("brief.partial"))
         assertEquals(2, partialIndex, "brief.partial 在说明区第 3 条")
-        val before = notes.toMutableList().also {
+        val before = beforeSubs.toMutableList().also {
             it[partialIndex] = "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，" +
                 "占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、" +
                 "没有逐段对应，所以占比不随上方的分段勾选变化。"
@@ -553,6 +558,6 @@ class LoadoutCrossCheckTest {
         dataset.buffs.filter { it.stackInput != null }.forEach { assertTrue(all.contains(it.displayName), "${it.displayName} 的叠层说明") }
         // 任何一处措辞改动都会让摘要分叉（数字不影响）。
         assertEquals(RankerCrossCheck.briefDigest(notes), RankerCrossCheck.briefDigest(notes.map { it.replace("7", "9") }))
-        assertFalse(RankerCrossCheck.briefDigest(notes.dropLast(1) + (notes.last() + "。")) == "34e5dacb")
+        assertFalse(RankerCrossCheck.briefDigest(notes.dropLast(1) + (notes.last() + "。")) == "1023d329")
     }
 }

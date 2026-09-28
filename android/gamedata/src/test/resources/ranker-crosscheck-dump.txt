@@ -30,6 +30,7 @@
 # beast-claw-uncharged-8330302（×1、不生效）两行 CONFIG；OUTPUTS 不变；TEXT 346 → 350 条（新增 chargedToggle.label /
 # hint / unavailable / onlyCharged，brief.partial 改值，摘要 446c874b → 591c0f7f），brief ad04314d → 34e5dacb。
 # 下面的数据行取自 Windows 端重新生成的输出（/tmp/ranker-dump-windows-4.txt，逐行未改）。
+# 收尾：requireSubsPartial / brief.appliesTo 两句改为逐段判定的说法（条数不变，摘要 591c0f7f → 43bf0705，brief 34e5dacb → 1023d329）。
 OUTPUTS skills=155 spells=119
 CASE corpse-piler-full selected=303400300,303400301,303400302,303400303,303400304,303400305 shares=0.500000000,0.000000000,0.000000000,0.000000000,0.000000000,0.000000000,0.500000000,0.000000000,0.000000000 applicable=296 useful=200 top10=707214:3.550000000,707215:3.550000000,707213:3.490000000,707212:3.400000000,707211:3.340000000,707210:3.170000000,707209:3.020000000,707208:2.840000000,707207:2.550000000,707206:2.250000000
 CASE corpse-piler-last selected=303400305 shares=0.500000000,0.000000000,0.000000000,0.000000000,0.000000000,0.000000000,0.500000000,0.000000000,0.000000000 applicable=296 useful=200 top10=707214:3.550000000,707215:3.550000000,707213:3.490000000,707212:3.400000000,707211:3.340000000,707210:3.170000000,707209:3.020000000,707208:2.840000000,707207:2.550000000,707206:2.250000000
@@ -46,4 +47,4 @@ CONFIG death-lightning-deep-fill mode=deep total=16.658968943 sub=weaponAffix:3.
 CONFIG lions-claw-2fixed-1custom-2talismans-evergaol7 mode=normal total=2.169951652 sub=weaponAffix:1.000000000,relic:1.886914480,accessory:1.150000000,other:1.000000000 weaponAffixes= relics=F2070|F2100|C7060000+7120100+7260400 accessories=1230,2040 counted=312300,7006600,7006700,7035902,7069001
 CONFIG beast-claw-charged-8330302 mode=normal total=1.180000000 sub=weaponAffix:1.180000000,relic:1.000000000,accessory:1.000000000,other:1.000000000 weaponAffixes=8330302x1 relics=-|-|- accessories= counted=8330302
 CONFIG beast-claw-uncharged-8330302 mode=normal total=1.000000000 sub=weaponAffix:1.000000000,relic:1.000000000,accessory:1.000000000,other:1.000000000 weaponAffixes=8330302x1 relics=-|-|- accessories= counted=
-TEXT count=350 digest=591c0f7f brief=34e5dacb
+TEXT count=350 digest=43bf0705 brief=1023d329

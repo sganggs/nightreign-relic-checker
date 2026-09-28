@@ -4985,7 +4985,10 @@ private func checkLoadoutParity(
             try rankerExpect(Set(fixed).count == fixed.count && Set(config.loadout.accessories).count == config.loadout.accessories.count,
                              "对照 \(config.key)：固定遗物与护符不重复", counter: &count)
         }
-        dump.append(loadoutConfigDump(config.key, config.loadout, index: index, evaluation: evaluation))
+        // 对拍 dump 只打 Windows / Android 也有的五组；8330302+8330301 叠加那组在两端是 D 组内的断言，不单独成行。
+        if config.key != "beast-claw-charged-8330302-8330301" {
+            dump.append(loadoutConfigDump(config.key, config.loadout, index: index, evaluation: evaluation))
+        }
     }
     let evalD1 = beastChargedEvaluator.evaluate(loadoutD1)
     let evalE = beastUnchargedEvaluator.evaluate(loadoutD1)
@@ -5065,9 +5068,10 @@ private func loadoutBriefDigest(_ notes: [String]) -> String {
 /// meansSearch.placeholder / empty、meansSpellFlatNote 七个键，改 pageSubtitle 与 otherInnateNoWeapon：339 → 346 条，41e2ae25 → 446c874b。
 /// skills v4 蓄力开关与逐段子类别：新增 chargedToggle.label / hint / unavailable / onlyCharged 四个键、改 brief.partial：
 /// 346 → 350 条，446c874b → 591c0f7f；说明区 ad04314d → 34e5dacb。
+/// 收尾：requireSubsPartial 与 brief.appliesTo 两句改为逐段判定的说法：591c0f7f → 43bf0705；说明区 34e5dacb → 1023d329。
 private let loadoutTextTableCount = 350
-private let loadoutTextTableDigest = "591c0f7f"
-private let loadoutBriefNotesDigest = "34e5dacb"
+private let loadoutTextTableDigest = "43bf0705"
+private let loadoutBriefNotesDigest = "1023d329"
 
 private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {
     try rankerExpect(LoadoutText.table.count == loadoutTextTableCount,
