@@ -4,7 +4,7 @@
 
 > 本工具为非官方社区工具，与 FromSoftware、Bandai Namco Entertainment 及原参考网站无关；游戏名称与游戏内文本的权利归其各自权利方所有。
 
-当前版本：**v0.3.0**（桌面双端新增「首领数据」「角色属性」「词条反查」「增伤排名」四页，存档检查新增自动查找、拖拽打开、导出报告与存档对比；首领数据改为按出场场合分组，增伤排名改为「自己组一套局内配置、看总增伤」）。Android 手机版同步到 v0.3.0：新增词条反查、首领数据、角色属性、增伤排名、存档检查五页，数据与判定口径同桌面端（手机版的取舍见 [`android/README.md`](android/README.md)）。
+当前版本：**v0.3.1**（v0.3.0 的修正版：增伤排名加「蓄力」开关，蓄力类与其它子类别限定的增益按所选段逐段判定，不再被稀释；法术段按施法动画核实；词条库列出负面词条。v0.3.0：桌面双端新增「首领数据」「角色属性」「词条反查」「增伤排名」四页，存档检查新增自动查找、拖拽打开、导出报告与存档对比；首领数据改为按出场场合分组，增伤排名改为「自己组一套局内配置、看总增伤」）。Android 手机版同步到 v0.3.0：新增词条反查、首领数据、角色属性、增伤排名、存档检查五页，数据与判定口径同桌面端（手机版的取舍见 [`android/README.md`](android/README.md)）。
 
 ## 下载
 
@@ -12,9 +12,9 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `NightreignRelicChecker-Windows-x64-v0.3.0.exe` | **Windows 版**。约 11 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
-| `NightreignRelicChecker-macOS-Universal-v0.3.0.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行），约 7.5 MB。 |
-| `NightreignRelicChecker-Android-v0.3.0.apk` | **Android 版**。Android 8.0+，约 10 MB，自签名安装包，与 v0.2.1 同一签名密钥，可直接覆盖安装。三词条检查、词条反查、词条库，以及「数据」页里的首领数据、角色属性、增伤排名与存档检查；存档经系统文件选择器只读打开（手机上没有自动查找与拖拽），增伤排名暂无「全部增益一览」。 |
+| `NightreignRelicChecker-Windows-x64-v0.3.1.exe` | **Windows 版**。约 11 MB，免安装，使用系统自带 Microsoft Edge WebView2 运行时。Windows 11 与新版 Windows 10 已内置该运行时；若缺失可[免费安装](https://developer.microsoft.com/microsoft-edge/webview2/)。 |
+| `NightreignRelicChecker-macOS-Universal-v0.3.1.zip` | macOS 13+，Universal 2（Apple Silicon 与 Intel 均可运行），约 7.5 MB。 |
+| `NightreignRelicChecker-Android-v0.3.1.apk` | **Android 版**。Android 8.0+，约 10 MB，自签名安装包，与 v0.2.1 同一签名密钥，可直接覆盖安装。三词条检查、词条反查、词条库，以及「数据」页里的首领数据、角色属性、增伤排名与存档检查；存档经系统文件选择器只读打开（手机上没有自动查找与拖拽），增伤排名暂无「全部增益一览」。 |
 
 （GitHub Release 附件名不支持中文，故采用英文文件名。）
 
