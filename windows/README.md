@@ -80,13 +80,13 @@ node --test tests/*.test.mjs
 - 增伤排名：`ranker`（纯计算层单元测试）、`ranker_config`（「自己组一套配置」的整套口径：
   槽位与深夜专属上限、互斥键去重、遗物合法性与深夜诅咒配对、appliesTo 分流、叠层换算、
   汇总连乘、按推荐填满不越界）、`ranker_crosscheck`（与 macOS 端
-  `BuffRankerChecks.swift` 的 `checkLoadoutParity` 同一组输入、同一套断言口径，含三组固定
+  `BuffRankerChecks.swift` 的 `checkLoadoutParity` 同一组输入、同一套断言口径，含五组固定
   配置对照与文案表摘要）。
 
 两端的数据契约断言要一起改：`bosses.test.mjs` / `bosses_roles.test.mjs` 钉着
 `bossesSchemaVersion` 4 与收录统计（夜王 18 · 守夜首领 40 · 据点首领 51 · 场景头目 35 ·
 封印监牢 10 · 其它场合 45 · 随从/召唤物 11 · 未放置 93，含 49 组同时属于多个分组 ·
-数值行 394），`ranker.test.mjs` 要求 buffs `schemaVersion` ≥ 6、skills `schemaVersion` 3，
+数值行 394），`ranker.test.mjs` 要求 buffs `schemaVersion` ≥ 6、skills `schemaVersion` 4，
 重新生成数据集时必须同步。
 
 存档解析器（Go 子包，无平台约束）：

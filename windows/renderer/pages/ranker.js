@@ -1,9 +1,11 @@
 // 增伤排名页。页面模块契约见 renderer/pages/README.md。
 // 本文件由「增伤排名」功能开发者独占：只改这里与 pages/ranker.css。
 //
-// 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 3：局内战技池进 weaponIds / weaponSources，
+// 数据：ctx.getGameData("skills") → resources/skills.json（schemaVersion 4：局内战技池进 weaponIds / weaponSources，
 //                                   选段读 weapons[].skillVariants[战技 ID]，variants[].atkIds 已按 TAE 核实；
 //                                   hits[].notInvoked / fpBoth / selfOrAllyOnly 见数据集 fieldNotes；
+//                                   v4：hits[].subCategories（逐段子类别）/ charged / chargeBranch（蓄力分侧），
+//                                   法术段同样按施法槽核实、标 notInvoked（usage.蓄力段（v4））；
 //                                   spells[] 只收可施放的法术，每个都有 casterWeaponIds）
 //       ctx.getGameData("buffs")  → resources/buffs.json（schemaVersion 6：sourceSlot / appliesTo /
 //                                   slotRules / weaponAffixes / fixedRelics / stackInput / exclusiveKey /
@@ -11,7 +13,9 @@
 //       ctx.Core + ctx.catalog    → 遗物合法性（core.js 的 check / isEligible / canonicalOrder）
 //
 // 页面结构：「自己组一套配置」
-//   ① 输出手段：战技（+ 武器）、魔法或祷告（类型开关三档，只做界面层过滤）；分段勾选、伤害构成（与旧版相同，算法不变）。
+//   ① 输出手段：战技（+ 武器）、魔法或祷告（类型开关三档，只做界面层过滤）；分段勾选、伤害构成。
+//      「专注值不足版」与「蓄力」两个开关都是同一招的互斥两侧：默认勾选＝两个开关各自那一侧的段（蓄力按
+//      hits[].chargeBranch：开取 charged / both，关取 uncharged / both，partial 两侧都不取）。
 //   ② 常规 / 深夜开关（slotRules.modes）：决定武器词条上限、深夜专属上限、遗物格数。
 //   ③ 局内武器词条栏（weaponAffixes）：按对当前输出的有效倍率排序，数量步进，受上限约束。
 //   ④ 遗物栏：3 或 6 张卡，每张二选一——官方固定词条遗物（fixedRelics）或自组
@@ -24,7 +28,9 @@
 // **两端同一口径**（macOS：RelicCore/BuffLoadout.swift；数据以 stackingRules / notes.ranking 为准）：
 //   · 生效判定一律用 buffs[].appliesTo[输出类别]（战技 → skill，含子弹段；魔法 → sorcery；祷告 → incantation）。
 //     conditional 看 requires：hand / attackWeaponTypes（法术按施法器）/ physicalType 自动判定，subCategoriesAny
-//     用 attackIndex 判定（部分段命中按 1＋(倍率−1)×命中段占比近似），attackContexts 用「攻击情境」勾选，
+//     按**当前勾选的段**逐段判定（每段 hits[].subCategories，法术再并上 attackIndex 的 magicSubCategories 流派；
+//     每个伤害类型 1＋(倍率−1)×命中段相对值占比，全中＝全额、全不中＝不生效），attackContexts 用「攻击情境」勾选
+//     （其中蓄力法术 / 蓄力战技 / 蓄力强攻击三项由「蓄力」开关派生），
 //     imbuedWeaponOnly / attachedWeaponOnly / requiresGoodsIds / 认不出的键要用户确认。
 //   · 作用对象只留 self / ally（selfAllyPair 的 Allies 那一行不算施放者自己）；direction=decrease 一律不计入。
 //   · activation ≠ passive 与要确认的条件默认不计入：占槽位的栏（武器词条、遗物、护符、当前武器固有）放进来
@@ -37,8 +43,8 @@
 //     （同增幅取 ID 小的），不选条件型、叠层与累积阶梯。
 // 配置部分的文案串全部集中在下方 TEXT 常量表，与 macOS 端 LoadoutText.table 是同一张表（点号路径逐键对照，
 // 两端测试都校验同一个摘要）。原样保留的输出手段／分段命中／伤害构成／底部原文折叠沿用旧版的行内文案，不在此表；
-// 例外是 v3 新增的武器来源标记（weaponSource.*）与输出手段的类型开关／检索框文案（meansKind.* / meansCard.* /
-// meansSearch.* / meansSpellFlatNote），三端同名同值，也放在表里。
+// 例外是 v3 新增的武器来源标记（weaponSource.*）、输出手段的类型开关／检索框文案（meansKind.* / meansCard.* /
+// meansSearch.* / meansSpellFlatNote）与 v4 的蓄力开关（chargedToggle.*），三端同名同值，也放在表里。
 // 本页只做「相对伤害构成」：没有强化等级、能力值补正与 AttackElementCorrectParam，绝对伤害不在范围内。
 (function (root) {
   "use strict";
@@ -116,6 +122,17 @@
     "initialAttack", "horsebackAttack", "twoHanded", "dualWield"
   ];
 
+  // 由「蓄力」开关派生的三项攻击情境（enums.attackContext 的 fromSubCategories 100 / 111 / 110）：
+  // 不再单独勾选，开关开（且这一招有蓄力段）＝三项同时成立，关＝都不成立。
+  var CHARGED_CONTEXTS = ["chargedHeavyAttack", "chargedSkill", "chargedSpell"];
+
+  // 蓄力分侧（hits[].chargeBranch，usage.蓄力段（v4））：开关开取 charged / both，关取 uncharged / both，
+  // partial（中间蓄力阶段的放招）两侧都不取。写成显式的保留集，不用「不是 charged 就算关侧」。
+  var CHARGE_SIDE_KEEP = {
+    on: { charged: true, both: true },
+    off: { uncharged: true, both: true }
+  };
+
   // 汇总的四栏（小计按这四栏算；「其它增益」含当前武器固有）。
   var COLUMN_ORDER = ["weaponAffix", "relic", "accessory", "other"];
 
@@ -148,6 +165,14 @@
     meansCard: { subtitle: "搜索战技、魔法或祷告（中文／英文名都可）；战技再选一把武器" },
     meansSearch: { placeholder: "搜索战技 / 魔法 / 祷告名称", empty: "没有匹配的输出手段" },
     meansSpellFlatNote: "魔法／祷告的段只用固定值",
+    // 分段命中 · 「蓄力」开关（skills schemaVersion 4 的 hits[].chargeBranch）：放在「专注值不足版」开关旁。
+    // 没有蓄力段的招禁用开关并显示 unavailable，只有蓄力段的招强制打开并显示 onlyCharged。三端同名同值。
+    chargedToggle: {
+      label: "蓄力",
+      hint: "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加",
+      unavailable: "这一招没有蓄力段",
+      onlyCharged: "这一招只有蓄力段"
+    },
     // 输出手段 · 武器选择器（skills schemaVersion 3 的 weaponSources：固定战技 / 局内战技池）
     weaponSource: {
       fixed: "固定战技",
@@ -473,7 +498,7 @@
     brief: {
       appliesTo: "生效判定一律按数据的 appliesTo：战技（含战技射出的子弹段）看 skill、魔法看 sorcery、祷告看 incantation。conditional 的机读条件里，持武器的手、出手武器类别（法术按施法器：魔法＝手杖、祷告＝圣印记）、物理攻击类型按当前输出自动判定；子类别按 attackIndex 对所选战技／法术判定；攻击情境用上方的情境勾选；附魔武器限定、需同时使用道具等无法自动判定的要手动确认。",
       formula: "总倍率＝按互斥键去重后，全部计入条目在每个伤害类型上的倍率连乘，再按伤害构成占比加权；攻击力倍率层与最终伤害倍率层相乘，物理子类型倍率只乘对应那一部分；各栏小计同法只算本栏；攻击力加算（点数）只展示、不进连乘。",
-      partial: "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、没有逐段对应，所以占比不随上方的分段勾选变化。",
+      partial: "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，所以蓄力类增益在蓄力施放下拿到全额。",
       direction: "减益不计入：direction=decrease 的 {0} 条（附加异常时的武器伤害惩罚、降低敌人攻击力等）按 notes.ranking 第②步一律不进乘积；mixed（有增有减，例如附加属性时物理减、属性加）照常计入。",
       target: "作用对象按 notes.ranking 第①步只保留 self 与 ally（ally＝自己与／或附近队友）；同一战技成对的 Self／Allies 两行（selfAllyPair）算施放者自己时只计 Self 那一行，Allies 那一行只在队友施放时计入。",
       activation: "activation 不是 passive 的条目（条件型／发动型）与需要手动确认的条件，默认不计入：占槽位的栏（武器词条、遗物、护符、当前武器固有）放进来≠条件成立，要单独勾选「条件成立」；不占槽位的「其它增益」栏里勾选本身就是确认；叠层填层数、累积阶梯选层同样算确认。",
@@ -519,16 +544,19 @@
 
   // ---- 选段（usage.选段（必读））---------------------------------------
 
-  // 本页按 skills schemaVersion 3 取段：weapons[].skillVariants（逐 (战技, 武器) 实解的动作套下标）、
-  // skills[].weaponSources（固定 / 局内战技池）与按 TAE 核实过的 variants[].atkIds。旧数据缺这些字段，
-  // 局内战技池的武器取不到段、不打出的段也没剔除，页面照样渲染但要提示结果不可信。
-  var SKILLS_SCHEMA_MIN = 3;
+  // 本页按 skills schemaVersion 4 取段：weapons[].skillVariants（逐 (战技, 武器) 实解的动作套下标）、
+  // skills[].weaponSources（固定 / 局内战技池）与按 TAE 核实过的 variants[].atkIds（v3），再加 v4 的
+  // hits[].subCategories（子类别限定的增益逐段判定）、hits[].chargeBranch（蓄力开关分侧）与法术段的
+  // notInvoked（施法动画没有槽位会发射的段）。旧数据缺这些字段：局内战技池的武器取不到段、不打出的段
+  // 没剔除、蓄力开关不可用、子类别限定判不准，页面照样渲染但要提示结果不可信。
+  var SKILLS_SCHEMA_MIN = 4;
 
   function skillsSchemaWarning(skillsData) {
     var version = skillsData ? skillsData.schemaVersion : null;
     if (num(version) >= SKILLS_SCHEMA_MIN) return "";
     return "战技数据是 schemaVersion " + (version == null ? "（缺失）" : version) + "：本页按 v" + SKILLS_SCHEMA_MIN +
-      " 的 skillVariants / weaponSources / TAE 核实过的动作套取段，旧数据缺这些字段，结果不可信";
+      " 的 skillVariants / weaponSources / TAE 核实过的动作套、逐段子类别（subCategories）与蓄力分侧（chargeBranch）" +
+      "取段，旧数据缺这些字段，结果不可信";
   }
 
   // 这把武器用这个战技时的 variants 下标：一律读 weapons[].skillVariants[战技 ID]（v3，覆盖武器
@@ -554,8 +582,10 @@
     return variants[index] || null;
   }
 
-  // 直接从 hits[] 取段时先剔掉 TAE 判定为永远打不出的段（hits[].notInvoked，v3）：它们不在任何
-  // variants[].atkIds 里，只留在 hits[] 备查。法术不做 TAE 过滤，这一步对法术是空操作。
+  // 直接从 hits[] 取段时先剔掉 TAE 判定为永远打不出的段（hits[].notInvoked）：战技段（v3）不在任何
+  // variants[].atkIds 里，只留在 hits[] 备查；法术段（v4）是施法动画没有任何槽位会发射的段
+  // （notInvokedReason=noCastSlot，例：兽爪 68201 / 68206、死亡雷击 50402 / 50407）。法术没有 variants，
+  // 页面直接读 spells[].hits，所以法术的取段一律先过这一步。
   function invokedHits(hits) {
     return (hits || []).filter(function (hit) { return hit && hit.notInvoked !== true; });
   }
@@ -593,15 +623,71 @@
     return hit.fpBoth === true || Boolean(hit.noFp) === Boolean(noFp);
   }
 
+  // ---- 蓄力开关（usage.蓄力段（v4），hits[].chargeBranch）----------------------------
+
+  function chargeBranchOf(hit) {
+    return hit && typeof hit.chargeBranch === "string" ? hit.chargeBranch : "";
+  }
+
+  // 这一招在当前「专注值不足版」一侧能不能用蓄力开关：先按 ① 取段（去掉 noDamage）、② 专注值开关同侧，
+  // 剩下的段一段 chargeBranch=charged 都没有 → 不适用（applicable=false，取 ② 的全部段）；有 → 适用。
+  // 「不适用」必须在 ② 之后判（王者嘶吼 1031 的无 FP 侧只剩两侧共用的吼叫本体）。
+  // onlyCharged：适用但关侧（uncharged / both）一段都没有——开关强制打开（本版本数据里没有这种招，按规则兜底）。
+  function chargeInfo(hits, noFp) {
+    var side = (hits || []).filter(function (hit) { return hit && !hit.noDamage && hitOnSide(hit, noFp); });
+    var applicable = side.some(function (hit) { return chargeBranchOf(hit) === "charged"; });
+    var offSide = applicable && side.some(function (hit) { return CHARGE_SIDE_KEEP.off[chargeBranchOf(hit)] === true; });
+    return { applicable: applicable, onlyCharged: applicable && !offSide };
+  }
+
+  // 开关实际生效的一侧：不适用 → 关（三项蓄力情境都不成立）；只有蓄力段 → 开；否则按用户的开关。
+  function effectiveCharged(info, charged) {
+    if (!info || !info.applicable) return false;
+    return info.onlyCharged || charged === true;
+  }
+
+  // 这一段在「蓄力」开关的这一侧吗：不适用时一律算；适用时开取 charged / both、关取 uncharged / both，
+  // partial（伟哉卡利亚的一段蓄力放招）与缺 chargeBranch 的段两侧都不取。
+  function hitOnChargeSide(hit, info, chargedOn) {
+    if (!hit) return false;
+    if (!info || !info.applicable) return true;
+    return (chargedOn ? CHARGE_SIDE_KEEP.on : CHARGE_SIDE_KEEP.off)[chargeBranchOf(hit)] === true;
+  }
+
+  // 默认勾选：段入选 ⇔ 带伤害 && (fpBoth || noFp 与专注值开关同侧) && 在蓄力开关这一侧（见 hitOnChargeSide）。
+  // charged 是用户的开关值（不适用 / 只有蓄力段时按 effectiveCharged 改写）；返回按原顺序的段。
+  function defaultSelection(hits, noFp, charged) {
+    var info = chargeInfo(hits, noFp);
+    var on = effectiveCharged(info, charged);
+    return (hits || []).filter(function (hit) {
+      return hit && !hit.noDamage && hitOnSide(hit, noFp) && hitOnChargeSide(hit, info, on);
+    });
+  }
+
+  // 攻击情境：用户勾的（去掉三项蓄力情境）＋ 蓄力开关派生的三项（开＝都成立）。不改入参。
+  function chargedContexts(contexts, chargedOn) {
+    var out = {};
+    Object.keys(contexts || {}).forEach(function (key) {
+      if (CHARGED_CONTEXTS.indexOf(key) !== -1) return;
+      if (contexts[key] === true) out[key] = true;
+    });
+    if (chargedOn) CHARGED_CONTEXTS.forEach(function (key) { out[key] = true; });
+    return out;
+  }
+
   // 分段列表工具条的三个动作，返回完整的 override 表（reset＝清空，退回默认规则）。
-  // 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍；
-  // 两侧共用的 fpBoth 段在哪一侧都勾上。
-  function hitOverridesFor(hits, action, noFp) {
+  // 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代、蓄力与不蓄力互为替代，两边一起勾会把
+  // 同一击算两遍；两侧共用的 fpBoth / chargeBranch=both 段在哪一侧都勾上。charged＝用户的蓄力开关。
+  function hitOverridesFor(hits, action, noFp, charged) {
     var overrides = {};
     if (action === "reset") return overrides;
+    var picked = {};
+    if (action === "all") {
+      defaultSelection(hits, noFp, charged).forEach(function (hit) { picked[hit.atkId] = true; });
+    }
     (hits || []).forEach(function (hit) {
       if (!hit || hit.noDamage) return;
-      overrides[hit.atkId] = action === "all" && hitOnSide(hit, noFp);
+      overrides[hit.atkId] = picked[hit.atkId] === true;
     });
     return overrides;
   }
@@ -1003,21 +1089,55 @@
 
   // ---- 输出上下文 ------------------------------------------------------
 
+  // 法术的流派子类别（Magic.subCategory1..2）：buffs attackIndex.spells[id].magicSubCategories。
+  // 子类别限定按段判定时，法术的每一段再并上它（usage.蓄力段（v4））；战技没有这一项。
+  function magicSubCategoriesOf(attackIndex, mode, meansId) {
+    if (mode === "skill" || meansId == null) return [];
+    var one = attackIndex && attackIndex.spells ? attackIndex.spells[String(meansId)] : null;
+    return one && Array.isArray(one.magicSubCategories) ? one.magicSubCategories.slice() : [];
+  }
+
+  // 当前勾选的段折成「逐段判定」用的清单：只收在任一伤害类型上相对值 > 0 的段（与伤害构成同一个
+  // hitContribution），每段带自己的子类别（hits[].subCategories ∪ 法术流派）与九类相对值。
+  function segmentsFor(hits, weapon, isSpell, extraSubs) {
+    var extra = Array.isArray(extraSubs) ? extraSubs : [];
+    var segments = [];
+    (hits || []).forEach(function (hit) {
+      if (!hit || hit.noDamage) return;
+      var parts = hitContribution(hit, weapon, isSpell);
+      var total = TYPE_KEYS.reduce(function (sum, key) { return sum + parts[key]; }, 0);
+      if (!(total > 0)) return;
+      var subs = Array.isArray(hit.subCategories) ? hit.subCategories.slice() : [];
+      extra.forEach(function (sub) { if (subs.indexOf(sub) === -1) subs.push(sub); });
+      segments.push({ atkId: hit.atkId, subs: subs, parts: parts, total: total });
+    });
+    return segments;
+  }
+
   // 把「当前输出」折成判定用的只读对象。meansId 是战技 / 法术的 id（查 attackIndex 用）。
+  // hits＝当前勾选的段（与 shares 同一批）：给了就按段判定子类别限定（out.segments）；没给（旧调用、
+  // 只做查阅）时 segments 为 null，子类别限定只能按 attackIndex 做说明、不决定数值。
   function makeOutput(options, buffsData) {
     var opts = options || {};
     var shares = opts.shares || emptyTypeMap(0);
     var hasComposition = TYPE_KEYS.some(function (key) { return num(shares[key]) > 0; });
     var enums = (buffsData && buffsData.enums) || {};
+    var mode = opts.mode === "sorcery" || opts.mode === "incantation" ? opts.mode : "skill";
+    var meansId = opts.meansId == null ? null : opts.meansId;
+    var attackIndex = (buffsData && buffsData.attackIndex) || null;
+    var weapon = opts.weapon || null;
     return {
-      mode: opts.mode === "sorcery" || opts.mode === "incantation" ? opts.mode : "skill",
-      meansId: opts.meansId == null ? null : opts.meansId,
-      weapon: opts.weapon || null,
+      mode: mode,
+      meansId: meansId,
+      weapon: weapon,
       hand: opts.hand === 2 ? 2 : 1,
       shares: shares,
       hasComposition: hasComposition,
       contexts: opts.contexts || {},
-      attackIndex: (buffsData && buffsData.attackIndex) || null,
+      segments: Array.isArray(opts.hits)
+        ? segmentsFor(opts.hits, mode === "skill" ? weapon : null, mode !== "skill", magicSubCategoriesOf(attackIndex, mode, meansId))
+        : null,
+      attackIndex: attackIndex,
       wepTypeNames: enums.wepType || {},
       subCategoryNames: enums.atkSubCategory || {},
       contextNames: enums.attackContext || {},
@@ -1065,7 +1185,45 @@
     }).join("、") + "]";
   }
 
-  // attackIndex 对所选战技／法术的逐段判定：有交集的段数 / 总段数。拿不到返回 null。
+  // 子类别限定按**当前勾选的段**逐段判定（usage.蓄力段（v4））：一段的子类别与 subs 有交集，这一段才乘。
+  // 返回 { matched, total（段数）, weight（全部类型合计的命中相对值占比）, shares（每个伤害类型的命中占比
+  // s_t = Σ命中段在 t 上的相对值 ÷ Σ全部勾选段在 t 上的相对值）}；没有勾选带伤害的段时返回 null。
+  // 分母为 0 的类型不参与加权（构成占比也是 0），这里填 weight 只为展示。
+  function subCategorySegmentMatch(out, subs) {
+    var segments = out && Array.isArray(out.segments) ? out.segments : null;
+    if (!segments || !segments.length) return null;
+    var all = emptyTypeMap(0);
+    var hit = emptyTypeMap(0);
+    var matched = 0;
+    var allTotal = 0;
+    var hitTotal = 0;
+    segments.forEach(function (segment) {
+      var ok = (segment.subs || []).some(function (sub) { return subs.indexOf(sub) !== -1; });
+      if (ok) matched += 1;
+      allTotal += segment.total;
+      if (ok) hitTotal += segment.total;
+      TYPE_KEYS.forEach(function (type) {
+        all[type] += segment.parts[type];
+        if (ok) hit[type] += segment.parts[type];
+      });
+    });
+    var weight = allTotal > 0 ? hitTotal / allTotal : 0;
+    var shares = emptyTypeMap(weight);
+    TYPE_KEYS.forEach(function (type) {
+      if (all[type] > 0) shares[type] = hit[type] / all[type];
+    });
+    return { matched: matched, total: segments.length, weight: weight, shares: shares };
+  }
+
+  // 「部分段命中」的说明：TEXT.requireSubsPartial 冒号前那半句（「所选X只有 m/n 段带子类别 […]」）。
+  // 冒号后的「按段数近似加权、与分段勾选无关」是 v3 口径，数值已改为按勾选的段逐段加权（brief.partial），
+  // 这里不再引用——键值保持三端同文，不单独改。
+  function subsPartialText(clsZh, matched, total, label) {
+    return fmt(TEXT.requireSubsPartial, clsZh, matched, total, label).split("：")[0];
+  }
+
+  // attackIndex 对所选战技／法术的整招统计：有交集的段数 / 总段数。拿不到返回 null。
+  // v4 起只在没有勾选带伤害的段时做说明（不决定数值），逐段判定见 subCategorySegmentMatch。
   function subCategoryMatch(out, subs) {
     var idx = (out && out.attackIndex) || {};
     var table = out && out.mode === "skill" ? idx.skills : idx.spells;
@@ -1085,15 +1243,16 @@
 
   // ---- appliesTo 判定（notes.appliesTo）--------------------------------
 
-  // 返回 { value, state, reasons, needs, notes, weight, restrictedType, requirements }：
+  // 返回 { value, state, reasons, needs, notes, weight, shares, restrictedType, requirements }：
   //   state = yes（生效）/ no（不生效）/ context（要勾选攻击情境）/ pending（要用户确认）
-  //   weight ∈ (0, 1]：subCategoriesAny 部分段命中时按段数加权（近似，见 brief.partial）
+  //   weight ∈ (0, 1]：subCategoriesAny 只有部分勾选段命中时＝命中段的相对值占比（全部类型合计，标签与说明用）
+  //   shares：同一情形下每个伤害类型自己的命中占比（entryTables 按它逐类型加权，见 brief.partial）；全中为 null
   //   restrictedType：requires.physicalType 时倍率只落在那一个物理通道
   //   requirements：逐项 {key, text, state: met / unmet / partial / needsUser}（详情展示用）
   function appliesVerdict(entry, out) {
     var cls = out && out.mode ? out.mode : "skill";
     var verdict = {
-      value: "missing", state: "yes", reasons: [], needs: [], notes: [], weight: 1,
+      value: "missing", state: "yes", reasons: [], needs: [], notes: [], weight: 1, shares: null,
       restrictedType: null, requirements: [], contexts: []
     };
     var value = entry && entry.appliesTo ? entry.appliesTo[cls] : null;
@@ -1154,20 +1313,37 @@
       } else if (key === "subCategoriesAny") {
         var subs = Array.isArray(needValue) ? needValue : [];
         var label = subCategoryLabel(out, subs);
-        var match = subCategoryMatch(out, subs);
-        if (!match) {
-          need(key, fmt(TEXT.requireSubsUnknown, clsZh, label));
-        } else if (match.matched === 0) {
-          text = fmt(TEXT.requireSubsFail, clsZh, label);
-          verdict.requirements.push({ key: key, text: text, state: "unmet" });
-          fails.push(text);
-        } else if (match.matched < match.total) {
-          verdict.weight = match.matched / match.total;
-          text = fmt(TEXT.requireSubsPartial, clsZh, match.matched, match.total, label);
-          verdict.requirements.push({ key: key, text: text, state: "partial", share: verdict.weight });
-          verdict.notes.push(text);
+        var bySegment = subCategorySegmentMatch(out, subs);
+        if (bySegment) {
+          // 按当前勾选的段：全中＝全额，全不中＝不生效，部分＝逐类型按命中段的相对值占比加权。
+          if (bySegment.matched === 0) {
+            text = fmt(TEXT.requireSubsFail, clsZh, label);
+            verdict.requirements.push({ key: key, text: text, state: "unmet" });
+            fails.push(text);
+          } else if (bySegment.matched < bySegment.total) {
+            verdict.weight = bySegment.weight;
+            verdict.shares = bySegment.shares;
+            text = subsPartialText(clsZh, bySegment.matched, bySegment.total, label);
+            verdict.requirements.push({ key: key, text: text, state: "partial", share: verdict.weight, shares: verdict.shares });
+            verdict.notes.push(text);
+          } else {
+            verdict.requirements.push({ key: key, text: fmt(TEXT.requireSubsAll, clsZh, bySegment.total, label), state: "met" });
+          }
         } else {
-          verdict.requirements.push({ key: key, text: fmt(TEXT.requireSubsAll, clsZh, match.total, label), state: "met" });
+          // 没有勾选带伤害的段（构成为空、算不出倍率）：只按 attackIndex 的整招统计做说明，不决定数值——
+          // 整招都不带这类子类别才判不生效，其余按全额留着（没有构成时本来就不出数）。
+          var match = subCategoryMatch(out, subs);
+          if (!match) {
+            need(key, fmt(TEXT.requireSubsUnknown, clsZh, label));
+          } else if (match.matched === 0) {
+            text = fmt(TEXT.requireSubsFail, clsZh, label);
+            verdict.requirements.push({ key: key, text: text, state: "unmet" });
+            fails.push(text);
+          } else if (match.matched < match.total) {
+            verdict.requirements.push({ key: key, text: subsPartialText(clsZh, match.matched, match.total, label), state: "partial" });
+          } else {
+            verdict.requirements.push({ key: key, text: fmt(TEXT.requireSubsAll, clsZh, match.total, label), state: "met" });
+          }
         }
       } else if (key === "attackContexts") {
         var wanted = Array.isArray(needValue) ? needValue : [];
@@ -1196,6 +1372,7 @@
       verdict.reasons = fails.concat(detail.reason ? [detail.reason] : []);
       verdict.needs = [];
       verdict.weight = 1;
+      verdict.shares = null;
       verdict.notes = [];
       return verdict;
     }
@@ -1332,17 +1509,27 @@
     return copy;
   }
 
+  // 子类别限定的加权：verdict.shares（逐类型）优先，其次 verdict.weight（统一的一个数）。
+  function verdictWeights(verdict) {
+    if (!verdict) return 1;
+    if (verdict.shares && typeof verdict.shares === "object") return verdict.shares;
+    return verdict.weight;
+  }
+
   // 这一条在 9 个伤害类型上的倍率表与加算表。
-  //   weight < 1（子类别只有部分段命中）：每个类型按 1 + (m − 1) × weight 近似，加算 × weight；
+  //   weight（子类别只有部分勾选段命中）：可以是逐类型的占比表 {type: s_t}（按段判定，v4）或统一的一个数；
+  //     s_t < 1 的类型按 1 + (m − 1) × s_t，加算 × s_t（brief.partial）；
   //   copies > 1（stackSelf 多份）：再按份数乘方，加算 × 份数。
   function entryTables(entry, plan, restrictedType, weight, stacks, copies) {
     var rates = entry.stackInput ? stackedRates(entry, stacks) : entry.rates;
     if (rates === null) return { table: emptyTypeMap(1), flat: emptyTypeMap(0) };
     var table = multiplierMap(rates, plan, null, restrictedType || entry.scopeRestricted || null);
     var flat = flatMap(rates, plan, null);
-    var w = typeof weight === "number" && weight >= 0 && weight < 1 ? weight : 1;
+    var perType = weight && typeof weight === "object" ? weight : null;
     var n = typeof copies === "number" && copies > 1 ? Math.floor(copies) : 1;
     TYPE_KEYS.forEach(function (type) {
+      var raw = perType ? perType[type] : weight;
+      var w = typeof raw === "number" && raw >= 0 && raw < 1 ? raw : 1;
       if (w < 1) {
         table[type] = 1 + (table[type] - 1) * w;
         flat[type] = flat[type] * w;
@@ -1486,7 +1673,7 @@
       item.reasons = reasons || [];
       if (state !== "counted" && state !== "neutral") {
         // 不计入的也给出「单独看这一条」的倍率，列表展示用（不进汇总）。
-        var probe = entryTables(entry, env.plan, verdict.restrictedType, verdict.weight, stacks, 1);
+        var probe = entryTables(entry, env.plan, verdict.restrictedType, verdictWeights(verdict), stacks, 1);
         item.table = probe.table;
         item.flatTable = probe.flat;
         item.multiplier = out && out.hasComposition ? weightedMultiplier(probe.table, out.shares) : null;
@@ -1546,7 +1733,7 @@
     }
     item.countedCopies = countedCopies;
     item.notes = item.notes.concat(item.stackWarnings);
-    var tables = entryTables(entry, env.plan, verdict.restrictedType, verdict.weight, stacks, countedCopies);
+    var tables = entryTables(entry, env.plan, verdict.restrictedType, verdictWeights(verdict), stacks, countedCopies);
     item.table = tables.table;
     item.flatTable = tables.flat;
     item.multiplier = out && out.hasComposition ? weightedMultiplier(tables.table, out.shares) : null;
@@ -3038,13 +3225,14 @@
     });
     ((skillsData && skillsData.spells) || []).forEach(function (spell) {
       if (!Array.isArray(spell.hits) || !spell.hits.length) return;
-      if (!hasAnyDamage(spell.hits, null, true)) spellCount += 1;
+      if (!hasAnyDamage(invokedHits(spell.hits), null, true)) spellCount += 1;
     });
     return { skills: skillCount, spells: spellCount };
   }
 
   // 战技 + 法术的统一检索条目：至少有一段能算出非 0 相对值才收录。战技还要至少有一把武器——
   // v3 把局内战技池也算进 weaponIds 之后，没有武器的只剩 1 无战技 / 9999 ？？？ 两个占位条目。
+  // 法术只看打得出的段（v4 起法术段也标 notInvoked）。
   function buildMeansItems(skillsData) {
     var items = [];
     ((skillsData && skillsData.skills) || []).forEach(function (skill) {
@@ -3064,7 +3252,7 @@
     });
     ((skillsData && skillsData.spells) || []).forEach(function (spell) {
       if (!Array.isArray(spell.hits) || !spell.hits.length) return;
-      if (!hasAnyDamage(spell.hits, null, true)) return;
+      if (!hasAnyDamage(invokedHits(spell.hits), null, true)) return;
       var spellKind = spellKindOf(spell);
       items.push({
         kind: spellKind,
@@ -3325,9 +3513,10 @@
     selection: null,      // { kind, id, weaponId }
     hand: 1,
     noFp: false,
+    charged: false,       // 「蓄力」开关（用户的选择；不适用 / 只有蓄力段时按 effectiveCharged 改写）
     hitOverrides: {},     // atkId → true/false
     config: emptyConfig(),
-    contexts: {},         // 用户勾选的攻击情境
+    contexts: {},         // 用户勾选的攻击情境（不含由蓄力开关派生的三项）
     showInactive: false,
     waFilter: "weapon",   // weapon / all
     waQuery: "",
@@ -3427,23 +3616,43 @@
     return [];
   }
 
-  // 默认：与「使用专注值不足版本」开关同侧的段全勾，另一侧全不勾，两侧共用的 fpBoth 段恒勾；
-  // 用户手动勾选写进 overrides。
-  function hitEnabled(hit) {
+  // 蓄力开关对当前这一招（当前专注值一侧）适不适用、是不是只有蓄力段。
+  function currentChargeInfo() {
+    return chargeInfo(currentHits(), state.noFp);
+  }
+
+  // 蓄力开关实际生效的一侧（派生三项蓄力攻击情境、默认勾选都看它）。
+  function currentCharged() {
+    return effectiveCharged(currentChargeInfo(), state.charged);
+  }
+
+  // 默认勾选的段（atkId → true）：与「使用专注值不足版本」「蓄力」两个开关同侧的段（defaultSelection）。
+  function defaultEnabledIds() {
+    var ids = {};
+    defaultSelection(currentHits(), state.noFp, state.charged).forEach(function (hit) { ids[hit.atkId] = true; });
+    return ids;
+  }
+
+  // 默认：两个开关同侧的段全勾，另一侧全不勾，两侧共用的 fpBoth / chargeBranch=both 段恒勾；
+  // 用户手动勾选写进 overrides。defaults 可预先算好传进来（逐行渲染时省得重算）。
+  function hitEnabled(hit, defaults) {
     if (!hit || hit.noDamage) return false;
     var override = state.hitOverrides[hit.atkId];
     if (override === true || override === false) return override;
-    return hitOnSide(hit, state.noFp);
+    var ids = defaults && typeof defaults === "object" ? defaults : defaultEnabledIds();
+    return ids[hit.atkId] === true;
   }
 
   function selectedHits() {
-    return currentHits().filter(hitEnabled);
+    var defaults = defaultEnabledIds();
+    return currentHits().filter(function (hit) { return hitEnabled(hit, defaults); });
   }
 
   function currentComposition() {
     return composition(selectedHits(), currentWeapon(), currentMode() !== "skill");
   }
 
+  // 当前输出：构成占比与逐段判定用同一批勾选段（hits）；三项蓄力攻击情境由蓄力开关派生。
   function currentOutput(comp) {
     var composed = comp || currentComposition();
     return makeOutput({
@@ -3452,7 +3661,8 @@
       weapon: currentWeapon(),
       hand: state.hand,
       shares: composed.shares,
-      contexts: state.contexts
+      hits: selectedHits(),
+      contexts: chargedContexts(state.contexts, currentCharged())
     }, state.buffsData);
   }
 
@@ -3693,6 +3903,46 @@
     return "命中段已按 TAE 动画事件核实：参数表里有、但本作动画打不出的段不列出（依据见页面底部「命中段已按 TAE 核实」）。";
   }
 
+  // 分段行上的蓄力标记（hits[].chargeBranch）：只在蓄力开关对这一招适用时才有意义，数据只在可蓄力条目上写。
+  function chargeMarksHtml(hit) {
+    var branch = chargeBranchOf(hit);
+    if (branch === "charged") {
+      return ["<span title='蓄力放法才打出的段（数据 hits[].chargeBranch=charged），「蓄力」开关打开时计入'>" +
+        pill(TEXT.chargedToggle.label, "purple") + "</span>"];
+    }
+    if (branch === "both") {
+      return ["<span title='蓄力与不蓄力两种放法都会打出这一段（数据 hits[].chargeBranch=both），开关在哪一侧都计入'>" +
+        pill("蓄力／不蓄力共用", "gray") + "</span>"];
+    }
+    if (branch === "partial") {
+      return ["<span title='中间蓄力阶段的放招（数据 hits[].chargeBranch=partial），与轻按、满蓄力三者互斥：开关两侧都不默认勾选，要算这一档请手动勾'>" +
+        pill("一段蓄力", "amber") + "</span>"];
+    }
+    return [];
+  }
+
+  // 「蓄力」开关：放在「专注值不足版」开关旁。没有蓄力段 → 禁用并写 unavailable；只有蓄力段 → 强制打开并写
+  // onlyCharged；其余按用户的开关（换招时重置为关）。
+  function chargedToggleHtml(info) {
+    var applicable = Boolean(info && info.applicable);
+    var forced = applicable && info.onlyCharged;
+    var on = effectiveCharged(info, state.charged);
+    var note = !applicable ? TEXT.chargedToggle.unavailable : (forced ? TEXT.chargedToggle.onlyCharged : "");
+    return "<label class='switch-control ranker-charged" + (applicable && !forced ? "" : " is-disabled") + "' " +
+      "title='" + esc(TEXT.chargedToggle.hint) + "'>" +
+      "<input type='checkbox' data-testid='ranker-charged'" + (on ? " checked" : "") +
+      (applicable && !forced ? "" : " disabled") + "><span class='switch-track'></span>" +
+      "<span>" + esc(TEXT.chargedToggle.label) + "</span>" +
+      (note ? "<span class='ranker-charged-note' data-testid='ranker-charged-note'>" + esc(note) + "</span>" : "") +
+      "</label>";
+  }
+
+  // 当前法术在 hits[] 里留着、但施法动画不会发射的段数（v4 的 notInvoked）。
+  function spellNotInvokedCount() {
+    var spell = currentSpell();
+    return spell ? (spell.hits || []).filter(function (hit) { return hit && hit.notInvoked === true; }).length : 0;
+  }
+
   function hitsHtml() {
     var hits = currentHits();
     var weapon = currentWeapon();
@@ -3714,18 +3964,20 @@
     }
 
     var hasNoFp = hits.some(function (hit) { return hit.noFp === true; });
-    var onCount = hits.filter(hitEnabled).length;
+    var defaults = defaultEnabledIds();
+    var onCount = hits.filter(function (hit) { return hitEnabled(hit, defaults); }).length;
     var variant = skill ? selectVariant(skill, weapon) : null;
 
     var rows = hits.map(function (hit) {
       var disabled = hit.noDamage === true;
-      var on = hitEnabled(hit);
+      var on = hitEnabled(hit, defaults);
       var marks = [];
       if (hit.noFp) marks.push(pill("专注值不足版", "amber"));
       if (hit.fpBoth) {
         marks.push("<span title='正常版与专注值不足版的动画都会打出这一段（数据 hits[].fpBoth，按 TAE 标出），开关在哪一侧都计入'>" +
           pill("两版共用", "gray") + "</span>");
       }
+      marks = marks.concat(chargeMarksHtml(hit));
       if (hit.isBullet) marks.push(pill("子弹", "blue"));
       if (hit.noDamage) marks.push(pill("只挂状态", "gray"));
       if (hit.addBaseAtk) marks.push(pill("额外加一份攻击力", "purple"));
@@ -3743,7 +3995,7 @@
 
     var toolbar = "<div class='ranker-hits-toolbar'>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='all' " +
-      "title='只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍（两版共用的段两侧都勾）'>" +
+      "title='只勾当前这一侧的段：正常版与专注值不足版、蓄力与不蓄力都互为替代，两边一起勾会把同一击算两遍（两侧共用的段两侧都勾）'>" +
       "全选（当前版本）</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='none'>全不选</button>" +
       "<button class='button button--ghost' type='button' data-ranker-hits='reset'>恢复默认</button>" +
@@ -3754,6 +4006,7 @@
           (state.noFp ? " checked" : "") + "><span class='switch-track'></span>" +
           "<span>使用专注值不足版本</span></label>"
         : "") +
+      chargedToggleHtml(currentChargeInfo()) +
       "<span class='ranker-hits-count' data-testid='ranker-hits-count'>已勾选 " + onCount +
       " / " + hits.length + " 段</span></div>";
 
@@ -3761,7 +4014,10 @@
       ? "<p class='ranker-note'>动作套：" + esc(variant.ctxZh || variant.ctx || "默认") +
         "（来源 " + esc(variant.via === "behavior" ? "BehaviorParam_PC 实解" : "按 ctx 单选") +
         "，共 " + variant.atkIds.length + " 段）。" + esc(taeNote(skill)) + "</p>"
-      : "";
+      : (isSpell && spellNotInvokedCount() > 0
+        ? "<p class='ranker-note'>施法动画不会发射的段（数据 hits[].notInvoked，按施法槽核实）不列出：这一招有 " +
+          spellNotInvokedCount() + " 段。</p>"
+        : "");
 
     return "<div class='section-heading'><div class='section-icon'>≡</div>" +
       "<div><h2>分段命中</h2><p>勾掉不打的段即可（例如只算刀气那一段）</p></div></div>" +
@@ -3833,6 +4089,14 @@
     }).join("");
     var contexts = availableContexts(state.buffsData, (state.index && state.index.entries) || [], out.mode);
     var chips = contexts.map(function (item) {
+      // 蓄力法术 / 蓄力战技 / 蓄力强攻击三项由「蓄力」开关派生（out.contexts），这里只显示、不能单独勾。
+      if (CHARGED_CONTEXTS.indexOf(item.key) !== -1) {
+        var derivedOn = out.contexts && out.contexts[item.key] === true;
+        return "<button class='ranker-chip ranker-chip--context ranker-chip--derived" + (derivedOn ? " is-on" : "") + "' type='button' " +
+          "disabled aria-pressed='" + (derivedOn ? "true" : "false") + "' title='" + esc(TEXT.chargedToggle.hint) + "' " +
+          "data-ranker-context-derived='" + esc(item.key) + "'>" +
+          esc(item.zh) + "<span class='ranker-chip-count'>" + item.count + "</span></button>";
+      }
       var on = state.contexts[item.key] === true;
       return "<button class='ranker-chip ranker-chip--context" + (on ? " is-on" : "") + "' type='button' " +
         "data-ranker-context='" + esc(item.key) + "' aria-pressed='" + (on ? "true" : "false") + "'>" +
@@ -4531,8 +4795,9 @@
       pill(counts.taeVerified === true ? "已核实" : "未核实", counts.taeVerified === true ? "green" : "amber") +
       pill("原文", "gray") + "</summary>" +
       "<div class='ranker-details-body'>" +
-      "<p class='ranker-note'>分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
-      "hits[] 里保留的这类段标了 notInvoked，本页不列出。来源：战技数据集 usage「" + esc(TAE_USAGE_KEY) + "」。</p>" +
+      "<p class='ranker-note'>战技的分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
+      "魔法／祷告直接读 hits[]，施法动画没有槽位会发射的段（v4）同样标了 notInvoked。两者本页都不列出。" +
+      "来源：战技数据集 usage「" + esc(TAE_USAGE_KEY) + "」。</p>" +
       "<p class='ranker-raw'>" + strongHtml(zhFpText(text)) + "</p></div></details>";
   }
 
@@ -4550,7 +4815,8 @@
       "<div><dt>skills</dt><dd>schemaVersion " + esc(skills.schemaVersion) + " · 武器 " +
       esc(counts.weapons) + " · 战技 " + esc(counts.skills) + " · 魔法／祷告 " + esc(counts.spells) +
       " · 分段 " + esc(counts.hits) +
-      (counts.taeVerified === true ? " · 命中段已按 TAE 核实（打不出的 " + esc(counts.hitsNotInvoked) + " 段不列出）" : "") +
+      (counts.taeVerified === true ? " · 命中段已按 TAE 核实（打不出的 " +
+        esc(counts.hitsNotInvokedAll != null ? counts.hitsNotInvokedAll : counts.hitsNotInvoked) + " 段不列出）" : "") +
       "</dd></div>" +
       "<div><dt>buffs</dt><dd>schemaVersion " + esc(buffs.schemaVersion) + " · 增益 " +
       esc(buffCounts.buffs) + " 条 · 倍率字段 " + esc((buffs.rateFields || []).length) + " 个</dd></div>" +
@@ -4695,10 +4961,12 @@
 
   // ---- 交互 ------------------------------------------------------------
 
-  // 换输出手段只重置选段；配置保留（同一套配置换一招比较）。
+  // 换输出手段只重置选段；配置保留（同一套配置换一招比较）。蓄力开关重置为关——按可用性改写由
+  // effectiveCharged 负责（没有蓄力段的招恒为关、只有蓄力段的招恒为开）。
   function applySelection(kind, id) {
     state.hitOverrides = {};
     state.noFp = false;
+    state.charged = false;
     state.overviewLimit = PAGE_SIZE;
     if (kind === "skill") {
       var skill = (state.skillsData._skillById || {})[id];
@@ -4758,7 +5026,7 @@
     }
     var hitsAction = target.closest("[data-ranker-hits]");
     if (hitsAction) {
-      state.hitOverrides = hitOverridesFor(currentHits(), hitsAction.dataset.rankerHits, state.noFp);
+      state.hitOverrides = hitOverridesFor(currentHits(), hitsAction.dataset.rankerHits, state.noFp, state.charged);
       renderHits();
       renderResults();
       return;
@@ -4774,6 +5042,8 @@
     var contextChip = target.closest("[data-ranker-context]");
     if (contextChip) {
       var contextKey = contextChip.dataset.rankerContext;
+      // 三项蓄力情境由「蓄力」开关派生，不接受单独勾选（渲染时也不给它们 data-ranker-context）。
+      if (CHARGED_CONTEXTS.indexOf(contextKey) !== -1) return;
       if (state.contexts[contextKey]) delete state.contexts[contextKey];
       else state.contexts[contextKey] = true;
       renderBuild();
@@ -4856,6 +5126,14 @@
     }
     if (target.matches("[data-testid='ranker-nofp']")) {
       state.noFp = Boolean(target.checked);
+      state.hitOverrides = {};
+      renderHits();
+      renderResults();
+      return;
+    }
+    if (target.matches("[data-testid='ranker-charged']")) {
+      // 蓄力开关：换一侧就是换一批段（与专注值开关同理），手动勾选一并清掉；派生的三项攻击情境随之改变。
+      state.charged = Boolean(target.checked);
       state.hitOverrides = {};
       renderHits();
       renderResults();
@@ -5060,6 +5338,8 @@
       TYPES_BY_ELEMENT: TYPES_BY_ELEMENT,
       ELEMENTS: ELEMENTS,
       ATTACK_CONTEXT_ORDER: ATTACK_CONTEXT_ORDER,
+      CHARGED_CONTEXTS: CHARGED_CONTEXTS,
+      CHARGE_SIDE_KEEP: CHARGE_SIDE_KEEP,
       USEFUL_EPSILON: USEFUL_EPSILON,
       EPSILON: EPSILON,
       OUTPUT_CLASSES: OUTPUT_CLASSES,
@@ -5077,7 +5357,15 @@
       invokedHits: invokedHits,
       selectHits: selectHits,
       hitOnSide: hitOnSide,
+      chargeBranchOf: chargeBranchOf,
+      chargeInfo: chargeInfo,
+      effectiveCharged: effectiveCharged,
+      hitOnChargeSide: hitOnChargeSide,
+      defaultSelection: defaultSelection,
+      chargedContexts: chargedContexts,
       hitOverridesFor: hitOverridesFor,
+      chargedToggleHtml: chargedToggleHtml,
+      chargeMarksHtml: chargeMarksHtml,
       physicalTypeForHit: physicalTypeForHit,
       usesMotion: usesMotion,
       hitContribution: hitContribution,
@@ -5105,8 +5393,13 @@
       selectedVariant: selectedVariant,
       availableContexts: availableContexts,
       makeOutput: makeOutput,
+      magicSubCategoriesOf: magicSubCategoriesOf,
+      segmentsFor: segmentsFor,
       outputWepType: outputWepType,
       subCategoryMatch: subCategoryMatch,
+      subCategorySegmentMatch: subCategorySegmentMatch,
+      subsPartialText: subsPartialText,
+      verdictWeights: verdictWeights,
       appliesVerdict: appliesVerdict,
       verdictLabel: verdictLabel,
       activationNote: activationNote,

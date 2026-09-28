@@ -245,6 +245,17 @@
   font-size: 11px;
 }
 
+/* 「蓄力」开关（hits[].chargeBranch）：没有蓄力段 / 只有蓄力段的招禁用，旁边写一句原因。 */
+.ranker-charged.is-disabled {
+  cursor: not-allowed;
+  opacity: .72;
+}
+
+.ranker-charged-note {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
 .ranker-hits-count {
   margin-left: auto;
   color: var(--text-secondary);
@@ -561,6 +572,12 @@
   border-color: color-mix(in srgb, var(--amber) 34%, transparent);
   background: var(--field-soft); /* 回退：不支持 color-mix 时用中性底色 */
   background: color-mix(in srgb, var(--amber) 12%, transparent);
+}
+
+/* 由「蓄力」开关派生的三项攻击情境：只显示，不能单独勾。 */
+.ranker-chip--derived {
+  cursor: default;
+  border-style: dashed;
 }
 
 /* ------------------------------------------------------------ 栏目通用 */

@@ -25,16 +25,22 @@ const cfgIndex = R.buildConfigIndex(buffs, index, catalog, Core);
 const affixById = new Map(catalog.affixes.map((affix) => [affix.effectId, affix]));
 const rules = buffs.slotRules;
 
+// 与页面同一口径的输出：法术先剔掉 notInvoked，默认勾选＝两个开关各自那一侧（专注值不足版默认关；
+// 蓄力默认关，extra.charged 可以打开），构成与逐段判定用同一批段，三项蓄力攻击情境由开关派生。
 function outputFor(kind, id, weaponId, extra) {
   const isSpell = kind !== "skill";
   const weapon = weaponId ? skills._weaponById[weaponId] : null;
   const source = isSpell ? skills._spellById[id] : skills._skillById[id];
-  // 默认勾选＝正常版这一侧（hit.fpBoth || noFp 与开关同侧，开关默认关）。
-  const hits = (isSpell ? source.hits : R.selectHits(source, weapon)).filter((hit) => !hit.noDamage && R.hitOnSide(hit, false));
+  const opts = Object.assign({}, extra || {});
+  const charged = opts.charged === true;
+  delete opts.charged;
+  const pool = isSpell ? R.invokedHits(source.hits) : R.selectHits(source, weapon);
+  const hits = R.defaultSelection(pool, false, charged);
   const comp = R.composition(hits, weapon, isSpell);
+  const on = R.effectiveCharged(R.chargeInfo(pool, false), charged);
   return R.makeOutput(Object.assign({
-    mode: kind, meansId: id, weapon, hand: 1, shares: comp.shares, contexts: {}
-  }, extra || {}), buffs);
+    mode: kind, meansId: id, weapon, hand: 1, shares: comp.shares, hits
+  }, opts, { contexts: R.chargedContexts(opts.contexts || {}, on) }), buffs);
 }
 
 const corpse = outputFor("skill", 1177, 9040000);          // 尸横遍野 + 尸山血海（刀）
@@ -381,24 +387,29 @@ test("appliesTo 分流：数据判 magParamChange=0 的条目对魔法一律不�
   assert.equal(R.appliesVerdict(sorceryBoost, comet).state, "yes");
 });
 
-test("appliesTo 分流：战技的子类别限定按 attackIndex 对所选战技判定（咆哮类没有 112 段就不吃）", () => {
-  const roarEntry = Object.keys(buffs.attackIndex.skills).find((id) => {
-    const sets = buffs.attackIndex.skills[id].subCategorySets;
-    return sets.every((set) => set.subs.indexOf(112) === -1 && set.subs.indexOf(111) === -1);
-  });
-  assert.ok(roarEntry, "应当有不带 112 的战技（野蛮咆哮等）");
-  const roar = R.makeOutput({ mode: "skill", meansId: Number(roarEntry), weapon: null, hand: 1,
-    shares: corpse.shares, contexts: {} }, buffs);
-  assert.equal(R.appliesVerdict(index.byId[8350000], roar).state, "no");
-  const partialId = Object.keys(buffs.attackIndex.skills).find((id) => {
-    const sets = buffs.attackIndex.skills[id].subCategorySets;
-    return sets.some((set) => set.subs.indexOf(112) !== -1) && sets.some((set) => set.subs.indexOf(112) === -1 && set.subs.indexOf(111) === -1);
-  });
-  assert.ok(partialId, "应当有部分段带 112 的战技");
-  const partial = R.appliesVerdict(index.byId[8350000], R.makeOutput({ mode: "skill", meansId: Number(partialId),
-    weapon: null, hand: 1, shares: corpse.shares, contexts: {} }, buffs));
-  assert.equal(partial.state, "yes");
-  assert.ok(partial.weight > 0 && partial.weight < 1, "部分段命中按段数加权");
+test("appliesTo 分流：战技的子类别限定按当前勾选的段判定（咆哮类没有 112 段就不吃，部分段带 112 的按相对值加权）", () => {
+  const skillAttack = index.byId[8350000];   // 提升战技攻击力（武器词条），requires.subCategoriesAny 含 112
+  // 找一招 + 一把武器：默认勾选的段全都不带 111 / 112（咆哮类）；再找一招部分段带 112。
+  let roar = null;
+  let partial = null;
+  skills.skills.some((skill) => R.weaponsForSkill(skills, skill).some((weapon) => {
+    const output = outputFor("skill", skill.id, weapon.id);
+    if (!output.segments || !output.segments.length) return false;
+    const hits = output.segments.filter((segment) => segment.subs.some((sub) => sub === 111 || sub === 112)).length;
+    if (!roar && hits === 0) roar = output;
+    if (!partial && hits > 0 && hits < output.segments.length) partial = output;
+    return Boolean(roar && partial);
+  }));
+  assert.ok(roar, "应当有勾选段都不带 112 的战技（野蛮咆哮等）");
+  assert.equal(R.appliesVerdict(skillAttack, roar).state, "no");
+  assert.ok(partial, "应当有勾选段只有部分带 112 的战技");
+  const verdict = R.appliesVerdict(skillAttack, partial);
+  assert.equal(verdict.state, "yes");
+  assert.ok(verdict.weight > 0 && verdict.weight < 1, "部分段命中按相对值加权");
+  assert.ok(verdict.shares && R.TYPE_KEYS.every((type) => verdict.shares[type] >= 0 && verdict.shares[type] <= 1));
+  assert.equal(R.verdictLabel(skillAttack, verdict), R.TEXT.verdict.partial);
+  // 尸横遍野：勾选的段都带 112，全额。
+  assert.equal(R.appliesVerdict(skillAttack, corpse).weight, 1);
 });
 
 test("appliesTo 分流：持武器的手、出手武器类别、攻击情境各走各的判定", () => {

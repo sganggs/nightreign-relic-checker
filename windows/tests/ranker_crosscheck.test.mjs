@@ -8,12 +8,15 @@
 // 数值会随数据集修订变化，所以一律**不写绝对快照**。文案常量表与说明区另用摘要锁住逐字一致
 // （摘要常量两端相同，见文末）。
 //
-// 固定的三组配置对照输入（任务清单）：
+// 固定的五组配置对照输入（任务清单）：
 //   A 尸横遍野 + 尸山血海，常规模式：按推荐填满；
 //   B 死亡雷击，深夜模式：按推荐填满；
 //   C 狮子斩 + 大剑：2 件固定遗物（安定者的遗志 2070、王的黑夜 2100，勾「切换武器时，能提升物理攻击力」
 //     7035902）＋ 1 件自组遗物（封印监牢 7060000 / 出击时附加火 7120100 / 对陷入冻伤的敌人 7260400）
-//     ＋ 2 个护符（战士壶碎片 1230、红羽七刃剑 2040）＋ 封印监牢 7 层。
+//     ＋ 2 个护符（战士壶碎片 1230、红羽七刃剑 2040）＋ 封印监牢 7 层；
+//   D 兽爪 6820 蓄力开 + 局内武器词条「强化祷告的蓄力执行」8330302 ×1：总倍率正好 ×1.18（五类 rate 相同，
+//     构成不影响），再叠 8330301 一条 → ×1.18×1.13；
+//   E 兽爪 6820 蓄力关 + 8330302：×1、不生效。
 //
 // 需要人工对拍时：
 //   NR_RANKER_DUMP=1 node --test windows/tests/ranker_crosscheck.test.mjs
@@ -21,8 +24,11 @@
 // 两端都打出 CASE / CONFIG / OUTPUTS / TEXT 四种行（同一格式，见 ranker.js 的 caseDumpLine / configDumpLine），
 // 逐行比即可。
 //
-// 战技数据集 schemaVersion 3：选段一律读 weapons[].skillVariants[战技 ID]（局内战技池的武器同样有），
-// 默认勾选按「hit.fpBoth || noFp 与开关同侧」；七组构成用例的战技都是所选武器的固定战技，输入不变。
+// 战技数据集 schemaVersion 4：选段一律读 weapons[].skillVariants[战技 ID]（局内战技池的武器同样有），法术段先剔掉
+// notInvoked（施法动画没有槽位会发射的段）；默认勾选＝「hit.fpBoth || noFp 与开关同侧」且在蓄力开关这一侧
+// （hits[].chargeBranch：开取 charged / both，关取 uncharged / both，partial 两侧都不取；② 之后一段 charged 都没有
+// 时开关不适用、取全部）。子类别限定（requires.subCategoriesAny）按勾选的段逐段判定：每个伤害类型
+// 1＋(倍率−1)×命中段相对值占比。参考实现按 usage.蓄力段（v4）独立重写这两步。
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -44,7 +50,8 @@ const index = R.indexBuffs(buffs);
 const cfgIndex = R.buildConfigIndex(buffs, index, catalog, Core);
 const DUMP = process.env.NR_RANKER_DUMP === "1";
 
-// 构成用例（两端同一组输入；v3 下不变，1177 + 9040000 等仍是武器的固定战技）。
+// 构成用例（两端同一组输入；v3 下不变，1177 + 9040000 等仍是武器的固定战技）。charged＝蓄力开关（缺省关）。
+// v4：法术段剔掉 notInvoked、按蓄力开关分侧之后，death-lightning / comet 只剩不蓄力的段；另加三组蓄力用例。
 const CASES = [
   // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
   { key: "corpse-piler-full", kind: "skill", id: 1177, weaponId: 9040000, only: null },
@@ -59,7 +66,12 @@ const CASES = [
   // 死亡雷击：祷告，只用 flat。
   { key: "death-lightning", kind: "incantation", id: 5040, weaponId: null, only: null },
   // 帚星：魔法，只用 flat。
-  { key: "comet", kind: "sorcery", id: 4021, weaponId: null, only: null }
+  { key: "comet", kind: "sorcery", id: 4021, weaponId: null, only: null },
+  // 兽爪（v4）：蓄力开只打 68205（[110]），关只打 68200；68201 / 68206 是 notInvoked。
+  { key: "beast-claw-charged", kind: "incantation", id: 6820, weaponId: null, only: null, charged: true },
+  { key: "beast-claw-uncharged", kind: "incantation", id: 6820, weaponId: null, only: null, charged: false },
+  // 死亡雷击蓄力开：50405 / 50406（50407 是 notInvoked）。
+  { key: "death-lightning-charged", kind: "incantation", id: 5040, weaponId: null, only: null, charged: true }
 ];
 
 const ELEMENTS = R.ELEMENTS;
@@ -76,30 +88,62 @@ function referenceShares(hits, weapon, selected) {
   TYPE_KEYS.forEach((key) => { amounts[key] = 0; });
   hits.forEach((hit) => {
     if (!selected.has(hit.atkId) || hit.noDamage) return;
-    let physType = "physNone";
-    if (hit.attribute === "Slash") physType = "slash";
-    else if (hit.attribute === "Strike") physType = "blow";
-    else if (hit.attribute === "Pierce") physType = "thrust";
-    else if (hit.attribute === "Standard") physType = "neutral";
-    else if (hit.attribute === "WeaponAtkAttribute") {
-      physType = ["slash", "blow", "thrust", "neutral"][weapon ? weapon.atkAttribute : -1] || "physNone";
-    } else if (hit.attribute === "WeaponAtkAttribute2") {
-      physType = ["slash", "blow", "thrust", "neutral"][weapon ? weapon.atkAttribute2 : -1] || "physNone";
-    }
-    ELEMENTS.forEach((element) => {
-      const base = weapon && weapon.attackBase && weapon.attackBase[element] ? weapon.attackBase[element] : 0;
-      const motion = weapon && hit.motion && hit.motion[element] ? hit.motion[element] : 0;
-      const flat = hit.flat && hit.flat[element] ? hit.flat[element] : 0;
-      let amount = (base * motion) / 100 + flat;
-      if (hit.addBaseAtk) amount += base;
-      if (!(amount > 0)) return;
-      amounts[element === "physical" ? physType : element] += amount;
-    });
+    const one = referenceHitAmounts(hit, weapon);
+    TYPE_KEYS.forEach((key) => { amounts[key] += one[key]; });
   });
   const total = TYPE_KEYS.reduce((sum, key) => sum + amounts[key], 0);
   const shares = {};
   TYPE_KEYS.forEach((key) => { shares[key] = total > 0 ? amounts[key] / total : 0; });
   return { shares, total };
+}
+
+// 单段在九类上的相对值（法术 weapon=null：攻击力全 0，motion 不起作用，只剩 flat）。
+function referenceHitAmounts(hit, weapon) {
+  const amounts = {};
+  TYPE_KEYS.forEach((key) => { amounts[key] = 0; });
+  if (hit.noDamage) return amounts;
+  let physType = "physNone";
+  if (hit.attribute === "Slash") physType = "slash";
+  else if (hit.attribute === "Strike") physType = "blow";
+  else if (hit.attribute === "Pierce") physType = "thrust";
+  else if (hit.attribute === "Standard") physType = "neutral";
+  else if (hit.attribute === "WeaponAtkAttribute") {
+    physType = ["slash", "blow", "thrust", "neutral"][weapon ? weapon.atkAttribute : -1] || "physNone";
+  } else if (hit.attribute === "WeaponAtkAttribute2") {
+    physType = ["slash", "blow", "thrust", "neutral"][weapon ? weapon.atkAttribute2 : -1] || "physNone";
+  }
+  ELEMENTS.forEach((element) => {
+    const base = weapon && weapon.attackBase && weapon.attackBase[element] ? weapon.attackBase[element] : 0;
+    const motion = weapon && hit.motion && hit.motion[element] ? hit.motion[element] : 0;
+    const flat = hit.flat && hit.flat[element] ? hit.flat[element] : 0;
+    let amount = (base * motion) / 100 + flat;
+    if (hit.addBaseAtk) amount += base;
+    if (!(amount > 0)) return;
+    amounts[element === "physical" ? physType : element] += amount;
+  });
+  return amounts;
+}
+
+// 取段（usage.蓄力段（v4），独立重写）：① 这一招会打出的段（战技 = variants 选段；法术 = hits 去掉 notInvoked），
+// 去掉 noDamage；② 专注值开关同侧（开关关：fpBoth 或不是 noFp）；③ ② 里有 chargeBranch=charged 才分侧，
+// 开取 charged / both、关取 uncharged / both（partial 两侧都不取），没有就全取。
+function referenceSelection(pool, charged) {
+  const side = pool.filter((hit) => !hit.noDamage && (hit.fpBoth === true || hit.noFp !== true));
+  const chargeable = side.some((hit) => hit.chargeBranch === "charged");
+  if (!chargeable) return { hits: side, chargedOn: false };
+  const keep = charged ? ["charged", "both"] : ["uncharged", "both"];
+  return { hits: side.filter((hit) => keep.indexOf(hit.chargeBranch) !== -1), chargedOn: charged === true };
+}
+
+// 逐段判定用的段：相对值 > 0 的段，子类别 = hits[].subCategories ∪ 法术流派（attackIndex.spells[id].magicSubCategories）。
+function referenceSegments(hits, weapon, kind, meansId) {
+  const spellInfo = kind === "skill" ? null : buffs.attackIndex.spells[String(meansId)];
+  const extra = spellInfo && spellInfo.magicSubCategories ? spellInfo.magicSubCategories : [];
+  return hits.map((hit) => {
+    const amounts = referenceHitAmounts(hit, weapon);
+    const total = TYPE_KEYS.reduce((sum, key) => sum + amounts[key], 0);
+    return { subs: (hit.subCategories || []).concat(extra), amounts, total };
+  }).filter((segment) => segment.total > 0);
 }
 
 const FIELD_CHANNELS = {
@@ -135,14 +179,16 @@ function listable(buff) {
 }
 
 // appliesTo 判定（notes.appliesTo 的口径，独立重写）。manual＝要用户确认。
+// out＝参考实现自己的输出：{ mode, hand, weapon, meansId, contexts, shares, segs }（segs 见 referenceSegments）。
+// weights＝子类别限定部分段命中时逐类型的命中占比（null＝全额）。
 function referenceVerdict(buff, out) {
   const cls = out.mode;
   const value = (buff.appliesTo || {})[cls];
   if (value !== "yes" && value !== "conditional") return { ok: false };
   let manual = (buff.requiresGoodsIds || []).length > 0;
-  if (value === "yes") return { ok: true, weight: 1, manual, restricted: null };
+  if (value === "yes") return { ok: true, weights: null, manual, restricted: null };
   const requires = (((buff.appliesToDetail || {})[cls]) || {}).requires || {};
-  let weight = 1;
+  let weights = null;
   let restricted = null;
   if (Object.keys(requires).length === 0) manual = true;
   for (const key of Object.keys(requires)) {
@@ -153,17 +199,27 @@ function referenceVerdict(buff, out) {
       const own = cls === "skill" ? (out.weapon ? out.weapon.wepType : null) : (cls === "sorcery" ? 57 : 61);
       if (need.indexOf(own) === -1) return { ok: false };
     } else if (key === "subCategoriesAny") {
-      const table = cls === "skill" ? buffs.attackIndex.skills : buffs.attackIndex.spells;
-      const one = table[String(out.meansId)];
-      if (!one) { manual = true; continue; }
-      let matched = 0;
-      let total = 0;
-      one.subCategorySets.forEach((set) => {
-        total += set.hits;
-        if (set.subs.some((sub) => need.indexOf(sub) !== -1)) matched += set.hits;
-      });
-      if (matched === 0) return { ok: false };
-      weight = matched / total;
+      const segs = out.segs || [];
+      if (!segs.length) {
+        // 没有勾选带伤害的段：只看 attackIndex 整招有没有这类段，不加权。
+        const table = cls === "skill" ? buffs.attackIndex.skills : buffs.attackIndex.spells;
+        const one = table[String(out.meansId)];
+        if (!one) { manual = true; continue; }
+        if (!one.subCategorySets.some((set) => set.subs.some((sub) => need.indexOf(sub) !== -1))) return { ok: false };
+        continue;
+      }
+      const hitSegs = segs.filter((segment) => segment.subs.some((sub) => need.indexOf(sub) !== -1));
+      if (hitSegs.length === 0) return { ok: false };
+      if (hitSegs.length < segs.length) {
+        weights = {};
+        const all = segs.reduce((sum, segment) => sum + segment.total, 0);
+        const hit = hitSegs.reduce((sum, segment) => sum + segment.total, 0);
+        TYPE_KEYS.forEach((type) => {
+          const denominator = segs.reduce((sum, segment) => sum + segment.amounts[type], 0);
+          const numerator = hitSegs.reduce((sum, segment) => sum + segment.amounts[type], 0);
+          weights[type] = denominator > 0 ? numerator / denominator : hit / all;
+        });
+      }
     } else if (key === "attackContexts") {
       if (!need.some((ctxKey) => out.contexts[ctxKey])) return { ok: false, context: true };
     } else if (key === "physicalType") {
@@ -173,7 +229,7 @@ function referenceVerdict(buff, out) {
       manual = true;
     }
   }
-  return { ok: true, weight, manual, restricted };
+  return { ok: true, weights, manual, restricted };
 }
 
 function paramMax(si) {
@@ -195,7 +251,7 @@ function referenceRates(buff, stacks) {
   return rates;
 }
 
-// 单条的逐通道倍率与加算：部分段命中按 1 + (m − 1) × 占比，stackSelf 多份再乘方。
+// 单条的逐通道倍率与加算：部分段命中按该类型的 1 + (m − 1) × 占比，stackSelf 多份再乘方。
 function referenceTables(buff, verdict, stacks, copies) {
   const table = {};
   const flat = {};
@@ -215,9 +271,9 @@ function referenceTables(buff, verdict, stacks, copies) {
     }
   });
   TYPE_KEYS.forEach((key) => {
-    if (verdict.weight < 1) {
-      table[key] = 1 + (table[key] - 1) * verdict.weight;
-      flat[key] *= verdict.weight;
+    if (verdict.weights && verdict.weights[key] < 1) {
+      table[key] = 1 + (table[key] - 1) * verdict.weights[key];
+      flat[key] *= verdict.weights[key];
     }
     if (copies > 1) {
       table[key] = Math.pow(table[key], copies);
@@ -365,17 +421,31 @@ function runCase(def) {
   assert.ok(skill || spell, def.key + "：找不到这个战技 / 法术");
   const weapon = def.weaponId ? skills._weaponById[def.weaponId] : null;
   if (def.weaponId) assert.ok(weapon, def.key + "：找不到武器 " + def.weaponId);
-  const hits = skill ? R.selectHits(skill, weapon) : (spell.hits || []).slice();
-  const selected = hits.filter((hit) => {
-    if (hit.noDamage) return false;
-    if (def.only) return def.only.indexOf(hit.atkId) !== -1;
-    return hit.fpBoth === true || hit.noFp !== true;   // 默认勾选＝正常版这一侧（两侧共用的 fpBoth 段也算）
-  });
+  // 页面的取段：战技走 variants，法术剔掉 notInvoked；默认勾选走 defaultSelection（两个开关）。
+  const hits = skill ? R.selectHits(skill, weapon) : R.invokedHits(spell.hits);
+  const charged = def.charged === true;
+  const pageDefault = R.defaultSelection(hits, false, charged);
+  const chargedOn = R.effectiveCharged(R.chargeInfo(hits, false), charged);
+  // 参考实现的取段（独立重写，法术的 notInvoked 自己剔）。
+  const pool = skill ? hits : spell.hits.filter((hit) => hit.notInvoked !== true);
+  const reference = referenceSelection(pool, charged);
+  const selected = def.only
+    ? hits.filter((hit) => !hit.noDamage && def.only.indexOf(hit.atkId) !== -1)
+    : pageDefault;
   const comp = R.composition(selected, weapon, isSpell);
-  const out = R.makeOutput({ mode: def.kind, meansId: def.id, weapon, hand: 1, shares: comp.shares, contexts: {} }, buffs);
+  const out = R.makeOutput({ mode: def.kind, meansId: def.id, weapon, hand: 1, shares: comp.shares, hits: selected,
+    contexts: R.chargedContexts({}, chargedOn) }, buffs);
+  const refSelected = def.only ? selected : reference.hits;
+  const refComp = referenceShares(pool, isSpell ? null : weapon, new Set(refSelected.map((hit) => hit.atkId)));
+  const refContexts = {};
+  if (reference.chargedOn) ["chargedHeavyAttack", "chargedSkill", "chargedSpell"].forEach((key) => { refContexts[key] = true; });
+  const ref = {
+    mode: def.kind, hand: 1, weapon, meansId: def.id, contexts: refContexts, shares: refComp.shares,
+    segs: referenceSegments(refSelected, isSpell ? null : weapon, def.kind, def.id)
+  };
   const rows = R.overviewRows(cfgIndex, out);
   const useful = rows.filter((row) => row.applicable && row.multiplier > R.USEFUL_EPSILON);
-  return { def, weapon, hits, selected, comp, out, rows, useful, isSpell };
+  return { def, weapon, hits, pool, selected, pageDefault, reference, comp, out, ref, rows, useful, isSpell };
 }
 
 const results = {};
@@ -400,8 +470,12 @@ CASES.forEach((def) => {
     run.selected.forEach((hit) => {
       assert.ok(ids.has(hit.atkId), "勾选的段必须来自选出的段");
       assert.notEqual(hit.noDamage, true, "noDamage 段不该被勾上");
+      assert.notEqual(hit.notInvoked, true, "notInvoked 段不该被勾上（法术段 v4 起同样剔掉）");
       if (!def.only) assert.notEqual(hit.noFp, true, "默认勾选只取正常版这一侧");
+      if (!def.only) assert.notEqual(hit.chargeBranch, "partial", "partial 两侧都不取");
     });
+    // 页面的默认勾选（两个开关）与参考实现逐段相同。
+    assert.deepEqual(run.pageDefault.map((hit) => hit.atkId), run.reference.hits.map((hit) => hit.atkId), "默认勾选与参考实现一致");
     const reference = referenceShares(run.hits, run.weapon, new Set(run.selected.map((hit) => hit.atkId)));
     TYPE_KEYS.forEach((key) => {
       close(run.comp.shares[key], reference.shares[key], key + " 占比应与参考实现一致");
@@ -417,7 +491,7 @@ CASES.forEach((def) => {
       if (i) assert.ok(top[i - 1].multiplier >= row.multiplier - 1e-12, "前 10 名必须按有效倍率降序");
       const buff = BUFF[row.entry.id];
       assert.ok(buff, "一览里出现了数据集里没有的 #" + row.entry.id);
-      const expected = referenceOverview(buff, run.out);
+      const expected = referenceOverview(buff, run.ref);
       assert.notEqual(expected, null, "#" + row.entry.id + " 参考实现判为不生效");
       close(row.multiplier, expected, "#" + row.entry.id + " 的有效倍率");
     });
@@ -429,7 +503,7 @@ CASES.forEach((def) => {
     buffs.buffs.forEach((buff) => assert.equal(listed.has(buff.spEffectId), listable(buff), "#" + buff.spEffectId + " 进不进一览"));
     run.rows.forEach((row) => {
       const buff = row.entry.buff;
-      const expected = referenceOverview(buff, run.out);
+      const expected = referenceOverview(buff, run.ref);
       checked += 1;
       if (expected === null) {
         assert.equal(row.applicable, false, "#" + buff.spEffectId + " 参考判不生效，页面却是 " + row.state);
@@ -512,9 +586,10 @@ function referenceSkillListable(skill) {
   });
 }
 
-// 参考实现：一个法术能不能进列表——没有武器，只看 spells[] 里各段的固定值（按参考公式算得出非 0 即可）。
+// 参考实现：一个法术能不能进列表——没有武器，只看 spells[] 里打得出（不是 notInvoked）的各段的固定值
+// （按参考公式算得出非 0 即可）。
 function referenceSpellListable(spell) {
-  const hits = spell.hits || [];
+  const hits = (spell.hits || []).filter((hit) => hit.notInvoked !== true);
   if (!hits.length) return false;
   return referenceShares(hits, null, new Set(hits.map((hit) => hit.atkId))).total > 0;
 }
@@ -536,7 +611,7 @@ test("对照：输出手段列表只收「算得出非 0 相对值」的战技�
     assert.ok(playable, "列表里的战技「" + item.nameZh + "」必须至少有一把武器算得出构成");
   });
   spellItems.forEach((item) => {
-    assert.ok(R.hasAnyDamage(skills._spellById[item.id].hits, null, true), "列表里的法术「" + item.nameZh + "」必须至少有一段带固定值");
+    assert.ok(R.hasAnyDamage(R.invokedHits(skills._spellById[item.id].hits), null, true), "列表里的法术「" + item.nameZh + "」必须至少有一段打得出的固定值");
   });
   // 法术同样与参考实现逐个相同：skills 的 spells[] 现在只收可施放的（可达施法器池里 chanceWeight>0），
   // Magic 残留行 8100 / 8101「风暴管束者」（本作是战技 1200）不在 spells[]，也就不在列表里（本版本 119 个）。
@@ -552,9 +627,15 @@ test("对照：输出手段列表只收「算得出非 0 相对值」的战技�
 
 // ---- 三组配置对照 --------------------------------------------------------
 
-function outputOf(kind, id, weaponId) {
-  const run = runCase({ key: "cfg", kind, id, weaponId, only: null });
-  return run.out;
+function outputOf(kind, id, weaponId, charged) {
+  return runCase({ key: "cfg", kind, id, weaponId, only: null, charged: charged === true });
+}
+
+// 兽爪配置用例的公共部分：蓄力开 / 关 + 局内武器词条（逐条 ×1）。
+function clawConfig(affixIds) {
+  const config = R.emptyConfig();
+  config.weaponAffixes = affixIds.map((id) => ({ id, count: 1 }));
+  return config;
 }
 
 function fixedCard(key) {
@@ -566,7 +647,8 @@ const CONFIG_CASES = [
     key: "corpse-piler-normal-fill",
     output: () => outputOf("skill", 1177, 9040000),
     build: (out) => R.recommendFill(cfgIndex, out, R.emptyConfig(), Core, R.outputWepType(out)).config,
-    filled: true
+    filled: true,
+    gain: true
   },
   {
     key: "death-lightning-deep-fill",
@@ -576,7 +658,8 @@ const CONFIG_CASES = [
       base.runMode = "deep";
       return R.recommendFill(cfgIndex, out, base, Core, R.outputWepType(out)).config;
     },
-    filled: true
+    filled: true,
+    gain: true
   },
   {
     key: "lions-claw-2fixed-1custom-2talismans-evergaol7",
@@ -594,22 +677,84 @@ const CONFIG_CASES = [
       config.ticks[7035902] = true;           // 切换武器时，能提升物理攻击力：条件成立
       return config;
     },
-    filled: false
+    filled: false,
+    gain: true,
+    check: (run) => {
+      assert.equal(run.result.relicChecks[0].status, "fixed");
+      assert.equal(run.result.relicChecks[1].status, "fixed");
+      assert.equal(run.result.relicChecks[2].status, "valid", "自组遗物三条合法：" + JSON.stringify(run.result.relicChecks[2].issues));
+      const counted = new Set(run.result.counted.map((item) => item.entry.id));
+      assert.ok(counted.has(7006700) && counted.has(7035902) && counted.has(7069001) && counted.has(312300));
+      assert.ok(!counted.has(7035703), "王的黑夜里没勾的条件型不计入");
+      assert.ok(!counted.has(320400), "红羽七刃剑是条件型，放进护符栏≠条件成立");
+      const evergaol = run.result.items.find((item) => item.entry.id === 7069001);
+      assert.equal(evergaol.stacks, 7);
+      close(evergaol.multiplier, BUFF[7069001].stackInput.tierMultipliers[6], "封印监牢 7 层");
+      const fire = run.result.items.filter((item) => item.entry.variantGroup === "affix#7120100");
+      assert.equal(fire.filter((item) => item.state !== "variantOff").length, 1, "多档词条只留第 1 档");
+      assert.equal(fire.find((item) => item.state !== "variantOff").state, "pending", "imbuedWeaponOnly 要确认");
+    }
+  },
+  {
+    // D：兽爪蓄力开只打 68205（[110]）→「强化祷告的蓄力执行」全额，雷／圣构成不影响（五类 rate 相同）。
+    key: "beast-claw-charged-8330302",
+    output: () => outputOf("incantation", 6820, null, true),
+    build: () => clawConfig([8330302]),
+    filled: false,
+    gain: true,
+    check: (run) => {
+      assert.deepEqual(run.selected.map((hit) => hit.atkId), [68205]);
+      assert.equal(run.result.total.multiplier, 1.18, "总倍率正好 ×1.18");
+      const item = run.result.items[0];
+      assert.equal(item.state, "counted");
+      assert.equal(item.verdict.weight, 1);
+      assert.equal(item.verdict.shares, null, "全额，不是部分段");
+      assert.equal(item.label, R.TEXT.verdict.conditionalMet);
+      // 再叠档位 2 一条：两条各自相乘。
+      const both = R.evaluateConfig(cfgIndex, run.out, clawConfig([8330301, 8330302]), Core);
+      close(both.total.multiplier, 1.18 * 1.13, "×1.18×1.13");
+      assert.deepEqual(both.counted.map((one) => one.entry.id).sort((a, b) => a - b), [8330301, 8330302]);
+      // 三档各自全额。
+      [[8330300, 1.09], [8330301, 1.13], [8330302, 1.18]].forEach(([id, rate]) => {
+        assert.equal(R.evaluateConfig(cfgIndex, run.out, clawConfig([id]), Core).total.multiplier, rate, id + " 全额");
+      });
+    }
+  },
+  {
+    // E：兽爪蓄力关只打 68200（没有 110）→ 不生效，总倍率 ×1。
+    key: "beast-claw-uncharged-8330302",
+    output: () => outputOf("incantation", 6820, null, false),
+    build: () => clawConfig([8330302]),
+    filled: false,
+    gain: false,
+    check: (run) => {
+      assert.deepEqual(run.selected.map((hit) => hit.atkId), [68200]);
+      assert.equal(run.result.total.multiplier, 1);
+      assert.deepEqual(run.result.counted, []);
+      const item = run.result.items[0];
+      assert.equal(item.state, "no");
+      assert.equal(item.label, R.TEXT.verdict.no);
+      assert.ok(item.reasons[0].indexOf("110") !== -1, "原因写明子类别：" + item.reasons[0]);
+    }
   }
 ];
 
 const configResults = {};
 CONFIG_CASES.forEach((def) => {
-  const out = def.output();
+  const caseRun = def.output();
+  const out = caseRun.out;
   const config = def.build(out);
-  configResults[def.key] = { def, out, config, result: R.evaluateConfig(cfgIndex, out, config, Core) };
+  configResults[def.key] = {
+    def, out, ref: caseRun.ref, selected: caseRun.selected, config,
+    result: R.evaluateConfig(cfgIndex, out, config, Core)
+  };
 });
 
 CONFIG_CASES.forEach((def) => {
   const run = configResults[def.key];
 
   test("配置对照 " + def.key + "：总倍率、各栏小计与计入条目集合等于参考实现", () => {
-    const reference = referenceConfig(run.config, run.out);
+    const reference = referenceConfig(run.config, run.ref);
     close(run.result.total.multiplier, reference.total, "总倍率");
     R.COLUMN_ORDER.forEach((column) => {
       close(run.result.byColumn[column].multiplier, reference.subtotals[column], column + " 小计");
@@ -619,7 +764,8 @@ CONFIG_CASES.forEach((def) => {
         .map((item) => item.entry.id + (item.countedCopies > 1 ? "x" + item.countedCopies : "")),
       reference.ids, "计入条目集合（含份数）"
     );
-    assert.ok(run.result.total.multiplier > 1, "这套配置应当增伤");
+    if (def.gain) assert.ok(run.result.total.multiplier > 1, "这套配置应当增伤");
+    else assert.equal(run.result.total.multiplier, 1, "这套配置不增伤");
   });
 
   test("配置对照 " + def.key + "：槽位不越界、遗物合法、同键不重复", () => {
@@ -669,19 +815,7 @@ CONFIG_CASES.forEach((def) => {
         assert.equal(run.result.slots.weaponAffix.used, buffs.slotRules.weaponAffix.maxAffixesNormal, "常规填满 6 条");
       }
     } else {
-      assert.equal(run.result.relicChecks[0].status, "fixed");
-      assert.equal(run.result.relicChecks[1].status, "fixed");
-      assert.equal(run.result.relicChecks[2].status, "valid", "自组遗物三条合法：" + JSON.stringify(run.result.relicChecks[2].issues));
-      const counted = new Set(run.result.counted.map((item) => item.entry.id));
-      assert.ok(counted.has(7006700) && counted.has(7035902) && counted.has(7069001) && counted.has(312300));
-      assert.ok(!counted.has(7035703), "王的黑夜里没勾的条件型不计入");
-      assert.ok(!counted.has(320400), "红羽七刃剑是条件型，放进护符栏≠条件成立");
-      const evergaol = run.result.items.find((item) => item.entry.id === 7069001);
-      assert.equal(evergaol.stacks, 7);
-      close(evergaol.multiplier, BUFF[7069001].stackInput.tierMultipliers[6], "封印监牢 7 层");
-      const fire = run.result.items.filter((item) => item.entry.variantGroup === "affix#7120100");
-      assert.equal(fire.filter((item) => item.state !== "variantOff").length, 1, "多档词条只留第 1 档");
-      assert.equal(fire.find((item) => item.state !== "variantOff").state, "pending", "imbuedWeaponOnly 要确认");
+      def.check(run);
     }
   });
 });
@@ -720,9 +854,12 @@ function briefDigest(notes) {
 //   buffs v6 道具等级：再多三个 goodsLevel.* 键（tag / hint / note），336 → 339 条，07a69c5e → 41e2ae25；
 //   输出手段类型开关拆成三档（战技 / 魔法 / 祷告）：多七个键（meansKind.skill / sorcery / incantation、
 //   meansCard.subtitle、meansSearch.placeholder / empty、meansSpellFlatNote），pageSubtitle 与
-//   otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），339 → 346 条，41e2ae25 → 446c874b。
-const TEXT_TABLE_DIGEST = "446c874b";
-const TEXT_TABLE_COUNT = 346;
+//   otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），339 → 346 条，41e2ae25 → 446c874b；
+//   skills v4 蓄力开关：多四个 chargedToggle.* 键（label / hint / unavailable / onlyCharged），brief.partial 改值
+//   （子类别限定改按勾选的段逐段判定），346 → 350 条，446c874b → 591c0f7f；说明区 ad04314d → 34e5dacb。
+const TEXT_TABLE_DIGEST = "591c0f7f";
+const TEXT_TABLE_COUNT = 350;
+const TEXT_TABLE_DIGEST_BEFORE_CHARGED = "446c874b";
 const TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND = "41e2ae25";
 const TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL = "07a69c5e";
 // 三档那一版新增的键与改值键的旧值（去掉新增键、换回旧值，摘要应回到上一版）。
@@ -731,19 +868,30 @@ const MEANS_KIND_RESTORE = {
   pageSubtitle: "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
   otherInnateNoWeapon: "法术没有出手武器，这里只有需手动勾选的固有效果"
 };
-const BRIEF_DIGEST = "ad04314d";
+// 蓄力开关那一版新增的键与改值键的旧值。
+const CHARGED_ADDED = ["chargedToggle."];
+const CHARGED_RESTORE = {
+  "brief.partial": "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、没有逐段对应，所以占比不随上方的分段勾选变化。"
+};
+const BRIEF_DIGEST = "34e5dacb";
+const BRIEF_DIGEST_BEFORE_CHARGED = "ad04314d";
 
 test("两端逐字一致：配置部分的文案常量表（点号路径 + 文案）与 macOS 端 LoadoutText.table 同一个摘要", () => {
   const { count, digest } = textTableDigest();
   assert.equal(count, TEXT_TABLE_COUNT, "文案条数");
   assert.equal(digest, TEXT_TABLE_DIGEST, "文案常量表摘要（macOS 端 checkLoadoutParity 断言同一个值）");
-  // 这一版只多了七个输出手段类型开关的键、改了两句「法术」：去掉新增键、换回旧值，摘要回到上一版（其余文案一字未动）。
-  const beforeMeans = textTableDigest(MEANS_KIND_ADDED, MEANS_KIND_RESTORE);
-  assert.equal(beforeMeans.count, TEXT_TABLE_COUNT - 7);
+  // 这一版只多了四个 chargedToggle.* 键、改了 brief.partial：去掉新增键、换回旧值，摘要回到上一版（其余文案一字未动）。
+  const beforeCharged = textTableDigest(CHARGED_ADDED, CHARGED_RESTORE);
+  assert.equal(beforeCharged.count, TEXT_TABLE_COUNT - 4);
+  assert.equal(beforeCharged.digest, TEXT_TABLE_DIGEST_BEFORE_CHARGED, "除 chargedToggle.* 四个新键与 brief.partial 外文案不变");
+  // 再往前一版只多了七个输出手段类型开关的键、改了两句「法术」：再去掉、换回，摘要回到那一版。
+  const meansRestore = Object.assign({}, CHARGED_RESTORE, MEANS_KIND_RESTORE);
+  const beforeMeans = textTableDigest(CHARGED_ADDED.concat(MEANS_KIND_ADDED), meansRestore);
+  assert.equal(beforeMeans.count, TEXT_TABLE_COUNT - 4 - 7);
   assert.equal(beforeMeans.digest, TEXT_TABLE_DIGEST_BEFORE_MEANS_KIND, "除 meansKind.* 等七个新键与两句改值外文案不变");
   // 再往前一版只多了 goodsLevel.* 三个键：再去掉它们，摘要回到那一版的值。
-  const before = textTableDigest(MEANS_KIND_ADDED.concat(["goodsLevel."]), MEANS_KIND_RESTORE);
-  assert.equal(before.count, TEXT_TABLE_COUNT - 7 - 3);
+  const before = textTableDigest(CHARGED_ADDED.concat(MEANS_KIND_ADDED, ["goodsLevel."]), meansRestore);
+  assert.equal(before.count, TEXT_TABLE_COUNT - 4 - 7 - 3);
   assert.equal(before.digest, TEXT_TABLE_DIGEST_BEFORE_GOODS_LEVEL, "除 goodsLevel.* 外文案不变");
 });
 
@@ -765,11 +913,14 @@ test("文案常量表：ranker.js 里引用到的每个 TEXT.路径 都真的存
 test("两端逐字一致：说明区（口径说明）的正文与 macOS 端 LoadoutText.briefNotes 同一个摘要", () => {
   const notes = R.briefNotes(buffs, cfgIndex);
   assert.equal(briefDigest(notes), BRIEF_DIGEST);
+  // 这一版只改了 brief.partial 那一段：换回旧文案，摘要回到上一版。
+  assert.equal(briefDigest(notes.map((note) => (note === R.TEXT.brief.partial ? CHARGED_RESTORE["brief.partial"] : note))),
+    BRIEF_DIGEST_BEFORE_CHARGED);
 });
 
-test("对照：七组构成用例与三组配置用例都真的算出了东西（并在需要时打出对拍行）", () => {
-  assert.equal(CASES.length, 7);
-  assert.equal(CONFIG_CASES.length, 3);
+test("对照：十组构成用例与五组配置用例都真的算出了东西（并在需要时打出对拍行）", () => {
+  assert.equal(CASES.length, 10);
+  assert.equal(CONFIG_CASES.length, 5);
   const kinds = new Set(CASES.map((def) => def.kind));
   assert.ok(kinds.has("skill") && kinds.has("sorcery") && kinds.has("incantation"));
   CASES.forEach((def) => assert.ok(results[def.key].useful.length > 0, def.key + " 应有生效条目"));

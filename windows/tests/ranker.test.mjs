@@ -1,8 +1,9 @@
 // 增伤排名页（renderer/pages/ranker.js）纯计算层单元测试。
 //
 // 口径以数据集自带的说明为准：
-//   · skills（schemaVersion 3）：usage.选段（必读）／战技来源（v3）／命中段已按 TAE 核实（v3）／近战武器段／
-//     法术 · 子弹段／削韧／伤害类型（斩 / 打 / 突），fieldNotes.noFp / fpBoth / notInvoked / selfOrAllyOnly
+//   · skills（schemaVersion 4）：usage.选段（必读）／战技来源（v3）／命中段已按 TAE 核实（v3）／蓄力段（v4）／
+//     近战武器段／法术 · 子弹段／削韧／伤害类型（斩 / 打 / 突），fieldNotes.noFp / fpBoth / notInvoked /
+//     selfOrAllyOnly / subCategories / charged / chargeBranch
 //   · buffs（schemaVersion 6）：notes.ranking、notes.appliesTo、stackingRules、slotRules、
 //     rateFields[].countsAsDamage、stackInput、accumulatorLadder、stacking.exclusiveKey
 //
@@ -82,9 +83,17 @@ test("模块注册：导出 init / refresh，不依赖 window", () => {
   assert.equal(typeof globalThis.NightreignPages, "undefined", "node 下不应尝试注册页面");
 });
 
-test("两份数据集都带着页面真正依赖的结构（skills 需要 v3 的 skillVariants / weaponSources，buffs 需要 v6 的 appliesTo / slotRules / exclusiveKey）", () => {
-  assert.equal(skills.schemaVersion, 3);
-  assert.equal(R.SKILLS_SCHEMA_MIN, 3);
+test("两份数据集都带着页面真正依赖的结构（skills 需要 v4 的 skillVariants / weaponSources / subCategories / chargeBranch，buffs 需要 v6 的 appliesTo / slotRules / exclusiveKey）", () => {
+  assert.equal(skills.schemaVersion, 4);
+  assert.equal(R.SKILLS_SCHEMA_MIN, 4);
+  assert.ok(skills.usage["蓄力段（v4）"], "蓄力开关与逐段子类别判定的读法来自数据集 usage.蓄力段（v4）");
+  assert.deepEqual(skills.enums.chargedSubCategories, [100, 110, 111]);
+  const branches = new Set();
+  skills.skills.concat(skills.spells).forEach((one) => (one.hits || []).forEach((hit) => {
+    if (hit.chargeBranch !== undefined) branches.add(hit.chargeBranch);
+    if (hit.subCategories !== undefined) assert.ok(Array.isArray(hit.subCategories) && hit.subCategories.length > 0, hit.atkId + " 的 subCategories");
+  }));
+  assert.deepEqual([...branches].sort(), ["both", "charged", "partial", "uncharged"], "chargeBranch 的取值");
   assert.ok(buffs.schemaVersion >= 6, "配置组装依赖 schemaVersion 6 的字段");
   assert.ok(skills.usage && skills.usage["选段（必读）"], "选段规则必须来自数据集");
   assert.ok(skills.usage["本数据集的边界"], "页面要引用『绝对伤害不在范围内』这段");
@@ -1014,7 +1023,11 @@ test("v3：fpBoth 段两侧都计——专注值不足侧不会丢掉两侧共�
   const noFpIds = sideHits(glintblade, weapon, true).map((hit) => hit.atkId);
   assert.ok(fpIds.indexOf(300200872) !== -1 && noFpIds.indexOf(300200872) !== -1);
   assert.ok(fpIds.length > 1 && noFpIds.length > 1);
-  assert.equal(R.hitOverridesFor(R.selectHits(glintblade, weapon), "all", true)[300200872], true);
+  // 300200872 是满蓄力的放招（chargeBranch=charged）：专注值不足侧「全选」在蓄力开时勾上它，蓄力关时换成轻按 875。
+  const glintHits = R.selectHits(glintblade, weapon);
+  assert.equal(R.hitOverridesFor(glintHits, "all", true, true)[300200872], true);
+  assert.equal(R.hitOverridesFor(glintHits, "all", true, false)[300200872], false);
+  assert.equal(R.hitOverridesFor(glintHits, "all", true, false)[300200875], true);
 });
 
 test("v3：武器选择器——固定战技的武器排前、其余按 id，每把武器标「固定战技 / 局内可抽到」（两者都成立只标固定）", () => {
@@ -1064,9 +1077,13 @@ test("v3：武器选择器——固定战技的武器排前、其余按 id，每
   });
 });
 
-test("v3：skills schemaVersion < 3 要提示结果不可信", () => {
+test("v4：skills schemaVersion < 4 要提示结果不可信（v3 缺逐段子类别与蓄力分侧）", () => {
   assert.equal(R.skillsSchemaWarning(skills), "");
   assert.equal(R.skillsSchemaWarning({ schemaVersion: 4 }), "");
+  assert.equal(R.skillsSchemaWarning({ schemaVersion: 5 }), "");
+  const v3 = R.skillsSchemaWarning({ schemaVersion: 3 });
+  assert.ok(v3.indexOf("schemaVersion 3") !== -1 && v3.indexOf("v4") !== -1 && v3.indexOf("结果不可信") !== -1);
+  assert.ok(v3.indexOf("chargeBranch") !== -1 && v3.indexOf("subCategories") !== -1);
   const old = R.skillsSchemaWarning({ schemaVersion: 2 });
   assert.ok(old.indexOf("schemaVersion 2") !== -1 && old.indexOf("结果不可信") !== -1);
   assert.ok(R.skillsSchemaWarning({}).indexOf("结果不可信") !== -1, "缺版本号同样提示");
@@ -1098,6 +1115,220 @@ test("v3 修订：spells[] 只收可施放的法术——没有 8100 / 8101「�
   const listed = R.buildMeansItems(skills).filter((item) => item.kind !== "skill").map((item) => item.id);
   assert.ok(listed.length > 0);
   assert.equal(listed.some((id) => id === 8100 || id === 8101), false);
+});
+
+// ------------------------------------------------------------------ v4：逐段子类别、蓄力开关、法术段 notInvoked
+
+const ids = (hits) => hits.map((hit) => hit.atkId);
+
+// 页面对一个法术的取段：先剔掉 notInvoked（currentHits），再按两个开关取默认勾选的段。
+function spellSelection(id, charged, noFp) {
+  return R.defaultSelection(R.invokedHits(skills._spellById[id].hits), Boolean(noFp), charged);
+}
+
+// 与页面 currentOutput 同一口径的输出：构成与逐段判定用同一批段，三项蓄力情境由开关派生。
+function outputOfSelection(kind, id, weapon, hits, charged, contexts) {
+  const comp = R.composition(hits, weapon, kind !== "skill");
+  return R.makeOutput({ mode: kind, meansId: id, weapon, hand: 1, shares: comp.shares, hits,
+    contexts: R.chargedContexts(contexts || {}, charged) }, buffs);
+}
+
+test("v4：蓄力开关——按 chargeBranch 分侧（开取 charged / both，关取 uncharged / both，partial 两侧都不取），在专注值一侧之后判适用", () => {
+  const hits = [
+    { atkId: 1, chargeBranch: "uncharged" },
+    { atkId: 2, chargeBranch: "charged", charged: true },
+    { atkId: 3, chargeBranch: "both" },
+    { atkId: 4, chargeBranch: "partial" },
+    { atkId: 5, chargeBranch: "charged", noDamage: true },
+    { atkId: 6, chargeBranch: "uncharged", noFp: true },
+    { atkId: 7, chargeBranch: "both", noFp: true },
+    { atkId: 8 }
+  ];
+  assert.deepEqual(R.chargeInfo(hits, false), { applicable: true, onlyCharged: false });
+  assert.deepEqual(ids(R.defaultSelection(hits, false, true)), [2, 3], "开：charged + both");
+  assert.deepEqual(ids(R.defaultSelection(hits, false, false)), [1, 3], "关：uncharged + both；partial 与缺 chargeBranch 的段两侧都不取");
+  // 专注值不足侧没有 charged 段：开关不适用，开 / 关都取 ② 的全部段（在 ② 之后判，否则一段不剩）。
+  assert.deepEqual(R.chargeInfo(hits, true), { applicable: false, onlyCharged: false });
+  assert.deepEqual(ids(R.defaultSelection(hits, true, true)), [6, 7]);
+  assert.deepEqual(ids(R.defaultSelection(hits, true, false)), [6, 7]);
+  assert.equal(R.effectiveCharged(R.chargeInfo(hits, true), true), false, "不适用 → 蓄力情境不成立");
+  // 只有蓄力段：强制打开。
+  const only = [{ atkId: 1, chargeBranch: "charged" }, { atkId: 2, chargeBranch: "charged" }, { atkId: 3, chargeBranch: "partial" }];
+  assert.deepEqual(R.chargeInfo(only, false), { applicable: true, onlyCharged: true });
+  assert.equal(R.effectiveCharged(R.chargeInfo(only, false), false), true);
+  assert.deepEqual(ids(R.defaultSelection(only, false, false)), [1, 2]);
+  // v3 数据（没有 chargeBranch）：不适用，取全部带伤害的段——与旧口径相同。
+  const v3 = [{ atkId: 1 }, { atkId: 2, noFp: true }, { atkId: 3, fpBoth: true }, { atkId: 4, noDamage: true }];
+  assert.deepEqual(ids(R.defaultSelection(v3, false, true)), [1, 3]);
+  assert.deepEqual(ids(R.defaultSelection(v3, true, false)), [2, 3]);
+  // 「全选」只勾当前两侧都对的段；「全不选」「恢复默认」不看开关。
+  const all = R.hitOverridesFor(hits, "all", false, true);
+  assert.deepEqual(Object.keys(all).filter((key) => all[key]).map(Number), [2, 3]);
+  assert.equal(5 in all, false, "noDamage 段不参与");
+  const allOff = R.hitOverridesFor(hits, "all", false, false);
+  assert.deepEqual(Object.keys(allOff).filter((key) => allOff[key]).map(Number), [1, 3]);
+  assert.deepEqual(R.hitOverridesFor(hits, "reset", false, true), {});
+  assert.equal(Object.values(R.hitOverridesFor(hits, "none", false, true)).some(Boolean), false);
+});
+
+test("v4：三项蓄力攻击情境由开关派生，不能单独勾（开＝同时成立，关＝都不成立）", () => {
+  assert.deepEqual(R.CHARGED_CONTEXTS, ["chargedHeavyAttack", "chargedSkill", "chargedSpell"]);
+  R.CHARGED_CONTEXTS.forEach((key) => assert.equal(buffs.enums.attackContext[key].fromSubCategories.length, 1));
+  const picked = { criticalHit: true, chargedSpell: true, guardCounter: false };
+  assert.deepEqual(R.chargedContexts(picked, false), { criticalHit: true }, "单独勾的蓄力情境不算数");
+  assert.deepEqual(R.chargedContexts(picked, true),
+    { criticalHit: true, chargedHeavyAttack: true, chargedSkill: true, chargedSpell: true });
+  assert.deepEqual(picked, { criticalHit: true, chargedSpell: true, guardCounter: false }, "不改入参");
+  const chargedOnly = synth(-60, {
+    appliesTo: { skill: "conditional", sorcery: "conditional", incantation: "conditional" },
+    appliesToDetail: { incantation: { reason: "蓄力法术", requires: { attackContexts: ["chargedSpell"] } } }
+  });
+  const on = out({ mode: "incantation", contexts: R.chargedContexts({}, true) });
+  const off = out({ mode: "incantation", contexts: R.chargedContexts({ chargedSpell: true }, false) });
+  assert.equal(R.appliesVerdict(chargedOnly, on).state, "yes");
+  assert.equal(R.appliesVerdict(chargedOnly, off).state, "context");
+});
+
+test("v4：法术段剔掉 notInvoked——兽爪 6820 只剩 68200 / 68205，死亡雷击 5040 不再算 50402 / 50407", () => {
+  const claw = skills._spellById[6820];
+  assert.deepEqual(ids(claw.hits.filter((hit) => hit.notInvoked)), [68201, 68206]);
+  claw.hits.filter((hit) => hit.notInvoked).forEach((hit) => assert.equal(hit.notInvokedReason, "noCastSlot"));
+  assert.deepEqual(ids(R.invokedHits(claw.hits)), [68200, 68205]);
+  assert.deepEqual(ids(spellSelection(6820, true)), [68205], "蓄力开：只打蓄力子弹");
+  assert.deepEqual(ids(spellSelection(6820, false)), [68200], "蓄力关：只打普通子弹");
+  assert.deepEqual(ids(spellSelection(5040, true)), [50405, 50406]);
+  assert.deepEqual(ids(spellSelection(5040, false)), [50400, 50401]);
+  // 熔炉百相之尾：75000 两种放法都打（both），75005 只在蓄力时打。
+  assert.deepEqual(ids(spellSelection(7500, true)), [75000, 75005]);
+  assert.deepEqual(ids(spellSelection(7500, false)), [75000]);
+  // 法术段的 notInvoked 数与数据集 counts 一致，而且没有一段进默认勾选。
+  let spellDead = 0;
+  skills.spells.forEach((spell) => {
+    spellDead += spell.hits.filter((hit) => hit.notInvoked === true).length;
+    [true, false].forEach((charged) => R.defaultSelection(R.invokedHits(spell.hits), false, charged)
+      .forEach((hit) => assert.notEqual(hit.notInvoked, true, spell.id + " 勾上了 " + hit.atkId)));
+  });
+  assert.equal(spellDead, skills.counts.spellHitsNotInvoked);
+  assert.equal(spellDead + skills.counts.hitsNotInvoked, skills.counts.hitsNotInvokedAll);
+});
+
+test("v4：局内武器词条「强化祷告的蓄力执行」用在兽爪上——蓄力开三档 ×1.18 / ×1.13 / ×1.09 全额生效，关则不生效", () => {
+  const rates = { 8330302: 1.18, 8330301: 1.13, 8330300: 1.09 };
+  const onOut = outputOfSelection("incantation", 6820, null, spellSelection(6820, true), true);
+  const offOut = outputOfSelection("incantation", 6820, null, spellSelection(6820, false), false);
+  Object.keys(rates).map(Number).forEach((id) => {
+    const entry = index.byId[id];
+    const verdictOn = R.appliesVerdict(entry, onOut);
+    assert.equal(verdictOn.state, "yes");
+    assert.equal(verdictOn.weight, 1);
+    assert.equal(verdictOn.shares, null, id + "：勾选的段全部带 110，全额");
+    assert.notEqual(R.verdictLabel(entry, verdictOn), R.TEXT.verdict.partial, "不再标「部分段生效」");
+    assert.equal(R.verdictLabel(entry, verdictOn).indexOf(R.TEXT.verdict.yes), 0);
+    const config = R.emptyConfig();
+    config.weaponAffixes = [{ id, count: 1 }];
+    assert.equal(R.evaluateConfig(cfgIndex, onOut, config, Core).total.multiplier, rates[id], id + " 蓄力开：总倍率正好是参数值");
+    const offResult = R.evaluateConfig(cfgIndex, offOut, config, Core);
+    assert.equal(offResult.total.multiplier, 1, id + " 蓄力关：不生效");
+    assert.equal(offResult.items[0].state, "no");
+    assert.equal(R.verdictLabel(entry, R.appliesVerdict(entry, offOut)), R.TEXT.verdict.no);
+    // 武器词条栏的这一行：开时分数就是参数值，关时判为不生效（默认隐藏）。
+    const rowOn = R.weaponAffixRows(cfgIndex, onOut, R.emptyConfig(), null).find((row) => row.affix.id === id);
+    assert.ok(Math.abs(rowOn.score - rates[id]) < 1e-12 && rowOn.applicable);
+    const rowOff = R.weaponAffixRows(cfgIndex, offOut, R.emptyConfig(), null).find((row) => row.affix.id === id);
+    assert.equal(rowOff.applicable, false);
+    assert.equal(rowOff.state, "no");
+  });
+});
+
+test("v4：逐段判定与数据集 diagnostics.chargeBranch.examples 实算的三个数一致", () => {
+  const examples = skills.diagnostics.chargeBranch.examples;
+  const close6 = (actual, expected) => assert.ok(Math.abs(actual - expected) < 5e-7, "期望 " + expected + "，实际 " + actual);
+  const spellTotal = (id, affixId) => {
+    const config = R.emptyConfig();
+    config.weaponAffixes = [{ id: affixId, count: 1 }];
+    return R.evaluateConfig(cfgIndex, outputOfSelection("incantation", id, null, spellSelection(id, true), true), config, Core).total.multiplier;
+  };
+  close6(spellTotal(6820, 8330302), examples["6820"]);
+  close6(spellTotal(7500, 8330302), examples["7500"]);
+  const charge = skills._skillById[105];
+  const weapon = R.defaultWeaponFor(skills, charge);
+  const hits = R.defaultSelection(R.selectHits(charge, weapon), false, true);
+  assert.deepEqual(ids(hits), [301701900, 301701901, 301701902, 301701903, 301701904]);
+  const chargeOut = outputOfSelection("skill", 105, weapon, hits, true);
+  const item = R.evaluateEntry(index.byId[330900], R.makeEnv(cfgIndex, chargeOut, R.emptyConfig(), { assumeAll: true }), { column: "other", copies: 1 });
+  close6(item.multiplier, examples["105"]);
+  assert.equal(item.label, R.TEXT.verdict.partial, "突击的冲刺段不带 111：部分段生效");
+  // 关：只打 903 + 905，都不带 110 / 111。
+  const offHits = R.defaultSelection(R.selectHits(charge, weapon), false, false);
+  assert.deepEqual(ids(offHits), [301701903, 301701905]);
+  assert.equal(R.appliesVerdict(index.byId[330900], outputOfSelection("skill", 105, weapon, offHits, false)).state, "no");
+});
+
+test("v4：王者嘶吼 1031 无 FP 侧没有蓄力段（开关不适用、取全部段）；伟哉卡利亚 218 的一段蓄力放招两侧都不取", () => {
+  const roar = skills._skillById[1031];
+  const roarWeapon = R.weaponsForSkill(skills, roar).find((weapon) => R.chargeInfo(R.selectHits(roar, weapon), false).applicable);
+  assert.ok(roarWeapon, "王者嘶吼有武器能蓄力");
+  const roarHits = R.selectHits(roar, roarWeapon);
+  assert.equal(R.chargeInfo(roarHits, true).applicable, false, "无 FP 侧只剩吼叫本体");
+  const noFpSide = roarHits.filter((hit) => !hit.noDamage && R.hitOnSide(hit, true));
+  assert.ok(noFpSide.length > 0);
+  assert.deepEqual(ids(R.defaultSelection(roarHits, true, true)), ids(noFpSide), "蓄力开也不会一段不剩");
+
+  const glint = skills._skillById[218];
+  const glintWeapon = R.weaponsForSkill(skills, glint)[0];
+  const glintHits = R.selectHits(glint, glintWeapon);
+  assert.deepEqual(ids(R.defaultSelection(glintHits, false, true)), [300200872]);
+  assert.deepEqual(ids(R.defaultSelection(glintHits, false, false)), [300200870]);
+  assert.deepEqual(ids(R.defaultSelection(glintHits, true, true)), [300200872, 300200877]);
+  assert.deepEqual(ids(R.defaultSelection(glintHits, true, false)), [300200875]);
+  const partials = glintHits.filter((hit) => hit.chargeBranch === "partial");
+  assert.deepEqual(ids(partials).sort(), [300200871, 300200876]);
+  partials.forEach((hit) => {
+    [true, false].forEach((noFp) => [true, false].forEach((charged) => {
+      assert.equal(R.defaultSelection(glintHits, noFp, charged).indexOf(hit), -1, hit.atkId + " 是 partial，不该默认勾上");
+    }));
+  });
+});
+
+test("v4：全表——可蓄力的招在每一侧开 / 关都取得到段，两侧只共用 chargeBranch=both 的段", () => {
+  let checked = 0;
+  const check = (label, hits) => [false, true].forEach((noFp) => {
+    const info = R.chargeInfo(hits, noFp);
+    if (!info.applicable) return;
+    checked += 1;
+    assert.equal(info.onlyCharged, false, label + " noFp=" + noFp + "：本版本没有只有蓄力段的招");
+    const on = R.defaultSelection(hits, noFp, true);
+    const off = R.defaultSelection(hits, noFp, false);
+    assert.ok(on.length > 0 && off.length > 0, label + " noFp=" + noFp + " 两侧都要有段");
+    on.filter((hit) => off.indexOf(hit) !== -1).forEach((hit) => assert.equal(hit.chargeBranch, "both", label + " 两侧共用的 " + hit.atkId));
+    on.concat(off).forEach((hit) => assert.notEqual(hit.chargeBranch, "partial"));
+  });
+  skills.skills.forEach((skill) => R.weaponsForSkill(skills, skill).forEach((weapon) => {
+    const hits = R.selectHits(skill, weapon);
+    if (hits.length) check(skill.id + " × " + weapon.id, hits);
+  }));
+  skills.spells.forEach((spell) => check("法术 " + spell.id, R.invokedHits(spell.hits)));
+  assert.ok(checked > 100, "可蓄力的（招, 武器, 专注值侧）组合太少：" + checked);
+});
+
+test("v4：蓄力开关的文案（三端同名同值）与禁用 / 强制打开的渲染", () => {
+  assert.deepEqual(R.TEXT.chargedToggle, {
+    label: "蓄力",
+    hint: "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加",
+    unavailable: "这一招没有蓄力段",
+    onlyCharged: "这一招只有蓄力段"
+  });
+  assert.equal(R.TEXT.brief.partial, "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，所以蓄力类增益在蓄力施放下拿到全额。");
+  const unavailable = R.chargedToggleHtml({ applicable: false, onlyCharged: false });
+  assert.ok(unavailable.indexOf(R.TEXT.chargedToggle.unavailable) !== -1 && unavailable.indexOf(" disabled") !== -1);
+  assert.equal(unavailable.indexOf(" checked"), -1);
+  const forced = R.chargedToggleHtml({ applicable: true, onlyCharged: true });
+  assert.ok(forced.indexOf(R.TEXT.chargedToggle.onlyCharged) !== -1 && forced.indexOf(" checked") !== -1 && forced.indexOf(" disabled") !== -1);
+  const normal = R.chargedToggleHtml({ applicable: true, onlyCharged: false });
+  assert.equal(normal.indexOf(" disabled"), -1);
+  assert.ok(normal.indexOf("data-testid='ranker-charged'") !== -1 && normal.indexOf(R.TEXT.chargedToggle.label) !== -1);
+  assert.ok(R.chargeMarksHtml({ chargeBranch: "charged" }).join("").indexOf(R.TEXT.chargedToggle.label) !== -1);
+  assert.deepEqual(R.chargeMarksHtml({}), []);
 });
 
 test("列表一律显示 displayNameZh（notes.displayName：nameZh 重名极多）", () => {
@@ -1383,7 +1614,7 @@ test("appliesVerdict：requires.physicalType 只落在对应物理通道，构�
   assert.equal(R.appliesVerdict(pierce, out({ shares: shares({ slash: 1 }) })).state, "no");
 });
 
-test("appliesVerdict：requires.subCategoriesAny 用 attackIndex 逐段判定（全中 / 全不中 / 部分按段加权）", () => {
+test("appliesVerdict：requires.subCategoriesAny 按当前勾选的段逐段判定（全中＝全额 / 全不中＝不生效 / 部分按类型加权）", () => {
   const data = {
     enums: buffs.enums,
     attackIndex: {
@@ -1392,25 +1623,78 @@ test("appliesVerdict：requires.subCategoriesAny 用 attackIndex 逐段判定（
         2: { subCategorySets: [{ subs: [106, 130], hits: 3 }] },
         3: { subCategorySets: [{ subs: [112], hits: 1 }, { subs: [130], hits: 3 }] }
       },
-      spells: {}
+      spells: { 9: { magicSubCategories: [23], subCategorySets: [{ subs: [23], hits: 1 }] } }
     }
   };
   const skillAttack = synth(-7, {
-    appliesTo: { skill: "conditional" },
-    appliesToDetail: { skill: { reason: "子类别限定 [112]", requires: { subCategoriesAny: [111, 112] } } }
+    rates: { physicsAttackRate: 1.2, fireAttackPower: 10 },
+    appliesTo: { skill: "conditional", incantation: "conditional" },
+    appliesToDetail: {
+      skill: { reason: "子类别限定 [112]", requires: { subCategoriesAny: [111, 112] } },
+      incantation: { reason: "流派限定 [23]", requires: { subCategoriesAny: [23] } }
+    }
   });
-  assert.equal(R.appliesVerdict(skillAttack, out({ meansId: 1 }, data)).state, "yes");
-  const none = R.appliesVerdict(skillAttack, out({ meansId: 2 }, data));
+  const weapon = { attackBase: { physical: 100, fire: 100 }, atkAttribute: 0, atkAttribute2: 0 };
+  // 三段：A 斩 motion 100（带 112）、B 斩 motion 300 + 火 motion 100（不带）、C 火 motion 100（带 112）。
+  const A = { atkId: 1, attribute: "Slash", motion: { physical: 100 }, subCategories: [112, 130] };
+  const B = { atkId: 2, attribute: "Slash", motion: { physical: 300, fire: 100 }, subCategories: [130] };
+  const C = { atkId: 3, attribute: "Slash", motion: { fire: 100 }, subCategories: [111, 112] };
+  const Z = { atkId: 4, attribute: "Slash", motion: { magic: 100 }, subCategories: [112] };   // 这把武器没有魔力：相对值 0，不算段
+  const outFor = (hits, meansId) => {
+    const comp = R.composition(hits, weapon, false);
+    return out({ meansId: meansId == null ? 3 : meansId, weapon, shares: comp.shares, hits }, data);
+  };
+
+  // 全中：attackIndex 说整招只有 1/4 段带 112，也不影响——看的是勾选的段。
+  const all = R.appliesVerdict(skillAttack, outFor([A, C, Z]));
+  assert.equal(all.state, "yes");
+  assert.equal(all.weight, 1);
+  assert.equal(all.shares, null, "全中＝全额，不加权");
+  assert.equal(all.requirements[0].state, "met");
+  assert.ok(all.requirements[0].text.indexOf("2 段") !== -1, "只数相对值 > 0 的段：" + all.requirements[0].text);
+  assert.equal(R.verdictLabel(skillAttack, all), R.TEXT.verdict.conditionalMet);
+
+  // 全不中：attackIndex 说整招有 112 段也不生效。
+  const none = R.appliesVerdict(skillAttack, outFor([B], 1));
   assert.equal(none.state, "no");
   assert.ok(none.reasons[0].indexOf("112") !== -1);
-  const partial = R.appliesVerdict(skillAttack, out({ meansId: 3 }, data));
+  assert.equal(R.verdictLabel(skillAttack, none), R.TEXT.verdict.no);
+
+  // 部分：斩 = A 100 / (A 100 + B 300) = 0.25，火 = C 100 / (B 100 + C 100) = 0.5；整体 = 200 / 600。
+  const partial = R.appliesVerdict(skillAttack, outFor([A, B, C]));
   assert.equal(partial.state, "yes");
-  assert.equal(partial.weight, 0.25, "4 段里 1 段带 112");
-  assert.ok(partial.notes[0].indexOf("1/4") !== -1);
-  const weighted = R.entryTables(skillAttack, plan, null, partial.weight, null);
-  assert.ok(Math.abs(weighted.table.slash - (1 + 0.2 * 0.25)) < 1e-12, "按段加权：1 + (m − 1) × 命中段占比");
+  assert.ok(Math.abs(partial.weight - 200 / 600) < 1e-12, "整体命中占比按相对值：" + partial.weight);
+  assert.ok(Math.abs(partial.shares.slash - 0.25) < 1e-12 && Math.abs(partial.shares.fire - 0.5) < 1e-12);
+  assert.equal(R.verdictLabel(skillAttack, partial), R.TEXT.verdict.partial);
+  assert.equal(partial.requirements[0].state, "partial");
+  assert.ok(partial.notes[0].indexOf("2/3") !== -1, "按勾选的段数说明：" + partial.notes[0]);
+  assert.equal(partial.notes[0].indexOf("attackIndex"), -1, "不再说「段数取 attackIndex、与分段勾选无关」");
+  const weighted = R.entryTables(skillAttack, plan, null, R.verdictWeights(partial), null);
+  assert.ok(Math.abs(weighted.table.slash - (1 + 0.2 * 0.25)) < 1e-12, "斩：1 + (m − 1) × 0.25");
+  assert.ok(Math.abs(weighted.flat.fire - 10 * 0.5) < 1e-12, "加算按同一类型的占比缩放");
+  // 统一的一个数（旧调用）仍按那个数加权。
+  assert.ok(Math.abs(R.entryTables(skillAttack, plan, null, 0.5, null).table.slash - 1.1) < 1e-12);
+
+  // 勾选变了，判定跟着变（旧口径按 attackIndex 整招统计，与勾选无关）。
+  assert.equal(R.appliesVerdict(skillAttack, outFor([A])).weight, 1);
+  assert.equal(R.appliesVerdict(skillAttack, outFor([B])).state, "no");
+
+  // 法术：每段再并上流派（attackIndex.spells[id].magicSubCategories），段自己没有子类别也算中。
+  const spellHit = { atkId: 90, flat: { holy: 100 } };
+  const spellComp = R.composition([spellHit], null, true);
+  const spellOut = out({ mode: "incantation", meansId: 9, shares: spellComp.shares, hits: [spellHit] }, data);
+  assert.deepEqual(spellOut.segments[0].subs, [23]);
+  assert.equal(R.appliesVerdict(skillAttack, spellOut).state, "yes");
+  assert.equal(R.appliesVerdict(skillAttack, spellOut).weight, 1);
+
+  // 没有勾选带伤害的段（或旧调用没给 hits）：只按 attackIndex 做说明，不决定数值。
+  const noHits = R.appliesVerdict(skillAttack, out({ meansId: 3, shares: shares({}), hits: [] }, data));
+  assert.equal(noHits.state, "yes");
+  assert.equal(noHits.weight, 1, "没有构成时不按整招段数加权");
+  assert.equal(noHits.requirements[0].state, "partial");
+  assert.equal(R.appliesVerdict(skillAttack, out({ meansId: 2 }, data)).state, "no", "整招都不带这类子类别：不生效");
   const unknown = R.appliesVerdict(skillAttack, out({ meansId: 99 }, data));
-  assert.equal(unknown.state, "pending", "attackIndex 里查不到就要用户确认");
+  assert.equal(unknown.state, "pending", "attackIndex 里查不到、也没有勾选的段：要用户确认");
 });
 
 test("appliesVerdict：requires.attackContexts 只认攻击情境勾选；附魔武器限定等要用户确认", () => {
