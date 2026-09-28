@@ -408,7 +408,7 @@ struct BuffRankerSegmentSection: View {
                     .buttonStyle(.plain)
                     .font(.caption)
                     .foregroundStyle(AppTheme.purpleSoft)
-                    .help("只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍")
+                    .help("只勾当前这一侧的段：正常版与专注值不足版、蓄力与不蓄力都互为替代，两边一起勾会把同一击算两遍")
                 Button("全不选") { model.clearSegments() }
                     .buttonStyle(.plain)
                     .font(.caption)
@@ -425,6 +425,10 @@ struct BuffRankerSegmentSection: View {
                     .toggleStyle(.switch)
                     .font(.caption)
                     .help("没蓝时打出的弱化版战技：正常版与专注值不足版互斥，这里整体切换")
+                }
+
+                if !model.segments.isEmpty {
+                    chargedToggle
                 }
 
                 Spacer(minLength: 0)
@@ -452,6 +456,34 @@ struct BuffRankerSegmentSection: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .appCard()
+    }
+
+    /// 「蓄力」开关（v4 chargeBranch）：与专注值不足版同理，是同一招的互斥两侧、整体切换。
+    /// 没有蓄力段的招禁用并注明，只有蓄力段的招强制开并注明；攻击情境里的蓄力三项由它派生。
+    private var chargedToggle: some View {
+        let availability = model.chargeAvailability
+        return HStack(spacing: 6) {
+            Toggle(LoadoutText.t("chargedToggle.label"), isOn: Binding(
+                get: { model.chargedToggleIsOn },
+                set: { model.setUseCharged($0) }
+            ))
+            .toggleStyle(.switch)
+            .font(.caption)
+            .disabled(availability != .toggle)
+            .help(LoadoutText.t("chargedToggle.hint"))
+            switch availability {
+            case .unavailable:
+                Text(LoadoutText.t("chargedToggle.unavailable"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.tertiaryText)
+            case .onlyCharged:
+                Text(LoadoutText.t("chargedToggle.onlyCharged"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.amber)
+            case .toggle:
+                EmptyView()
+            }
+        }
     }
 }
 

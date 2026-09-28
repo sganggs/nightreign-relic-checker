@@ -188,8 +188,9 @@ struct BuffRankerNotesSection: View {
                         RankerDetailRow(
                             label: "命中段核实",
                             value: skills.dataset.taeVerified
-                                ? "已按 TAE 动画事件核实：\(skills.notInvokedHits) 段在所有武器上都打不出（hits[].notInvoked），"
-                                    + "本页不取（usage.命中段已按 TAE 核实（v3））"
+                                ? "已按 TAE 动画事件核实：\(skills.notInvokedHits) 段打不出（hits[].notInvoked：战技在所有武器上都不调用、"
+                                    + "法术没有任何施法动画发射），本页不取（usage.命中段已按 TAE 核实（v3））；"
+                                    + "蓄力与不蓄力按 hits[].chargeBranch 分两侧（usage.蓄力段（v4））"
                                 : "这份数据没做 TAE 核实（counts.taeVerified 不为 true），选段只按行为表",
                             tint: AppTheme.secondaryText
                         )
@@ -262,10 +263,11 @@ struct BuffRankerNotesSection: View {
         return existing + rest
     }
 
-    /// usage 的展示顺序：选段在前，紧跟 v3 的三条（战技来源、法术来源、命中段已按 TAE 核实），再是算法与边界，其余按键名。
+    /// usage 的展示顺序：选段在前，紧跟 v3 的三条（战技来源、法术来源、命中段已按 TAE 核实）与 v4 的蓄力段，
+    /// 再是算法与边界，其余按键名。
     private func usageKeys(_ skills: SkillDataIndex) -> [String] {
         let preferred = [
-            "选段（必读）", "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）",
+            "选段（必读）", "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）", "蓄力段（v4）",
             "近战武器段", "法术 / 子弹段", "伤害类型（斩 / 打 / 突）", "削韧", "本数据集的边界"
         ]
         let existing = preferred.filter { skills.dataset.usage[$0] != nil }

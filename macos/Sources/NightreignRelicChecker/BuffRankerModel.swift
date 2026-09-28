@@ -6,7 +6,8 @@ import SwiftUI
 ///
 /// 页面状态全部收在这里（视图只读不算），纯计算在 RelicCore 的 `BuffLoadout.swift`：
 ///   * 换输出手段 / 换武器 → 重新选段 → 重算构成 → 重建计算器（appliesTo 判定跟着输出走）；
-///   * 勾选段 / 换手 / 勾攻击情境 → 重建计算器；
+///   * 勾选段 / 专注值与蓄力开关（互斥两侧，整体切换选段）/ 换手 / 勾攻击情境 → 重建计算器
+///     （子类别限定的增益按勾选的段逐段判；攻击情境的蓄力三项由蓄力开关派生）；
 ///   * 改配置（武器词条、遗物、护符、其它增益、条件、层数…）→ 只重算汇总与各栏候选。
 @MainActor
 final class BuffRankerModel: ObservableObject {
@@ -49,6 +50,9 @@ final class BuffRankerModel: ObservableObject {
     @Published private(set) var composition: SkillDamageComposition = .empty
     /// 当前勾的是专注值不足版（正常版与专注值不足版互斥切换）。
     @Published private(set) var useNoFp: Bool = false
+    /// 用户要的蓄力侧（v4 chargeBranch）：蓄力与不蓄力是同一招的互斥两侧。实际取哪一侧看 `chargeAvailability`
+    /// ——不适用时不分侧、只有蓄力段时强制开。
+    @Published private(set) var useCharged: Bool = false
 
     // MARK: 生效判定的输入
 
@@ -230,8 +234,10 @@ final class BuffRankerModel: ObservableObject {
             segments = []
         }
         if resetSelection {
+            // 换招 / 换武器：专注值回正常版，蓄力按可用性重置（只有蓄力段的招开，其余关）。
             useNoFp = false
-            selectedSegmentIDs = SkillDamageMath.defaultSelection(segments)
+            useCharged = SkillDamageMath.defaultCharged(segments, useNoFp: false)
+            selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: false, useCharged: useCharged)
         } else {
             selectedSegmentIDs = selectedSegmentIDs.filter { id in segments.contains { $0.atkId == id } }
         }
@@ -255,9 +261,9 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
-    /// 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍。
+    /// 「全选」只勾**当前这一侧**的段：正常版与专注值不足版、蓄力与不蓄力都互为替代，两边一起勾会把同一击算两遍。
     func selectAllSegments() {
-        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: useNoFp)
+        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: useNoFp, useCharged: useCharged)
         refreshComposition()
     }
 
@@ -266,15 +272,41 @@ final class BuffRankerModel: ObservableObject {
         refreshComposition()
     }
 
-    /// 正常版与专注值不足版互斥切换。
+    /// 正常版与专注值不足版互斥切换（蓄力侧保持；这一侧的蓄力可用性由 `chargeAvailability` 现算）。
     func setUseNoFp(_ value: Bool) {
         guard value != useNoFp else { return }
         useNoFp = value
-        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: value)
+        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: value, useCharged: useCharged)
         refreshComposition()
     }
 
     var hasNoFpVariant: Bool { segments.contains { $0.noFp } }
+
+    /// 蓄力与不蓄力互斥切换（usage.蓄力段（v4））：开只取 charged / both 段、关只取 uncharged / both 段。
+    func setUseCharged(_ value: Bool) {
+        guard chargeAvailability == .toggle, value != useCharged else { return }
+        useCharged = value
+        selectedSegmentIDs = SkillDamageMath.selection(segments, useNoFp: useNoFp, useCharged: value)
+        refreshComposition()
+    }
+
+    /// 蓄力开关对当前这一招（专注值当前这一侧）的可用性：没有蓄力段禁用、只有蓄力段强制开。
+    var chargeAvailability: SkillChargeAvailability {
+        SkillDamageMath.chargeAvailability(segments, useNoFp: useNoFp)
+    }
+
+    /// 开关显示的状态（不适用时显示关、只有蓄力段时显示开）。
+    var chargedToggleIsOn: Bool { chargeAvailability.effectiveCharged(useCharged) ?? false }
+
+    /// 某个攻击情境当前是否成立：蓄力三项由蓄力开关派生，其余看用户勾选。
+    func isAttackContextOn(_ key: String) -> Bool {
+        LoadoutOutput.attackContexts(picked: includedAttackContexts, charged: chargedToggleIsOn).contains(key)
+    }
+
+    /// 由蓄力开关派生、不能单独勾选的情境。
+    func isDerivedAttackContext(_ key: String) -> Bool {
+        LoadoutOutput.chargedAttackContexts.contains(key)
+    }
 
     private func refreshComposition() {
         composition = SkillDamageMath.composition(of: segments, selected: selectedSegmentIDs)
@@ -297,7 +329,10 @@ final class BuffRankerModel: ObservableObject {
             weaponWepType: skill == nil ? nil : weapon?.wepType,
             hand: weaponSlot,
             shares: composition.shares,
-            attackContexts: includedAttackContexts
+            // 攻击情境里的 蓄力法术 / 蓄力战技 / 蓄力强攻击 不单独勾：由蓄力开关派生（开 = 三项成立）。
+            attackContexts: LoadoutOutput.attackContexts(picked: includedAttackContexts, charged: chargedToggleIsOn),
+            // 子类别限定的增益按当前勾选的段逐段判。
+            segments: LoadoutSegment.selected(segments, selectedSegmentIDs)
         )
     }
 
@@ -321,6 +356,7 @@ final class BuffRankerModel: ObservableObject {
     }
 
     func toggleAttackContext(_ key: String) {
+        guard !isDerivedAttackContext(key) else { return }
         if includedAttackContexts.contains(key) {
             includedAttackContexts.remove(key)
         } else {

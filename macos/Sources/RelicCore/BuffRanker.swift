@@ -2842,19 +2842,26 @@ public struct BuffSubCategorySet: Sendable, Hashable, Decodable {
 }
 
 /// attackIndex：每个战技／法术实际命中段的子类别集合。
+///
+/// skills 数据集 v4 起子类别限定的增益按**所选的每一段**判（段的 hits[].subCategories，法术再并上这里的
+/// magicSubCategories）；subCategorySets 只是整招的人口统计，只在没有可用段时用来说明，不再决定数值。
 public struct BuffAttackIndex: Sendable, Hashable, Decodable {
     public let skills: [Int: [BuffSubCategorySet]]
     public let spells: [Int: [BuffSubCategorySet]]
+    /// attackIndex.spells[id].magicSubCategories：法术的流派（Magic.subCategory1..2），逐段判定时并到每一段上。
+    public let spellMagicSubCategories: [Int: [Int]]
     /// 近战普通攻击／弓弩射击的子类别人口（{subs, rows}；只用 subs）。
     public let melee: [BuffSubCategorySet]
     public let ranged: [BuffSubCategorySet]
 
     public init(
         skills: [Int: [BuffSubCategorySet]] = [:], spells: [Int: [BuffSubCategorySet]] = [:],
+        spellMagicSubCategories: [Int: [Int]] = [:],
         melee: [BuffSubCategorySet] = [], ranged: [BuffSubCategorySet] = []
     ) {
         self.skills = skills
         self.spells = spells
+        self.spellMagicSubCategories = spellMagicSubCategories
         self.melee = melee
         self.ranged = ranged
     }
@@ -2863,8 +2870,19 @@ public struct BuffAttackIndex: Sendable, Hashable, Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         skills = Self.table(container, .skills)
         spells = Self.table(container, .spells)
+        spellMagicSubCategories = Self.magicTable(container, .spells)
         melee = Self.population(container, .melee)
         ranged = Self.population(container, .ranged)
+    }
+
+    private static func magicTable(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [Int: [Int]] {
+        guard let raw = try? container.decodeIfPresent([String: BuffFailable<Entry>].self, forKey: key) else { return [:] }
+        var result: [Int: [Int]] = [:]
+        for (id, entry) in raw {
+            guard let number = Int(id), let subs = entry.value?.magicSubCategories, !subs.isEmpty else { continue }
+            result[number] = subs
+        }
+        return result
     }
 
     private static func population(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> [BuffSubCategorySet] {
@@ -2897,13 +2915,15 @@ public struct BuffAttackIndex: Sendable, Hashable, Decodable {
 
     private struct Entry: Decodable {
         let sets: [BuffSubCategorySet]
+        let magicSubCategories: [Int]
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             sets = container.buffArray(.subCategorySets)
+            magicSubCategories = container.buffIntArray(.magicSubCategories).filter { $0 != 0 }
         }
 
-        private enum CodingKeys: String, CodingKey { case subCategorySets }
+        private enum CodingKeys: String, CodingKey { case subCategorySets, magicSubCategories }
     }
 
     private enum CodingKeys: String, CodingKey { case skills, spells, melee, ranged }

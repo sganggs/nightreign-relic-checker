@@ -195,13 +195,17 @@ struct BuffRankerSummarySection: View {
                 .foregroundStyle(AppTheme.tertiaryText)
             RankerWrap(spacing: 6, lineSpacing: 5) {
                 ForEach(model.contextOptions) { option in
+                    // 蓄力法术 / 蓄力战技 / 蓄力强攻击 不单独勾选：由「分段命中」里的蓄力开关派生。
+                    let derived = model.isDerivedAttackContext(option.key)
                     RankerFilterChip(
                         text: "\(option.zh) \(option.count)",
-                        isOn: model.includedAttackContexts.contains(option.key),
+                        isOn: model.isAttackContextOn(option.key),
                         color: AppTheme.amber
                     ) {
                         model.toggleAttackContext(option.key)
                     }
+                    .disabled(derived)
+                    .help(derived ? LoadoutText.t("chargedToggle.hint") : LoadoutText.t("contextsLabel"))
                 }
             }
         }

@@ -336,6 +336,10 @@ struct RankerSegmentRow: View {
                         if segment.fpBoth {
                             Pill(text: "两版共用", color: AppTheme.purpleSoft)
                         }
+                        // v4 chargeBranch：只在蓄力施放里打出的段（蓄力开关开时才计入）。
+                        if segment.chargeBranch == .charged {
+                            Pill(text: LoadoutText.t("chargedToggle.label"), color: AppTheme.amber)
+                        }
                         if segment.noDamage {
                             Pill(text: "只挂状态", color: AppTheme.tertiaryText)
                         }

@@ -1162,7 +1162,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     // 3. 整份 skills 数据集：未知顶层字段 + 坏的 weapons 元素
     let dataset = try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 3, "gameVersion": "x", "dataVersion": "y",
+      "schemaVersion": 4, "gameVersion": "x", "dataVersion": "y",
       "未来块": {"a": [1,2,3]},
       "usage": {"选段（必读）": "…", "坏值": 3},
       "caveats": ["一条"],
@@ -1198,7 +1198,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     // 4. variants 整个缺失 → ctx 单选逻辑（先武器名，再类别名，最后 ctx 缺失那组），不取并集
     let ctxDataset = try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":7}],
       "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
                   "hits":[{"atkId":1,"ctx":"Alpha","motion":{"physical":100},"attribute":"Slash"},
@@ -1220,7 +1220,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     )
     let noSharedIndex = try SkillDataIndex(dataset: try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","attackBase":{"physical":10},"swordArtsParamId":7}],
       "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
                   "hits":[{"atkId":1,"ctx":"Alpha","motion":{"physical":100},"attribute":"Slash"},
@@ -1237,7 +1237,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     // TAE 判定永远打不出的段、只挂状态 / 只打自己队友的段都不该出现在选段结果里。
     let fallbackFilterIndex = try SkillDataIndex(dataset: try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 3,
+      "schemaVersion": 4,
       "weapons": [{"id":1,"nameZh":"甲","nameEn":"Alpha","wepTypeEn":"Katana","attackBase":{"physical":10},"swordArtsParamId":7}],
       "skills": [{"id":7,"nameZh":"测试战技","weaponIds":[1],
                   "hits":[{"atkId":1,"motion":{"physical":100},"attribute":"Slash"},
@@ -1266,7 +1266,7 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     //     武器 4：固定战技 9、skillVariant=1、没写 skillVariants → 8 不得借用 9 的下标，打不出段。
     let v3Dataset = try SkillDataset.decode(from: Data("""
     {
-      "schemaVersion": 3, "counts": {"taeVerified": true, "hits": 4},
+      "schemaVersion": 4, "counts": {"taeVerified": true, "hits": 4},
       "swordArtsPools": {"500": [[8, 100], [7, 300], "坏条目"], "坏池": [[8, 1]]},
       "weapons": [
         {"id":1,"nameZh":"甲","wepTypeZh":"刀","attackBase":{"physical":10},"swordArtsParamId":7,"skillVariant":0,
@@ -1363,7 +1363,8 @@ private func checkLenientDecoding(counter count: inout Int) throws {
     try rankerExpect(v3Index.defaultWeapon(for: poolSkill)?.id == 3, "默认武器应是固定带这个战技的那一把", counter: &count)
     try rankerExpect(v3Index.poolOnlyOutputs == 0, "两个战技都有固定武器，不该算「只在池里」", counter: &count)
 
-    // 4c. schemaVersion < 3 拒绝解码：v2 没有 skillVariants，池里的战技会拿固定战技的下标选错动作套。
+    // 4c. schemaVersion < 4 拒绝解码：v2 没有 skillVariants，池里的战技会拿固定战技的下标选错动作套；
+    //     v3 没有逐段 subCategories / chargeBranch，蓄力两侧会一起勾、子类别限定的增益只能按整招段数近似。
     var rejectedV2 = false
     do {
         _ = try SkillDataset.decode(from: Data("{\"schemaVersion\":2,\"weapons\":[],\"skills\":[],\"spells\":[]}".utf8))
@@ -1371,6 +1372,15 @@ private func checkLenientDecoding(counter count: inout Int) throws {
         rejectedV2 = version == 2
     }
     try rankerExpect(rejectedV2, "skills schemaVersion 2 应抛 unsupportedSchema(2)", counter: &count)
+    var rejectedV3 = false
+    do {
+        _ = try SkillDataset.decode(from: Data("{\"schemaVersion\":3,\"weapons\":[],\"skills\":[],\"spells\":[]}".utf8))
+    } catch SkillDataError.unsupportedSchema(let version) {
+        rejectedV3 = version == 3
+    }
+    try rankerExpect(rejectedV3 && SkillDataset.minimumSchemaVersion == 4,
+                     "skills schemaVersion 3 应抛 unsupportedSchema(3)（本页要 v4 的逐段子类别与蓄力分侧）", counter: &count)
+    try checkSkillChargeSynthetic(counter: &count)
     var rejectedMissing = false
     do {
         _ = try SkillDataset.decode(from: Data("{\"weapons\":[],\"skills\":[],\"spells\":[]}".utf8))
@@ -1482,11 +1492,242 @@ private struct SkillFailableProbe: Decodable {
     }
 }
 
+// MARK: - v4：真实数据的逐段子类别、法术 notInvoked 与蓄力分侧
+
+/// 与数据集 self_check 的 `charge_pick` 断言同一组取段（usage.蓄力段（v4）、PROVENANCE v4 两轮审查修正）。
+private func checkSkillDatasetV4(_ index: SkillDataIndex, counter count: inout Int) throws {
+    let dataset = index.dataset
+    let allHits = dataset.skills.flatMap(\.hits) + dataset.spells.flatMap(\.hits)
+    func counted(_ key: String) -> Int { Int(dataset.counts[key] ?? -1) }
+
+    // ① 计数：chargeBranch 各项、charged 与子类别一致
+    let branches = allHits.compactMap(\.chargeBranch)
+    try rankerExpect(
+        branches.count == counted("hitsChargeBranch")
+            && branches.filter { $0 == .charged }.count == counted("hitsChargeBranchCharged")
+            && branches.filter { $0 == .uncharged }.count == counted("hitsChargeBranchUncharged")
+            && branches.filter { $0 == .both }.count == counted("hitsChargeBranchBoth")
+            && branches.filter { $0 == .partial }.count == counted("hitsChargeBranchPartial")
+            && counted("hitsChargeBranchPartial") == 2
+            && allHits.filter(\.charged).count == counted("hitsCharged")
+            && allHits.filter { !$0.subCategories.isEmpty }.count == counted("hitsWithSubCategories"),
+        "chargeBranch / charged / subCategories 的段数与 counts 一致（partial 只有伟哉卡利亚 2 段）",
+        counter: &count
+    )
+    let chargedSubs: Set<Int> = [100, 110, 111]
+    try rankerExpect(
+        allHits.allSatisfy { $0.charged == !chargedSubs.isDisjoint(with: $0.subCategories) }
+            && allHits.allSatisfy { $0.subCategories == $0.subCategories.sorted() && !$0.subCategories.contains(0) },
+        "charged ⇔ 子类别带 100 / 110 / 111；subCategories 升序、无 0",
+        counter: &count
+    )
+    try rankerExpect(
+        allHits.filter { $0.charged && !$0.notInvoked && $0.chargeBranch != nil }
+            .allSatisfy { $0.chargeBranch == .charged || $0.chargeBranch == .both },
+        "带蓄力子类别的段不会是 uncharged / partial",
+        counter: &count
+    )
+
+    // ② 用户点名的几招
+    func spellSegments(_ id: Int) throws -> [SkillSegment] {
+        guard let spell = index.spellsByID[id] else { throw CheckFailure(description: "增伤排名：找不到法术 \(id)") }
+        return index.segments(for: spell)
+    }
+    func skillSegments(_ id: Int) throws -> [SkillSegment] {
+        guard let skill = index.skillsByID[id], let weapon = index.defaultWeapon(for: skill) else {
+            throw CheckFailure(description: "增伤排名：找不到战技 \(id) 或它的武器")
+        }
+        return index.segments(for: skill, weapon: weapon)
+    }
+    func pick(_ segments: [SkillSegment], noFp: Bool = false, charged: Bool) -> [Int] {
+        SkillDamageMath.selection(segments, useNoFp: noFp, useCharged: charged).sorted()
+    }
+    let beastClaw = try spellSegments(6820)
+    try rankerExpect(
+        beastClaw.map(\.atkId) == [68200, 68205]
+            && beastClaw.first { $0.atkId == 68205 }?.subCategories == [110]
+            && beastClaw.first { $0.atkId == 68200 }?.subCategories == []
+            && index.spellsByID[6820]!.hits.filter(\.notInvoked).map(\.atkId) == [68201, 68206],
+        "兽爪：68201 / 68206 是 notInvoked（没有施法槽），只剩 68200（无子类别）与 68205（[110]）",
+        counter: &count
+    )
+    try rankerExpect(
+        SkillDamageMath.chargeAvailability(beastClaw, useNoFp: false) == .toggle
+            && pick(beastClaw, charged: true) == [68205] && pick(beastClaw, charged: false) == [68200]
+            && SkillDamageMath.defaultSelection(beastClaw) == [68200],
+        "兽爪：蓄力开只取 68205、关只取 68200（默认关）",
+        counter: &count
+    )
+    let deathLightning = try spellSegments(5040)
+    try rankerExpect(
+        !deathLightning.contains { $0.atkId == 50402 || $0.atkId == 50407 }
+            && pick(deathLightning, charged: true) == [50405, 50406] && pick(deathLightning, charged: false) == [50400, 50401],
+        "死亡雷击：50402 / 50407 不取；蓄力开 50405 + 50406、关 50400 + 50401",
+        counter: &count
+    )
+    let furnace = try spellSegments(7500)
+    try rankerExpect(pick(furnace, charged: true) == [75000, 75005] && pick(furnace, charged: false) == [75000],
+                     "熔炉百相之尾：75000 是 both（两侧都计），开 75000 + 75005、关 75000", counter: &count)
+    let charge = try skillSegments(105)
+    try rankerExpect(
+        pick(charge, charged: true) == [301701900, 301701901, 301701902, 301701903, 301701904]
+            && pick(charge, charged: false) == [301701903, 301701905]
+            && pick(charge, noFp: true, charged: true) == [301701906, 301701907, 301701908, 301701909, 301701910]
+            && pick(charge, noFp: true, charged: false) == [301701909, 301701911],
+        "突击：蓄力开 900–904、关 903 + 905（无 FP 侧 906–910 / 909 + 911）",
+        counter: &count
+    )
+    let carian = try skillSegments(218)
+    try rankerExpect(
+        pick(carian, charged: true) == [300200872] && pick(carian, charged: false) == [300200870]
+            && pick(carian, noFp: true, charged: true) == [300200872, 300200877]
+            && pick(carian, noFp: true, charged: false) == [300200875],
+        "伟哉卡利亚：partial（871 / 876 一段蓄力）两侧都不取；开 872、关 870（无 FP 侧开 872 + 877、关 875）",
+        counter: &count
+    )
+    let comet = try skillSegments(1017)
+    try rankerExpect(
+        pick(comet, charged: true) == [300107900, 300107910] && pick(comet, charged: false) == [300107901, 300107910]
+            && pick(comet, noFp: true, charged: true) == [300107905, 300107911]
+            && pick(comet, noFp: true, charged: false) == [300107906, 300107911],
+        "辉石彗砾：追加突刺 910 / 911 是 both，两侧都计入",
+        counter: &count
+    )
+    let roar = try skillSegments(1031)
+    try rankerExpect(
+        SkillDamageMath.chargeAvailability(roar, useNoFp: true) == .unavailable
+            && pick(roar, noFp: true, charged: true) == [302305910] && pick(roar, noFp: true, charged: false) == [302305910]
+            && SkillDamageMath.chargeAvailability(roar, useNoFp: false) == .toggle,
+        "王者嘶吼：无 FP 侧只剩吼叫本体（both），开关不适用、两侧都取它；带 FP 侧可切换",
+        counter: &count
+    )
+
+    // ③ 每个可蓄力条目 × 动作套 × 专注值侧：开关适用时开 / 关两侧都不空（本版本没有「只有蓄力段」的招）
+    var checkedSides = 0
+    var emptySides: [String] = []
+    func checkSides(_ segments: [SkillSegment], _ label: String) {
+        for noFp in [false, true] where !SkillDamageMath.fpSide(segments, useNoFp: noFp).isEmpty {
+            let availability = SkillDamageMath.chargeAvailability(segments, useNoFp: noFp)
+            guard availability != .unavailable else { continue }
+            checkedSides += 1
+            if availability == .onlyCharged
+                || SkillDamageMath.selection(segments, useNoFp: noFp, useCharged: true).isEmpty
+                || SkillDamageMath.selection(segments, useNoFp: noFp, useCharged: false).isEmpty {
+                emptySides.append("\(label)\(noFp ? "（无 FP）" : "")")
+            }
+        }
+    }
+    for skill in dataset.skills where skill.hits.contains(where: { $0.chargeBranch != nil }) {
+        var seen: Set<Int> = []
+        for id in skill.weaponIds {
+            guard let weapon = index.weaponsByID[id], let variant = weapon.variantIndex(forSkill: skill.id),
+                  seen.insert(variant).inserted else { continue }
+            checkSides(index.segments(for: skill, weapon: weapon), "战技 \(skill.id)#\(variant)")
+        }
+    }
+    for spell in dataset.spells where spell.hits.contains(where: { $0.chargeBranch != nil }) {
+        checkSides(index.segments(for: spell), "法术 \(spell.id)")
+    }
+    try rankerExpect(checkedSides > 60 && emptySides.isEmpty,
+                     "可蓄力条目开 / 关两侧都不空（检查 \(checkedSides) 侧，空的：\(emptySides)）", counter: &count)
+}
+
+// MARK: - v4：逐段子类别与蓄力分侧（合成数据）
+
+/// skills v4 的 hits[].subCategories / charged / chargeBranch 解码与蓄力开关取段（usage.蓄力段（v4））。
+private func checkSkillChargeSynthetic(counter count: inout Int) throws {
+    let dataset = try SkillDataset.decode(from: Data("""
+    {
+      "schemaVersion": 4,
+      "weapons": [{"id":1,"nameZh":"甲","wepTypeZh":"刀","attackBase":{"physical":100},"swordArtsParamId":7,"skillVariant":0}],
+      "skills": [{"id":7,"nameZh":"可蓄力战技","weaponIds":[1],
+                  "variants":[{"atkIds":[1,2,3,4,5,6,8],"via":"behavior","weaponIds":[1]}],
+                  "hits":[{"atkId":1,"motion":{"physical":100},"attribute":"Slash","subCategories":[111,112,112,0],"charged":true,"chargeBranch":"charged"},
+                          {"atkId":2,"motion":{"physical":80},"attribute":"Slash","subCategories":[112],"chargeBranch":"uncharged"},
+                          {"atkId":3,"motion":{"physical":90},"attribute":"Slash","subCategories":[112],"chargeBranch":"partial"},
+                          {"atkId":4,"motion":{"physical":30},"attribute":"Slash","chargeBranch":"both"},
+                          {"atkId":5,"labelZh":"无FP版","motion":{"physical":60},"attribute":"Slash","noFp":true,"chargeBranch":"uncharged"},
+                          {"atkId":6,"motion":{"physical":20},"attribute":"Slash","fpBoth":true,"chargeBranch":"both"},
+                          {"atkId":8,"motion":{"physical":10},"attribute":"Slash","noDamage":true,"chargeBranch":"uncharged"},
+                          {"atkId":9,"motion":{"physical":10},"attribute":"Slash","chargeBranch":"未来取值","notInvoked":true}]}],
+      "spells": [
+        {"id":20,"nameZh":"只有蓄力段","kind":"incantation","hits":[
+          {"atkId":201,"flat":{"fire":100},"subCategories":[110],"charged":true,"chargeBranch":"charged"},
+          {"atkId":202,"flat":{"fire":50},"chargeBranch":"uncharged","noDamage":true},
+          {"atkId":203,"flat":{"fire":70},"notInvoked":true,"notInvokedReason":"noCastSlot"}]},
+        {"id":21,"nameZh":"不分侧","kind":"sorcery","hits":[
+          {"atkId":211,"flat":{"magic":100},"subCategories":[110],"charged":true},
+          {"atkId":212,"flat":{"magic":100}}]}
+      ]
+    }
+    """.utf8))
+    let index = try SkillDataIndex(dataset: dataset)
+    let skill = index.skillsByID[7]!
+    let hit1 = skill.hits[0]
+    try rankerExpect(
+        hit1.subCategories == [111, 112] && hit1.charged && hit1.chargeBranch == .charged
+            && skill.hits[1].subCategories == [112] && !skill.hits[1].charged && skill.hits[1].chargeBranch == .uncharged
+            && skill.hits[3].subCategories.isEmpty && skill.hits[2].chargeBranch == .partial
+            && skill.hits[7].chargeBranch == nil,
+        "hits[].subCategories 去重升序去 0、charged / chargeBranch 解码，认不出的 chargeBranch 退 nil",
+        counter: &count
+    )
+    let segments = index.segments(for: skill, weapon: index.weaponsByID[1])
+    try rankerExpect(segments.first { $0.atkId == 1 }?.subCategories == [111, 112]
+                        && segments.first { $0.atkId == 3 }?.chargeBranch == .partial,
+                     "SkillSegment 带上 subCategories / chargeBranch", counter: &count)
+    func sorted(_ ids: Set<Int>) -> [Int] { ids.sorted() }
+    try rankerExpect(SkillDamageMath.chargeAvailability(segments, useNoFp: false) == .toggle,
+                     "正常版这一侧有 charged 也有 uncharged / both：开关可切换", counter: &count)
+    try rankerExpect(
+        sorted(SkillDamageMath.selection(segments, useNoFp: false, useCharged: true)) == [1, 4, 6]
+            && sorted(SkillDamageMath.selection(segments, useNoFp: false, useCharged: false)) == [2, 4, 6],
+        "蓄力开取 charged / both、关取 uncharged / both；partial 两侧都不取、noDamage 不取，实际 "
+            + "\(sorted(SkillDamageMath.selection(segments, useNoFp: false, useCharged: true))) / "
+            + "\(sorted(SkillDamageMath.selection(segments, useNoFp: false, useCharged: false)))",
+        counter: &count
+    )
+    try rankerExpect(
+        SkillDamageMath.chargeAvailability(segments, useNoFp: true) == .unavailable
+            && sorted(SkillDamageMath.selection(segments, useNoFp: true, useCharged: true)) == [5, 6]
+            && sorted(SkillDamageMath.selection(segments, useNoFp: true, useCharged: false)) == [5, 6],
+        "专注值不足版这一侧没有 charged 段：开关不适用（在分专注值之后判），取这一侧全部段",
+        counter: &count
+    )
+    try rankerExpect(!SkillDamageMath.defaultCharged(segments, useNoFp: false)
+                        && sorted(SkillDamageMath.defaultSelection(segments)) == [2, 4, 6],
+                     "默认：正常版、蓄力关", counter: &count)
+    try rankerExpect(
+        SkillChargeBranch.partial.isOnSide(useCharged: true) == false && SkillChargeBranch.partial.isOnSide(useCharged: false) == false
+            && SkillChargeBranch.both.isOnSide(useCharged: true) && SkillChargeBranch.both.isOnSide(useCharged: false),
+        "保留集显式写成 charged / both 与 uncharged / both：partial 不进任一侧",
+        counter: &count
+    )
+
+    let onlyCharged = index.segments(for: index.spellsByID[20]!)
+    try rankerExpect(onlyCharged.map(\.atkId) == [201, 202], "法术段剔掉 notInvoked", counter: &count)
+    try rankerExpect(
+        SkillDamageMath.chargeAvailability(onlyCharged, useNoFp: false) == .onlyCharged
+            && SkillDamageMath.defaultCharged(onlyCharged, useNoFp: false)
+            && SkillDamageMath.defaultSelection(onlyCharged) == [201]
+            && SkillDamageMath.selection(onlyCharged, useNoFp: false, useCharged: false) == [201],
+        "关侧只剩 noDamage 段：只有蓄力段，强制开",
+        counter: &count
+    )
+    let plain = index.segments(for: index.spellsByID[21]!)
+    try rankerExpect(
+        SkillDamageMath.chargeAvailability(plain, useNoFp: false) == .unavailable
+            && SkillDamageMath.selection(plain, useNoFp: false, useCharged: true) == [211, 212],
+        "整招没有 chargeBranch：开关不适用，不按 charged 分侧",
+        counter: &count
+    )
+}
+
 // MARK: - 真实 skills.json
 
 private func checkSkillDataset(_ index: SkillDataIndex, counter count: inout Int) throws {
     let dataset = index.dataset
-    try rankerExpect(dataset.schemaVersion >= 3, "skills schemaVersion 应 ≥ 3，实际 \(dataset.schemaVersion)", counter: &count)
+    try rankerExpect(dataset.schemaVersion == 4, "skills schemaVersion 应为 4，实际 \(dataset.schemaVersion)", counter: &count)
     try rankerExpect(!dataset.gameVersion.isEmpty && !dataset.dataVersion.isEmpty, "skills 缺少 gameVersion / dataVersion", counter: &count)
     try rankerExpect(dataset.weapons.count > 100, "武器数应 > 100，实际 \(dataset.weapons.count)", counter: &count)
     try rankerExpect(dataset.skills.count > 50, "战技数应 > 50，实际 \(dataset.skills.count)", counter: &count)
@@ -1702,8 +1943,9 @@ private func checkSegmentSelection(_ index: SkillDataIndex, counter count: inout
 // MARK: - 战技数据 v3：局内战技池、TAE 核实、FP 分侧
 
 /// 某个战技 × 武器的选段结果：(全部段, 正常版勾选, 专注值不足版勾选)。
+/// v4 起再叠一层蓄力分侧：`charged` 是两侧共用的蓄力开关（默认关，与页面换招时的初值相同）。
 private func v3Selection(
-    _ index: SkillDataIndex, skillID: Int, weaponID: Int
+    _ index: SkillDataIndex, skillID: Int, weaponID: Int, charged: Bool = false
 ) throws -> (all: [Int], normal: [Int], noFp: [Int]) {
     guard let skill = index.skillsByID[skillID], let weapon = index.weaponsByID[weaponID] else {
         throw CheckFailure(description: "增伤排名：战技 \(skillID) / 武器 \(weaponID) 不在数据集里")
@@ -1711,8 +1953,8 @@ private func v3Selection(
     let segments = index.segments(for: skill, weapon: weapon)
     return (
         segments.map(\.atkId),
-        SkillDamageMath.defaultSelection(segments).sorted(),
-        SkillDamageMath.selection(segments, useNoFp: true).sorted()
+        SkillDamageMath.selection(segments, useNoFp: false, useCharged: charged).sorted(),
+        SkillDamageMath.selection(segments, useNoFp: true, useCharged: charged).sorted()
     )
 }
 
@@ -1732,11 +1974,23 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
         "v3 计数：skills 187 / skillsWithHits 166 / skillsWithWeapons 185 / hits 2197（法术可施放口径去掉 8100 / 8101 的 4 段）",
         counter: &count
     )
+    // v4：法术段也按施法槽核实，notInvoked 的合计读 counts.hitsNotInvokedAll（战技 34 + 法术 21 = 55；带伤害 24 + 18 = 42）；
+    // counts.hitsNotInvoked 仍只数战技。
     try rankerExpect(
-        allHits.filter(\.notInvoked).count == 34 && counted("hitsNotInvoked") == 34
-            && allHits.filter { $0.notInvoked && !$0.noDamage && (!$0.motion.isEmpty || !$0.flat.isEmpty) }.count == 24
-            && counted("hitsNotInvokedDamaging") == 24,
-        "notInvoked 34 段（带伤害 24 段）",
+        allHits.filter(\.notInvoked).count == 55 && counted("hitsNotInvokedAll") == 55
+            && allHits.filter { $0.notInvoked && !$0.noDamage && (!$0.motion.isEmpty || !$0.flat.isEmpty) }.count == 42
+            && counted("hitsNotInvokedDamagingAll") == 42
+            && skillHits.filter(\.notInvoked).count == 34 && counted("hitsNotInvoked") == 34
+            && counted("hitsNotInvokedDamaging") == 24
+            && dataset.spells.flatMap(\.hits).filter(\.notInvoked).count == 21 && counted("spellHitsNotInvoked") == 21
+            && index.notInvokedHits == 55,
+        "notInvoked 55 段（带伤害 42 段）= 战技 34（带伤害 24）+ 法术 21",
+        counter: &count
+    )
+    try rankerExpect(
+        dataset.spells.flatMap(\.hits).filter(\.notInvoked).allSatisfy { $0.notInvokedReason == "noCastSlot" }
+            && skillHits.allSatisfy { $0.notInvokedReason != "noCastSlot" },
+        "法术的 notInvoked 原因都是 noCastSlot，战技不会出现 noCastSlot",
         counter: &count
     )
     try rankerExpect(
@@ -1754,12 +2008,13 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
     try rankerExpect(allHits.filter(\.fpBoth).allSatisfy { !$0.noFp }, "fpBoth 段的 noFp 一定是 false", counter: &count)
     try rankerExpect(allHits.filter(\.selfOrAllyOnly).allSatisfy(\.noDamage), "selfOrAllyOnly 段一律带 noDamage", counter: &count)
     try rankerExpect(
-        dataset.usage.count == 9 && dataset.usage["战技来源（v3）"] != nil && dataset.usage["命中段已按 TAE 核实（v3）"] != nil
-            && dataset.usage["法术来源（v3）"] != nil && dataset.caveats.count == 11,
-        "usage 9 个键（新增「战技来源（v3）」「法术来源（v3）」「命中段已按 TAE 核实（v3）」）、caveats 11 条，"
+        dataset.usage.count == 10 && dataset.usage["战技来源（v3）"] != nil && dataset.usage["命中段已按 TAE 核实（v3）"] != nil
+            && dataset.usage["法术来源（v3）"] != nil && dataset.usage["蓄力段（v4）"] != nil && dataset.caveats.count == 11,
+        "usage 10 个键（v3 的「战技来源」「法术来源」「命中段已按 TAE 核实」+ v4 的「蓄力段（v4）」）、caveats 11 条，"
             + "实际 \(dataset.usage.count) / \(dataset.caveats.count)",
         counter: &count
     )
+    try checkSkillDatasetV4(index, counter: &count)
     try rankerExpect(
         dataset.swordArtsPools.count == counted("swordArtsPools")
             && dataset.swordArtsPools.values.reduce(0) { $0 + $1.count } == counted("swordArtsPoolEntries"),
@@ -1954,14 +2209,18 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
         "1021 毁灭灵火 × 3130000：唯一一段 303401400 是 fpBoth，两侧都计，实际 \(flame.normal) / \(flame.noFp)",
         counter: &count
     )
-    let carian = try v3Selection(index, skillID: 218, weaponID: 1000000)
+    // v4：300200872 是满蓄力的放招（chargeBranch charged），蓄力开时两侧都计；871 / 876（一段蓄力，partial）两侧都不取。
+    let carian = try v3Selection(index, skillID: 218, weaponID: 1000000, charged: true)
+    let carianOff = try v3Selection(index, skillID: 218, weaponID: 1000000, charged: false)
     try rankerExpect(
-        carian.normal == [300200870, 300200871, 300200872]
-            && carian.noFp == [300200872, 300200875, 300200876, 300200877],
-        "218 伟哉卡利亚 × 1000000：300200872 两侧都计，实际 \(carian.normal) / \(carian.noFp)",
+        carian.all == [300200870, 300200871, 300200872, 300200875, 300200876, 300200877]
+            && carian.normal == [300200872] && carian.noFp == [300200872, 300200877]
+            && carianOff.normal == [300200870] && carianOff.noFp == [300200875],
+        "218 伟哉卡利亚 × 1000000：蓄力开时 300200872 两侧都计，实际 \(carian.normal) / \(carian.noFp)"
+            + "（蓄力关 \(carianOff.normal) / \(carianOff.noFp)）",
         counter: &count
     )
-    // 全量：凡是选出了 fpBoth 段的 (战技, 武器) 对，两侧勾选都含它。
+    // 全量：凡是选出了 fpBoth 段的 (战技, 武器) 对，两侧勾选（蓄力开或关里的一侧）都含它。
     var fpBothPairs = 0
     var fpBothDropped = 0
     for skill in dataset.skills where skill.hits.contains(where: \.fpBoth) {
@@ -1971,8 +2230,11 @@ private func checkSkillDatasetV3(_ index: SkillDataIndex, counter count: inout I
             let shared = Set(segments.filter { $0.fpBoth && !$0.noDamage }.map(\.atkId))
             guard !shared.isEmpty else { continue }
             fpBothPairs += 1
-            if !shared.isSubset(of: SkillDamageMath.selection(segments, useNoFp: false))
-                || !shared.isSubset(of: SkillDamageMath.selection(segments, useNoFp: true)) {
+            func either(_ noFp: Bool) -> Set<Int> {
+                SkillDamageMath.selection(segments, useNoFp: noFp, useCharged: false)
+                    .union(SkillDamageMath.selection(segments, useNoFp: noFp, useCharged: true))
+            }
+            if !shared.isSubset(of: either(false)) || !shared.isSubset(of: either(true)) {
                 fpBothDropped += 1
             }
         }
@@ -3318,7 +3580,7 @@ private let loadoutSyntheticJSON = """
   ],
   "attackIndex": {
     "skills": {"77": {"nameZh": "测试战技", "subCategorySets": [{"subs": [112, 130], "hits": 3}, {"subs": [106], "hits": 1}]}},
-    "spells": {"88": {"nameZh": "测试法术", "subCategorySets": [{"subs": [], "hits": 2}]}}
+    "spells": {"88": {"nameZh": "测试法术", "magicSubCategories": [23, 0], "subCategorySets": [{"subs": [23], "hits": 2}]}}
   },
   "counts": {"buffs": 1},
   "buffs": [
@@ -3476,10 +3738,53 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     )
     try rankerExpect(leftEvaluator.verdict(forBuffAt: try offset(908))?.state == .yes,
                      "requires.hand = 2 在左手时应生效", counter: &count)
-    let partial = evaluator.verdict(forBuffAt: try offset(909))!
-    try rankerExpectClose(partial.fraction, 0.75, "subCategoriesAny 按 attackIndex 段数折算（3/4 段带 112）", counter: &count)
-    try rankerExpect(partial.notes.first == LoadoutText.f("requireSubsPartial", "战技", 3, 4, "[112 战技攻击]"),
-                     "部分段命中写明近似（实际 \(partial.notes)）", counter: &count)
+    // subCategoriesAny：按当前勾选的段逐段判（skills v4）。斩击 30 [112,130] + 斩击 20 [106] + 火 50 [112]：
+    // 斩击 s = 30/50 = 0.6、火 s = 1；整体 80/100；三段里两段命中 → 部分段生效。
+    func amounts(_ values: [SkillDamageChannel: Double]) -> [Double] {
+        SkillDamageChannel.allCases.map { values[$0] ?? 0 }
+    }
+    let splitSegments = [
+        LoadoutSegment(atkId: 1, subCategories: [112, 130], amounts: amounts([.slash: 30])),
+        LoadoutSegment(atkId: 2, subCategories: [106], amounts: amounts([.slash: 20])),
+        LoadoutSegment(atkId: 3, subCategories: [112], amounts: amounts([.fire: 50]))
+    ]
+    let splitEvaluator = LoadoutEvaluator(
+        index: index,
+        output: LoadoutOutput(outputClass: .skill, skillID: 77, weaponWepType: 9, hand: 1, shares: shares, segments: splitSegments)
+    )
+    let partial = splitEvaluator.verdict(forBuffAt: try offset(909))!
+    try rankerExpectClose(partial.fraction, 0.8, "subCategoriesAny 按勾选段的相对值折算（80/100）", counter: &count)
+    try rankerExpect(
+        partial.isPartial && partial.label == LoadoutText.t("verdict.partial")
+            && partial.channelWeights.map { abs($0[SkillDamageChannel.slash.rawValue] - 0.6) < 1e-12
+                && $0[SkillDamageChannel.fire.rawValue] == 1 } == true,
+        "逐通道占比：斩击 0.6、火 1（实际 \(partial.channelWeights ?? [])）", counter: &count
+    )
+    try rankerExpect(partial.notes.first == LoadoutText.t("verdict.partial") + "：[112 战技攻击] 2/3 · 80.0%",
+                     "部分段命中写明段数与相对值占比（实际 \(partial.notes)）", counter: &count)
+    let fullSplit = LoadoutEvaluator(
+        index: index,
+        output: LoadoutOutput(outputClass: .skill, skillID: 77, weaponWepType: 9, hand: 1, shares: shares,
+                              segments: [splitSegments[0], splitSegments[2]])
+    ).verdict(forBuffAt: try offset(909))!
+    try rankerExpect(fullSplit.state == .yes && fullSplit.fraction == 1 && fullSplit.channelWeights == nil
+                        && fullSplit.requirements.first?.state == .met,
+                     "勾选的段全部命中：全额（attackIndex 里整招只有 3/4 段带 112 也不影响）", counter: &count)
+    let noneSplit = LoadoutEvaluator(
+        index: index,
+        output: LoadoutOutput(outputClass: .skill, skillID: 77, weaponWepType: 9, hand: 1, shares: shares,
+                              segments: [splitSegments[1]])
+    ).verdict(forBuffAt: try offset(909))!
+    try rankerExpect(noneSplit.state == .no && noneSplit.blockedReason == LoadoutText.f("requireSubsFail", "战技", "[112 战技攻击]"),
+                     "勾选的段都不带子类别：不生效", counter: &count)
+    // 没有可用段（一段带伤害的都没勾）时退回 attackIndex 只作说明：整招 3/4 段带 112。
+    let indexOnly = evaluator.verdict(forBuffAt: try offset(909))!
+    try rankerExpectClose(indexOnly.fraction, 0.75, "没有可用段时按 attackIndex 段数说明（3/4 段带 112）", counter: &count)
+    try rankerExpect(indexOnly.notes.first == LoadoutText.f("requireSubsPartial", "战技", 3, 4, "[112 战技攻击]"),
+                     "没有可用段时的说明（实际 \(indexOnly.notes)）", counter: &count)
+    // 法术：段的子类别并上 attackIndex 的流派（magicSubCategories）再判。
+    try rankerExpect(index.dataset.attackIndex.spellMagicSubCategories[88] == [23],
+                     "attackIndex.spells[].magicSubCategories 应解码出来", counter: &count)
     try rankerExpect(sorceryEvaluator.verdict(forBuffAt: try offset(909))?.state == .no,
                      "对魔法 = no 的子类别条目不生效", counter: &count)
     try rankerExpect(evaluator.verdict(forBuffAt: try offset(923))?.state == .context,
@@ -3501,11 +3806,14 @@ private func checkLoadoutSynthetic(counter count: inout Int) throws {
     try rankerExpect(evaluator.attackContextOptions().map(\.key) == ["thrustingCounter"],
                      "攻击情境勾选项只列 requires.attackContexts 里出现的", counter: &count)
 
-    // ② 单条倍率：部分段折算 = Σ 占比 × (1 + f × (m − 1))；不占槽位的栏勾选即确认
+    // ② 单条倍率：部分段逐通道折算 = Σ 占比_t × (1 + s_t × (m_t − 1))；不占槽位的栏勾选即确认
     var loadout = BuffLoadout(mode: .normal, rules: rules)
     loadout.selectedBuffs = [909]
-    var result = evaluator.evaluate(loadout)
-    try rankerExpectClose(result.total, 0.5 * (1 + 0.75 * 0.2) + 0.5, "部分段生效按段数折算", tolerance: 1e-12, counter: &count)
+    var result = splitEvaluator.evaluate(loadout)
+    try rankerExpectClose(result.total, 0.5 * (1 + 0.6 * 0.2) + 0.5, "部分段生效按逐通道相对值占比折算（斩击 s = 0.6）",
+                          tolerance: 1e-12, counter: &count)
+    try rankerExpect(result.countedLines.first?.verdict.isPartial == true, "计入的这一条标「部分段生效」", counter: &count)
+    result = evaluator.evaluate(loadout)
 
     // ③ exclusiveKey 去重：同键取有效倍率高的；applyHighest 取 categoryPriority 小的并提示
     loadout.selectedBuffs = [905, 906, 920, 921]
@@ -3780,30 +4088,48 @@ private func checkLoadoutTotal(
 
 // MARK: - 配置页（BuffLoadout）：真实数据
 
+/// 与页面同一条路径拼输出手段：正常版这一侧，蓄力开关按 `charged`（nil = 页面换招时的初值：只有蓄力段才开），
+/// 构成与逐段子类别都取这批勾选的段，攻击情境里的蓄力三项由开关派生。
 private func loadoutOutput(
     skills: SkillDataIndex, skillID: Int? = nil, spellID: Int? = nil, weaponID: Int? = nil,
-    hand: Int = 1, contexts: Set<String> = []
+    hand: Int = 1, contexts: Set<String> = [], charged: Bool? = nil
 ) throws -> LoadoutOutput {
+    try loadoutCase(skills: skills, skillID: skillID, spellID: spellID, weaponID: weaponID,
+                    hand: hand, contexts: contexts, charged: charged).output
+}
+
+private func loadoutCase(
+    skills: SkillDataIndex, skillID: Int? = nil, spellID: Int? = nil, weaponID: Int? = nil,
+    hand: Int = 1, contexts: Set<String> = [], charged: Bool? = nil, only: Set<Int>? = nil
+) throws -> (output: LoadoutOutput, segments: [SkillSegment], selected: Set<Int>) {
+    let segments: [SkillSegment]
+    var weapon: SkillWeapon?
+    let outputClass: LoadoutOutputClass
     if let skillID {
-        guard let skill = skills.skillsByID[skillID], let weaponID, let weapon = skills.weaponsByID[weaponID] else {
+        guard let skill = skills.skillsByID[skillID], let weaponID, let found = skills.weaponsByID[weaponID] else {
             throw CheckFailure(description: "增伤排名：配置用例找不到战技 \(skillID) / 武器 \(weaponID ?? -1)")
         }
-        let segments = skills.segments(for: skill, weapon: weapon)
-        let composition = SkillDamageMath.composition(of: segments, selected: SkillDamageMath.defaultSelection(segments))
-        return LoadoutOutput(
-            outputClass: .skill, skillID: skillID, weaponID: weaponID, weaponWepType: weapon.wepType,
-            hand: hand, shares: composition.shares, attackContexts: contexts
-        )
+        weapon = found
+        segments = skills.segments(for: skill, weapon: found)
+        outputClass = .skill
+    } else {
+        guard let spellID, let spell = skills.spellsByID[spellID] else {
+            throw CheckFailure(description: "增伤排名：配置用例找不到法术 \(spellID ?? -1)")
+        }
+        segments = skills.segments(for: spell)
+        outputClass = spell.isSorcery ? .sorcery : .incantation
     }
-    guard let spellID, let spell = skills.spellsByID[spellID] else {
-        throw CheckFailure(description: "增伤排名：配置用例找不到法术 \(spellID ?? -1)")
-    }
-    let segments = skills.segments(for: spell)
-    let composition = SkillDamageMath.composition(of: segments, selected: SkillDamageMath.defaultSelection(segments))
-    return LoadoutOutput(
-        outputClass: spell.isSorcery ? .sorcery : .incantation, spellID: spellID,
-        hand: hand, shares: composition.shares, attackContexts: contexts
+    let requested = charged ?? SkillDamageMath.defaultCharged(segments, useNoFp: false)
+    let effective = SkillDamageMath.chargeAvailability(segments, useNoFp: false).effectiveCharged(requested) ?? false
+    let selected = only ?? SkillDamageMath.selection(segments, useNoFp: false, useCharged: requested)
+    let composition = SkillDamageMath.composition(of: segments, selected: selected)
+    let output = LoadoutOutput(
+        outputClass: outputClass, skillID: skillID, spellID: skillID == nil ? spellID : nil,
+        weaponID: weapon?.id, weaponWepType: weapon?.wepType, hand: hand, shares: composition.shares,
+        attackContexts: LoadoutOutput.attackContexts(picked: contexts, charged: effective),
+        segments: LoadoutSegment.selected(segments, selected)
     )
+    return (output, segments, selected)
 }
 
 private func checkLoadoutRealData(skills: SkillDataIndex, buffs: BuffRankerIndex, counter count: inout Int) throws {
@@ -4170,7 +4496,8 @@ private struct LoadoutReference {
 
     struct Verdict {
         var ok: Bool
-        var weight: Double = 1
+        /// 逐通道的子类别命中占比（nil = 全额）。
+        var weights: [Double]?
         var manual = false
         var restricted: SkillDamageChannel?
     }
@@ -4197,10 +4524,35 @@ private struct LoadoutReference {
         }
         if !requires.subCategoriesAny.isEmpty {
             any = true
+            // skills v4：按勾选的段逐段判；一段的子类别（法术并上流派）与 subCategoriesAny 有交集这一段才乘，
+            // 每个通道取「命中段的相对值 ÷ 全部段的相对值」。
+            let picked = output.segments.filter { $0.amounts.contains { $0 > 0 } }
             let sets = output.outputClass == .skill
                 ? output.skillID.flatMap { dataset.attackIndex.skills[$0] }
                 : output.spellID.flatMap { dataset.attackIndex.spells[$0] }
-            if let sets, !sets.isEmpty {
+            if !picked.isEmpty {
+                var school: [Int] = []
+                if output.outputClass != .skill, let spellID = output.spellID {
+                    school = dataset.attackIndex.spellMagicSubCategories[spellID] ?? []
+                }
+                var hit = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+                var all = hit
+                var matched = 0
+                for segment in picked {
+                    let subs = Array(segment.subCategories) + school
+                    let applies = subs.contains { requires.subCategoriesAny.contains($0) }
+                    if applies { matched += 1 }
+                    for index in all.indices {
+                        all[index] += segment.amounts[index]
+                        if applies { hit[index] += segment.amounts[index] }
+                    }
+                }
+                if matched == 0 { return Verdict(ok: false) }
+                if matched < picked.count {
+                    result.weights = all.indices.map { all[$0] > 0 ? hit[$0] / all[$0] : 1 }
+                }
+            } else if let sets, !sets.isEmpty {
+                // 没有可用段：attackIndex 的整招段数（只作说明；构成为空时数值恒为 ×1）。
                 var matched = 0
                 var total = 0
                 for set in sets {
@@ -4208,7 +4560,9 @@ private struct LoadoutReference {
                     if set.subs.contains(where: { requires.subCategoriesAny.contains($0) }) { matched += set.hits }
                 }
                 if matched == 0 { return Verdict(ok: false) }
-                result.weight = Double(matched) / Double(total)
+                if matched < total {
+                    result.weights = Array(repeating: Double(matched) / Double(total), count: SkillDamageChannel.allCases.count)
+                }
             } else {
                 result.manual = true
             }
@@ -4259,9 +4613,9 @@ private struct LoadoutReference {
             }
         }
         for index in table.indices {
-            if verdict.weight < 1 {
-                table[index] = 1 + (table[index] - 1) * verdict.weight
-                flat[index] *= verdict.weight
+            if let weights = verdict.weights, weights[index] < 1 {
+                table[index] = 1 + (table[index] - 1) * weights[index]
+                flat[index] *= weights[index]
             }
             if copies > 1 {
                 table[index] = pow(table[index], Double(copies))
@@ -4459,6 +4813,39 @@ private func loadoutCaseDump(_ key: String, selected: [Int], shares: [Double], r
         + top.joined(separator: ",")
 }
 
+/// 蓄力用例的精确值（用户实测：「强化祷告的蓄力执行」三档 +18% / +13% / +9%，旧口径在兽爪上摊成 ×1.09 / ×1.065 / ×1.045）。
+private func checkChargedCases(_ outputs: [String: LoadoutOutput], index: BuffLoadoutIndex, counter count: inout Int) throws {
+    guard let charged = outputs["beast-claw-charged"], let uncharged = outputs["beast-claw-uncharged"],
+          let lightning = outputs["death-lightning-charged"], let plainLightning = outputs["death-lightning"] else {
+        throw CheckFailure(description: "增伤排名：蓄力用例缺输出手段")
+    }
+    func row(_ output: LoadoutOutput, _ id: Int) -> LoadoutOverviewRow? {
+        LoadoutEvaluator(index: index, output: output).overview().first { $0.spEffectId == id }
+    }
+    try rankerExpect(
+        charged.segments.map(\.atkId) == [68205] && uncharged.segments.map(\.atkId) == [68200]
+            && charged.attackContexts == LoadoutOutput.chargedAttackContexts && uncharged.attackContexts.isEmpty
+            && lightning.segments.map(\.atkId) == [50405] && plainLightning.segments.map(\.atkId) == [50400],
+        "蓄力开只勾蓄力段、关只勾非蓄力段（没有伤害数值的 50401 / 50406 不进逐段判定）；攻击情境的蓄力三项随开关成立",
+        counter: &count
+    )
+    for (id, rate) in [(8330302, 1.18), (8330301, 1.13), (8330300, 1.09)] {
+        for (key, output) in [("兽爪", charged), ("死亡雷击", lightning)] {
+            guard let found = row(output, id) else { throw CheckFailure(description: "增伤排名：\(key) 蓄力一览缺 #\(id)") }
+            try rankerExpect(found.isApplicable && !found.verdict.isPartial && abs(found.multiplier - rate) < 1e-12,
+                             "\(key) 蓄力：#\(id) 应全额 ×\(rate)（实际 ×\(found.multiplier)）", counter: &count)
+        }
+        for (key, output) in [("兽爪", uncharged), ("死亡雷击", plainLightning)] {
+            try rankerExpect(row(output, id)?.isApplicable == false, "\(key) 不蓄力：#\(id) 不生效", counter: &count)
+        }
+    }
+    // 流派子类别（Magic.subCategory：兽爪是 23 野兽的祷告）并到每一段上：蓄力开关两侧都全额。
+    for output in [charged, uncharged] {
+        try rankerExpect(row(output, 7044400).map { $0.isApplicable && !$0.verdict.isPartial && abs($0.multiplier - 1.12) < 1e-12 } == true,
+                         "强化野兽的祷告（[23]）在兽爪两侧都全额 ×1.12", counter: &count)
+    }
+}
+
 private func checkLoadoutParity(
     skills: SkillDataIndex, index: BuffLoadoutIndex, catalog: [Affix], counter count: inout Int
 ) throws {
@@ -4471,35 +4858,31 @@ private func checkLoadoutParity(
         "OUTPUTS skills=\(skills.outputs.filter { $0.kind == .skill }.count) spells=\(skills.outputs.filter { $0.kind == .spell }.count)"
     ]
 
-    // ① 七组构成用例：一览（条件全部成立）逐条与参考实现一致，前 10 名降序
-    let cases: [(key: String, skillID: Int?, spellID: Int?, weaponID: Int?, only: Set<Int>?)] = [
-        ("corpse-piler-full", 1177, nil, 9040000, nil),
-        ("corpse-piler-last", 1177, nil, 9040000, [303400305]),
-        ("lions-claw-greatsword", 100, nil, 3180000, nil),
-        ("lions-claw-flame-greatsword", 100, nil, 3180500, nil),
-        ("firebreather", 223, nil, 24020000, nil),
-        ("death-lightning", nil, 5040, nil, nil),
-        ("comet", nil, 4021, nil, nil)
+    // ① 十组构成用例：一览（条件全部成立）逐条与参考实现一致，前 10 名降序。
+    //    skills v4：法术段剔掉 notInvoked、蓄力开关按 chargeBranch 分侧（charged nil = 页面换招时的初值，即关）；
+    //    死亡雷击 / 帚星的默认选段因此只剩不蓄力那一侧（50400 + 50401 / 40210）。
+    let cases: [(key: String, skillID: Int?, spellID: Int?, weaponID: Int?, only: Set<Int>?, charged: Bool?)] = [
+        ("corpse-piler-full", 1177, nil, 9040000, nil, nil),
+        ("corpse-piler-last", 1177, nil, 9040000, [303400305], nil),
+        ("lions-claw-greatsword", 100, nil, 3180000, nil, nil),
+        ("lions-claw-flame-greatsword", 100, nil, 3180500, nil, nil),
+        ("firebreather", 223, nil, 24020000, nil, nil),
+        ("death-lightning", nil, 5040, nil, nil, nil),
+        ("comet", nil, 4021, nil, nil, nil),
+        // 兽爪：蓄力开只取 68205（[110]），关只取 68200；「强化祷告的蓄力执行」开时全额、关时不生效。
+        ("beast-claw-charged", nil, 6820, nil, nil, true),
+        ("beast-claw-uncharged", nil, 6820, nil, nil, false),
+        // 死亡雷击蓄力：50405 + 50406（都带 110，50406 没有伤害数值）。
+        ("death-lightning-charged", nil, 5040, nil, nil, true)
     ]
+    var caseOutputs: [String: LoadoutOutput] = [:]
     for item in cases {
-        let segments: [SkillSegment]
-        let output: LoadoutOutput
-        if let skillID = item.skillID, let skill = skills.skillsByID[skillID], let weaponID = item.weaponID,
-           let weapon = skills.weaponsByID[weaponID] {
-            segments = skills.segments(for: skill, weapon: weapon)
-            let selected = item.only ?? SkillDamageMath.defaultSelection(segments)
-            let composition = SkillDamageMath.composition(of: segments, selected: selected)
-            output = LoadoutOutput(outputClass: .skill, skillID: skillID, weaponID: weaponID, weaponWepType: weapon.wepType,
-                                   hand: 1, shares: composition.shares)
-        } else if let spellID = item.spellID, let spell = skills.spellsByID[spellID] {
-            segments = skills.segments(for: spell)
-            let composition = SkillDamageMath.composition(of: segments, selected: SkillDamageMath.defaultSelection(segments))
-            output = LoadoutOutput(outputClass: spell.isSorcery ? .sorcery : .incantation, spellID: spellID, hand: 1,
-                                   shares: composition.shares)
-        } else {
-            throw CheckFailure(description: "增伤排名：对照用例 \(item.key) 找不到输出手段")
-        }
-        let selected = item.only ?? SkillDamageMath.defaultSelection(segments)
+        let built = try loadoutCase(skills: skills, skillID: item.skillID, spellID: item.spellID, weaponID: item.weaponID,
+                                    charged: item.charged, only: item.only)
+        let segments = built.segments
+        let output = built.output
+        let selected = built.selected
+        caseOutputs[item.key] = output
         let evaluator = LoadoutEvaluator(index: index, output: output)
         let rows = evaluator.overview()
         try rankerExpect(Set(rows.map(\.spEffectId)) == Set(dataset.buffs.filter(reference.listable).map(\.spEffectId)),
@@ -4521,6 +4904,7 @@ private func checkLoadoutParity(
         dump.append(loadoutCaseDump(item.key, selected: segments.map(\.atkId).filter { selected.contains($0) },
                                     shares: output.shares, rows: rows))
     }
+    try checkChargedCases(caseOutputs, index: index, counter: &count)
 
     // ② 三组配置对照
     let skillOutput = try loadoutOutput(skills: skills, skillID: 1177, weaponID: 9040000)
@@ -4550,10 +4934,26 @@ private func checkLoadoutParity(
     loadoutC.stackCounts = [7069001: 7]
     loadoutC.confirmed = [7035902]
 
-    let configs: [(key: String, loadout: BuffLoadout, evaluator: LoadoutEvaluator, output: LoadoutOutput, filled: Bool)] = [
-        ("corpse-piler-normal-fill", fillA, skillEvaluator, skillOutput, true),
-        ("death-lightning-deep-fill", fillB, incantationEvaluator, incantationOutput, true),
-        ("lions-claw-2fixed-1custom-2talismans-evergaol7", loadoutC, lionEvaluator, lionOutput, false)
+    // D：兽爪 蓄力开 + 局内武器词条「强化祷告的蓄力执行」8330302 ×1 → 正好 ×1.18（勾选的 68205 带 110、五类 rate 相同，
+    //    构成是雷是圣都不影响）；再叠档位 2（8330301）一条 → ×1.18 × 1.13（不同档位各有互斥键，相乘）。
+    // E：兽爪 蓄力关（只取 68200，不带 110）+ 8330302 → ×1、不生效。
+    let beastChargedOutput = try loadoutOutput(skills: skills, spellID: 6820, charged: true)
+    let beastUnchargedOutput = try loadoutOutput(skills: skills, spellID: 6820, charged: false)
+    let beastChargedEvaluator = LoadoutEvaluator(index: index, output: beastChargedOutput)
+    let beastUnchargedEvaluator = LoadoutEvaluator(index: index, output: beastUnchargedOutput)
+    var loadoutD1 = BuffLoadout(mode: .normal, rules: rules)
+    loadoutD1.weaponAffixCounts = [8330302: 1]
+    var loadoutD2 = loadoutD1
+    loadoutD2.weaponAffixCounts[8330301] = 1
+
+    let configs: [(key: String, loadout: BuffLoadout, evaluator: LoadoutEvaluator, output: LoadoutOutput, filled: Bool,
+                   exact: Double?)] = [
+        ("corpse-piler-normal-fill", fillA, skillEvaluator, skillOutput, true, nil),
+        ("death-lightning-deep-fill", fillB, incantationEvaluator, incantationOutput, true, nil),
+        ("lions-claw-2fixed-1custom-2talismans-evergaol7", loadoutC, lionEvaluator, lionOutput, false, nil),
+        ("beast-claw-charged-8330302", loadoutD1, beastChargedEvaluator, beastChargedOutput, false, 1.18),
+        ("beast-claw-charged-8330302-8330301", loadoutD2, beastChargedEvaluator, beastChargedOutput, false, 1.18 * 1.13),
+        ("beast-claw-uncharged-8330302", loadoutD1, beastUnchargedEvaluator, beastUnchargedOutput, false, 1)
     ]
     for config in configs {
         let evaluation = config.evaluator.evaluate(config.loadout)
@@ -4567,7 +4967,11 @@ private func checkLoadoutParity(
             .map { "\($0.spEffectId)" + ($0.countedCopies > 1 ? "x\($0.countedCopies)" : "") }
         try rankerExpect(ids == expected.ids, "对照 \(config.key)：计入条目集合（含份数）\(ids) vs \(expected.ids)", counter: &count)
         try checkLoadoutTotal(evaluation, shares: config.output.shares, "对照 \(config.key)", counter: &count)
-        try rankerExpect(evaluation.total > 1, "对照 \(config.key)：这套配置应当增伤", counter: &count)
+        if let exact = config.exact {
+            try rankerExpectClose(evaluation.total, exact, "对照 \(config.key)：总倍率应正好 ×\(exact)", tolerance: 1e-12, counter: &count)
+        } else {
+            try rankerExpect(evaluation.total > 1, "对照 \(config.key)：这套配置应当增伤", counter: &count)
+        }
         try rankerExpect(evaluation.violations.isEmpty && evaluation.relicChecks.allSatisfy { $0.status != .invalid },
                          "对照 \(config.key)：不越界、遗物合法（\(evaluation.violations)）", counter: &count)
         if config.filled {
@@ -4583,6 +4987,14 @@ private func checkLoadoutParity(
         }
         dump.append(loadoutConfigDump(config.key, config.loadout, index: index, evaluation: evaluation))
     }
+    let evalD1 = beastChargedEvaluator.evaluate(loadoutD1)
+    let evalE = beastUnchargedEvaluator.evaluate(loadoutD1)
+    try rankerExpect(
+        evalD1.countedLines.map(\.spEffectId) == [8330302] && evalD1.countedLines.allSatisfy { !$0.verdict.isPartial }
+            && evalE.countedLines.isEmpty && evalE.lines.first { $0.spEffectId == 8330302 }?.status == .no,
+        "兽爪：蓄力开时「强化祷告的蓄力执行」全额计入（不再标部分段生效），蓄力关时不生效",
+        counter: &count
+    )
     let evalA = skillEvaluator.evaluate(fillA)
     try rankerExpect(evalA.weaponAffixUsage.used == rules.maxAffixesNormal, "对照 A：常规应填满 6 条武器词条", counter: &count)
     let evalB = incantationEvaluator.evaluate(fillB)
@@ -4651,9 +5063,11 @@ private func loadoutBriefDigest(_ notes: [String]) -> String {
 /// 道具等级（学者「携物知识」）新增 goodsLevel.tag / hint / note 三个键：336 → 339 条，07a69c5e → 41e2ae25。
 /// 输出手段选择器拆成 战技 / 魔法 / 祷告 三档：新增 meansKind.skill / sorcery / incantation、meansCard.subtitle、
 /// meansSearch.placeholder / empty、meansSpellFlatNote 七个键，改 pageSubtitle 与 otherInnateNoWeapon：339 → 346 条，41e2ae25 → 446c874b。
-private let loadoutTextTableCount = 346
-private let loadoutTextTableDigest = "446c874b"
-private let loadoutBriefNotesDigest = "ad04314d"
+/// skills v4 蓄力开关与逐段子类别：新增 chargedToggle.label / hint / unavailable / onlyCharged 四个键、改 brief.partial：
+/// 346 → 350 条，446c874b → 591c0f7f；说明区 ad04314d → 34e5dacb。
+private let loadoutTextTableCount = 350
+private let loadoutTextTableDigest = "591c0f7f"
+private let loadoutBriefNotesDigest = "34e5dacb"
 
 private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int) throws {
     try rankerExpect(LoadoutText.table.count == loadoutTextTableCount,
@@ -4676,6 +5090,18 @@ private func checkLoadoutTexts(index: BuffLoadoutIndex, counter count: inout Int
         ("otherInnateNoWeapon", "魔法与祷告没有出手武器，这里只有需手动勾选的固有效果"),
     ]
     for (key, value) in meansTexts {
+        try rankerExpect(LoadoutText.table[key] == value, "文案 \(key) 应逐字为「\(value)」（实际「\(LoadoutText.table[key] ?? "缺")」）",
+                         counter: &count)
+    }
+    // 蓄力开关（skills v4 chargeBranch）与逐段子类别的说明：三端同名同值。
+    let chargedTexts: [(String, String)] = [
+        ("chargedToggle.label", "蓄力"),
+        ("chargedToggle.hint", "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加"),
+        ("chargedToggle.unavailable", "这一招没有蓄力段"),
+        ("chargedToggle.onlyCharged", "这一招只有蓄力段"),
+        ("brief.partial", "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，所以蓄力类增益在蓄力施放下拿到全额。"),
+    ]
+    for (key, value) in chargedTexts {
         try rankerExpect(LoadoutText.table[key] == value, "文案 \(key) 应逐字为「\(value)」（实际「\(LoadoutText.table[key] ?? "缺")」）",
                          counter: &count)
     }

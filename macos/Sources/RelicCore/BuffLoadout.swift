@@ -13,8 +13,10 @@ import Foundation
 // **两端同一口径**（Windows：windows/renderer/pages/ranker.js；数据以 stackingRules / notes.ranking 为准）：
 //   ① 生效判定一律取 buffs[].appliesTo[输出类别]：战技（含战技子弹段）→ skill，魔法 → sorcery，祷告 → incantation。
 //      conditional 按 requires 逐项判：hand / attackWeaponTypes（法术按施法器：魔法＝手杖 57、祷告＝圣印记 61）/
-//      physicalType 自动判定；subCategoriesAny 用 attackIndex（部分段命中按 1＋(倍率−1)×命中段占比近似）；
-//      attackContexts 用「攻击情境」勾选；imbuedWeaponOnly / attachedWeaponOnly / requiresGoodsIds / 认不出的键要确认。
+//      physicalType 自动判定；subCategoriesAny 按**当前勾选的段**逐段判（skills v4 hits[].subCategories，法术并上
+//      attackIndex 的流派）：每个伤害类型取「命中段的相对值 ÷ 全部勾选段的相对值」s，倍率 1＋(倍率−1)×s、加算 ×s；
+//      attackIndex 只在没有可用段时用来说明；attackContexts 用「攻击情境」勾选（蓄力三项由蓄力开关派生）；
+//      imbuedWeaponOnly / attachedWeaponOnly / requiresGoodsIds / 认不出的键要确认。
 //   ② 作用对象只留 self / ally（selfAllyPair 的 Allies 那一行不算施放者自己）；direction=decrease 一律不计入。
 //   ③ activation ≠ passive 与要确认的条件默认不计入：占槽位的栏（武器词条、遗物、护符、当前武器固有）选中
 //      ≠ 条件成立，要勾「条件成立」；不占槽位的栏里勾选即确认；叠层填层数、累积阶梯选层同样算确认。
@@ -121,6 +123,38 @@ public enum LoadoutOutputClass: String, Sendable, Hashable {
     }
 }
 
+/// 当前勾选的一段（子类别限定的增益逐段判定用）：这一段的子类别与它在各伤害通道上的相对值。
+public struct LoadoutSegment: Sendable, Hashable {
+    public let atkId: Int
+    /// hits[].subCategories（法术**不含**流派，判定时由 attackIndex.spells[id].magicSubCategories 并上）。
+    public let subCategories: Set<Int>
+    /// 按 `SkillDamageChannel.rawValue` 索引的相对伤害量（与伤害构成同一口径）。
+    public let amounts: [Double]
+
+    public init(atkId: Int, subCategories: Set<Int>, amounts: [Double]) {
+        self.atkId = atkId
+        self.subCategories = subCategories
+        var padded = Array(amounts.prefix(SkillDamageChannel.allCases.count))
+        while padded.count < SkillDamageChannel.allCases.count { padded.append(0) }
+        self.amounts = padded
+    }
+
+    public init(segment: SkillSegment) {
+        var amounts = Array(repeating: 0.0, count: SkillDamageChannel.allCases.count)
+        for component in segment.components { amounts[component.channel.rawValue] += component.amount }
+        self.init(atkId: segment.atkId, subCategories: Set(segment.subCategories), amounts: amounts)
+    }
+
+    public var total: Double { amounts.reduce(0, +) }
+
+    /// 勾选里带伤害的段（与 `SkillDamageMath.composition` 同一批段，顺序照 segments）。
+    public static func selected(_ segments: [SkillSegment], _ selected: Set<Int>) -> [LoadoutSegment] {
+        segments.filter { selected.contains($0.atkId) && !$0.noDamage }
+            .map(LoadoutSegment.init(segment:))
+            .filter { $0.total > 0 }
+    }
+}
+
 /// 当前的输出手段（决定 appliesTo 走哪一类、conditional 怎么判）。
 public struct LoadoutOutput: Sendable, Hashable {
     public var outputClass: LoadoutOutputClass
@@ -133,13 +167,18 @@ public struct LoadoutOutput: Sendable, Hashable {
     public var hand: Int
     /// 按 `SkillDamageChannel.rawValue` 索引的伤害占比。
     public var shares: [Double]
-    /// 用户勾选的攻击情境（enums.attackContext 的键）。
+    /// 生效的攻击情境（enums.attackContext 的键）：用户勾选的，加上蓄力开关派生的三项（见 `chargedAttackContexts`）。
     public var attackContexts: Set<String>
+    /// 当前勾选、带伤害的段（子类别限定的增益逐段判）。空 = 没有可用段，退回 attackIndex 只作说明。
+    public var segments: [LoadoutSegment]
+
+    /// 由「蓄力」开关派生、不单独勾选的三个攻击情境：开关开 = 三项都成立。
+    public static let chargedAttackContexts: Set<String> = ["chargedHeavyAttack", "chargedSkill", "chargedSpell"]
 
     public init(
         outputClass: LoadoutOutputClass, skillID: Int? = nil, spellID: Int? = nil,
         weaponID: Int? = nil, weaponWepType: Int? = nil, hand: Int = 1,
-        shares: [Double], attackContexts: Set<String> = []
+        shares: [Double], attackContexts: Set<String> = [], segments: [LoadoutSegment] = []
     ) {
         self.outputClass = outputClass
         self.skillID = skillID
@@ -149,6 +188,12 @@ public struct LoadoutOutput: Sendable, Hashable {
         self.hand = hand == 2 ? 2 : 1
         self.shares = shares
         self.attackContexts = attackContexts
+        self.segments = segments
+    }
+
+    /// 页面的攻击情境：用户勾的（去掉蓄力三项）并上蓄力开关派生的三项（开关开 = 三项成立）。
+    public static func attackContexts(picked: Set<String>, charged: Bool) -> Set<String> {
+        picked.subtracting(chargedAttackContexts).union(charged ? chargedAttackContexts : [])
     }
 
     public var hasComposition: Bool { shares.contains { $0 > 0 } }
@@ -164,7 +209,8 @@ public struct LoadoutOutput: Sendable, Hashable {
 public enum LoadoutRequirementState: Sendable, Hashable {
     case met
     case unmet
-    /// 按段数折算（attackIndex：满足的段 / 全部段）。
+    /// 只有部分勾选的段命中子类别：值是命中段的相对值占全部勾选段的比例（逐通道的占比见 `LoadoutVerdict.channelWeights`）；
+    /// 没有可用段时退回 attackIndex 的段数比（只作说明）。
     case partial(Double)
     /// 本页判不了，交给用户勾「条件成立」。
     case needsUser
@@ -195,10 +241,13 @@ public struct LoadoutVerdict: Sendable, Hashable {
     public let reasons: [String]
     /// 要用户确认的条件（imbuedWeaponOnly、需同时使用道具、认不出的键…）。
     public let needs: [String]
-    /// 部分段命中的近似说明。
+    /// 部分段命中的说明。
     public let notes: [String]
-    /// 1 = 全部生效；(0, 1) = 子类别只有部分段命中、按段数近似折算。
+    /// 1 = 全部生效；(0, 1) = 子类别只有部分勾选的段命中（命中段的相对值 ÷ 全部勾选段的相对值，标「部分段生效」）。
     public let fraction: Double
+    /// 部分段命中时按 `SkillDamageChannel.rawValue` 索引的逐通道占比 s_t：倍率 1＋(倍率−1)×s_t、加算 ×s_t；
+    /// nil = 全额（不折算）。这一通道没有勾选段的相对值时取 1（它在构成里的占比本来就是 0，不影响结果）。
+    public let channelWeights: [Double]?
     /// requires.physicalType：倍率只落在这一个物理通道。
     public let restrictedChannel: SkillDamageChannel?
     public let requirements: [LoadoutRequirement]
@@ -1108,12 +1157,12 @@ public struct BuffLoadoutIndex: Sendable {
         }
         func make(
             _ state: LoadoutVerdict.State, reasons: [String] = [], notes: [String] = [], fraction: Double = 1,
-            restricted: SkillDamageChannel? = nil
+            weights: [Double]? = nil, restricted: SkillDamageChannel? = nil
         ) -> LoadoutVerdict {
             LoadoutVerdict(
                 value: value, state: state, reasons: reasons, needs: state == .no ? [] : needs, notes: notes,
-                fraction: fraction, restrictedChannel: restricted, requirements: requirements,
-                activation: buff.activation, activationNote: activationNote
+                fraction: fraction, channelWeights: fraction < 1 ? weights : nil, restrictedChannel: restricted,
+                requirements: requirements, activation: buff.activation, activationNote: activationNote
             )
         }
         guard raw == "yes" || raw == "conditional" else {
@@ -1136,6 +1185,7 @@ public struct BuffLoadoutIndex: Sendable {
         var fails: [String] = []
         var contexts: [String] = []
         var fraction = 1.0
+        var weights: [Double]?
         var notes: [String] = []
         var restricted: SkillDamageChannel?
         let clsTitle = cls.title
@@ -1169,14 +1219,32 @@ public struct BuffLoadoutIndex: Sendable {
         }
         if requires.hasSubCategoriesAny {
             let label = subCategoryLabel(requires.subCategoriesAny)
+            let wanted = Set(requires.subCategoriesAny)
             let sets: [BuffSubCategorySet]?
             switch cls {
             case .skill: sets = output.skillID.flatMap { dataset.attackIndex.skills[$0] }
             case .sorcery, .incantation: sets = output.spellID.flatMap { dataset.attackIndex.spells[$0] }
             }
-            let wanted = Set(requires.subCategoriesAny)
             let total = sets?.reduce(0) { $0 + $1.hits } ?? 0
-            if let sets, total > 0 {
+            if let split = subCategorySplit(wanted, output: output) {
+                // 按当前勾选的段逐段判（skills v4 hits[].subCategories；法术并上流派）。
+                if split.matched == 0 {
+                    let text = LoadoutText.f("requireSubsFail", clsTitle, label)
+                    requirements.append(LoadoutRequirement(key: "subCategoriesAny", text: text, state: .unmet))
+                    fails.append(text)
+                } else if split.matched < split.total {
+                    fraction = split.fraction
+                    weights = split.weights
+                    let text = LoadoutText.t("verdict.partial") + "：" + label + " \(split.matched)/\(split.total) · "
+                        + String(format: "%.1f%%", split.fraction * 100)
+                    requirements.append(LoadoutRequirement(key: "subCategoriesAny", text: text, state: .partial(fraction)))
+                    notes.append(text)
+                } else {
+                    let text = LoadoutText.f("requireSubsAll", clsTitle, split.total, label)
+                    requirements.append(LoadoutRequirement(key: "subCategoriesAny", text: text, state: .met))
+                }
+            } else if let sets, total > 0 {
+                // 没有可用段（一段带伤害的都没勾）：构成为空、数值恒为 ×1，attackIndex 的整招段数只用来说明。
                 let matched = sets.filter { !wanted.isDisjoint(with: $0.subs) }.reduce(0) { $0 + $1.hits }
                 if matched == 0 {
                     let text = LoadoutText.f("requireSubsFail", clsTitle, label)
@@ -1184,6 +1252,7 @@ public struct BuffLoadoutIndex: Sendable {
                     fails.append(text)
                 } else if matched < total {
                     fraction = Double(matched) / Double(total)
+                    weights = Array(repeating: fraction, count: SkillDamageChannel.allCases.count)
                     let text = LoadoutText.f("requireSubsPartial", clsTitle, matched, total, label)
                     requirements.append(LoadoutRequirement(key: "subCategoriesAny", text: text, state: .partial(fraction)))
                     notes.append(text)
@@ -1213,9 +1282,38 @@ public struct BuffLoadoutIndex: Sendable {
             return make(.context, reasons: [LoadoutText.f("requireContext", names)], restricted: restricted)
         }
         if !needs.isEmpty {
-            return make(.pending, reasons: reason.isEmpty ? [] : [reason], notes: notes, fraction: fraction, restricted: restricted)
+            return make(.pending, reasons: reason.isEmpty ? [] : [reason], notes: notes, fraction: fraction, weights: weights,
+                        restricted: restricted)
         }
-        return make(.yes, notes: notes, fraction: fraction, restricted: restricted)
+        return make(.yes, notes: notes, fraction: fraction, weights: weights, restricted: restricted)
+    }
+
+    /// 子类别限定按当前勾选的段逐段判（skills v4 usage.蓄力段（v4））：一段的子类别（法术并上流派
+    /// attackIndex.spells[id].magicSubCategories）与 subCategoriesAny 有交集，这一段才乘。
+    /// 返回命中段数 / 段数、逐通道占比 s_t（命中段在该通道的相对值 ÷ 全部勾选段在该通道的相对值；分母为 0 的通道取 1，
+    /// 它在构成里的占比本来就是 0）与整体占比；没有可用段（一段带伤害的都没勾）时为 nil。
+    func subCategorySplit(
+        _ wanted: Set<Int>, output: LoadoutOutput
+    ) -> (matched: Int, total: Int, weights: [Double], fraction: Double)? {
+        let segments = output.segments.filter { $0.total > 0 }
+        guard !segments.isEmpty else { return nil }
+        let school: Set<Int> = output.outputClass == .skill
+            ? [] : Set(output.spellID.flatMap { dataset.attackIndex.spellMagicSubCategories[$0] } ?? [])
+        let count = SkillDamageChannel.allCases.count
+        var hit = Array(repeating: 0.0, count: count)
+        var all = Array(repeating: 0.0, count: count)
+        var matched = 0
+        for segment in segments {
+            let applies = !wanted.isDisjoint(with: segment.subCategories.union(school))
+            if applies { matched += 1 }
+            for index in 0..<count {
+                all[index] += segment.amounts[index]
+                if applies { hit[index] += segment.amounts[index] }
+            }
+        }
+        let weights = (0..<count).map { all[$0] > 0 ? hit[$0] / all[$0] : 1 }
+        let sum = all.reduce(0, +)
+        return (matched, segments.count, weights, sum > 0 ? hit.reduce(0, +) / sum : 0)
     }
 
     /// 发动条件的说明：发动型 / 条件型；「装备三把以上 X」写出数量与类别。
@@ -1273,10 +1371,11 @@ public struct BuffLoadoutIndex: Sendable {
 
     // MARK: 倍率
 
-    /// 这一条的逐通道倍率与加算：叠层替换 appliesToRateKeys、物理类型限定、部分段近似（1＋(m−1)×占比）、
+    /// 这一条的逐通道倍率与加算：叠层替换 appliesToRateKeys、物理类型限定、部分段按逐通道占比折算
+    /// （倍率 1＋(m−1)×s_t、加算 ×s_t，s_t 见 `LoadoutVerdict.channelWeights`；nil = 全额）、
     /// stackSelf 多份乘方（加算×份数）。与 Windows 端 entryTables 同一口径。
     func tables(
-        forBuffAt offset: Int, stacks: Int?, restricted: SkillDamageChannel?, fraction: Double, copies: Int
+        forBuffAt offset: Int, stacks: Int?, restricted: SkillDamageChannel?, weights: [Double]?, copies: Int
     ) -> (channels: [Double], flat: [Double]) {
         let buff = dataset.buffs[offset]
         var channels: [Double]
@@ -1297,9 +1396,9 @@ public struct BuffLoadoutIndex: Sendable {
             channels = baseChannels[offset]
         }
         var flat = baseFlat[offset]
-        let weight = fraction >= 0 && fraction < 1 ? fraction : 1
         for index in channels.indices {
-            if weight < 1 {
+            let weight = weights.flatMap { $0.indices.contains(index) ? $0[index] : nil } ?? 1
+            if weight >= 0 && weight < 1 {
                 channels[index] = 1 + (channels[index] - 1) * weight
                 flat[index] *= weight
             }
@@ -1772,7 +1871,7 @@ public struct LoadoutEvaluator: Sendable {
             work.reasons = reasons
             // 不计入的也给出「单独看这一条」的倍率，列表展示用（不进汇总）。
             let probe = index.tables(
-                forBuffAt: offset, stacks: stacks, restricted: verdict.restrictedChannel, fraction: verdict.fraction, copies: 1
+                forBuffAt: offset, stacks: stacks, restricted: verdict.restrictedChannel, weights: verdict.channelWeights, copies: 1
             )
             work.channels = probe.channels
             work.flatChannels = probe.flat
@@ -1841,7 +1940,7 @@ public struct LoadoutEvaluator: Sendable {
         }
         work.countedCopies = countedCopies
         let tables = index.tables(
-            forBuffAt: offset, stacks: stacks, restricted: verdict.restrictedChannel, fraction: verdict.fraction,
+            forBuffAt: offset, stacks: stacks, restricted: verdict.restrictedChannel, weights: verdict.channelWeights,
             copies: countedCopies
         )
         work.channels = tables.channels
@@ -2538,7 +2637,7 @@ public enum LoadoutText {
         "brief.fill": "「按推荐填满」只填空着的槽位，顺序是武器词条 → 遗物逐格（最好的固定遗物与贪心自组的合法遗物比较，分数相同取固定遗物）→ 护符；每一步都按「加进去之后的总倍率」取增幅最大的候选，增幅相同取 ID 小的；只算不用确认、不用填层数或选层就会计入的条目，不选条件型。",
         "brief.formula": "总倍率＝按互斥键去重后，全部计入条目在每个伤害类型上的倍率连乘，再按伤害构成占比加权；攻击力倍率层与最终伤害倍率层相乘，物理子类型倍率只乘对应那一部分；各栏小计同法只算本栏；攻击力加算（点数）只展示、不进连乘。",
         "brief.innate": "当前武器的固有效果自动列入「其它增益 · 武器固有」：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数（notes.ranking 第③步：自动带入不算用户确认）。其它武器的固有效果可以手动勾选。",
-        "brief.partial": "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、没有逐段对应，所以占比不随上方的分段勾选变化。",
+        "brief.partial": "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，所以蓄力类增益在蓄力施放下拿到全额。",
         "brief.relic": "遗物：普通遗物按「普通 1.03」口径（三条不重复、compatibilityId 两两不同、能分配到槽池模板）；深夜遗物按「深夜正面」口径，并要求 requiresCurse 的词条各配一条负面诅咒池（{0}）里的诅咒（与存档检查的深夜遗物审计同一规则、同一文案）。不足三条时用可落任一槽池、不参与互斥的占位词条补足后再检查。官方固定遗物整件计入；随整件带进来的条件型效果要手动确认。",
         "brief.runStack": "叠层：{0}。同一阶梯各层互斥、只取当前层；不同阶梯（封印监牢、黑夜入侵者等）按 categoryPriority 判为互不顶替、可以同时生效——参数推断，未实测。",
         "brief.skillAttack": "「提升战技攻击力」类（子类别 {0}）只作用于战技（含战技的子弹段），不作用于法术与普通攻击；法术吃到的「提升攻击力（XX・战技）」是战技发动后给自己的全伤害增益（sourceSlot=weaponSkill），名字里的「战技」是来源（notes.userQuestions.Q1）。",
@@ -2569,6 +2668,10 @@ public enum LoadoutText {
         "characterNames.Undertaker": "送葬者",
         "characterNames.Wylder": "追踪者",
         "characterOther": "其他角色",
+        "chargedToggle.hint": "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加",
+        "chargedToggle.label": "蓄力",
+        "chargedToggle.onlyCharged": "这一招只有蓄力段",
+        "chargedToggle.unavailable": "这一招没有蓄力段",
         "checkConflictDetail": "{0} 不能同时出现",
         "checkConflictTitle": "同一互斥池",
         "checkDuplicateDetail": "同一个效果不能在一件遗物上出现两次：{0}",

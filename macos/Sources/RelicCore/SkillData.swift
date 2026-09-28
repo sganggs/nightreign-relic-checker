@@ -2,14 +2,14 @@ import Foundation
 
 // 「增伤排名」页上半部分的数据模型：武器 / 战技 / 法术与它们的分段命中。
 //
-// 数据来源：Resources/skills.json（schemaVersion 3，更早的版本拒绝解码），经
+// 数据来源：Resources/skills.json（schemaVersion 4，更早的版本拒绝解码），经
 // `GameDataLoader.dataIfAvailable(for: .skills)` 读出原始 Data 后在这里解码。
 //
 // 解码原则（数据集由另一条流水线维护，字段随时可能增删）：
 //   * 未知字段一律忽略；
 //   * 已知字段缺失 / 类型不符时退回默认值，**不抛错**；
 //   * 数组逐元素解码，坏元素跳过而不是整份失败。
-// 只有「顶层不是 JSON 对象」「schemaVersion < 3」「武器与战技全空」这种读不懂的情况才抛 `SkillDataError`。
+// 只有「顶层不是 JSON 对象」「schemaVersion < 4」「武器与战技全空」这种读不懂的情况才抛 `SkillDataError`。
 //
 // 关键算法（严格按数据集 usage 块，见页面底部的「原文」折叠区）：
 //   * 选段：weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
@@ -19,7 +19,10 @@ import Foundation
 //   * 法术来源（v3 修订）：spells[] 只收施法器能带的法术（风暴管束者 8100 / 8101 这类 Magic 残留行不在里面，
 //     见 coverage.spellsNotCastable）；能带它的施法器看 spells[].casterWeaponIds / casterSources，池看顶层 magicPools；
 //   * 正常版 / 专注值不足版：取段规则是 `hit.fpBoth || hit.noFp == 开关`（fpBoth 段两侧都计）；
-//   * 页面只从 variants 取段；任何直接回到 hits[] 的路径都过滤 notInvoked 与 noDamage；
+//   * 蓄力（v4，usage.蓄力段（v4））：蓄力 / 不蓄力是同一招的互斥两侧，按 hits[].chargeBranch 分——专注值那一侧剩下的段里
+//     一段 charged 都没有时开关不适用（取全部）；否则开取 charged / both、关取 uncharged / both，partial 两侧都不取。
+//     **不要**用 hits[].charged 分侧：它只说明这段的子类别带蓄力（吃不吃蓄力类增益），见 `SkillDamageMath.selection`；
+//   * 页面只从 variants 取段；任何直接回到 hits[] 的路径都过滤 notInvoked 与 noDamage（法术段 v4 起同样按施法槽标了 notInvoked）；
 //   * 近战武器段：该属性伤害 ≈ 武器该属性攻击力 × motion/100 + flat（addBaseAtk 再加一份基础攻击力）；
 //   * 法术 / 子弹段：法术只用 flat（motion 的五属性同值 100 是占位写法）；
 //   * 伤害类型：attribute 为 WeaponAtkAttribute / WeaponAtkAttribute2 时回 weapons[] 取 atkAttribute / atkAttribute2。
@@ -40,7 +43,7 @@ public enum SkillDataError: LocalizedError {
         case .notAnObject: return "战技数据不是合法的 JSON 对象"
         case .undecodable(let detail): return "战技数据无法解码：" + detail
         case .unsupportedSchema(let version):
-            return "战技数据是 schemaVersion \(version)：本页按 v3 的 skillVariants / weaponSources 选段，"
+            return "战技数据是 schemaVersion \(version)：本页按 v4 的逐段子类别与蓄力分侧（chargeBranch）选段、判增益，"
                 + "需要 schemaVersion \(SkillDataset.minimumSchemaVersion) 或更新的数据"
         case .empty: return "战技数据里没有任何武器或战技记录"
         }
@@ -569,12 +572,24 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
     /// notInvoked 的原因（enums.notInvokedReason 的键）。
     public let notInvokedReason: String?
     public let addBaseAtk: Bool
+    /// v4：AtkParam_Pc.subCategory1..5 的非 0 值（去重升序；全为 0 时数据集省略 → 空）。
+    /// 法术段**不含**流派（Magic.subCategory1..2），判增益时再并上 buffs attackIndex.spells[id].magicSubCategories。
+    public let subCategories: [Int]
+    /// v4：子类别带蓄力（100 蓄力强攻击 / 110 蓄力法术攻击 / 111 蓄力战技攻击）。只说明这段吃不吃蓄力类增益，**不是**分侧依据。
+    public let charged: Bool
+    /// v4：这段在蓄力开关的哪一侧（按 TAE 逐动画判）；只写在「有可取蓄力段」的条目的可取段上，其余为 nil。
+    public let chargeBranch: SkillChargeBranch?
 
     public var id: Int { atkId }
 
     /// 按「专注值不足版」开关取段：fpBoth 段两侧都计，其余段只取与开关同侧的。
     public func isOnSide(useNoFp: Bool) -> Bool {
         fpBoth || noFp == useNoFp
+    }
+
+    /// 按「蓄力」开关取段（开关适用时）：见 `SkillChargeBranch.isOnSide(useCharged:)`。
+    public func isOnChargeSide(useCharged: Bool) -> Bool {
+        SkillChargeBranch.resolve(chargeBranch, charged: charged).isOnSide(useCharged: useCharged)
     }
 
     public var displayLabel: String {
@@ -609,6 +624,9 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
         notInvoked = container.skillBool(.notInvoked)
         notInvokedReason = container.skillOptionalString(.notInvokedReason)
         addBaseAtk = container.skillBool(.addBaseAtk)
+        subCategories = Array(Set(container.skillIntArray(.subCategories).filter { $0 != 0 })).sorted()
+        charged = container.skillBool(.charged)
+        chargeBranch = container.skillOptionalString(.chargeBranch).flatMap(SkillChargeBranch.init(rawValue:))
     }
 
     private static func elementMap(_ raw: [String: Double]) -> [SkillElement: Double] {
@@ -623,7 +641,54 @@ public struct SkillHit: Sendable, Hashable, Identifiable, Decodable {
         case atkId, ctx, ctxZh, ctxKind, label, labelZh, motion, flat
         case poise, poiseMv, stamina, staminaMv, attribute, attributeZh
         case isBullet, noFp, noFpSource, fpBoth, noDamage, selfOrAllyOnly, noVariant
-        case notInvoked, notInvokedReason, addBaseAtk
+        case notInvoked, notInvokedReason, addBaseAtk, subCategories, charged, chargeBranch
+    }
+}
+
+/// v4 hits[].chargeBranch：蓄力开关的哪一侧（fieldNotes.chargeBranch，按 TAE 逐动画判）。
+public enum SkillChargeBranch: String, Sendable, Hashable, CaseIterable {
+    /// 只在蓄力动画里打出。
+    case charged
+    /// 只在不蓄力动画里打出。
+    case uncharged
+    /// 两种放法都打（或两种放法之后都能接的追加）——开关两侧都计入。
+    case both
+    /// 中间蓄力阶段的放招（伟哉卡利亚的一段蓄力）：开关两侧都**不**取。
+    case partial
+
+    /// 开关适用时这一段在不在当前侧：开取 charged / both，关取 uncharged / both，partial 两侧都不取。
+    /// 保留集必须显式写成这两组——写成「不是 charged 就算关侧」会把 partial 算进蓄力关（伟哉卡利亚 870 + 871）。
+    public func isOnSide(useCharged: Bool) -> Bool {
+        switch self {
+        case .both: return true
+        case .charged: return useCharged
+        case .uncharged: return !useCharged
+        case .partial: return false
+        }
+    }
+
+    /// 数据缺 chargeBranch 时的兜底（本版本可蓄力条目的可取段都有，只防数据缺字段）：按子类别归侧。
+    static func resolve(_ branch: SkillChargeBranch?, charged: Bool) -> SkillChargeBranch {
+        branch ?? (charged ? .charged : .uncharged)
+    }
+}
+
+/// 蓄力开关对当前这一招（专注值当前那一侧）的可用性。
+public enum SkillChargeAvailability: String, Sendable, Hashable {
+    /// 这一侧一段 chargeBranch = charged 都没有：开关不适用、禁用，取全部段（chargedToggle.unavailable）。
+    case unavailable
+    /// 开 / 关两侧都有段：可以切换。
+    case toggle
+    /// 关侧（uncharged / both）一段都没有：强制开（chargedToggle.onlyCharged）。
+    case onlyCharged
+
+    /// 实际按哪一侧取段：不适用时为 nil（不分侧），只有蓄力段时强制 true。
+    public func effectiveCharged(_ requested: Bool) -> Bool? {
+        switch self {
+        case .unavailable: return nil
+        case .toggle: return requested
+        case .onlyCharged: return true
+        }
     }
 }
 
@@ -731,8 +796,9 @@ public struct SpellEntry: Sendable, Hashable, Identifiable, Decodable {
 }
 
 public struct SkillDataset: Sendable {
-    /// 本页按 v3 的 skillVariants / weaponSources / fpBoth / notInvoked 选段，更早的数据拒绝解码。
-    public static let minimumSchemaVersion = 3
+    /// 本页按 v4 的逐段 subCategories / chargeBranch（蓄力分侧）与法术 notInvoked 选段、判子类别限定的增益，
+    /// 更早的数据拒绝解码（v3 没有逐段子类别，蓄力类增益只能按整招段数近似，兽爪会被摊成 ×1.09）。
+    public static let minimumSchemaVersion = 4
 
     public let schemaVersion: Int
     public let gameVersion: String
@@ -765,7 +831,8 @@ public struct SkillDataset: Sendable {
         } catch {
             throw SkillDataError.undecodable(String(describing: error))
         }
-        // v2 没有 skillVariants：池里抽到的战技会拿固定战技的下标选段（选错动作套），宁可不认。
+        // v2 没有 skillVariants：池里抽到的战技会拿固定战技的下标选段（选错动作套）；v3 没有逐段子类别与蓄力分侧：
+        // 蓄力两侧会一起勾、子类别限定的增益只能按整招段数近似。宁可不认。
         guard dataset.schemaVersion >= minimumSchemaVersion else {
             throw SkillDataError.unsupportedSchema(dataset.schemaVersion)
         }
@@ -901,6 +968,12 @@ public struct SkillSegment: Sendable, Hashable, Identifiable {
     /// 这一段的物理伤害类型（attribute 已解析到武器的 atkAttribute / atkAttribute2）。
     public let physicalChannel: SkillDamageChannel?
     public let total: Double
+    /// v4：hits[].subCategories（法术不含流派）。子类别限定的增益按勾选的段逐段判。
+    public var subCategories: [Int] = []
+    /// v4：子类别带蓄力（吃蓄力类增益）。
+    public var charged: Bool = false
+    /// v4：蓄力开关的哪一侧（nil = 这一招没有蓄力分侧）。
+    public var chargeBranch: SkillChargeBranch?
 
     public var id: Int { atkId }
     public var hasDamage: Bool { total > 0 }
@@ -1065,13 +1138,38 @@ public enum SkillDamageMath {
             noDamage: hit.noDamage,
             attributeZh: hit.attributeZh,
             physicalChannel: hasPhysical ? physicalChannel : nil,
-            total: total
+            total: total,
+            subCategories: hit.subCategories,
+            charged: hit.charged,
+            chargeBranch: hit.chargeBranch
         )
     }
 
-    /// 默认勾选：正常版这一侧、非 noDamage 的段（默认在正常版侧）。
+    /// 默认勾选：正常版这一侧、非 noDamage 的段；蓄力开关默认关（只有蓄力段的招强制开，见 `defaultCharged`）。
     public static func defaultSelection(_ segments: [SkillSegment]) -> Set<Int> {
-        selection(segments, useNoFp: false)
+        selection(segments, useNoFp: false, useCharged: defaultCharged(segments, useNoFp: false))
+    }
+
+    /// 换招 / 换武器时蓄力开关的初值：按可用性重置——只有蓄力段时开，其余一律关。
+    public static func defaultCharged(_ segments: [SkillSegment], useNoFp: Bool) -> Bool {
+        chargeAvailability(segments, useNoFp: useNoFp) == .onlyCharged
+    }
+
+    /// 专注值这一侧（usage.蓄力段（v4）第 ② 步之后）的段：`fpBoth || noFp == 开关`，去掉 noDamage。
+    public static func fpSide(_ segments: [SkillSegment], useNoFp: Bool) -> [SkillSegment] {
+        segments.filter { ($0.fpBoth || $0.noFp == useNoFp) && !$0.noDamage }
+    }
+
+    /// 蓄力开关对这一招（专注值当前这一侧）的可用性（usage.蓄力段（v4）第 ③ 步）：
+    /// 这一侧一段 chargeBranch = charged 都没有 → 不适用（包括整招没有 chargeBranch）；
+    /// 否则看关侧（uncharged / both）有没有段——没有就只能开。
+    /// 「不适用」必须在分专注值之后判：王者嘶吼 1031 的无 FP 侧只剩吼叫本体（both），先判会一段不剩。
+    public static func chargeAvailability(_ segments: [SkillSegment], useNoFp: Bool) -> SkillChargeAvailability {
+        let side = fpSide(segments, useNoFp: useNoFp)
+        guard side.contains(where: { $0.chargeBranch != nil }) else { return .unavailable }
+        let branches = side.map { SkillChargeBranch.resolve($0.chargeBranch, charged: $0.charged) }
+        guard branches.contains(.charged) else { return .unavailable }
+        return branches.contains { $0.isOnSide(useCharged: false) } ? .toggle : .onlyCharged
     }
 
     /// 「专注值不足版」与「正常版」互斥切换：只勾这一侧的段。
@@ -1084,8 +1182,20 @@ public enum SkillDamageMath {
     /// v3：取段规则是 `fpBoth || noFp == 开关`——fpBoth 段（带 FP / 无 FP 两侧动画共用，本版本 19 段）
     /// 两侧都计。旧写法 `noFp == 开关` 会在专注值不足版这一侧丢掉它们：1024 唤矛仪式、1021 毁灭灵火
     /// 切过去一段都不剩，218 伟哉卡利亚少了最后一发。
-    public static func selection(_ segments: [SkillSegment], useNoFp: Bool) -> Set<Int> {
-        Set(segments.filter { ($0.fpBoth || $0.noFp == useNoFp) && !$0.noDamage }.map(\.atkId))
+    ///
+    /// v4：再叠一层蓄力分侧（usage.蓄力段（v4））——蓄力 / 不蓄力是同一招的两种放法、一次只打一侧，与专注值同理互斥：
+    /// 段入选 ⇔ (fpBoth || noFp == 专注值开关) && !noDamage && (开关不适用 || chargeBranch 在开关这一侧)。
+    /// 开关这一侧：开取 charged / both、关取 uncharged / both，partial（一段蓄力的放招）两侧都不取；
+    /// 不适用 = 专注值这一侧一段 charged 都没有（见 `chargeAvailability`），此时取全部；只有蓄力段时强制开。
+    /// 兽爪 6820：开只取 68205、关只取 68200（68201 / 68206 是 notInvoked，根本不在 segments 里）。
+    public static func selection(_ segments: [SkillSegment], useNoFp: Bool, useCharged: Bool = false) -> Set<Int> {
+        let side = fpSide(segments, useNoFp: useNoFp)
+        guard let charged = chargeAvailability(segments, useNoFp: useNoFp).effectiveCharged(useCharged) else {
+            return Set(side.map(\.atkId))
+        }
+        return Set(side.filter {
+            SkillChargeBranch.resolve($0.chargeBranch, charged: $0.charged).isOnSide(useCharged: charged)
+        }.map(\.atkId))
     }
 
     /// 汇总勾选的段：各通道相对伤害量 → 占比。
@@ -1172,9 +1282,11 @@ public struct SkillDataIndex: Sendable {
     public let skillsWithoutWeapons: Int
     /// 列表里只在局内战技池里抽得到、没有任何武器固定带的战技数（v3 战技来源，页面底部说明用）。
     public let poolOnlyOutputs: Int
-    /// hits[] 里标了 notInvoked 的段数（v3 TAE 核实：在所有武器上都打不出，本页不取）。
+    /// hits[] 里标了 notInvoked 的段数（战技 + 法术，= counts.hitsNotInvokedAll）：战技按 TAE 核实（v3）在所有武器上都打不出，
+    /// 法术按施法槽核实（v4）没有任何施法动画会发射；本页都不取。
     public var notInvokedHits: Int {
         dataset.skills.reduce(0) { $0 + $1.hits.filter(\.notInvoked).count }
+            + dataset.spells.reduce(0) { $0 + $1.hits.filter(\.notInvoked).count }
     }
     /// 完全没有命中段的战技 / 法术数量（纯增益、格挡、附魔一类）。
     public let skillsWithoutHits: Int
@@ -1238,7 +1350,8 @@ public struct SkillDataIndex: Sendable {
                 continue
             }
             // 法术没有武器，构成只来自 flat；一个 flat 都没有的（冰雾、各种恢复／庇佑／防护）排除。
-            guard spell.hits.contains(where: { SkillDamageMath.segment(for: $0, weapon: nil).hasDamage }) else {
+            // v4：notInvoked 段（施法动画发射不到）不算——与 `segments(for:)` 同一口径（本版本条数不变，119）。
+            guard spell.hits.contains(where: { !$0.notInvoked && SkillDamageMath.segment(for: $0, weapon: nil).hasDamage }) else {
                 spellsNoDamage += 1
                 continue
             }
@@ -1402,9 +1515,10 @@ public struct SkillDataIndex: Sendable {
         hits(for: skill, weapon: weapon).map { SkillDamageMath.segment(for: $0, weapon: weapon) }
     }
 
-    /// 法术：没有 variants，全部段都会打出；只用 flat 做配比（见 usage.法术 / 子弹段）。
+    /// 法术：没有 variants；只用 flat 做配比（见 usage.法术 / 子弹段）。
+    /// v4 起法术段按施法槽核实：没有任何施法动画发射的段标 notInvoked（兽爪 68201 / 68206、死亡雷击 50402 / 50407…），不进计算；
+    /// 蓄力 / 不蓄力两侧再由 `SkillDamageMath.selection` 按 chargeBranch 分。
     public func segments(for spell: SpellEntry) -> [SkillSegment] {
-        // 法术目前没有 TAE 核实（fieldNotes 说明），但与 Windows / Android 同口径：notInvoked 段不进计算。
         spell.hits.filter { !$0.notInvoked }.map { SkillDamageMath.segment(for: $0, weapon: nil) }
     }
 
