@@ -561,30 +561,106 @@ class BuffRankerIndexTest {
     }
 
     @Test
-    fun `verdict - requires subCategoriesAny is judged per hit through attackIndex`() {
+    fun `verdict - requires subCategoriesAny is judged on the selected hits (all, none, partial per damage type)`() {
         val attackIndex = BuffAttackIndex(
             skills = mapOf(
                 1 to listOf(BuffSubCategorySet(subs = listOf(112, 130), hits = 4)),
                 2 to listOf(BuffSubCategorySet(subs = listOf(106, 130), hits = 3)),
                 3 to listOf(BuffSubCategorySet(subs = listOf(112), hits = 1), BuffSubCategorySet(subs = listOf(130), hits = 3)),
             ),
-            spells = emptyMap(), melee = emptyList(), ranged = emptyList(),
+            spells = mapOf(9 to listOf(BuffSubCategorySet(subs = listOf(23), hits = 1))),
+            melee = emptyList(), ranged = emptyList(),
+            spellMagicSubCategories = mapOf(9 to listOf(23)),
         )
-        val buff = synthBuff(-7, conditional("子类别限定 [112]", BuffRequirement(subCategoriesAny = listOf(111, 112))))
+        val buff = synthBuff(-7) {
+            it.copy(
+                rates = mapOf("physicsAttackRate" to 1.2, "fireAttackPower" to 10.0),
+                appliesTo = BuffAppliesTo(skill = "conditional", incantation = "conditional"),
+                appliesToDetail = BuffAppliesDetails(
+                    skill = BuffAppliesDetail(reason = "子类别限定 [112]", requires = BuffRequirement(subCategoriesAny = listOf(111, 112))),
+                    incantation = BuffAppliesDetail(reason = "流派限定 [23]", requires = BuffRequirement(subCategoriesAny = listOf(23))),
+                ),
+            )
+        }
         val index = RankerTestData.miniIndex(listOf(buff), attackIndex)
         val entry = index.byId.getValue(-7)
-        assertEquals(VerdictState.YES, index.verdict(entry, out(meansId = 1)).state)
-        val none = index.verdict(entry, out(meansId = 2))
+        val weapon = SkillWeapon(id = 5, wepType = 9, attackBase = mapOf("physical" to 100.0, "fire" to 100.0), atkAttribute = 0, atkAttribute2 = 0)
+        // 三段：A 斩 motion 100（带 112）、B 斩 motion 300 + 火 motion 100（不带）、C 火 motion 100（带 112）；
+        // Z 只有魔力 motion，这把武器没有魔力：相对值 0，不算段。
+        val a = SkillHit(atkId = 1, attribute = "Slash", motion = mapOf("physical" to 100.0), subCategories = listOf(112, 130))
+        val b = SkillHit(atkId = 2, attribute = "Slash", motion = mapOf("physical" to 300.0, "fire" to 100.0), subCategories = listOf(130))
+        val c = SkillHit(atkId = 3, attribute = "Slash", motion = mapOf("fire" to 100.0), subCategories = listOf(111, 112))
+        val z = SkillHit(atkId = 4, attribute = "Slash", motion = mapOf("magic" to 100.0), subCategories = listOf(112))
+        fun outFor(hits: List<SkillHit>, meansId: Int = 3): RankerOutput {
+            val comp = SkillDamageMath.composition(hits, weapon, false)
+            return RankerOutput(
+                OutputClass.SKILL, meansId = meansId, weaponId = weapon.id, weaponWepType = weapon.wepType, shares = comp.shares,
+                segments = SkillDamageMath.outputSegments(hits, weapon, isSpell = false),
+            )
+        }
+
+        // 全中：attackIndex 说整招只有 1/4 段带 112，也不影响——看的是勾选的段。
+        val all = index.verdict(entry, outFor(listOf(a, c, z)))
+        assertEquals(VerdictState.YES, all.state)
+        assertEquals(1.0, all.weight)
+        assertNull(all.typeShares, "全中＝全额，不加权")
+        assertNull(all.weights)
+        assertEquals(RequirementState.MET, all.requirements.single().state)
+        assertTrue(all.requirements.single().text.contains("2 段"), "只数相对值 > 0 的段：${all.requirements.single().text}")
+        assertEquals(RankerText.t("verdict.conditionalMet"), all.label)
+
+        // 全不中：attackIndex 说整招有 112 段也不生效。
+        val none = index.verdict(entry, outFor(listOf(b), meansId = 1))
         assertEquals(VerdictState.NO, none.state)
         assertTrue(none.reasons[0].contains("112"))
-        val partial = index.verdict(entry, out(meansId = 3))
+        assertEquals(RankerText.t("verdict.no"), none.label)
+
+        // 部分：斩 = A 100 / (A 100 + B 300) = 0.25，火 = C 100 / (B 100 + C 100) = 0.5；整体 = 200 / 600。
+        val partial = index.verdict(entry, outFor(listOf(a, b, c)))
         assertEquals(VerdictState.YES, partial.state)
-        assertEquals(0.25, partial.weight, "4 段里 1 段带 112")
-        assertTrue(partial.notes[0].contains("1/4"))
+        assertClose(200.0 / 600.0, partial.weight, 1e-12, "整体命中占比按相对值")
+        val typeShares = assertNotNull(partial.typeShares)
+        assertClose(0.25, typeShares[DamageType.SLASH.ordinal], 1e-12, "斩")
+        assertClose(0.5, typeShares[DamageType.FIRE.ordinal], 1e-12, "火")
         assertEquals(RankerText.t("verdict.partial"), partial.label)
-        val (table, _) = index.tables(entry, null, partial.weight, null, 1)
-        assertClose(1 + 0.2 * 0.25, table[DamageType.SLASH.ordinal], 1e-12, "按段加权：1 + (m − 1) × 命中段占比")
-        assertEquals(VerdictState.PENDING, index.verdict(entry, out(meansId = 99)).state, "attackIndex 里查不到就要用户确认")
+        assertEquals(RequirementState.PARTIAL, partial.requirements.single().state)
+        assertTrue(partial.notes[0].contains("2/3"), "按勾选的段数说明：${partial.notes[0]}")
+        assertFalse(partial.notes[0].contains("attackIndex"), "不再说「段数取 attackIndex、与分段勾选无关」")
+        val (table, flat) = index.tables(entry, partial, null, 1)
+        assertClose(1 + 0.2 * 0.25, table[DamageType.SLASH.ordinal], 1e-12, "斩：1 + (m − 1) × 0.25")
+        assertClose(10 * 0.5, flat[DamageType.FIRE.ordinal], 1e-12, "加算按同一类型的占比缩放")
+        // 统一的一个数（旧调用）仍按那个数加权。
+        assertClose(1.1, index.tables(entry, null, 0.5, null, 1).first[DamageType.SLASH.ordinal], 1e-12)
+        // 单条评估（一览 / 配置）同样按逐类型占比：斩 1.05，火没有倍率（只有加算）；按构成（斩 2/3、火 1/3）加权。
+        val item = index.evaluate(entry, outFor(listOf(a, b, c)))
+        assertEquals(EntryState.COUNTED, item.state)
+        assertClose(1 + 0.2 * 0.25, item.table[DamageType.SLASH.ordinal], 1e-12)
+        assertClose(2.0 / 3.0 * 1.05 + 1.0 / 3.0, item.multiplier, 1e-12)
+        assertClose(1.0 / 3.0 * 5.0, item.flat, 1e-12)
+
+        // 勾选变了，判定跟着变（旧口径按 attackIndex 整招统计，与勾选无关）。
+        assertEquals(1.0, index.verdict(entry, outFor(listOf(a))).weight)
+        assertEquals(VerdictState.NO, index.verdict(entry, outFor(listOf(b))).state)
+
+        // 法术：每段再并上流派（attackIndex.spells[id].magicSubCategories），段自己没有子类别也算中。
+        val spellHit = SkillHit(atkId = 90, flat = mapOf("holy" to 100.0))
+        val spellOut = RankerOutput(
+            OutputClass.INCANTATION, meansId = 9, shares = SkillDamageMath.composition(listOf(spellHit), null, true).shares,
+            segments = SkillDamageMath.outputSegments(listOf(spellHit), null, isSpell = true),
+        )
+        assertEquals(listOf(23), index.segmentSubCategories(spellOut, spellOut.segments!!.single()))
+        assertEquals(VerdictState.YES, index.verdict(entry, spellOut).state)
+        assertEquals(1.0, index.verdict(entry, spellOut).weight)
+
+        // 没有勾选带伤害的段（或调用方没给逐段信息）：只按 attackIndex 做说明，不决定数值。
+        val noHits = index.verdict(entry, out(meansId = 3, shares = shares()).copy(segments = emptyList()))
+        assertEquals(VerdictState.YES, noHits.state)
+        assertEquals(1.0, noHits.weight, "没有构成时不按整招段数加权")
+        assertEquals(RequirementState.PARTIAL, noHits.requirements.single().state)
+        assertEquals(VerdictState.YES, index.verdict(entry, out(meansId = 3)).state, "旧调用（segments=null）同样只做说明")
+        assertEquals(1.0, index.verdict(entry, out(meansId = 3)).weight)
+        assertEquals(VerdictState.NO, index.verdict(entry, out(meansId = 2)).state, "整招都不带这类子类别：不生效")
+        assertEquals(VerdictState.PENDING, index.verdict(entry, out(meansId = 99)).state, "attackIndex 里查不到、也没有勾选的段：要用户确认")
         // 真实数据：尸横遍野 12 段全带 112 → 生效；死亡雷击是祷告，8350000 对祷告是 no。
         val real = buffs.byId.getValue(8350000)
         val onSkill = buffs.verdict(real, out(meansId = 1177))

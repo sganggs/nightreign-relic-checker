@@ -99,13 +99,19 @@ data class BuffEnums(
     val spCategoryBehavior: Map<String, String>,
 )
 
-/** attackIndex：每个战技／法术实际命中段的子类别集合（appliesTo=conditional 且带 subCategoriesAny 时用）。 */
+/**
+ * attackIndex：每个战技／法术整招命中段的子类别集合。skills v4 起子类别限定（requires.subCategoriesAny）按**当前
+ * 勾选的段**逐段判定（每段 hits[].subCategories，法术再并上 [spellMagicSubCategories]），这里的整招统计只在没有
+ * 勾选带伤害的段时做说明，不再决定数值。
+ */
 data class BuffAttackIndex(
     val skills: Map<Int, List<BuffSubCategorySet>>,
     val spells: Map<Int, List<BuffSubCategorySet>>,
     /** 近战普通攻击／弓弩射击的子类别人口（只用 subs）。 */
     val melee: List<BuffSubCategorySet>,
     val ranged: List<BuffSubCategorySet>,
+    /** 法术 ID → 流派（attackIndex.spells[id].magicSubCategories，Magic.subCategory1..2）。 */
+    val spellMagicSubCategories: Map<Int, List<Int>> = emptyMap(),
 )
 
 /** buffs 数据集（解码后的不可变模型）。 */
@@ -200,6 +206,9 @@ class BuffDataset internal constructor(
                     spells = dto.attackIndex.spells.setsByInt(),
                     melee = dto.attackIndex.melee,
                     ranged = dto.attackIndex.ranged,
+                    spellMagicSubCategories = dto.attackIndex.spells.mapNotNull { (key, entry) ->
+                        key.toIntOrNull()?.takeIf { entry.magicSubCategories.isNotEmpty() }?.let { it to entry.magicSubCategories }
+                    }.toMap(),
                 ),
                 buffs = dto.buffs,
             )

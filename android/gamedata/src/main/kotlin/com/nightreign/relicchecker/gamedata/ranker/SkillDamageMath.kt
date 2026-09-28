@@ -3,11 +3,14 @@ package com.nightreign.relicchecker.gamedata.ranker
 // 选段、单段相对伤害、伤害构成、削韧／削精力与分段勾选（严格按 skills 数据集的 usage 块）：
 //   · 选段：weapons[].skillVariants[战技 ID] → skills[].variants[i].atkIds，**不要**按 ctx 取并集；
 //   · 正常版 / 专注值不足版：取段规则是「hit.fpBoth 或 noFp 与开关同侧」（[SkillHit.isOnSide]，fpBoth 段两侧都计）；
+//   · 蓄力 / 不蓄力（v4，usage「蓄力段（v4）」）：② 专注值分侧之后一段 chargeBranch=charged 都没有 → 开关不适用、
+//     取 ② 的全部段；否则开取 charged / both、关取 uncharged / both，partial 两侧都不取（[chargeInfo] / [defaultSelection]）；
 //   · 近战武器段（含战技的子弹段）：该属性伤害 ≈ 武器该属性攻击力 × motion/100 + flat（addBaseAtk 再加一份基础攻击力）；
 //   · 法术段：只用 flat（motion 的五属性同值 100 是占位写法）；
 //   · 伤害类型：attribute 为 WeaponAtkAttribute / WeaponAtkAttribute2 时回 weapons[] 取 atkAttribute / atkAttribute2。
 // 与 Windows 端 selectVariant / selectHits / hitContribution / hitChipPlan / composition / hitPoise / hitStamina /
-// hitOverridesFor，macOS 端 SkillDamageMath / SkillDataIndex.hits(for:weapon:) 逐条对应。
+// chargeInfo / effectiveCharged / defaultSelection / chargedContexts / segmentsFor / hitOverridesFor，
+// macOS 端 SkillDamageMath / SkillDataIndex.hits(for:weapon:) 逐条对应。
 
 /** 一段命中在某类伤害上的贡献（分段芯片用）。`motionPercent` / `flat` 原样来自数据集（没声明就是 null）。 */
 data class SegmentComponent(
@@ -95,6 +98,35 @@ data class DamageComposition(
 
 /** 分段列表工具条的三个动作（Windows 端 hitOverridesFor 的 action）。 */
 enum class HitAction { ALL, NONE, RESET }
+
+/**
+ * 「蓄力」开关对一招（在当前专注值一侧）的可用性（Windows chargeInfo）。
+ * [applicable]＝专注值分侧之后还有 chargeBranch=charged 的段；[onlyCharged]＝适用但关侧（uncharged / both）一段都没有
+ * （开关强制打开；本版本数据里没有这种招，按规则兜底）。
+ */
+data class ChargeInfo(val applicable: Boolean, val onlyCharged: Boolean) {
+    /** 开关实际生效的一侧（Windows effectiveCharged）：不适用 → 关；只有蓄力段 → 开；否则按用户的开关 [charged]。 */
+    fun effective(charged: Boolean): Boolean = applicable && (onlyCharged || charged)
+
+    /** 开关能不能拨（不适用或只有蓄力段时禁用）。 */
+    val switchable: Boolean get() = applicable && !onlyCharged
+
+    companion object {
+        val NOT_APPLICABLE = ChargeInfo(applicable = false, onlyCharged = false)
+    }
+}
+
+/**
+ * 子类别限定逐段判定用的一段（Windows segmentsFor 的一项）：当前勾选、在任一伤害类型上相对值 > 0 的段。
+ * [subCategories]＝hits[].subCategories（法术的流派 attackIndex.spells[id].magicSubCategories 由判定时并上）；
+ * [parts] 按 [DamageType.ordinal] 索引的九类相对值（与伤害构成同一个 hitContribution），[total] 是它们之和。
+ */
+data class OutputSegment(
+    val atkId: Int,
+    val subCategories: List<Int>,
+    val parts: List<Double>,
+    val total: Double,
+)
 
 object SkillDamageMath {
     /**
@@ -230,38 +262,110 @@ object SkillDamageMath {
     fun hasAnyDamage(hits: List<SkillHit>, weapon: SkillWeapon?, isSpell: Boolean): Boolean =
         hits.any { hit -> hitContribution(hit, weapon, isSpell).any { it > 0.0 } }
 
+    // ---- 蓄力开关（usage「蓄力段（v4）」，hits[].chargeBranch）----------------------
+
+    /**
+     * 这一招在当前「专注值不足版」一侧能不能用蓄力开关（Windows chargeInfo）：先按 ① 去掉 noDamage、② 专注值开关同侧，
+     * 剩下的段一段 chargeBranch=charged 都没有 → 不适用；有 → 适用。「不适用」必须在 ② 之后判（王者嘶吼 1031 的
+     * 无 FP 侧只剩两侧共用的吼叫本体，否则无 FP 开 + 蓄力开会一段不剩）。
+     */
+    fun chargeInfo(hits: List<SkillHit>, useNoFp: Boolean): ChargeInfo {
+        val side = hits.filter { !it.noDamage && it.isOnSide(useNoFp) }
+        val applicable = side.any { it.chargeBranch == ChargeBranch.CHARGED }
+        if (!applicable) return ChargeInfo.NOT_APPLICABLE
+        val offSide = side.any { it.isOnChargeSide(chargedOn = false) }
+        return ChargeInfo(applicable = true, onlyCharged = !offSide)
+    }
+
+    /**
+     * 这一段在「蓄力」开关的这一侧吗（Windows hitOnChargeSide）：开关不适用时一律算；适用时开取 charged / both、
+     * 关取 uncharged / both，partial（伟哉卡利亚的一段蓄力放招）与缺 chargeBranch 的段两侧都不取。
+     */
+    fun isOnChargeSide(hit: SkillHit, info: ChargeInfo, chargedOn: Boolean): Boolean =
+        !info.applicable || hit.isOnChargeSide(chargedOn)
+
+    /**
+     * 「攻击情境」里由蓄力开关派生的三项（enums.attackContext 的 fromSubCategories 100 / 111 / 110，Windows
+     * CHARGED_CONTEXTS）：不再单独勾选，开关开（且这一招有蓄力段）＝三项同时成立，关＝都不成立。
+     */
+    val CHARGED_CONTEXTS: List<String> = listOf("chargedHeavyAttack", "chargedSkill", "chargedSpell")
+
+    /** 攻击情境：用户勾的（去掉三项蓄力情境）＋ 蓄力开关派生的三项（开＝都成立；Windows chargedContexts）。 */
+    fun chargedContexts(contexts: Set<String>, chargedOn: Boolean): Set<String> {
+        val out = LinkedHashSet<String>()
+        for (key in contexts) if (key !in CHARGED_CONTEXTS) out += key
+        if (chargedOn) out += CHARGED_CONTEXTS
+        return out
+    }
+
     // ---- 分段勾选 ----------------------------------------------------------
 
     /**
-     * 默认勾选：与「使用专注值不足版本」开关同侧、非 noDamage 的段；两侧共用的 fpBoth 段恒勾（[SkillHit.isOnSide]）。
-     * 两侧互为替代，一起勾会把同一击算两遍；数值为 0 但没标 noDamage 的段照样勾上（它对构成的贡献本来就是 0）。
+     * 默认勾选（Windows defaultSelection）：段入选 ⇔ 非 noDamage && (fpBoth || noFp 与专注值开关同侧) && 在蓄力开关
+     * 这一侧（[isOnChargeSide]；[charged] 是用户的开关，不适用 / 只有蓄力段时按 [ChargeInfo.effective] 改写）。
+     * 专注值两侧、蓄力两侧都互为替代，一起勾会把同一击算两遍；数值为 0 但没标 noDamage 的段照样勾上。
      */
-    fun defaultSelection(hits: List<SkillHit>, useNoFp: Boolean = false): Set<Int> =
-        hits.filter { !it.noDamage && it.isOnSide(useNoFp) }.mapTo(LinkedHashSet()) { it.atkId }
+    fun defaultSelection(hits: List<SkillHit>, useNoFp: Boolean = false, charged: Boolean = false): Set<Int> {
+        val info = chargeInfo(hits, useNoFp)
+        val on = info.effective(charged)
+        return hits.filter { !it.noDamage && it.isOnSide(useNoFp) && isOnChargeSide(it, info, on) }
+            .mapTo(LinkedHashSet()) { it.atkId }
+    }
 
-    /** 用户手动勾选写进 overrides（atkId → 勾 / 不勾）；没写的按 [defaultSelection] 的规则。 */
-    fun isHitEnabled(hit: SkillHit, overrides: Map<Int, Boolean>, useNoFp: Boolean): Boolean {
+    /** 用户手动勾选写进 overrides（atkId → 勾 / 不勾）；没写的按默认勾选 [defaults]（[defaultSelection] 的结果）。 */
+    fun isHitEnabled(hit: SkillHit, overrides: Map<Int, Boolean>, defaults: Set<Int>): Boolean {
         if (hit.noDamage) return false
-        return overrides[hit.atkId] ?: hit.isOnSide(useNoFp)
+        return overrides[hit.atkId] ?: (hit.atkId in defaults)
     }
 
     /** 当前勾中的段（保持数据顺序）。 */
-    fun selectedHits(hits: List<SkillHit>, overrides: Map<Int, Boolean>, useNoFp: Boolean): List<SkillHit> =
-        hits.filter { isHitEnabled(it, overrides, useNoFp) }
+    fun selectedHits(
+        hits: List<SkillHit>,
+        overrides: Map<Int, Boolean>,
+        useNoFp: Boolean,
+        charged: Boolean = false,
+    ): List<SkillHit> {
+        val defaults = defaultSelection(hits, useNoFp, charged)
+        return hits.filter { isHitEnabled(it, overrides, defaults) }
+    }
 
     /**
      * 分段列表工具条的三个动作，返回完整的 override 表（[HitAction.RESET]＝清空，退回默认规则）。
-     * 「全选」只勾**当前这一侧**的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍；
-     * 两侧共用的 fpBoth 段在哪一侧都勾上。
+     * 「全选」只勾**两个开关当前这一侧**的段（[defaultSelection]）：正常版与专注值不足版、蓄力与不蓄力都互为替代，
+     * 两边一起勾会把同一击算两遍；两侧共用的 fpBoth / chargeBranch=both 段在哪一侧都勾上。
      */
-    fun hitOverridesFor(hits: List<SkillHit>, action: HitAction, useNoFp: Boolean): Map<Int, Boolean> {
+    fun hitOverridesFor(
+        hits: List<SkillHit>,
+        action: HitAction,
+        useNoFp: Boolean,
+        charged: Boolean = false,
+    ): Map<Int, Boolean> {
         if (action == HitAction.RESET) return emptyMap()
+        val picked = if (action == HitAction.ALL) defaultSelection(hits, useNoFp, charged) else emptySet()
         val overrides = LinkedHashMap<Int, Boolean>()
         for (hit in hits) {
             if (hit.noDamage) continue
-            overrides[hit.atkId] = action == HitAction.ALL && hit.isOnSide(useNoFp)
+            overrides[hit.atkId] = hit.atkId in picked
         }
         return overrides
+    }
+
+    // ---- 子类别限定的逐段判定 --------------------------------------------------
+
+    /**
+     * 当前勾选的段折成逐段判定用的清单（Windows segmentsFor）：只收在任一伤害类型上相对值 > 0 的段（与伤害构成同一个
+     * [hitContribution]），每段带自己的 hits[].subCategories 与九类相对值。
+     */
+    fun outputSegments(hits: List<SkillHit>, weapon: SkillWeapon?, isSpell: Boolean): List<OutputSegment> {
+        val out = ArrayList<OutputSegment>(hits.size)
+        for (hit in hits) {
+            if (hit.noDamage) continue
+            val parts = hitContribution(hit, weapon, isSpell)
+            val total = parts.sum()
+            if (!(total > 0.0)) continue
+            out += OutputSegment(hit.atkId, hit.subCategories, parts, total)
+        }
+        return out
     }
 
     internal fun channelOf(element: SkillElement): DamageType = when (element) {

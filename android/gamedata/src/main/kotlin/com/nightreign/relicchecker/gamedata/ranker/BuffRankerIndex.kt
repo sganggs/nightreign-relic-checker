@@ -10,7 +10,9 @@ import com.nightreign.relicchecker.rules.foldedForSearch
 // overview；Windows：renderer/pages/ranker.js 的 indexBuff / appliesVerdict / evaluateEntry / overviewRows）：
 //   · 生效判定一律用 buffs[].appliesTo[输出类别]（战技 → skill，含子弹段；魔法 → sorcery；祷告 → incantation）。
 //     conditional 看 requires：hand / attackWeaponTypes（法术按施法器）/ physicalType 自动判定，subCategoriesAny
-//     用 attackIndex 判定（部分段命中按 1＋(倍率−1)×命中段占比近似），attackContexts 用「攻击情境」勾选，
+//     按**当前勾选的段**逐段判定（RankerOutput.segments：每段 hits[].subCategories，法术再并上 attackIndex 的流派
+//     magicSubCategories；每个伤害类型 1＋(倍率−1)×命中段相对值占比，全中＝全额、全不中＝不生效），attackContexts
+//     用「攻击情境」勾选（其中蓄力法术 / 蓄力战技 / 蓄力强攻击三项由「蓄力」开关派生），
 //     imbuedWeaponOnly / attachedWeaponOnly / requiresGoodsIds / 认不出的键要用户确认。
 //   · 作用对象只留 self / ally（selfAllyPair 的 Allies 那一行不算施放者自己）；direction=decrease 一律不计入。
 //   · activation ≠ passive 与要确认的条件默认不计入（占槽位的栏放进来 ≠ 条件成立）；叠层填层数、累积阶梯选层同样算确认。
@@ -195,7 +197,63 @@ class BuffRankerIndex(val dataset: BuffDataset) {
 
     // ============================================================ appliesTo 判定（notes.appliesTo）
 
-    /** attackIndex 对所选战技／法术的逐段判定：(有交集的段数, 总段数)；拿不到返回 null。 */
+    /**
+     * 子类别限定按**当前勾选的段**逐段判定的结果（Windows subCategorySegmentMatch）：[matched] / [total] 是段数，
+     * [weight] 是全部类型合计的命中相对值占比，[typeShares] 是每个伤害类型的命中占比
+     * s_t = Σ 命中段在 t 上的相对值 ÷ Σ 全部勾选段在 t 上的相对值（分母为 0 的类型填 [weight]，只为展示）。
+     */
+    class SegmentMatch(val matched: Int, val total: Int, val weight: Double, val typeShares: List<Double>)
+
+    /** 这一段参与判定的子类别：hits[].subCategories，法术再并上流派（attackIndex.spells[id].magicSubCategories）。 */
+    fun segmentSubCategories(output: RankerOutput, segment: OutputSegment): List<Int> {
+        val extra = if (output.outputClass == OutputClass.SKILL) {
+            emptyList()
+        } else {
+            output.meansId?.let { dataset.attackIndex.spellMagicSubCategories[it] }.orEmpty()
+        }
+        if (extra.isEmpty()) return segment.subCategories
+        val merged = ArrayList(segment.subCategories)
+        for (sub in extra) if (sub !in merged) merged += sub
+        return merged
+    }
+
+    /** 按 [RankerOutput.segments] 逐段判定；没有勾选带伤害的段（或调用方没给逐段信息）时返回 null。 */
+    fun subCategorySegmentMatch(output: RankerOutput, subs: List<Int>): SegmentMatch? {
+        val segments = output.segments
+        if (segments.isNullOrEmpty()) return null
+        val all = DoubleArray(DamageType.COUNT)
+        val hit = DoubleArray(DamageType.COUNT)
+        var matched = 0
+        var allTotal = 0.0
+        var hitTotal = 0.0
+        for (segment in segments) {
+            val ok = segmentSubCategories(output, segment).any { it in subs }
+            if (ok) matched += 1
+            allTotal += segment.total
+            if (ok) hitTotal += segment.total
+            for (index in 0 until DamageType.COUNT) {
+                val value = segment.parts.getOrElse(index) { 0.0 }
+                all[index] += value
+                if (ok) hit[index] += value
+            }
+        }
+        val weight = if (allTotal > 0.0) hitTotal / allTotal else 0.0
+        val shares = List(DamageType.COUNT) { index -> if (all[index] > 0.0) hit[index] / all[index] else weight }
+        return SegmentMatch(matched, segments.size, weight, shares)
+    }
+
+    /**
+     * 「部分段命中」的说明：文案 requireSubsPartial 冒号前那半句（「所选X只有 m/n 段带子类别 […]」）。冒号后的
+     * 「按段数近似加权、与分段勾选无关」是 v3 口径，数值已改为按勾选的段逐段加权（brief.partial），这里不再引用——
+     * 键值保持三端同文，不单独改（Windows subsPartialText）。
+     */
+    fun subsPartialText(clsTitle: String, matched: Int, total: Int, label: String): String =
+        RankerText.f("requireSubsPartial", clsTitle, matched, total, label).split("：")[0]
+
+    /**
+     * attackIndex 对所选战技／法术的整招统计：(有交集的段数, 总段数)；拿不到返回 null。
+     * skills v4 起只在没有勾选带伤害的段时做说明（不决定数值），逐段判定见 [subCategorySegmentMatch]。
+     */
     fun subCategoryMatch(output: RankerOutput, subs: List<Int>): Pair<Int, Int>? {
         val meansId = output.meansId ?: return null
         val table = if (output.outputClass == OutputClass.SKILL) dataset.attackIndex.skills else dataset.attackIndex.spells
@@ -236,11 +294,12 @@ class BuffRankerIndex(val dataset: BuffDataset) {
             weight: Double = 1.0,
             restricted: DamageType? = null,
             contexts: List<String> = emptyList(),
+            typeShares: List<Double>? = null,
         ) = AppliesVerdict(
             value = value, state = state, reasons = reasons,
             needs = if (state == VerdictState.NO) emptyList() else needs.toList(),
             notes = notes, weight = weight, restrictedType = restricted, requirements = requirements.toList(),
-            contexts = contexts, activation = buff.activation, activationNote = activationNote,
+            contexts = contexts, activation = buff.activation, activationNote = activationNote, typeShares = typeShares,
         )
 
         if (value != VerdictValue.YES && value != VerdictValue.CONDITIONAL) {
@@ -264,6 +323,7 @@ class BuffRankerIndex(val dataset: BuffDataset) {
         val fails = ArrayList<String>()
         var contexts: List<String> = emptyList()
         var weight = 1.0
+        var typeShares: List<Double>? = null
         val notes = ArrayList<String>()
         var restricted: DamageType? = null
         val clsTitle = cls.titleZh
@@ -299,24 +359,48 @@ class BuffRankerIndex(val dataset: BuffDataset) {
             }
         }
         if (requires.subCategoriesAny.isNotEmpty()) {
-            val label = subCategoryLabel(requires.subCategoriesAny)
-            val match = subCategoryMatch(output, requires.subCategoriesAny)
-            when {
-                match == null -> need("subCategoriesAny", RankerText.f("requireSubsUnknown", clsTitle, label))
-                match.first == 0 -> {
-                    val text = RankerText.f("requireSubsFail", clsTitle, label)
-                    requirements += Requirement("subCategoriesAny", text, RequirementState.UNMET)
-                    fails += text
+            val subs = requires.subCategoriesAny
+            val label = subCategoryLabel(subs)
+            val bySegment = subCategorySegmentMatch(output, subs)
+            if (bySegment != null) {
+                // 按当前勾选的段：全中＝全额，全不中＝不生效，部分＝逐类型按命中段的相对值占比加权。
+                when {
+                    bySegment.matched == 0 -> {
+                        val text = RankerText.f("requireSubsFail", clsTitle, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.UNMET)
+                        fails += text
+                    }
+                    bySegment.matched < bySegment.total -> {
+                        weight = bySegment.weight
+                        typeShares = bySegment.typeShares
+                        val text = subsPartialText(clsTitle, bySegment.matched, bySegment.total, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.PARTIAL, weight, typeShares)
+                        notes += text
+                    }
+                    else -> {
+                        val text = RankerText.f("requireSubsAll", clsTitle, bySegment.total, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.MET)
+                    }
                 }
-                match.first < match.second -> {
-                    weight = match.first.toDouble() / match.second.toDouble()
-                    val text = RankerText.f("requireSubsPartial", clsTitle, match.first, match.second, label)
-                    requirements += Requirement("subCategoriesAny", text, RequirementState.PARTIAL, weight)
-                    notes += text
-                }
-                else -> {
-                    val text = RankerText.f("requireSubsAll", clsTitle, match.second, label)
-                    requirements += Requirement("subCategoriesAny", text, RequirementState.MET)
+            } else {
+                // 没有勾选带伤害的段（构成为空、算不出倍率）：只按 attackIndex 的整招统计做说明，不决定数值——
+                // 整招都不带这类子类别才判不生效，其余按全额留着（没有构成时本来就不出数）。
+                val match = subCategoryMatch(output, subs)
+                when {
+                    match == null -> need("subCategoriesAny", RankerText.f("requireSubsUnknown", clsTitle, label))
+                    match.first == 0 -> {
+                        val text = RankerText.f("requireSubsFail", clsTitle, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.UNMET)
+                        fails += text
+                    }
+                    match.first < match.second -> {
+                        val text = subsPartialText(clsTitle, match.first, match.second, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.PARTIAL)
+                    }
+                    else -> {
+                        val text = RankerText.f("requireSubsAll", clsTitle, match.second, label)
+                        requirements += Requirement("subCategoriesAny", text, RequirementState.MET)
+                    }
                 }
             }
         }
@@ -336,17 +420,23 @@ class BuffRankerIndex(val dataset: BuffDataset) {
         }
         if (contexts.isNotEmpty()) {
             val names = contexts.joinToString("／") { dataset.attackContextLabel(it) }
+            // 与 Windows 同法：部分段命中的加权留着（「单独看这一条」的展示用），说明不带。
             return make(
                 VerdictState.CONTEXT,
                 reasons = listOf(RankerText.f("requireContext", names)),
+                weight = weight,
                 restricted = restricted,
                 contexts = contexts,
+                typeShares = typeShares,
             )
         }
         if (needs.isNotEmpty()) {
-            return make(VerdictState.PENDING, reasons = reasonList, notes = notes, weight = weight, restricted = restricted)
+            return make(
+                VerdictState.PENDING, reasons = reasonList, notes = notes, weight = weight, restricted = restricted,
+                typeShares = typeShares,
+            )
         }
-        return make(VerdictState.YES, notes = notes, weight = weight, restricted = restricted)
+        return make(VerdictState.YES, notes = notes, weight = weight, restricted = restricted, typeShares = typeShares)
     }
 
     // ============================================================ 叠层
@@ -383,16 +473,31 @@ class BuffRankerIndex(val dataset: BuffDataset) {
         return copy
     }
 
+    /** 统一的一个加权数（旧调用）：每个类型都按 [weight]，见下方逐类型的 [tables]。 */
+    fun tables(
+        entry: BuffRankerEntry,
+        restrictedType: DamageType?,
+        weight: Double,
+        stacks: Int?,
+        copies: Int,
+    ): Pair<List<Double>, List<Double>> =
+        tables(entry, restrictedType, if (weight >= 0.0 && weight < 1.0) List(DamageType.COUNT) { weight } else null, stacks, copies)
+
+    /** 按判定结果的加权（[AppliesVerdict.weights]：逐类型占比优先）与限定通道算这一条的两张表。 */
+    fun tables(entry: BuffRankerEntry, verdict: AppliesVerdict, stacks: Int?, copies: Int): Pair<List<Double>, List<Double>> =
+        tables(entry, verdict.restrictedType, verdict.weights, stacks, copies)
+
     /**
      * 这一条在九类伤害上的倍率表与加算表（Windows entryTables、macOS BuffLoadoutIndex.tables）：
      *   · 叠层条目按层数替换 rates；[restrictedType]（requires.physicalType）缺失时退回 scope.atkAttribute；
-     *   · [weight] < 1（子类别只有部分段命中）：每类按 1 + (m − 1) × weight 近似，加算 × weight；
+     *   · [weights]（子类别限定只有部分勾选段命中，按 [DamageType.ordinal] 的占比 s_t；null＝全额）：
+     *     s_t < 1 的类型按 1 + (m − 1) × s_t，加算 × s_t（brief.partial）；
      *   · [copies] > 1（stackSelf 多份）：再按份数乘方，加算 × 份数。
      */
     fun tables(
         entry: BuffRankerEntry,
         restrictedType: DamageType?,
-        weight: Double,
+        weights: List<Double>?,
         stacks: Int?,
         copies: Int,
     ): Pair<List<Double>, List<Double>> {
@@ -405,9 +510,10 @@ class BuffRankerIndex(val dataset: BuffDataset) {
             plan.multiplierTable(rates, restricted)
         }
         val flat = if (rates === entry.rates) entry.flat.toDoubleArray() else plan.flatTable(rates)
-        val w = if (weight >= 0.0 && weight < 1.0) weight else 1.0
         val n = if (copies > 1) copies else 1
         for (index in 0 until DamageType.COUNT) {
+            val raw = weights?.getOrNull(index) ?: 1.0
+            val w = if (raw >= 0.0 && raw < 1.0) raw else 1.0
             if (w < 1.0) {
                 table[index] = 1.0 + (table[index] - 1.0) * w
                 flat[index] = flat[index] * w
@@ -488,7 +594,7 @@ class BuffRankerIndex(val dataset: BuffDataset) {
             tier: TierPick? = null,
             variant: TierPick? = null,
         ): EvaluatedEntry = build(
-            state, reasons, tables(entry, verdict.restrictedType, verdict.weight, stacks, 1),
+            state, reasons, tables(entry, verdict, stacks, 1),
             needs = needs, tier = tier, variant = variant,
         )
 
@@ -585,7 +691,7 @@ class BuffRankerIndex(val dataset: BuffDataset) {
         notes += warnings
         val result = build(
             EntryState.COUNTED, emptyList(),
-            tables(entry, verdict.restrictedType, verdict.weight, stacks, countedCopies),
+            tables(entry, verdict, stacks, countedCopies),
             notes = notes, needs = needs, ticked = ticked, countedCopies = countedCopies, tier = tier, variant = variant,
         )
         val multiplier = result.multiplier

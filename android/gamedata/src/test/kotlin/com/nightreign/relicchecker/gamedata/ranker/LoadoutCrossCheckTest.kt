@@ -12,8 +12,10 @@ import kotlin.test.assertTrue
 //      四栏小计（容差 1e-6）、配置本身（武器词条 / 遗物 / 护符）与计入条目集合（含份数，逐字相同）；
 //   ② 与两端一样，再用一份**独立重算的参考实现**（ConfigReference，不复用被测代码的分支）校对总倍率、
 //      各栏小计与计入条目集合（容差 1e-9）；
-//   ③ 口径细节：槽位不越界、遗物合法、同键不重复、推荐确定性、只选被动；C 组的逐条状态；
-//   ④ TEXT 行：说明区（口径说明）的摘要 brief=ad04314d，与条数、诅咒池、子类别这些现算的数字。
+//   ③ 口径细节：槽位不越界、遗物合法、同键不重复、推荐确定性、只选被动；C 组的逐条状态；D / E 组（兽爪 6820 蓄力开 / 关
+//      + 局内武器词条「强化祷告的蓄力执行」）：开正好 ×1.18、再叠档位 2 → ×1.18×1.13，关 ×1、不生效；
+//   ④ TEXT 行：说明区（口径说明）的摘要 brief=34e5dacb，与条数、诅咒池、子类别这些现算的数字。
+// skills v4：参考实现的取段与子类别限定按 usage「蓄力段（v4）」独立重写（RankerReference）。
 class LoadoutCrossCheckTest {
     private val skills get() = RankerTestData.skills
     private val index get() = RankerTestData.loadout
@@ -63,7 +65,7 @@ class LoadoutCrossCheckTest {
     @Test
     fun `every CONFIG line of the desktop dump matches field by field`() {
         val expectedLines = dumpLines.filter { it.startsWith("CONFIG ") }
-        assertEquals(RankerCrossCheck.CONFIG_CASES.map { it.key }, expectedLines.map { it.split(' ')[1] }, "三组配置、同一顺序")
+        assertEquals(RankerCrossCheck.CONFIG_CASES.map { it.key }, expectedLines.map { it.split(' ')[1] }, "五组配置、同一顺序")
         for (line in expectedLines) {
             val expected = parseConfig(line)
             val run = runs.getValue(expected.key)
@@ -79,12 +81,12 @@ class LoadoutCrossCheckTest {
             assertEquals(expected.accessories, actual.accessories, "${expected.key}：护符")
             assertEquals(expected.counted, actual.counted, "${expected.key}：计入条目集合（含份数）")
         }
-        // 本版本数据下三行逐字相同（比逐字段 1e-6 更严；数据集修订后以上面的逐字段比对为准）。
+        // 本版本数据下五行逐字相同（比逐字段 1e-6 更严；数据集修订后以上面的逐字段比对为准）。
         assertEquals(expectedLines, RankerCrossCheck.CONFIG_CASES.map { runs.getValue(it.key).dumpLine })
     }
 
     @Test
-    fun `the three CONFIG cases pin the documented facts`() {
+    fun `the five CONFIG cases pin the documented facts`() {
         val a = runs.getValue("corpse-piler-normal-fill")
         assertClose(6.073732827, a.result.totalMultiplier, 1e-6, "A 总倍率")
         assertEquals(mapOf(8350002 to 6), a.config.weaponAffixes, "A：提升战技攻击力（档位3）×6")
@@ -98,6 +100,34 @@ class LoadoutCrossCheckTest {
         assertClose(2.169951652, c.result.totalMultiplier, 1e-6, "C 总倍率")
         assertClose(1.886914480, c.result.column(SummaryColumn.RELIC).multiplier, 1e-6, "C 遗物小计")
         assertClose(1.15, c.result.column(SummaryColumn.ACCESSORY).multiplier, 1e-6, "C 护符小计（战士壶碎片）")
+
+        // D：兽爪蓄力开只打 68205（[110]）→「强化祷告的蓄力执行」全额，雷／圣构成不影响（五类 rate 相同）。
+        val d = runs.getValue("beast-claw-charged-8330302")
+        assertEquals(listOf(68205), RankerCrossCheck.compose(skills, d.case.output).selected.map { it.atkId })
+        assertEquals(1.18, d.result.totalMultiplier, "D 总倍率正好 ×1.18")
+        assertEquals(1.18, d.result.column(SummaryColumn.WEAPON_AFFIX).multiplier)
+        val dItem = d.result.items.single()
+        assertEquals(EntryState.COUNTED, dItem.state)
+        assertEquals(1.0, dItem.verdict.weight)
+        assertEquals(null, dItem.verdict.typeShares, "全额，不是部分段")
+        assertEquals(RankerText.t("verdict.conditionalMet"), dItem.label)
+        // 再叠档位 2 一条：两条各自相乘；三档各自全额。
+        val both = d.evaluator.evaluate(LoadoutConfig(weaponAffixes = mapOf(8330301 to 1, 8330302 to 1)))
+        assertClose(1.18 * 1.13, both.totalMultiplier, 1e-12, "×1.18×1.13")
+        assertEquals(listOf(8330301, 8330302), both.counted.map { it.id }.sorted())
+        mapOf(8330300 to 1.09, 8330301 to 1.13, 8330302 to 1.18).forEach { (id, rate) ->
+            assertEquals(rate, d.evaluator.evaluate(LoadoutConfig(weaponAffixes = mapOf(id to 1))).totalMultiplier, "$id 全额")
+        }
+
+        // E：兽爪蓄力关只打 68200（没有 110）→ 不生效，总倍率 ×1。
+        val e = runs.getValue("beast-claw-uncharged-8330302")
+        assertEquals(listOf(68200), RankerCrossCheck.compose(skills, e.case.output).selected.map { it.atkId })
+        assertEquals(1.0, e.result.totalMultiplier)
+        assertTrue(e.result.counted.isEmpty())
+        val eItem = e.result.items.single()
+        assertEquals(EntryState.NO, eItem.state)
+        assertEquals(RankerText.t("verdict.no"), eItem.label)
+        assertTrue(eItem.reasons[0].contains("110"), "原因写明子类别：${eItem.reasons[0]}")
     }
 
     // ------------------------------------------------------------------ ② 独立参考实现
@@ -138,16 +168,17 @@ class LoadoutCrossCheckTest {
             return counts && (buff.target == "self" || buff.target == "ally") && buff.direction != "decrease"
         }
 
-        class Verdict(val weight: Double, val manual: Boolean, val restricted: DamageType?)
+        /** [weights]＝子类别限定部分段命中时逐类型的命中占比（null＝全额）。 */
+        class Verdict(val weights: DoubleArray?, val manual: Boolean, val restricted: DamageType?)
 
-        fun verdict(buff: BuffEntry, out: RankerOutput): Verdict? {
+        fun verdict(buff: BuffEntry, out: RankerReference.Output): Verdict? {
             val cls = out.outputClass
             val value = buff.appliesTo?.get(cls)
             if (value != "yes" && value != "conditional") return null
             var manual = buff.requiresGoodsIds.isNotEmpty()
-            if (value == "yes") return Verdict(1.0, manual, null)
-            val requires = buff.appliesToDetail[cls]?.requires ?: return Verdict(1.0, true, null)
-            var weight = 1.0
+            if (value == "yes") return Verdict(null, manual, null)
+            val requires = buff.appliesToDetail[cls]?.requires ?: return Verdict(null, true, null)
+            var weights: DoubleArray? = null
             var restricted: DamageType? = null
             var any = false
             requires.hand?.let {
@@ -166,23 +197,13 @@ class LoadoutCrossCheckTest {
             if (requires.subCategoriesAny.isNotEmpty()) {
                 any = true
                 val table = if (cls == OutputClass.SKILL) dataset.attackIndex.skills else dataset.attackIndex.spells
-                val sets = out.meansId?.let { table[it] }
-                if (sets.isNullOrEmpty()) {
-                    manual = true
-                } else {
-                    var matched = 0
-                    var total = 0
-                    sets.forEach { set ->
-                        total += set.hits
-                        if (set.subs.any { it in requires.subCategoriesAny }) matched += set.hits
-                    }
-                    if (matched == 0) return null
-                    weight = matched.toDouble() / total
-                }
+                val result = RankerReference.subCategories(requires.subCategoriesAny, out, table[out.meansId]) ?: return null
+                if (result.manual) manual = true
+                weights = result.weights
             }
             if (requires.attackContexts.isNotEmpty()) {
                 any = true
-                if (requires.attackContexts.none { it in out.attackContexts }) return null
+                if (requires.attackContexts.none { it in out.contexts }) return null
             }
             requires.physicalType?.let { code ->
                 any = true
@@ -195,7 +216,7 @@ class LoadoutCrossCheckTest {
                 manual = true
             }
             if (!any) manual = true
-            return Verdict(weight, manual, restricted)
+            return Verdict(weights, manual, restricted)
         }
 
         private fun paramMax(input: BuffStackInput): Int {
@@ -230,9 +251,10 @@ class LoadoutCrossCheckTest {
                 }
             }
             for (i in table.indices) {
-                if (verdict.weight < 1) {
-                    table[i] = 1 + (table[i] - 1) * verdict.weight
-                    flat[i] *= verdict.weight
+                val w = verdict.weights?.get(i) ?: 1.0
+                if (w < 1) {
+                    table[i] = 1 + (table[i] - 1) * w
+                    flat[i] *= w
                 }
                 if (copies > 1) {
                     table[i] = Math.pow(table[i], copies.toDouble())
@@ -242,7 +264,7 @@ class LoadoutCrossCheckTest {
             return table to flat
         }
 
-        private fun weighted(table: DoubleArray, out: RankerOutput): Double {
+        private fun weighted(table: DoubleArray, out: RankerReference.Output): Double {
             var sum = 0.0
             var weight = 0.0
             DamageType.entries.forEach { type ->
@@ -262,7 +284,7 @@ class LoadoutCrossCheckTest {
 
         class Result(val total: Double, val subtotals: Map<SummaryColumn, Double>, val ids: List<String>)
 
-        fun config(config: LoadoutConfig, out: RankerOutput, weapon: SkillWeapon?): Result {
+        fun config(config: LoadoutConfig, out: RankerReference.Output, weapon: SkillWeapon?): Result {
             val deep = config.runMode == RunMode.DEEP
             val rules = dataset.slotRules!!
             val relicSlots = if (deep) rules.modes.deep.relicSlots else rules.modes.normal.relicSlots
@@ -373,7 +395,15 @@ class LoadoutCrossCheckTest {
         for (case in RankerCrossCheck.CONFIG_CASES) {
             val run = runs.getValue(case.key)
             val weapon = run.output.weaponId?.let { skills.weaponsById[it] }
-            val expected = reference.config(run.config, run.output, weapon)
+            // 参考输出：取段（专注值 / 蓄力两侧）与逐段判定都不经被测代码（RankerReference）。
+            val skillHits = if (case.output.outputClass == OutputClass.SKILL) {
+                skills.hits(skills.skillsById.getValue(case.output.id), weapon)
+            } else {
+                emptyList()
+            }
+            val refOut = RankerReference.case(case.output, weapon, skillHits).second
+            DamageType.entries.forEach { assertClose(refOut.share(it), run.output.share(it), 1e-9, "${case.key}：${it.key} 占比") }
+            val expected = reference.config(run.config, refOut, weapon)
             assertClose(expected.total, run.result.totalMultiplier, 1e-9, "${case.key}：总倍率")
             SummaryColumn.entries.forEach { column ->
                 assertClose(expected.subtotals.getValue(column), run.result.column(column).multiplier, 1e-9, "${case.key}：${column.key} 小计")
@@ -383,7 +413,11 @@ class LoadoutCrossCheckTest {
                 run.result.counted.sortedBy { it.id }.map { it.id.toString() + if (it.countedCopies > 1) "x${it.countedCopies}" else "" },
                 "${case.key}：计入条目集合（含份数）",
             )
-            assertTrue(run.result.totalMultiplier!! > 1, "${case.key}：这套配置应当增伤")
+            if (case.gain) {
+                assertTrue(run.result.totalMultiplier!! > 1, "${case.key}：这套配置应当增伤")
+            } else {
+                assertEquals(1.0, run.result.totalMultiplier, "${case.key}：这套配置不增伤")
+            }
             // 总倍率＝计入条目逐类型连乘后按构成加权（独立再算一遍）；各栏小计同法只算本栏。
             fun weighted(items: List<EvaluatedEntry>): Double {
                 val table = DoubleArray(DamageType.COUNT) { 1.0 }
@@ -498,7 +532,16 @@ class LoadoutCrossCheckTest {
         val text = dumpLines.single { it.startsWith("TEXT ") }
         val notes = LoadoutText.briefNotes(index)
         assertEquals(field(text, "brief"), RankerCrossCheck.briefDigest(notes), "说明区摘要（两端 BRIEF_DIGEST）")
-        assertEquals("ad04314d", RankerCrossCheck.briefDigest(notes))
+        assertEquals("34e5dacb", RankerCrossCheck.briefDigest(notes))
+        // skills v4 只改了 brief.partial 一句（子类别限定改按勾选的段逐段判定）：换回旧值回到上一版的摘要。
+        val partialIndex = notes.indexOf(RankerText.t("brief.partial"))
+        assertEquals(2, partialIndex, "brief.partial 在说明区第 3 条")
+        val before = notes.toMutableList().also {
+            it[partialIndex] = "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，" +
+                "占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、" +
+                "没有逐段对应，所以占比不随上方的分段勾选变化。"
+        }
+        assertEquals("ad04314d", RankerCrossCheck.briefDigest(before))
         val all = notes.joinToString("\n")
         val decreases = RankerTestData.buffs.entries.count { it.countsAsDamage && it.direction == "decrease" }
         assertTrue(all.contains("direction=decrease 的 $decreases 条"), "减益条数照数据现算")
@@ -510,6 +553,6 @@ class LoadoutCrossCheckTest {
         dataset.buffs.filter { it.stackInput != null }.forEach { assertTrue(all.contains(it.displayName), "${it.displayName} 的叠层说明") }
         // 任何一处措辞改动都会让摘要分叉（数字不影响）。
         assertEquals(RankerCrossCheck.briefDigest(notes), RankerCrossCheck.briefDigest(notes.map { it.replace("7", "9") }))
-        assertFalse(RankerCrossCheck.briefDigest(notes.dropLast(1) + (notes.last() + "。")) == "ad04314d")
+        assertFalse(RankerCrossCheck.briefDigest(notes.dropLast(1) + (notes.last() + "。")) == "34e5dacb")
     }
 }

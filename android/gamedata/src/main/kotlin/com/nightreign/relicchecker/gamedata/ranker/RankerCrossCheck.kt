@@ -8,13 +8,17 @@ package com.nightreign.relicchecker.gamedata.ranker
  * useful=<生效且有效倍率 > 1.0000001 的条数> top10=<id:有效倍率 %.9f，…>`。
  */
 object RankerCrossCheck {
-    /** 一组构成用例：战技（+ 武器）或法术；[only] 非空时只勾这些段，否则按默认勾选（正常版这一侧）。 */
+    /**
+     * 一组构成用例：战技（+ 武器）或法术；[only] 非空时只勾这些段，否则按默认勾选（正常版这一侧、[charged] 这一侧）。
+     * [charged]＝「蓄力」开关（缺省关；skills v4）。
+     */
     data class CompositionCase(
         val key: String,
         val outputClass: OutputClass,
         val id: Int,
         val weaponId: Int? = null,
         val only: List<Int>? = null,
+        val charged: Boolean = false,
     )
 
     /** 一个用例跑出来的中间量。 */
@@ -33,7 +37,10 @@ object RankerCrossCheck {
         val dumpLine: String get() = caseDumpLine(case.key, selected.map { it.atkId }, composition.shares, rows)
     }
 
-    /** 两端同一组输入（任务清单里的七组构成用例）。 */
+    /**
+     * 三端同一组输入（十组构成用例）。skills v4：法术段剔掉 notInvoked、按蓄力开关分侧之后，death-lightning / comet
+     * 只剩不蓄力的段；另加三组蓄力用例（兽爪 6820 开 / 关、死亡雷击 5040 开）。
+     */
     val CASES: List<CompositionCase> = listOf(
         // 尸横遍野（尸山血海）：全段 —— 物理 + 火两条通道，12 段里 6 段是专注值不足版。
         CompositionCase("corpse-piler-full", OutputClass.SKILL, 1177, 9040000),
@@ -49,20 +56,30 @@ object RankerCrossCheck {
         CompositionCase("death-lightning", OutputClass.INCANTATION, 5040),
         // 帚星：魔法，只用 flat。
         CompositionCase("comet", OutputClass.SORCERY, 4021),
+        // 兽爪（v4）：蓄力开只打 68205（[110]），关只打 68200；68201 / 68206 是 notInvoked。
+        CompositionCase("beast-claw-charged", OutputClass.INCANTATION, 6820, charged = true),
+        CompositionCase("beast-claw-uncharged", OutputClass.INCANTATION, 6820, charged = false),
+        // 死亡雷击蓄力开：50405 / 50406（50407 是 notInvoked）。
+        CompositionCase("death-lightning-charged", OutputClass.INCANTATION, 5040, charged = true),
     )
 
-    /** 一个用例的输出手段（不算一览）：选段 → 默认勾选 → 构成 → 输出手段（右手、不勾攻击情境）。 */
+    /**
+     * 一个用例的输出手段（不算一览）：选段 → 默认勾选 → 构成 → 输出手段（右手；攻击情境只有蓄力开关派生的三项）。
+     * [chargedOn]＝蓄力开关实际生效的一侧（这一招没有蓄力段时恒为关）。
+     */
     data class Composed(
         val weapon: SkillWeapon?,
         val hits: List<SkillHit>,
         val selected: List<SkillHit>,
         val composition: DamageComposition,
         val output: RankerOutput,
+        val chargedOn: Boolean = false,
     )
 
     /**
-     * 选段 → 默认勾选（正常版这一侧，两侧共用的 fpBoth 段也算；[CompositionCase.only] 非空时只勾这些段）→ 构成 →
-     * 输出手段。找不到时抛 IllegalArgumentException。
+     * 选段 → 默认勾选（两个开关同侧：正常版这一侧，两侧共用的 fpBoth 段也算；蓄力按 chargeBranch 分侧，见
+     * [SkillDamageMath.defaultSelection]；[CompositionCase.only] 非空时只勾这些段）→ 构成 → 输出手段（构成与逐段判定
+     * 用同一批段，三项蓄力攻击情境由开关派生）。找不到时抛 IllegalArgumentException。
      */
     fun compose(skills: SkillDataIndex, case: CompositionCase): Composed {
         val isSpell = case.outputClass != OutputClass.SKILL
@@ -75,11 +92,13 @@ object RankerCrossCheck {
             val skill = requireNotNull(skills.skillsById[case.id]) { "${case.key}：找不到战技 ${case.id}" }
             hits = skills.hits(skill, weapon)
         }
+        val defaults = SkillDamageMath.defaultSelection(hits, useNoFp = false, charged = case.charged)
+        val chargedOn = SkillDamageMath.chargeInfo(hits, useNoFp = false).effective(case.charged)
         val selected = hits.filter { hit ->
             when {
                 hit.noDamage -> false
                 case.only != null -> hit.atkId in case.only
-                else -> hit.isOnSide(useNoFp = false)
+                else -> hit.atkId in defaults
             }
         }
         val composition = SkillDamageMath.composition(selected, weapon, isSpell)
@@ -90,8 +109,10 @@ object RankerCrossCheck {
             weaponWepType = weapon?.wepType,
             hand = 1,
             shares = composition.shares,
+            attackContexts = SkillDamageMath.chargedContexts(emptySet(), chargedOn),
+            segments = SkillDamageMath.outputSegments(selected, weapon, isSpell),
         )
-        return Composed(weapon, hits, selected, composition, output)
+        return Composed(weapon, hits, selected, composition, output, chargedOn)
     }
 
     /** 跑一个构成用例：[compose] → 一览。找不到输出手段时抛 IllegalArgumentException。 */
@@ -118,12 +139,14 @@ object RankerCrossCheck {
 
     /**
      * 一组整套配置的对照用例（三端同一组输入，windows/tests/ranker_crosscheck.test.mjs 的 CONFIG_CASES）。
-     * [build] 拿到索引与绑定了输出手段的计算器，返回要评估的配置；[filled]＝按推荐填满得到的配置。
+     * [build] 拿到索引与绑定了输出手段的计算器，返回要评估的配置；[filled]＝按推荐填满得到的配置；
+     * [gain]＝这套配置应当增伤（E 组「蓄力关 + 蓄力类词条」恰好 ×1）。
      */
     class ConfigCase(
         val key: String,
         val output: CompositionCase,
         val filled: Boolean,
+        val gain: Boolean = true,
         val build: (LoadoutIndex, LoadoutEvaluator) -> LoadoutConfig,
     )
 
@@ -139,12 +162,15 @@ object RankerCrossCheck {
     }
 
     /**
-     * 三组配置：
+     * 五组配置：
      *   A 尸横遍野 + 尸山血海，常规模式：按推荐填满（武器词条按出手武器类别过滤）；
      *   B 死亡雷击，深夜模式：按推荐填满（武器词条按施法器圣印记的类别过滤）；
      *   C 狮子斩 + 大剑：固定遗物 2070（安定者的遗志）、2100（王的黑夜，勾「切换武器时，能提升物理攻击力」7035902）
      *     ＋ 自组遗物（封印监牢 7060000 / 出击时附加火 7120100 / 对陷入冻伤的敌人 7260400）
-     *     ＋ 护符 1230（战士壶碎片）、2040（红羽七刃剑，条件型未勾）＋ 封印监牢 7 层。
+     *     ＋ 护符 1230（战士壶碎片）、2040（红羽七刃剑，条件型未勾）＋ 封印监牢 7 层；
+     *   D 兽爪 6820 蓄力开 + 局内武器词条「强化祷告的蓄力执行」8330302 ×1：只打 68205（[110]）→ 总倍率正好 ×1.18
+     *     （五类 rate 相同，雷／圣构成不影响）；再叠 8330301 一条 → ×1.18×1.13（测试里另算）；
+     *   E 兽爪 6820 蓄力关 + 8330302：只打 68200（没有 110）→ ×1、不生效。
      */
     val CONFIG_CASES: List<ConfigCase> = listOf(
         ConfigCase("corpse-piler-normal-fill", CASES[0], filled = true) { _, evaluator ->
@@ -164,6 +190,17 @@ object RankerCrossCheck {
                 .withRelic(2, RelicCard.custom(listOf(7060000, 7120100, 7260400)))
                 .copy(accessories = listOf(1230, 2040), stackCounts = mapOf(7069001 to 7), ticks = setOf(7035902))
         },
+        ConfigCase(
+            "beast-claw-charged-8330302",
+            CompositionCase("beast-claw-charged", OutputClass.INCANTATION, 6820, charged = true),
+            filled = false,
+        ) { _, _ -> LoadoutConfig(weaponAffixes = mapOf(8330302 to 1)) },
+        ConfigCase(
+            "beast-claw-uncharged-8330302",
+            CompositionCase("beast-claw-uncharged", OutputClass.INCANTATION, 6820, charged = false),
+            filled = false,
+            gain = false,
+        ) { _, _ -> LoadoutConfig(weaponAffixes = mapOf(8330302 to 1)) },
     )
 
     /** 跑一组配置用例：输出手段（默认勾选）→ 计算器 → 配置 → 评估。 */

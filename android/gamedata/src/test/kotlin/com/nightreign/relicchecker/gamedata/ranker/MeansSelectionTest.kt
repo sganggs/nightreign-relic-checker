@@ -19,6 +19,7 @@ class MeansSelectionTest {
         val output = assertNotNull(skills.output("${case.outputClass.key}-${case.id}"), "找不到输出手段 ${case.key}")
         var selection = MeansSelection().select(skills, output)
         case.weaponId?.let { selection = selection.withWeapon(it) }
+        selection = selection.withCharged(case.charged)
         val only = case.only
         if (only != null) {
             val resolved = selection.resolve(skills)
@@ -29,7 +30,7 @@ class MeansSelectionTest {
     }
 
     @Test
-    fun `页面的输出手段与对拍用例逐项相同（七组构成用例）`() {
+    fun `页面的输出手段与对拍用例逐项相同（十组构成用例）`() {
         for (case in RankerCrossCheck.CASES) {
             val composed = RankerCrossCheck.compose(skills, case)
             val resolved = select(case).resolve(skills)
@@ -301,17 +302,23 @@ class MeansSelectionTest {
 
     @Test
     fun `专注值不足版：两侧共用的 fpBoth 段在哪一侧都勾上`() {
-        // 218 伟哉卡利亚：300200872 两侧共用；正常侧 870/871/872，专注值不足侧 872/875/876/877。
+        // 218 伟哉卡利亚（skills v4 可蓄力）：300200872 是两侧共用（fpBoth）的满蓄力放招（chargeBranch=charged），
+        // 871 / 876 是一段蓄力的放招（partial，两侧都不取）。蓄力关：正常侧 870、专注值不足侧 875；
+        // 蓄力开：正常侧 872、专注值不足侧 872 / 877。
         val base = MeansSelection().select(skills, assertNotNull(skills.output("skill-218")))
         val normal = base.resolve(skills)
         assertTrue(normal.hasNoFpVariant)
-        assertEquals(listOf(300200870, 300200871, 300200872), normal.selectedHits.map { it.atkId })
-        val lowFocus = base.withNoFp(true).resolve(skills)
-        assertEquals(listOf(300200872, 300200875, 300200876, 300200877), lowFocus.selectedHits.map { it.atkId })
+        assertTrue(normal.chargeInfo.switchable)
+        assertEquals(listOf(300200870), normal.selectedHits.map { it.atkId })
+        assertEquals(listOf(300200875), base.withNoFp(true).resolve(skills).selectedHits.map { it.atkId })
+        val charged = base.withCharged(true).resolve(skills)
+        assertEquals(listOf(300200872), charged.selectedHits.map { it.atkId })
+        val lowFocus = base.withNoFp(true).withCharged(true).resolve(skills)
+        assertEquals(listOf(300200872, 300200877), lowFocus.selectedHits.map { it.atkId })
         val shared = normal.hits.first { it.atkId == 300200872 }
-        assertTrue(shared.fpBoth && normal.isEnabled(shared) && lowFocus.isEnabled(shared))
-        // 全选（当前这一侧）同样带上 fpBoth 段。
-        val all = base.withNoFp(true).let { it.withHitAction(it.resolve(skills).hits, HitAction.ALL) }.resolve(skills)
+        assertTrue(shared.fpBoth && charged.isEnabled(shared) && lowFocus.isEnabled(shared))
+        // 全选（两个开关当前这一侧）同样带上 fpBoth 段。
+        val all = base.withNoFp(true).withCharged(true).let { it.withHitAction(it.resolve(skills).hits, HitAction.ALL) }.resolve(skills)
         assertEquals(lowFocus.selectedIds, all.selectedIds)
 
         // 1024 唤矛仪式：带伤害的两段都是 fpBoth 子弹，专注值不足侧也有构成（旧写法这里一段都不剩）。

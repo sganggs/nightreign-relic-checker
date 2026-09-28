@@ -467,17 +467,33 @@ class LoadoutConfigTest {
     }
 
     @Test
-    fun `appliesTo 分流：战技的子类别限定按 attackIndex 对所选战技判定（咆哮类没有 112 段就不吃）`() {
-        val skillsIndex = dataset.attackIndex.skills
-        val roarId = skillsIndex.entries.first { (_, sets) -> sets.all { 112 !in it.subs && 111 !in it.subs } }.key
-        val roar = RankerOutput(OutputClass.SKILL, meansId = roarId, shares = corpse.shares)
-        assertEquals(VerdictState.NO, ranker.verdict(entry(8350000), roar).state)
-        val partialId = skillsIndex.entries.first { (_, sets) ->
-            sets.any { 112 in it.subs } && sets.any { 112 !in it.subs && 111 !in it.subs }
-        }.key
-        val partial = ranker.verdict(entry(8350000), RankerOutput(OutputClass.SKILL, meansId = partialId, shares = corpse.shares))
-        assertEquals(VerdictState.YES, partial.state)
-        assertTrue(partial.weight > 0 && partial.weight < 1, "部分段命中按段数加权")
+    fun `appliesTo 分流：战技的子类别限定按当前勾选的段判定（咆哮类没有 112 段就不吃，部分段带 112 的按相对值加权）`() {
+        val skillAttack = entry(8350000)   // 提升战技攻击力（武器词条），requires.subCategoriesAny 含 112
+        // 找一招 + 一把武器：默认勾选的段全都不带 111 / 112（咆哮类）；再找一招部分段带 112。
+        var roar: RankerOutput? = null
+        var partial: RankerOutput? = null
+        loop@ for (skill in skills.dataset.skills) {
+            for (weapon in skills.weaponsFor(skill)) {
+                val output = RankerTestData.output(OutputClass.SKILL, skill.id, weapon.id)
+                val segments = output.segments.orEmpty()
+                if (segments.isEmpty()) continue
+                val hits = segments.count { segment -> segment.subCategories.any { it == 111 || it == 112 } }
+                if (roar == null && hits == 0) roar = output
+                if (partial == null && hits > 0 && hits < segments.size) partial = output
+                if (roar != null && partial != null) break@loop
+            }
+        }
+        assertNotNull(roar, "应当有勾选段都不带 112 的战技（野蛮咆哮等）")
+        assertEquals(VerdictState.NO, ranker.verdict(skillAttack, roar!!).state)
+        assertNotNull(partial, "应当有勾选段只有部分带 112 的战技")
+        val verdict = ranker.verdict(skillAttack, partial!!)
+        assertEquals(VerdictState.YES, verdict.state)
+        assertTrue(verdict.weight > 0 && verdict.weight < 1, "部分段命中按相对值加权")
+        val typeShares = assertNotNull(verdict.typeShares)
+        assertTrue(typeShares.all { it in 0.0..1.0 })
+        assertEquals(RankerText.t("verdict.partial"), verdict.label)
+        // 尸横遍野：勾选的段都带 112，全额。
+        assertEquals(1.0, ranker.verdict(skillAttack, corpse).weight)
     }
 
     @Test

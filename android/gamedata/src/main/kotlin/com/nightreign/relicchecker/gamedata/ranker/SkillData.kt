@@ -6,7 +6,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 // 「增伤排名」页上半部分的数据模型：武器 / 战技 / 法术与它们的分段命中（data/nightreign-skills-v1.03.5.json，
-// schemaVersion 3）。直接解码成下面这些不可变模型，只声明页面用到的字段：coverage / fieldNotes / enums /
+// schemaVersion 4）。直接解码成下面这些不可变模型，只声明页面用到的字段：coverage / fieldNotes / enums /
 // diagnostics 等说明块不声明，解码时跳过。所有字段带默认值（配合 GameDataJson.lenient 的 coerceInputValues；
 // 数据集按「省略即默认值」省掉等于默认值的字段）。
 //
@@ -23,8 +23,18 @@ import kotlinx.serialization.json.doubleOrNull
 //     移到 coverage.spellsNotCastable，不在 spells[]。每个法术带 casterWeaponIds / casterSources（结构仿
 //     weaponSources，没有 fixed），施法器的 custom 行见 weapons[].customMagicTables，池见顶层 magicPools。
 //
+// schemaVersion 4 的变化（usage「蓄力段（v4）」，fieldNotes.subCategories / charged / chargeBranch / notInvoked）：
+//   · hits[].subCategories：这一段 AtkParam_Pc 自己的 subCategory1..5（非 0、去重升序）——子类别限定的增益
+//     （buffs requires.subCategoriesAny）按**当前勾选的每一段**判定，法术再并上 buffs attackIndex 的流派
+//     magicSubCategories，不再用 attackIndex 的「整招段数占比」近似；
+//   · hits[].charged：子类别带蓄力（100 / 110 / 111），只说明这一段吃不吃蓄力类增益，**不**用来分侧；
+//   · hits[].chargeBranch（charged / uncharged / both / partial）：蓄力开关的分侧——开取 charged / both，
+//     关取 uncharged / both，partial 两侧都不取（[ChargeBranch]，SkillDamageMath.defaultSelection）；
+//   · 法术段同样按施法槽核实：施法动画不发射的段标 notInvoked（notInvokedReason=noCastSlot，例：兽爪 68201 / 68206），
+//     法术直接读 hits[]，所以 [SkillDataIndex.spellHits] 一律先剔掉它们。
+//
 // 权威实现：macOS RelicCore/SkillData.swift；Windows renderer/pages/ranker.js（variantIndexFor / selectHits /
-// hitOnSide / weaponSourceOf / hitContribution …）。
+// hitOnSide / chargeInfo / defaultSelection / weaponSourceOf / hitContribution …）。
 // 本数据集不含强化倍率与能力值补正曲线，因此这里算出来的一律是**相对构成**，不是绝对伤害
 // （见 usage「本数据集的边界」）。
 
@@ -123,11 +133,26 @@ data class SkillHit(
     val selfOrAllyOnly: Boolean = false,
     /** 该段所属动作套在本作没有任何武器会用到，按选段算法永远取不到。 */
     val noVariant: Boolean = false,
-    /** TAE 判定在所有武器上都打不出（已从 variants 移除，只留在 hits[] 备查；v3）。 */
+    /**
+     * 这一段本作永远打不出（v3：战技按 TAE 核实，已从 variants 移除；v4：法术的施法动画没有任何槽位发射它），
+     * 只留在 hits[] 备查。
+     */
     val notInvoked: Boolean = false,
-    /** notInvoked 的原因（enums.notInvokedReason：gated / notInvoked / elsewhere / roarR2Only …）。 */
+    /** notInvoked 的原因（enums.notInvokedReason：gated / notInvoked / elsewhere / roarR2Only … / 法术 noCastSlot）。 */
     val notInvokedReason: String? = null,
     val addBaseAtk: Boolean = false,
+    /**
+     * 这一段 AtkParam_Pc 自己的子类别（subCategory1..5 的非 0 值，去重升序；v4）：子类别限定的增益
+     * （requires.subCategoriesAny）逐段按它判定。缺失＝全为 0。
+     */
+    val subCategories: List<Int> = emptyList(),
+    /** 子类别带蓄力（enums.chargedSubCategories：100 / 110 / 111；v4）。只说明吃不吃蓄力类增益，**不**用来分侧。 */
+    val charged: Boolean = false,
+    /**
+     * 蓄力开关的分侧（v4 审查修正，按动画判）：charged / uncharged / both / partial（[ChargeBranch]）。
+     * 只写在可蓄力条目的可取段上；缺失＝该条目不能蓄力或这一段不可取。
+     */
+    val chargeBranch: String? = null,
 ) {
     /** 数据里声明过的动作值（0 视为没声明，与 macOS 端 elementMap 同一口径）。 */
     fun motionOf(element: SkillElement): Double? = motion[element.key]?.takeIf { it.isFinite() && it != 0.0 }
@@ -140,12 +165,37 @@ data class SkillHit(
      */
     fun isOnSide(useNoFp: Boolean): Boolean = fpBoth || noFp == useNoFp
 
+    /** 在「蓄力」开关的 [chargedOn] 这一侧吗（只看 chargeBranch 的显式保留集，见 [ChargeBranch.keeps]）。 */
+    fun isOnChargeSide(chargedOn: Boolean): Boolean = ChargeBranch.keeps(chargeBranch, chargedOn)
+
     /** 段名：labelZh → label → 「单段」（数据集原文，未做 FP 替换）。 */
     val displayLabel: String
         get() = labelZh?.takeIf { it.isNotEmpty() } ?: label?.takeIf { it.isNotEmpty() } ?: "单段"
 
     /** 展示层的段名：把「无FP版」换成「专注值不足版」（见 [SkillTextZh.fpText]）。 */
     val displayLabelZh: String get() = SkillTextZh.fpText(displayLabel)
+}
+
+/**
+ * hits[].chargeBranch 的取值与蓄力开关的分侧（usage「蓄力段（v4）」，Windows CHARGE_SIDE_KEEP）：
+ * 开取 charged / both，关取 uncharged / both；partial（中间蓄力阶段的放招，例：伟哉卡利亚 300200871 / 876）与
+ * 缺 chargeBranch 的段两侧都不取。写成显式的保留集——**不要**把「不是 charged」当成关侧（会把 partial 算进关侧）。
+ */
+object ChargeBranch {
+    const val CHARGED = "charged"
+    const val UNCHARGED = "uncharged"
+    const val BOTH = "both"
+    const val PARTIAL = "partial"
+
+    /** 开关打开时保留的分侧。 */
+    val ON_SIDE: Set<String> = setOf(CHARGED, BOTH)
+
+    /** 开关关闭时保留的分侧。 */
+    val OFF_SIDE: Set<String> = setOf(UNCHARGED, BOTH)
+
+    /** [branch] 在开关 [chargedOn] 这一侧吗。 */
+    fun keeps(branch: String?, chargedOn: Boolean): Boolean =
+        branch != null && branch in (if (chargedOn) ON_SIDE else OFF_SIDE)
 }
 
 /** 一套实际会打出的段。`atkIds` 是本战技 hits 里的 atkId 子集（v3 起已按 TAE 核实）。 */
@@ -332,6 +382,9 @@ data class SkillDataset(
 
         /** usage 里「命中段已按 TAE 核实」一节（v3）：页面底部引用。 */
         const val USAGE_TAE = "命中段已按 TAE 核实（v3）"
+
+        /** usage 里蓄力开关的分侧与子类别限定逐段判定的读法（v4）。 */
+        const val USAGE_CHARGED = "蓄力段（v4）"
     }
 }
 

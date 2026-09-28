@@ -18,7 +18,11 @@ const val RANK_EPSILON: Double = 1e-9
  * @property weaponWepType 战技所用武器的 wepType；法术为 null（出手武器类别按施法器取，见 [attackWepType]）。
  * @property hand 1 右手 / 2 左手（其它值按右手）。
  * @property shares 按 [DamageType.ordinal] 索引的伤害占比（和为 1；全 0 表示没有勾选任何带伤害的段）。
- * @property attackContexts 用户勾选的攻击情境（enums.attackContext 的键）。
+ * @property attackContexts 成立的攻击情境（enums.attackContext 的键）：用户勾的，加上由「蓄力」开关派生的三项
+ *   （[SkillDamageMath.chargedContexts]）。
+ * @property segments 当前勾选的段（与 [shares] 同一批，[SkillDamageMath.outputSegments]）：子类别限定
+ *   （requires.subCategoriesAny）按它逐段判定。null＝调用方没给逐段信息（旧调用、只做查阅），子类别限定只能按
+ *   attackIndex 的整招统计做说明、不决定数值（Windows makeOutput 的 segments）。
  */
 data class RankerOutput(
     val outputClass: OutputClass,
@@ -28,6 +32,7 @@ data class RankerOutput(
     val hand: Int = 1,
     val shares: List<Double> = List(DamageType.COUNT) { 0.0 },
     val attackContexts: Set<String> = emptySet(),
+    val segments: List<OutputSegment>? = null,
 ) {
     val normalizedHand: Int get() = if (hand == 2) 2 else 1
 
@@ -39,12 +44,14 @@ data class RankerOutput(
     val attackWepType: Int? get() = if (outputClass == OutputClass.SKILL) weaponWepType else outputClass.casterWepType
 
     companion object {
+        /** 战技：构成与逐段判定用同一批勾选的段 [selected]（缺省＝不给逐段信息）。 */
         fun skill(
             skillId: Int,
             weapon: SkillWeapon?,
             composition: DamageComposition,
             hand: Int = 1,
             attackContexts: Set<String> = emptySet(),
+            selected: List<SkillHit>? = null,
         ): RankerOutput = RankerOutput(
             outputClass = OutputClass.SKILL,
             meansId = skillId,
@@ -53,19 +60,23 @@ data class RankerOutput(
             hand = hand,
             shares = composition.shares,
             attackContexts = attackContexts,
+            segments = selected?.let { SkillDamageMath.outputSegments(it, weapon, isSpell = false) },
         )
 
+        /** 法术：构成与逐段判定用同一批勾选的段 [selected]（缺省＝不给逐段信息）。 */
         fun spell(
             spell: SpellEntry,
             composition: DamageComposition,
             hand: Int = 1,
             attackContexts: Set<String> = emptySet(),
+            selected: List<SkillHit>? = null,
         ): RankerOutput = RankerOutput(
             outputClass = spell.outputClass,
             meansId = spell.id,
             hand = hand,
             shares = composition.shares,
             attackContexts = attackContexts,
+            segments = selected?.let { SkillDamageMath.outputSegments(it, null, isSpell = true) },
         )
     }
 }
@@ -78,8 +89,17 @@ enum class VerdictState(val key: String) { YES("yes"), NO("no"), CONTEXT("contex
 
 enum class RequirementState { MET, UNMET, PARTIAL, NEEDS_USER }
 
-/** 逐项条件（详情展示用）。[share] 只在 PARTIAL 时有值（命中段占比）。 */
-data class Requirement(val key: String, val text: String, val state: RequirementState, val share: Double? = null)
+/**
+ * 逐项条件（详情展示用）。[share] 只在按勾选的段判出 PARTIAL 时有值（命中段的相对值占比，全部类型合计）；
+ * [typeShares] 同一情形下每个伤害类型自己的命中占比（按 [DamageType.ordinal]）。
+ */
+data class Requirement(
+    val key: String,
+    val text: String,
+    val state: RequirementState,
+    val share: Double? = null,
+    val typeShares: List<Double>? = null,
+)
 
 /** 一条 buff 对当前输出手段的 appliesTo 判定。 */
 data class AppliesVerdict(
@@ -89,9 +109,12 @@ data class AppliesVerdict(
     val reasons: List<String>,
     /** 要用户确认的条件（imbuedWeaponOnly、需同时使用道具、认不出的键…）。 */
     val needs: List<String>,
-    /** 部分段命中的近似说明。 */
+    /** 部分段命中的说明（「所选X只有 m/n 段带子类别 […]」）。 */
     val notes: List<String>,
-    /** 1 = 全部生效；(0, 1) = 子类别只有部分段命中、按段数近似折算。 */
+    /**
+     * 1 = 全部生效；(0, 1) = 子类别限定只有部分勾选段命中（命中段的相对值占比，全部类型合计；标签与说明用）。
+     * 数值按 [typeShares] 逐类型加权（[weights]）。
+     */
     val weight: Double,
     /** requires.physicalType：倍率只落在这一个物理通道。 */
     val restrictedType: DamageType?,
@@ -101,7 +124,20 @@ data class AppliesVerdict(
     val activation: String,
     /** activation ≠ passive 时的说明（条件型 / 发动型 / 装备中有 N 把以上 X）。 */
     val activationNote: String?,
+    /**
+     * 子类别限定只有部分勾选段命中时，每个伤害类型自己的命中占比 s_t（按 [DamageType.ordinal]；Windows verdict.shares）：
+     * s_t = Σ 命中段在 t 上的相对值 ÷ Σ 全部勾选段在 t 上的相对值，分母为 0 的类型填 [weight]（构成占比也是 0，只为展示）。
+     * 全中 / 不生效时为 null。
+     */
+    val typeShares: List<Double>? = null,
 ) {
+    /**
+     * 逐类型的加权（Windows verdictWeights）：[typeShares] 优先，其次统一的 [weight]；全额为 null。
+     * 每个类型按 1＋(倍率−1)×s_t、加算 × s_t（brief.partial）。
+     */
+    val weights: List<Double>?
+        get() = typeShares ?: if (weight >= 0.0 && weight < 1.0) List(DamageType.COUNT) { weight } else null
+
     val isApplicable: Boolean get() = state == VerdictState.YES || state == VerdictState.PENDING
     val isPartial: Boolean get() = isApplicable && weight < 1.0
     val needsConfirmation: Boolean get() = needs.isNotEmpty() || activationNote != null

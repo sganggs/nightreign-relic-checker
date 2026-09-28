@@ -10,12 +10,16 @@ import kotlin.test.assertTrue
 //   ① 逐行比对 Windows 端打印的 CASE 行（test resources 的 ranker-crosscheck-dump.txt）：选段、九类构成占比、
 //      一览生效条数、有效倍率 > 1 的条数与前 10 名（数值容差 1e-6）；OUTPUTS 行（输出手段条数）；
 //   ② 与 Windows / macOS 两端一样，再用一份**独立重算的参考实现**（下方 Reference，不复用被测代码的分支）
-//      逐条校对一览的生效判定与有效倍率（容差 1e-9）；
-//   ③ 跨用例关系（构成相同 → 一览相同；换火属性武器只多出加火的条目；子弹段；法术只用 flat）。
+//      逐条校对取段、一览的生效判定与有效倍率（容差 1e-9）；
+//   ③ 跨用例关系（构成相同 → 一览相同；换火属性武器只多出加火的条目；子弹段；法术只用 flat；蓄力两侧）。
 // CONFIG 行（整套配置）与说明区摘要见 LoadoutCrossCheckTest。
 // 战技数据集 schemaVersion 3：选段一律读 weapons[].skillVariants[战技 ID]，默认勾选按「hit.fpBoth || noFp 与开关同侧」；
 // 七组构成用例的战技都是所选武器的固定战技，输入与 CASE 行不变，OUTPUTS 因局内战技池 114 → 155；
 // v3 修订的 spells[] 只收可施放的法术，OUTPUTS 的法术 121 → 119（8100 / 8101「风暴管束者」移出）。
+// schemaVersion 4（usage「蓄力段（v4）」）：法术段剔掉 notInvoked；默认勾选再按「蓄力」开关分侧（hits[].chargeBranch：
+// 开取 charged / both，关取 uncharged / both，partial 两侧都不取；专注值分侧后一段 charged 都没有时开关不适用、取全部）；
+// 子类别限定（requires.subCategoriesAny）按勾选的段逐段判定：每个伤害类型 1＋(倍率−1)×命中段相对值占比。
+// 参考实现按这段 usage 独立重写取段与逐段判定；CASES 多了兽爪 6820 蓄力开 / 关与死亡雷击 5040 蓄力开三组。
 class RankerCrossCheckTest {
     private val skills get() = RankerTestData.skills
     private val buffs get() = RankerTestData.buffs
@@ -63,7 +67,7 @@ class RankerCrossCheckTest {
     @Test
     fun `every CASE line of the desktop dump matches field by field`() {
         val cases = dumpLines.filter { it.startsWith("CASE ") }.map { parseCase(it) }
-        assertEquals(RankerCrossCheck.CASES.map { it.key }, cases.map { it.key }, "七组构成用例、同一顺序")
+        assertEquals(RankerCrossCheck.CASES.map { it.key }, cases.map { it.key }, "十组构成用例、同一顺序")
         for (expected in cases) {
             val run = runs.getValue(expected.key)
             val actual = parseCase(run.dumpLine)
@@ -90,7 +94,7 @@ class RankerCrossCheckTest {
         val text = dumpLines.single { it.startsWith("TEXT ") }
         assertEquals(RankerText.table.size.toString(), field(text, "count"), "文案条数")
         assertEquals(RankerCrossCheck.textTableDigest(), field(text, "digest"), "文案常量表摘要")
-        assertEquals(3, dumpLines.count { it.startsWith("CONFIG ") }, "三组配置对拍行（LoadoutCrossCheckTest 逐字段比对）")
+        assertEquals(5, dumpLines.count { it.startsWith("CONFIG ") }, "五组配置对拍行（LoadoutCrossCheckTest 逐字段比对）")
     }
 
     @Test
@@ -100,7 +104,7 @@ class RankerCrossCheckTest {
         assertTrue(line.startsWith("CASE corpse-piler-full selected=303400300,303400301,303400302,303400303,303400304,303400305 shares=0.500000000,"), line)
         assertTrue(line.contains(" applicable=296 useful=200 top10=707214:3.550000000,707215:3.550000000,"), line)
         assertEquals(dumpLines.first { it.startsWith("CASE corpse-piler-full ") }, line, "整行逐字相同")
-        // 本版本数据下七行全部逐字相同（比逐字段 1e-6 更严；数据集修订后以上一条测试的逐字段比对为准）。
+        // 本版本数据下十行全部逐字相同（比逐字段 1e-6 更严；数据集修订后以上一条测试的逐字段比对为准）。
         val expected = dumpLines.filter { it.startsWith("CASE ") }
         assertEquals(expected, RankerCrossCheck.CASES.map { runs.getValue(it.key).dumpLine })
     }
@@ -133,15 +137,16 @@ class RankerCrossCheckTest {
         fun listable(buff: BuffEntry): Boolean =
             countsAsDamage(buff) && (buff.target == "self" || buff.target == "ally") && buff.direction != "decrease"
 
-        data class Verdict(val weight: Double, val restricted: DamageType?)
+        /** [weights]＝子类别限定部分段命中时逐类型的命中占比（null＝全额）。 */
+        data class Verdict(val weights: DoubleArray?, val restricted: DamageType?)
 
-        fun verdict(buff: BuffEntry, out: RankerOutput): Verdict? {
+        fun verdict(buff: BuffEntry, out: RankerReference.Output): Verdict? {
             val cls = out.outputClass
             val value = buff.appliesTo?.get(cls)
             if (value != "yes" && value != "conditional") return null
-            if (value == "yes") return Verdict(1.0, null)
-            val requires = buff.appliesToDetail[cls]?.requires ?: return Verdict(1.0, null)
-            var weight = 1.0
+            if (value == "yes") return Verdict(null, null)
+            val requires = buff.appliesToDetail[cls]?.requires ?: return Verdict(null, null)
+            var weights: DoubleArray? = null
             var restricted: DamageType? = null
             requires.hand?.let { if (it != out.hand) return null }
             if (requires.attackWeaponTypes.isNotEmpty()) {
@@ -154,24 +159,14 @@ class RankerCrossCheckTest {
             }
             if (requires.subCategoriesAny.isNotEmpty()) {
                 val table = if (cls == OutputClass.SKILL) dataset.attackIndex.skills else dataset.attackIndex.spells
-                val sets = out.meansId?.let { table[it] }
-                if (sets != null) {
-                    var matched = 0
-                    var total = 0
-                    sets.forEach { set ->
-                        total += set.hits
-                        if (set.subs.any { it in requires.subCategoriesAny }) matched += set.hits
-                    }
-                    if (matched == 0) return null
-                    weight = matched.toDouble() / total
-                }
+                weights = (RankerReference.subCategories(requires.subCategoriesAny, out, table[out.meansId]) ?: return null).weights
             }
-            if (requires.attackContexts.isNotEmpty() && requires.attackContexts.none { it in out.attackContexts }) return null
+            if (requires.attackContexts.isNotEmpty() && requires.attackContexts.none { it in out.contexts }) return null
             requires.physicalType?.let { code ->
                 restricted = listOf(DamageType.SLASH, DamageType.BLOW, DamageType.THRUST, DamageType.NEUTRAL)[code]
                 if (!(out.share(restricted!!) > 0.0)) return null
             }
-            return Verdict(weight, restricted)
+            return Verdict(weights, restricted)
         }
 
         private fun paramMax(input: BuffStackInput): Int {
@@ -192,7 +187,7 @@ class RankerCrossCheckTest {
             return buff.rates + keys.associateWith { value }
         }
 
-        fun overview(buff: BuffEntry, out: RankerOutput): Double? {
+        fun overview(buff: BuffEntry, out: RankerReference.Output): Double? {
             if (!listable(buff)) return null
             if (buff.selfAllyPair?.role == "ally") return null
             val verdict = verdict(buff, out) ?: return null
@@ -211,7 +206,7 @@ class RankerCrossCheckTest {
                     }
                 }
             }
-            if (verdict.weight < 1) for (i in table.indices) table[i] = 1 + (table[i] - 1) * verdict.weight
+            verdict.weights?.let { w -> for (i in table.indices) if (w[i] < 1) table[i] = 1 + (table[i] - 1) * w[i] }
             var sum = 0.0
             var weight = 0.0
             DamageType.entries.forEach { type ->
@@ -225,17 +220,41 @@ class RankerCrossCheckTest {
         }
     }
 
+    /** 参考实现下这个用例的取段与输出（[RankerReference.case]）。 */
+    private fun referenceCase(run: RankerCrossCheck.CaseRun): Pair<RankerReference.Selection, RankerReference.Output> =
+        RankerReference.case(run.case, run.weapon, run.hits)
+
+    @Test
+    fun `default selection agrees with an independent reference - fp side, charge side, notInvoked`() {
+        for ((key, run) in runs) {
+            val (selection, _) = referenceCase(run)
+            assertTrue(run.selected.none { it.notInvoked }, "$key：notInvoked 段不该被勾上（法术段 v4 起同样剔掉）")
+            assertTrue(run.hits.none { it.notInvoked }, "$key：选出的段里不该有 notInvoked")
+            if (run.case.only != null) continue
+            assertEquals(selection.hits.map { it.atkId }, run.selected.map { it.atkId }, "$key：默认勾选与参考实现一致")
+            assertTrue(run.selected.none { it.chargeBranch == "partial" }, "$key：partial 两侧都不取")
+            val expectedContexts = if (selection.chargedOn) setOf("chargedHeavyAttack", "chargedSkill", "chargedSpell") else emptySet()
+            assertEquals(expectedContexts, run.output.attackContexts, "$key：三项蓄力情境由开关派生")
+        }
+        assertEquals(listOf(68205), runs.getValue("beast-claw-charged").selected.map { it.atkId })
+        assertEquals(listOf(68200), runs.getValue("beast-claw-uncharged").selected.map { it.atkId })
+        assertEquals(listOf(50405, 50406), runs.getValue("death-lightning-charged").selected.map { it.atkId })
+        assertEquals(listOf(50400, 50401), runs.getValue("death-lightning").selected.map { it.atkId })
+        assertEquals(listOf(40210), runs.getValue("comet").selected.map { it.atkId })
+    }
+
     @Test
     fun `overview agrees with an independent reference for every row of every case`() {
         val reference = Reference(buffs.dataset)
         var checked = 0
         for ((key, run) in runs) {
+            val refOut = referenceCase(run).second
             val listed = run.rows.map { it.id }.toSet()
             buffs.dataset.buffs.forEach { buff ->
                 assertEquals(reference.listable(buff), buff.spEffectId in listed, "$key：#${buff.spEffectId} 进不进一览")
             }
             run.rows.forEach { row ->
-                val expected = reference.overview(row.entry.buff, run.output)
+                val expected = reference.overview(row.entry.buff, refOut)
                 checked += 1
                 if (expected == null) {
                     assertTrue(!row.applicable, "$key：#${row.id} 参考判不生效，实际是 ${row.state}")
@@ -259,24 +278,8 @@ class RankerCrossCheckTest {
             val amounts = DoubleArray(DamageType.COUNT)
             for (hit in run.hits) {
                 if (hit.atkId !in selected || hit.noDamage) continue
-                val physType = when (hit.attribute) {
-                    "Slash" -> DamageType.SLASH
-                    "Strike" -> DamageType.BLOW
-                    "Pierce" -> DamageType.THRUST
-                    "Standard" -> DamageType.NEUTRAL
-                    "WeaponAtkAttribute" -> DamageType.physical(run.weapon?.atkAttribute ?: -1)
-                    "WeaponAtkAttribute2" -> DamageType.physical(run.weapon?.atkAttribute2 ?: -1)
-                    else -> DamageType.PHYS_NONE
-                }
-                for (element in SkillElement.entries) {
-                    val base = run.weapon?.attackBase?.get(element.key) ?: 0.0
-                    val motion = if (run.weapon != null) hit.motion[element.key] ?: 0.0 else 0.0
-                    var amount = base * motion / 100 + (hit.flat[element.key] ?: 0.0)
-                    if (hit.addBaseAtk) amount += base
-                    if (!(amount > 0)) continue
-                    val type = if (element == SkillElement.PHYSICAL) physType else DamageType.entries.first { it.element == element }
-                    amounts[type.ordinal] += amount
-                }
+                val one = RankerReference.amounts(hit, run.weapon)
+                for (i in amounts.indices) amounts[i] += one[i]
             }
             val total = amounts.sum()
             assertClose(total, run.composition.total, 1e-9, "$key：相对伤害总量")
@@ -285,12 +288,13 @@ class RankerCrossCheckTest {
             assertTrue(run.selected.none { it.noDamage })
             if (run.case.only == null) {
                 assertTrue(run.selected.none { it.noFp }, "默认勾选只取正常版这一侧")
-                // 取段规则 hit.fpBoth || noFp 与开关同侧：正常版这一侧的带伤害段一个不漏（两侧共用的 fpBoth 段也算）。
-                assertEquals(
-                    run.hits.filter { !it.noDamage && (it.fpBoth || !it.noFp) }.map { it.atkId },
-                    run.selected.map { it.atkId },
-                    "$key：默认勾选",
-                )
+                // 取段规则 hit.fpBoth || noFp 与开关同侧：正常版这一侧的带伤害段一个不漏（两侧共用的 fpBoth 段也算）；
+                // 可蓄力的招再按蓄力开关分侧（chargeBranch），见上方独立参考实现。
+                val side = run.hits.filter { !it.noDamage && (it.fpBoth || !it.noFp) }
+                val expected = if (side.none { it.chargeBranch == "charged" }) side else side.filter {
+                    it.chargeBranch == "both" || it.chargeBranch == (if (run.case.charged) "charged" else "uncharged")
+                }
+                assertEquals(expected.map { it.atkId }, run.selected.map { it.atkId }, "$key：默认勾选")
             }
         }
     }
@@ -335,7 +339,8 @@ class RankerCrossCheckTest {
 
     @Test
     fun `spell compositions come only from flat values`() {
-        listOf("death-lightning", "comet").forEach { key ->
+        // 兽爪本身就是物理（标准）固定值，不在这组里；死亡雷击蓄力开同样只有雷。
+        listOf("death-lightning", "comet", "death-lightning-charged").forEach { key ->
             val run = runs.getValue(key)
             DamageType.PHYSICAL.forEach { assertEquals(0.0, run.composition.share(it), "$key 是法术，${it.key} 占比必须为 0") }
             assertTrue(run.useful.isNotEmpty())
@@ -344,6 +349,32 @@ class RankerCrossCheckTest {
         }
         assertEquals(OutputClass.INCANTATION, runs.getValue("death-lightning").output.outputClass)
         assertEquals(OutputClass.SORCERY, runs.getValue("comet").output.outputClass)
+    }
+
+    @Test
+    fun `beast claw - charged casting gets the charged spell buffs in full, uncharged gets none`() {
+        // 局内武器词条「强化祷告的蓄力执行」8330302 / 301 / 300：五项 *AttackRate 各 1.18 / 1.13 / 1.09，requires [110]。
+        val on = runs.getValue("beast-claw-charged")
+        val off = runs.getValue("beast-claw-uncharged")
+        assertEquals(listOf(68200, 68205), on.hits.map { it.atkId }, "68201 / 68206 是施法动画不发射的 notInvoked 段")
+        assertEquals(setOf("chargedHeavyAttack", "chargedSkill", "chargedSpell"), on.output.attackContexts)
+        assertTrue(off.output.attackContexts.isEmpty())
+        mapOf(8330302 to 1.18, 8330301 to 1.13, 8330300 to 1.09).forEach { (id, rate) ->
+            val entry = buffs.byId.getValue(id)
+            val verdictOn = buffs.verdict(entry, on.output)
+            assertEquals(VerdictState.YES, verdictOn.state, "$id 蓄力开")
+            assertEquals(1.0, verdictOn.weight)
+            assertEquals(null, verdictOn.typeShares, "$id：勾选的段全部带 110，全额")
+            assertEquals(RankerText.t("verdict.conditionalMet"), verdictOn.label, "不再标「部分段生效」")
+            val rowOn = on.rows.first { it.id == id }
+            assertTrue(rowOn.applicable)
+            assertClose(rate, rowOn.multiplier, 1e-12, "$id 蓄力开：一览按全额")
+            val verdictOff = buffs.verdict(entry, off.output)
+            assertEquals(VerdictState.NO, verdictOff.state, "$id 蓄力关：不生效")
+            assertEquals(RankerText.t("verdict.no"), verdictOff.label)
+            assertTrue(verdictOff.reasons[0].contains("110"), verdictOff.reasons[0])
+            assertTrue(!off.rows.first { it.id == id }.applicable)
+        }
     }
 
     @Test
@@ -357,7 +388,7 @@ class RankerCrossCheckTest {
             assertTrue(playable, "列表里的战技「${output.nameZh}」必须至少有一把武器算得出构成")
         }
         skills.outputs.filter { !it.isSkill }.forEach { output ->
-            assertTrue(SkillDamageMath.hasAnyDamage(skills.spellsById.getValue(output.entryId).hits, null, true))
+            assertTrue(SkillDamageMath.hasAnyDamage(skills.spellHits(skills.spellsById.getValue(output.entryId)), null, true))
         }
         // v3：局内战技池的武器也算，列表里的战技与参考实现逐个相同（本版本 155 个）。参考实现不经被测代码，
         // 直接读 weapons[].skillVariants → variants[i].atkIds，任一把武器的任一段算得出非 0 相对值即可。
@@ -376,14 +407,14 @@ class RankerCrossCheckTest {
         }.map { it.id }
         assertEquals(155, reference.size)
         assertEquals(reference, skills.outputs.filter { it.isSkill }.map { it.entryId })
-        // 七组构成用例的战技都是所选武器的固定战技（v3 下输入不变，对拍行的 CASE / CONFIG 与 v2 相同）。
+        // 构成用例的战技都是所选武器的固定战技（v3 下输入不变，对拍行的 CASE / CONFIG 与 v2 相同）。
         RankerCrossCheck.CASES.filter { it.outputClass == OutputClass.SKILL }.forEach { case ->
             val weapon = skills.weaponsById.getValue(case.weaponId!!)
             assertEquals(case.id, weapon.swordArtsParamId, case.key)
             assertEquals(WeaponSourceKind.FIXED, skills.weaponSourceKind(skills.skillsById.getValue(case.id), weapon), case.key)
             assertEquals(weapon.skillVariant, weapon.variantIndex(case.id), "${case.key}：固定战技的 skillVariant 与 skillVariants 一致")
         }
-        assertEquals(7, RankerCrossCheck.CASES.size)
+        assertEquals(10, RankerCrossCheck.CASES.size)
         assertEquals(setOf(OutputClass.SKILL, OutputClass.SORCERY, OutputClass.INCANTATION), RankerCrossCheck.CASES.map { it.outputClass }.toSet())
         assertEquals(7, buffs.variants.size, "多档词条 7 组（数据 affixVariant）")
     }

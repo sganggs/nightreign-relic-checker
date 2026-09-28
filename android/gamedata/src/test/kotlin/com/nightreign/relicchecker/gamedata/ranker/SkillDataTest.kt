@@ -24,6 +24,9 @@ import kotlin.test.assertTrue
 // （缺失时只对固定战技回退 skillVariant）；variants[].atkIds 已按 TAE 核实，hits[] 里打不出的段标 notInvoked；
 // 取段规则是「hit.fpBoth 或 noFp 与开关同侧」；selfOrAllyOnly 段恒带 noDamage。
 // v3 修订：spells[] 只收可施放的法术（8100 / 8101「风暴管束者」移出），每个法术带 casterWeaponIds / casterSources。
+// 数据集 schemaVersion 4（usage「蓄力段（v4）」）：hits[].subCategories / charged / chargeBranch；法术段按施法槽核实，
+// 施法动画不发射的段标 notInvoked；默认勾选再按「蓄力」开关分侧（chargeBranch：开取 charged / both，关取 uncharged / both，
+// partial 两侧都不取；专注值分侧后一段 charged 都没有时开关不适用）。
 class SkillDataTest {
     private val skills get() = RankerTestData.skills
     private val dataset get() = skills.dataset
@@ -56,7 +59,7 @@ class SkillDataTest {
 
     @Test
     fun `dataset parses with version, usage boundary and fixed counts`() {
-        assertEquals(3, dataset.schemaVersion)
+        assertEquals(4, dataset.schemaVersion)
         assertTrue(dataset.gameVersion.startsWith("v1.03.5"), dataset.gameVersion)
         assertEquals("regulation 10350000", dataset.dataVersion)
         assertNotNull(dataset.usage[SkillDataset.USAGE_SELECTION], "选段规则必须来自数据集")
@@ -67,11 +70,12 @@ class SkillDataTest {
         assertEquals(
             listOf(
                 "选段（必读）", "近战武器段", "伤害类型（斩 / 打 / 突）", "法术 / 子弹段", "削韧", "本数据集的边界",
-                "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）",
+                "战技来源（v3）", "法术来源（v3）", "命中段已按 TAE 核实（v3）", "蓄力段（v4）",
             ),
             dataset.usage.keys.toList(),
-            "usage 的键按数据顺序（v3 多了三个：战技来源、法术来源（修订）、TAE 核实）",
+            "usage 的键按数据顺序（v3 多了三个：战技来源、法术来源（修订）、TAE 核实；v4 多了蓄力段）",
         )
+        assertNotNull(dataset.usage[SkillDataset.USAGE_CHARGED], "蓄力开关与逐段子类别判定的读法来自数据集")
         assertNotNull(dataset.usage[SkillDataset.USAGE_SPELL_SOURCES], "法术来源（可施放口径）的读法来自数据集")
         assertEquals(11, dataset.caveats.size)
         assertEquals(3, dataset.sources.size)
@@ -140,7 +144,12 @@ class SkillDataTest {
         val v2 = assertFailsWith<GameDataFormatException> {
             RankerParsers.skills("""{"schemaVersion":2,"weapons":[],"skills":[],"spells":[]}""")
         }
-        assertTrue(v2.message!!.contains("只支持 3"), v2.message)
+        assertTrue(v2.message!!.contains("只支持 4"), v2.message)
+        // v3 缺逐段子类别（subCategories）与蓄力分侧（chargeBranch），法术段也没按施法槽核实：同样拒绝。
+        val v3 = assertFailsWith<GameDataFormatException> {
+            RankerParsers.skills("""{"schemaVersion":3,"weapons":[],"skills":[],"spells":[]}""")
+        }
+        assertTrue(v3.message!!.contains("schemaVersion 为 3") && v3.message!!.contains("只支持 4"), v3.message)
     }
 
     @Test
@@ -440,8 +449,8 @@ class SkillDataTest {
         val onlyDead = SkillEntry(hits = listOf(SkillHit(atkId = 21, ctx = "Dagger", notInvoked = true), SkillHit(atkId = 22)))
         assertEquals(listOf(22), SkillDataIndex.selectHits(onlyDead, weapon(wepTypeEn = "Dagger")).map { it.atkId }, "剔掉 notInvoked 之后这一类没有段，才往下退")
         assertEquals(listOf(12, 13, 15), SkillDataIndex.invokedHits(tae.hits).map { it.atkId })
-        // 法术不做 TAE 过滤：真实数据里没有 notInvoked 的法术段，spellHits 原样返回。
-        dataset.spells.forEach { spell -> assertEquals(spell.hits, skills.spellHits(spell), "${spell.id}") }
+        // 法术段（v4）按施法槽核实：spellHits 剔掉施法动画不发射的 notInvoked 段，其余原样返回。
+        dataset.spells.forEach { spell -> assertEquals(spell.hits.filter { !it.notInvoked }, skills.spellHits(spell), "${spell.id}") }
     }
 
     @Test
@@ -459,7 +468,7 @@ class SkillDataTest {
         assertEquals(setOf(1), SkillDamageMath.defaultSelection(hits))
         assertEquals(setOf(2), SkillDamageMath.defaultSelection(hits, useNoFp = true))
         assertEquals(listOf(2), SkillDamageMath.selectedHits(hits, mapOf(1 to false, 2 to true), false).map { it.atkId })
-        assertFalse(SkillDamageMath.isHitEnabled(hits[2], mapOf(3 to true), false), "noDamage 段怎么勾都不计入")
+        assertFalse(SkillDamageMath.isHitEnabled(hits[2], mapOf(3 to true), setOf(3)), "noDamage 段怎么勾都不计入")
 
         // fpBoth：两侧动画都会打出的段，开关在哪一侧都勾上（取段规则 hit.fpBoth || noFp 同侧）。
         val shared = hits + SkillHit(atkId = 4, fpBoth = true)
@@ -467,8 +476,9 @@ class SkillDataTest {
         assertEquals(true, SkillDamageMath.hitOverridesFor(shared, HitAction.ALL, true)[4], "专注值不足侧也要计入 fpBoth 段")
         assertEquals(setOf(1, 4), SkillDamageMath.defaultSelection(shared))
         assertEquals(setOf(2, 4), SkillDamageMath.defaultSelection(shared, useNoFp = true))
-        assertTrue(SkillDamageMath.isHitEnabled(shared[3], emptyMap(), true))
-        assertFalse(SkillDamageMath.isHitEnabled(shared[3], mapOf(4 to false), true), "手动勾掉照样生效")
+        val lowFocusDefaults = SkillDamageMath.defaultSelection(shared, useNoFp = true)
+        assertTrue(SkillDamageMath.isHitEnabled(shared[3], emptyMap(), lowFocusDefaults))
+        assertFalse(SkillDamageMath.isHitEnabled(shared[3], mapOf(4 to false), lowFocusDefaults), "手动勾掉照样生效")
         assertTrue(SkillHit(fpBoth = true).isOnSide(true) && SkillHit(fpBoth = true).isOnSide(false))
         assertFalse(SkillHit(noFp = true).isOnSide(false))
         assertFalse(SkillHit().isOnSide(true))
@@ -483,7 +493,13 @@ class SkillDataTest {
         val picked = skills.hits(skill, weapon)
         val overrides = SkillDamageMath.hitOverridesFor(picked, HitAction.ALL, false)
         val chosen = picked.filter { overrides[it.atkId] == true }
-        val fallback = picked.filter { !it.noDamage && (it.fpBoth || !it.noFp) }
+        // 正常版这一侧；可蓄力的招再取不蓄力这一侧（uncharged / both）。
+        val fpSide = picked.filter { !it.noDamage && (it.fpBoth || !it.noFp) }
+        val fallback = if (fpSide.none { it.chargeBranch == ChargeBranch.CHARGED }) {
+            fpSide
+        } else {
+            fpSide.filter { it.chargeBranch == ChargeBranch.UNCHARGED || it.chargeBranch == ChargeBranch.BOTH }
+        }
         assertEquals(fallback.map { it.atkId }, chosen.map { it.atkId })
         assertEquals(
             SkillDamageMath.composition(fallback, weapon, false).total,
@@ -492,11 +508,8 @@ class SkillDataTest {
         val normal = SkillDamageMath.defaultSelection(picked)
         val lowFocus = SkillDamageMath.defaultSelection(picked, useNoFp = true)
         assertTrue(lowFocus.isNotEmpty(), "专注值不足侧要有段")
-        assertEquals(
-            picked.filter { it.fpBoth && !it.noDamage }.map { it.atkId }.toSet(),
-            normal.intersect(lowFocus),
-            "正常版与专注值不足版必须互斥（两侧共用的 fpBoth 段除外）",
-        )
+        val fpBothIds = picked.filter { it.fpBoth && !it.noDamage }.map { it.atkId }.toSet()
+        assertTrue(fpBothIds.containsAll(normal.intersect(lowFocus)), "正常版与专注值不足版必须互斥（两侧共用的 fpBoth 段除外）")
     }
 
     // ------------------------------------------------------------------ v3：局内战技池、TAE 核实、fpBoth
@@ -584,7 +597,7 @@ class SkillDataTest {
             assertTrue(hit.noDamage, "${hit.atkId} 只打自己 / 队友，必须带 noDamage")
             assertTrue(SkillDamageMath.hitContribution(hit, full, false).all { it == 0.0 })
             assertFalse(hit.atkId in SkillDamageMath.hitOverridesFor(listOf(hit), HitAction.ALL, false), "全选也不勾")
-            assertFalse(SkillDamageMath.isHitEnabled(hit, mapOf(hit.atkId to true), false))
+            assertFalse(SkillDamageMath.isHitEnabled(hit, mapOf(hit.atkId to true), setOf(hit.atkId)))
         }
         assertEquals(dataset.count("hitsNotInvoked"), notInvoked, "notInvoked 段数与数据集 counts 一致")
         assertEquals(dataset.count("hitsSelfOrAllyOnly"), selfOrAlly)
@@ -629,7 +642,11 @@ class SkillDataTest {
             assertTrue(300200872 in fpIds && 300200872 in noFpIds, "${weapon.id}")
             assertTrue(fpIds.size > 1 && noFpIds.size > 1, "${weapon.id}")
         }
-        assertEquals(true, SkillDamageMath.hitOverridesFor(skills.hits(glintblade, weapons[0]), HitAction.ALL, true)[300200872])
+        // 300200872 是满蓄力的放招（chargeBranch=charged）：专注值不足侧「全选」在蓄力开时勾上它，蓄力关时换成轻按 875。
+        val glintHits = skills.hits(glintblade, weapons[0])
+        assertEquals(true, SkillDamageMath.hitOverridesFor(glintHits, HitAction.ALL, true, charged = true)[300200872])
+        assertEquals(false, SkillDamageMath.hitOverridesFor(glintHits, HitAction.ALL, true, charged = false)[300200872])
+        assertEquals(true, SkillDamageMath.hitOverridesFor(glintHits, HitAction.ALL, true, charged = false)[300200875])
     }
 
     @Test

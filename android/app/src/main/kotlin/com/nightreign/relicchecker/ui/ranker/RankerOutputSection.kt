@@ -47,11 +47,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.nightreign.relicchecker.gamedata.ranker.BuffFormat
+import com.nightreign.relicchecker.gamedata.ranker.ChargeBranch
 import com.nightreign.relicchecker.gamedata.ranker.DamageComposition
 import com.nightreign.relicchecker.gamedata.ranker.HitAction
 import com.nightreign.relicchecker.gamedata.ranker.MeansKind
 import com.nightreign.relicchecker.gamedata.ranker.RankerText
 import com.nightreign.relicchecker.gamedata.ranker.ResolvedMeans
+import com.nightreign.relicchecker.gamedata.ranker.SkillDamageMath
 import com.nightreign.relicchecker.gamedata.ranker.SkillDataIndex
 import com.nightreign.relicchecker.gamedata.ranker.SkillElement
 import com.nightreign.relicchecker.gamedata.ranker.SkillHit
@@ -225,9 +227,21 @@ internal fun HitsCard(state: RankerPageState, detailOpen: Boolean, onToggleDetai
                     detail = RankerStrings.NO_FP_HELP,
                 )
             }
+            // 「蓄力」开关（skills v4，放在「专注值不足版」开关旁）：没有蓄力段 → 禁用并写 unavailable；
+            // 只有蓄力段 → 强制打开并写 onlyCharged；其余按用户的开关（换招时重置为关）。
+            val toggle = chargedToggleModel(resolved)
+            RankerSwitchRow(
+                text = toggle.label,
+                checked = toggle.checked,
+                onCheckedChange = state::setCharged,
+                detail = toggle.hint,
+                note = toggle.note,
+                enabled = toggle.enabled,
+            )
             resolved.variant?.let { variant ->
                 RankerNote(RankerStrings.variantNote(variant.displayContext ?: "默认", variant.via, variant.atkIds.size))
             }
+            if (resolved.spellNotInvokedCount > 0) RankerNote(RankerStrings.spellNotInvokedNote(resolved.spellNotInvokedCount))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -240,7 +254,7 @@ internal fun HitsCard(state: RankerPageState, detailOpen: Boolean, onToggleDetai
                         text = "${position + 1} · ${segment.displayLabelZh}",
                         selected = on,
                         enabled = !hit.noDamage,
-                        color = if (hit.noFp) NightColors.Amber else NightColors.PurpleSoft,
+                        color = if (hit.noFp || hit.chargeBranch == ChargeBranch.PARTIAL) NightColors.Amber else NightColors.PurpleSoft,
                         onClick = { state.setHit(hit, !on) },
                     )
                 }
@@ -283,6 +297,7 @@ private fun SegmentDetail(position: Int, segment: SkillSegment, hit: SkillHit, o
         val marks = buildList {
             if (hit.noFp) add(RankerStrings.MARK_NO_FP to NightColors.Amber)
             if (hit.fpBoth) add(RankerStrings.MARK_FP_BOTH to NightColors.PurpleSoft)
+            addAll(chargeMarks(hit))
             if (hit.isBullet) add(RankerStrings.MARK_BULLET to RankerPalette.Blue)
             if (hit.noDamage) add(RankerStrings.MARK_NO_DAMAGE to NightColors.TextMuted)
             if (hit.addBaseAtk) add(RankerStrings.MARK_ADD_BASE to NightColors.PurpleSoft)
@@ -329,7 +344,43 @@ private fun SegmentDetail(position: Int, segment: SkillSegment, hit: SkillHit, o
             color = NightColors.TextSecondary,
         )
         if (hit.noDamage) RankerNote(RankerStrings.NO_DAMAGE_HELP)
+        if (hit.chargeBranch == ChargeBranch.PARTIAL) RankerNote(RankerStrings.MARK_CHARGE_PARTIAL_HELP)
     }
+}
+
+/**
+ * 「蓄力」开关的展示（纯数据，页面测试直接校对；Windows chargedToggleHtml）：文案读 chargedToggle.*；
+ * 不适用 → 禁用、关、写 unavailable；只有蓄力段 → 禁用、开、写 onlyCharged；其余可拨、按用户的开关。
+ */
+internal data class ChargedToggleModel(
+    val label: String,
+    val hint: String,
+    val checked: Boolean,
+    val enabled: Boolean,
+    val note: String?,
+)
+
+internal fun chargedToggleModel(resolved: ResolvedMeans): ChargedToggleModel {
+    val info = resolved.chargeInfo
+    return ChargedToggleModel(
+        label = RankerText.t("chargedToggle.label"),
+        hint = RankerText.t("chargedToggle.hint"),
+        checked = resolved.chargedOn,
+        enabled = info.switchable,
+        note = when {
+            !info.applicable -> RankerText.t("chargedToggle.unavailable")
+            info.onlyCharged -> RankerText.t("chargedToggle.onlyCharged")
+            else -> null
+        },
+    )
+}
+
+/** 分段明细里的蓄力标记（hits[].chargeBranch；Windows chargeMarksHtml 同文同色）。 */
+internal fun chargeMarks(hit: SkillHit): List<Pair<String, androidx.compose.ui.graphics.Color>> = when (hit.chargeBranch) {
+    ChargeBranch.CHARGED -> listOf(RankerText.t("chargedToggle.label") to NightColors.PurpleSoft)
+    ChargeBranch.BOTH -> listOf(RankerStrings.MARK_CHARGE_BOTH to NightColors.TextSecondary)
+    ChargeBranch.PARTIAL -> listOf(RankerStrings.MARK_CHARGE_PARTIAL to NightColors.Amber)
+    else -> emptyList()
 }
 
 // ============================================================ 伤害构成
@@ -368,21 +419,25 @@ internal fun CompositionCard(state: RankerPageState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = NightColors.Amber,
             )
-            // 攻击情境：当前输出类别下数据里实际要求过的（勾选后，只在该情境成立的倍率才计入）
+            // 攻击情境：当前输出类别下数据里实际要求过的（勾选后，只在该情境成立的倍率才计入）。
+            // 蓄力强攻击 / 蓄力战技 / 蓄力法术三项由「蓄力」开关派生：只显示当前是否成立，不能单独勾。
             val contexts = state.contextOptions
             if (contexts.isNotEmpty()) {
                 RankerFieldLabel(RankerText.t("contextsLabel"))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     contexts.forEach { option ->
+                        val derived = option.key in SkillDamageMath.CHARGED_CONTEXTS
                         RankerChip(
                             text = option.zh,
                             trailing = option.count.toString(),
-                            selected = option.key in state.means.attackContexts,
+                            selected = if (derived) option.key in state.output.attackContexts else option.key in state.means.attackContexts,
                             color = NightColors.Amber,
+                            enabled = !derived,
                             onClick = { state.toggleContext(option.key) },
                         )
                     }
                 }
+                if (contexts.any { it.key in SkillDamageMath.CHARGED_CONTEXTS }) RankerNote(RankerStrings.CONTEXT_DERIVED_NOTE)
             }
         }
     }

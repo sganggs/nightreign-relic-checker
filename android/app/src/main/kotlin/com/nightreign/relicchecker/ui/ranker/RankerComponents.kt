@@ -363,23 +363,32 @@ internal fun RankerSwitchRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     detail: String? = null,
+    /** 开关旁的一句状态说明（如「这一招没有蓄力段」），用琥珀色显示在标题下。 */
+    note: String? = null,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
-            .clickable(role = Role.Switch) { onCheckedChange(!checked) },
+            .clickable(enabled = enabled, role = Role.Switch) { onCheckedChange(!checked) },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = NightColors.TextPrimary)
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) NightColors.TextPrimary else NightColors.TextSecondary,
+            )
+            note?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = NightColors.Amber) }
             detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = NightColors.TextMuted) }
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = NightColors.TextPrimary,
                 checkedTrackColor = NightColors.Purple,

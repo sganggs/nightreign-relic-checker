@@ -499,7 +499,8 @@ private fun versionLines(state: RankerPageState): List<Pair<String, String>> {
         "数据版本" to skills.dataVersion.ifEmpty { "—" },
         "skills" to "schemaVersion ${skills.schemaVersion} · 武器 ${skills.count("weapons")} · 战技 ${skills.count("skills")}" +
             " · 魔法／祷告 ${skills.count("spells")} · 分段 ${skills.count("hits")}" +
-            (if (skills.taeVerified) RankerStrings.taeVersion(skills.count("hitsNotInvoked")) else ""),
+            // v4 起法术段也标 notInvoked：打不出的段数取 hitsNotInvokedAll（战技 + 法术），旧数据退回 hitsNotInvoked。
+            (if (skills.taeVerified) RankerStrings.taeVersion(skills.count("hitsNotInvokedAll").takeIf { it > 0 } ?: skills.count("hitsNotInvoked")) else ""),
         "buffs" to "schemaVersion ${buffs.schemaVersion} · 增益 ${counts.buffs} 条 · 倍率字段 ${buffs.rateFields.size} 个",
         "v6 字段" to "局内武器词条 ${counts.weaponAffixes} 条 · 固定遗物 ${counts.fixedRelics} 件 · 叠层输入 ${counts.buffsWithStackInput}" +
             " 条 · 互斥键 ${counts.exclusiveKeys} 个",

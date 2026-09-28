@@ -33,7 +33,9 @@ import org.junit.Test
 //   · 页面用到的 RankerText 键都在文案表里（缺键时 RankerText.t 会原样显示键名）；
 //   · skills schemaVersion 3：武器抽屉每行带「固定战技 / 局内可抽到」标记与说明，底部说明引用 usage 的两节新原文；
 //   · buffs v6 修订的道具等级：「道具」分栏里携物知识 2／3 级的行标等级，分栏说明区给出等级来源；
-//   · 输出手段抽屉的类型开关三档（战技 / 魔法 / 祷告，默认战技）：每档只列本类，换档不改已选的输出手段，文案读表。
+//   · 输出手段抽屉的类型开关三档（战技 / 魔法 / 祷告，默认战技）：每档只列本类，换档不改已选的输出手段，文案读表；
+//   · skills schemaVersion 4 的「蓄力」开关：分侧取段、禁用 / 强制打开的展示、派生的三项攻击情境、分段标记，
+//     局内武器词条「强化祷告的蓄力执行」用在兽爪上开 ×1.18、关不生效。
 class RankerPageStateTest {
     private object Data {
         private fun read(name: String): String {
@@ -432,8 +434,10 @@ class RankerPageStateTest {
         assertTrue(bodies.any { it.key == "note-sources-intro" && it.text.contains("战技来源（v3）") })
         assertTrue(bodies.any { it.key == "note-tae-intro" && it.text.contains("notInvoked") })
         val version = bodies.single { it.title == "skills" }
-        assertTrue(version.text, version.text.startsWith("schemaVersion 3 · "))
-        assertTrue(version.text, version.text.endsWith("命中段已按 TAE 核实（打不出的 34 段不列出）"))
+        assertTrue(version.text, version.text.startsWith("schemaVersion 4 · "))
+        // v4 起法术段也标 notInvoked：战技 34 段 + 法术 21 段。
+        assertTrue(version.text, version.text.endsWith("命中段已按 TAE 核实（打不出的 55 段不列出）"))
+        assertTrue(bodies.any { it.key == "note-tae-intro" && it.text.contains("魔法／祷告直接读 hits[]") })
     }
 
     @Test
@@ -464,6 +468,60 @@ class RankerPageStateTest {
         assertTrue(708421 in magic)
         assertFalse(3950 in magic)
         assertFalse(708420 in magic)
+    }
+
+    @Test
+    fun chargedToggleSplitsSegmentsAndDerivesContexts() {
+        val state = newState()
+        // 页面默认的狮子斩没有蓄力段：开关禁用、关，写「这一招没有蓄力段」；拨了也不改状态。
+        val lion = chargedToggleModel(state.resolved)
+        assertEquals("蓄力", lion.label)
+        assertEquals(RankerText.t("chargedToggle.hint"), lion.hint)
+        assertFalse(lion.enabled)
+        assertFalse(lion.checked)
+        assertEquals("这一招没有蓄力段", lion.note)
+        val before = state.means
+        state.setCharged(true)
+        assertEquals(before, state.means)
+
+        // 兽爪：默认关只打 68200，开只打 68205；68201 / 68206 是施法动画不发射的段，不列出。
+        state.selectOutput(requireNotNull(Data.skills.output("incantation-6820")))
+        assertEquals(listOf(68200, 68205), state.resolved.hits.map { it.atkId })
+        assertEquals(2, state.resolved.spellNotInvokedCount)
+        val off = chargedToggleModel(state.resolved)
+        assertTrue(off.enabled)
+        assertFalse(off.checked)
+        assertNull(off.note)
+        assertEquals(listOf(68200), state.resolved.selectedHits.map { it.atkId })
+        assertTrue(state.output.attackContexts.isEmpty())
+        state.update(LoadoutConfig(weaponAffixes = mapOf(8330302 to 1)))
+        assertEquals(1.0, state.evaluation.totalMultiplier!!, 0.0)
+        assertEquals(EntryState.NO, state.evaluation.items.single().state)
+
+        state.setHit(state.resolved.hits.first { it.atkId == 68205 }, true)
+        state.setCharged(true)
+        assertTrue("切换时手动勾选清掉", state.means.hitOverrides.isEmpty())
+        assertTrue(chargedToggleModel(state.resolved).checked)
+        assertEquals(listOf(68205), state.resolved.selectedHits.map { it.atkId })
+        assertEquals(setOf("chargedHeavyAttack", "chargedSkill", "chargedSpell"), state.output.attackContexts)
+        assertEquals("×1.18：蓄力施放全额", 1.18, state.evaluation.totalMultiplier!!, 0.0)
+        assertEquals(RankerText.t("verdict.conditionalMet"), state.evaluation.items.single().label)
+
+        // 三项蓄力情境不能单独勾：点了不改状态。
+        state.toggleContext("chargedSpell")
+        assertFalse("chargedSpell" in state.means.attackContexts)
+
+        // 分段标记：蓄力段标「蓄力」；伟哉卡利亚的一段蓄力放招标「一段蓄力」、两侧都不默认勾。
+        assertEquals(listOf("蓄力"), chargeMarks(state.resolved.hits.first { it.atkId == 68205 }).map { it.first })
+        assertTrue(chargeMarks(state.resolved.hits.first { it.atkId == 68200 }).isEmpty())
+        state.selectOutput(requireNotNull(Data.skills.output("skill-218")))
+        assertFalse("换招时开关重置为关", state.means.charged)
+        val partial = state.resolved.hits.first { it.atkId == 300200871 }
+        assertEquals(listOf(RankerStrings.MARK_CHARGE_PARTIAL), chargeMarks(partial).map { it.first })
+        assertFalse(state.resolved.isEnabled(partial))
+        state.setCharged(true)
+        assertFalse(state.resolved.isEnabled(partial))
+        assertEquals(listOf(300200872), state.resolved.selectedHits.map { it.atkId })
     }
 
     @Test

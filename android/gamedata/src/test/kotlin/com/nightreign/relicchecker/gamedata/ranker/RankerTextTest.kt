@@ -12,6 +12,12 @@ class RankerTextTest {
         /** 类型开关三档那一版新增的键（前缀）。 */
         val MEANS_KIND_ADDED = listOf("meansKind.", "meansCard.", "meansSearch.", "meansSpellFlatNote")
 
+        /** skills v4 蓄力开关那一版：新增 chargedToggle.* 四个键，brief.partial 改值（旧值用来回到上一版的摘要）。 */
+        const val BRIEF_PARTIAL_BEFORE_CHARGED =
+            "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，" +
+                "占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、" +
+                "没有逐段对应，所以占比不随上方的分段勾选变化。"
+
         /** 那一版改值的两句的旧值（Windows ranker_crosscheck.test.mjs 的 MEANS_KIND_RESTORE）。 */
         val MEANS_KIND_RESTORE = mapOf(
             "pageSubtitle" to "选一个战技／法术，再自己组一套局内配置：武器词条、遗物、护符与其它增益，看总增伤",
@@ -20,26 +26,56 @@ class RankerTextTest {
     }
 
     @Test
-    fun `text table is the same table as both desktop ends - 346 entries, digest 446c874b`() {
+    fun `text table is the same table as both desktop ends - 350 entries, digest 591c0f7f`() {
         // skills schemaVersion 3 多了武器来源标记 weaponSource.*（332 → 336 条，854da404 → 07a69c5e）；
         // buffs v6 修订的道具等级再多 goodsLevel.*（336 → 339 条，07a69c5e → 41e2ae25）；
-        // 输出手段类型开关拆成三档（战技 / 魔法 / 祷告）再多七个键、改两句「法术」（339 → 346 条，41e2ae25 → 446c874b）。
-        assertEquals(346, RankerText.table.size)
-        assertEquals("446c874b", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
+        // 输出手段类型开关拆成三档（战技 / 魔法 / 祷告）再多七个键、改两句「法术」（339 → 346 条，41e2ae25 → 446c874b）；
+        // skills v4 的蓄力开关再多 chargedToggle.* 四个键、brief.partial 改值（346 → 350 条，446c874b → 591c0f7f）。
+        assertEquals(350, RankerText.table.size)
+        assertEquals("591c0f7f", RankerCrossCheck.textTableDigest(), "文案常量表摘要（两端 TEXT_TABLE_DIGEST 同一个值）")
         assertEquals(RankerText.table.keys.sorted(), RankerText.table.keys.toList(), "按点号路径排序存放")
         RankerText.table.forEach { (key, value) -> assertTrue(value.isNotEmpty(), "$key 应是非空文案") }
         // 任何一处改动都会让摘要分叉。
         val tampered = RankerText.table + ("reasonNeutral" to RankerText.t("reasonNeutral") + "。")
-        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "446c874b")
-        // 这一版只多了七个类型开关的键、改了 pageSubtitle / otherInnateNoWeapon 两句：去掉新键、换回旧值回到上一版
+        assertFalse(RankerCrossCheck.textTableDigest(tampered) == "591c0f7f")
+        // 蓄力开关那一版：去掉 chargedToggle.*、换回 brief.partial 旧值回到上一版（其余文案一字未动）。
+        val beforeCharged = RankerText.table.filterKeys { !it.startsWith("chargedToggle.") } +
+            ("brief.partial" to BRIEF_PARTIAL_BEFORE_CHARGED)
+        assertEquals(346, beforeCharged.size)
+        assertEquals("446c874b", RankerCrossCheck.textTableDigest(beforeCharged))
+        // 类型开关那一版只多了七个键、改了 pageSubtitle / otherInnateNoWeapon 两句：去掉新键、换回旧值回到上一版
         // （其余文案一字未动）；再去掉 goodsLevel.* 回到 v3 那一版，再去掉 weaponSource.* 回到 v2 时的那张表。
-        val beforeMeansKind = RankerText.table.filterKeys { key -> MEANS_KIND_ADDED.none { key.startsWith(it) } } + MEANS_KIND_RESTORE
+        val beforeMeansKind = beforeCharged.filterKeys { key -> MEANS_KIND_ADDED.none { key.startsWith(it) } } + MEANS_KIND_RESTORE
         assertEquals(339, beforeMeansKind.size)
         assertEquals("41e2ae25", RankerCrossCheck.textTableDigest(beforeMeansKind))
         val beforeGoodsLevel = beforeMeansKind.filterKeys { !it.startsWith("goodsLevel.") }
         assertEquals(336, beforeGoodsLevel.size)
         assertEquals("07a69c5e", RankerCrossCheck.textTableDigest(beforeGoodsLevel))
         assertEquals("854da404", RankerCrossCheck.textTableDigest(beforeGoodsLevel.filterKeys { !it.startsWith("weaponSource.") }))
+    }
+
+    @Test
+    fun `charged toggle texts are word for word the same as the desktop TEXT chargedToggle`() {
+        // skills v4 的「蓄力」开关（放在「专注值不足版」开关旁），三端同名同值。
+        assertEquals(
+            mapOf(
+                "chargedToggle.hint" to "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加",
+                "chargedToggle.label" to "蓄力",
+                "chargedToggle.onlyCharged" to "这一招只有蓄力段",
+                "chargedToggle.unavailable" to "这一招没有蓄力段",
+            ),
+            RankerText.table.filterKeys { it.startsWith("chargedToggle.") },
+        )
+        assertEquals(
+            "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，" +
+                "即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，" +
+                "所以蓄力类增益在蓄力施放下拿到全额。",
+            RankerText.t("brief.partial"),
+        )
+        // requireSubsPartial 未改值（三端同文），页面只引用冒号前的半句。
+        val half = RankerTestData.buffs.subsPartialText("祷告", 1, 2, "[110 蓄力法术攻击]")
+        assertEquals("所选祷告只有 1/2 段带子类别 [110 蓄力法术攻击]", half)
+        assertTrue(RankerText.t("requireSubsPartial").startsWith("所选{0}只有 {1}/{2} 段带子类别 {3}："))
     }
 
     @Test

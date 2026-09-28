@@ -18,12 +18,16 @@ import com.nightreign.relicchecker.gamedata.GameDataKey
 object RankerParsers {
     /**
      * v2：skills schemaVersion 3 的 DTO（weaponSources / skillVariants / notInvoked / fpBoth …）；
-     * v3：v3 修订的法术来源（spells[].casterWeaponIds / casterSources、weapons[].customMagicTables、magicPools）。
+     * v3：v3 修订的法术来源（spells[].casterWeaponIds / casterSources、weapons[].customMagicTables、magicPools）；
+     * v4：skills schemaVersion 4 的 hits[].subCategories / charged / chargeBranch（法术段的 notInvoked）。
      */
-    const val SKILLS_ID: String = "ranker.skills.v3"
+    const val SKILLS_ID: String = "ranker.skills.v4"
 
-    /** v2：buffs v6 修订的道具等级（goodsLevel / goodsLevelSource / goodsBaseSpEffectId / goodsLevels）。 */
-    const val BUFFS_ID: String = "ranker.buffs.v2"
+    /**
+     * v2：buffs v6 修订的道具等级（goodsLevel / goodsLevelSource / goodsBaseSpEffectId / goodsLevels）；
+     * v3：attackIndex.spells[].magicSubCategories（法术流派，子类别限定逐段判定时并进每一段）。
+     */
+    const val BUFFS_ID: String = "ranker.buffs.v3"
 
     /** skills 数据集 → [SkillDataIndex]（版本不符或读不出任何输出手段时抛 GameDataFormatException）。 */
     fun skills(text: String): SkillDataIndex {

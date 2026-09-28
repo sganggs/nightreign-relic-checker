@@ -486,6 +486,8 @@ data class BuffSubCategorySet(
 @Serializable
 data class BuffAttackIndexEntry(
     val nameZh: String = "",
+    /** 法术的流派（Magic.subCategory1..2，只在 spells 上有）：子类别限定逐段判定时并进这个法术的每一段。 */
+    val magicSubCategories: List<Int> = emptyList(),
     val subCategorySets: List<BuffSubCategorySet> = emptyList(),
 )
 

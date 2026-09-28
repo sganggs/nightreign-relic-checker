@@ -45,7 +45,7 @@ internal object RankerStrings {
     const val HITS_EMPTY_SKILL = "按 usage 的选段规则，这把武器在这个战技上没有任何命中段（weapons[].skillVariants 里没有这个战技）。"
     const val HITS_EMPTY_SPELL = "这条魔法／祷告没有带数值的命中段。"
     const val HITS_ALL = "全选（当前版本）"
-    const val HITS_ALL_HELP = "只勾当前这一侧的段：正常版与专注值不足版互为替代，两边一起勾会把同一击算两遍"
+    const val HITS_ALL_HELP = "只勾当前这一侧的段：正常版与专注值不足版、蓄力与不蓄力都互为替代，两边一起勾会把同一击算两遍（两侧共用的段两侧都勾）"
     const val HITS_NONE = "全不选"
     const val HITS_RESET = "恢复默认"
     const val NO_FP_SWITCH = "使用专注值不足版本"
@@ -53,6 +53,20 @@ internal object RankerStrings {
     const val MARK_NO_FP = "专注值不足版"
     /** fpBoth 段：正常版与专注值不足版两侧都计（与 Windows 的行内标记同文）。 */
     const val MARK_FP_BOTH = "两版共用"
+
+    /**
+     * 蓄力分侧的行内标记（hits[].chargeBranch，与 Windows chargeMarksHtml 同文）：charged 用 chargedToggle.label（「蓄力」），
+     * both＝两种放法都打，partial＝中间蓄力阶段的放招（开关两侧都不默认勾）。
+     */
+    const val MARK_CHARGE_BOTH = "蓄力／不蓄力共用"
+    const val MARK_CHARGE_PARTIAL = "一段蓄力"
+    const val MARK_CHARGE_PARTIAL_HELP = "中间蓄力阶段的放招，与轻按、满蓄力三者互斥：开关两侧都不默认勾选，要算这一档请手动勾"
+
+    /** 攻击情境里由蓄力开关派生的三项（蓄力强攻击 / 蓄力战技 / 蓄力法术）：只显示、不能单独勾。 */
+    const val CONTEXT_DERIVED_NOTE = "蓄力强攻击 / 蓄力战技 / 蓄力法术由上方「蓄力」开关决定，不单独勾选"
+
+    /** 法术 hits[] 里留着、但施法动画不会发射的段（v4 的 notInvoked，Windows hitsHtml 同文）。 */
+    fun spellNotInvokedNote(count: Int) = "施法动画不会发射的段（数据 hits[].notInvoked，按施法槽核实）不列出：这一招有 $count 段。"
     const val MARK_BULLET = "子弹"
     const val MARK_NO_DAMAGE = "只挂状态"
     const val MARK_ADD_BASE = "额外加一份攻击力"
@@ -101,8 +115,9 @@ internal object RankerStrings {
     const val TAE_TITLE = "命中段已按 TAE 核实"
     const val TAE_VERIFIED = "已核实"
     const val TAE_UNVERIFIED = "未核实"
-    const val TAE_NOTE = "分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
-        "hits[] 里保留的这类段标了 notInvoked，本页不列出。来源：战技数据集 usage「命中段已按 TAE 核实（v3）」。"
+    const val TAE_NOTE = "战技的分段命中只从 variants[].atkIds 取段：那里已按动画事件（TAE）剔掉本作打不出的段；" +
+        "魔法／祷告直接读 hits[]，施法动画没有槽位会发射的段（v4）同样标了 notInvoked。两者本页都不列出。" +
+        "来源：战技数据集 usage「命中段已按 TAE 核实（v3）」。"
 
     /** 「数据版本与来源」skills 一行的 TAE 注记（Windows versionHtml）。 */
     fun taeVersion(notInvoked: Int) = " · 命中段已按 TAE 核实（打不出的 $notInvoked 段不列出）"

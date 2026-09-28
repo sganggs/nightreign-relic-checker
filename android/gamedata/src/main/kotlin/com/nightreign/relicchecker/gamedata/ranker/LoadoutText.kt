@@ -141,7 +141,7 @@ object LoadoutText {
 
     /**
      * 说明区「口径说明」（三端同一顺序、同一文案，数字照数据现算；Windows briefNotes、macOS LoadoutText.briefNotes）。
-     * 数字归一成「#」后的摘要＝ad04314d（RankerCrossCheck.briefDigest）。
+     * 数字归一成「#」后的摘要＝34e5dacb（RankerCrossCheck.briefDigest；skills v4 的 brief.partial 改值前是 ad04314d）。
      */
     fun briefNotes(index: LoadoutIndex): List<String> {
         val dataset = index.dataset

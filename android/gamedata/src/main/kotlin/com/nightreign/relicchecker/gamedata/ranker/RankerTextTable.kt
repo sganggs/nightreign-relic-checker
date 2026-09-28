@@ -4,7 +4,7 @@ package com.nightreign.relicchecker.gamedata.ranker
 //
 // 与 Windows 端 windows/renderer/pages/ranker.js 的 TEXT（按点号路径展开，flattenText）、macOS 端
 // RelicCore/BuffLoadout.swift 的 LoadoutText.table **逐键逐字相同**（本表由 ranker.js 的 TEXT 原样导出，按键排序）。
-// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 446c874b，共 346 条
+// 三端用同一个摘要锁住：点号路径排序后逐行「路径=文案」、按 UTF-8 字节做 FNV-1a 32 位 = 591c0f7f，共 350 条
 // （:gamedata 测试 RankerTextTest 断言；两端的常量见 ranker_crosscheck.test.mjs 的 TEXT_TABLE_DIGEST）。
 // 改任何一句文案都必须三端同时改、同时更新摘要。带 {0} {1} 的是格式串，由 RankerText.fmt 按位置替换。
 // skills schemaVersion 3 起多了武器来源标记 weaponSource.*（fixed / pool / poolHint / note，332 → 336 条）：
@@ -16,6 +16,10 @@ package com.nightreign.relicchecker.gamedata.ranker
 // meansSpellFlatNote（选中魔法／祷告时的标记）；pageSubtitle 与 otherInnateNoWeapon 改值（「法术」→「魔法／祷告」），
 // 339 → 346 条，41e2ae25 → 446c874b。三档只是界面层的过滤，输出手段与生效判定（appliesTo 的 skill / sorcery /
 // incantation）不变；技术说明区（brief.*）里作为统称的「法术」不改。
+// skills schemaVersion 4 的「蓄力」开关（hits[].chargeBranch，放在「专注值不足版」开关旁）又多了 chargedToggle.label /
+// hint / unavailable / onlyCharged 四个键；brief.partial 改值（子类别限定改按当前勾选的段逐段判定），346 → 350 条，
+// 446c874b → 591c0f7f（去掉这四个键、换回 brief.partial 旧值仍是 446c874b）。requireSubsPartial 的值未改（三端同文），
+// 页面只引用它冒号前的半句（BuffRankerIndex.subsPartialText）。
 
 internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "accEffectCount" to "{0} 条效果",
@@ -57,7 +61,7 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "brief.fill" to "「按推荐填满」只填空着的槽位，顺序是武器词条 → 遗物逐格（最好的固定遗物与贪心自组的合法遗物比较，分数相同取固定遗物）→ 护符；每一步都按「加进去之后的总倍率」取增幅最大的候选，增幅相同取 ID 小的；只算不用确认、不用填层数或选层就会计入的条目，不选条件型。",
     "brief.formula" to "总倍率＝按互斥键去重后，全部计入条目在每个伤害类型上的倍率连乘，再按伤害构成占比加权；攻击力倍率层与最终伤害倍率层相乘，物理子类型倍率只乘对应那一部分；各栏小计同法只算本栏；攻击力加算（点数）只展示、不进连乘。",
     "brief.innate" to "当前武器的固有效果自动列入「其它增益 · 武器固有」：被动的直接计入；条件型默认不计入，要勾选「条件成立」；叠层类默认 0 层，要填层数（notes.ranking 第③步：自动带入不算用户确认）。其它武器的固有效果可以手动勾选。",
-    "brief.partial" to "子类别只有部分段命中（requires.subCategoriesAny）时按近似加权：每个伤害类型取 1＋(倍率−1)×命中段占比，占比＝attackIndex 里所选战技／法术带该子类别的段数÷总段数；attackIndex 只给整招各子类别组合的段数、没有逐段对应，所以占比不随上方的分段勾选变化。",
+    "brief.partial" to "子类别限定（requires.subCategoriesAny）按当前勾选的段逐段判定：每个伤害类型取「命中该子类别的段的相对值占比」加权，即 1＋(倍率−1)×占比；勾选的段全部命中即全额，没有段命中即不生效。蓄力开关决定勾选的是蓄力段还是非蓄力段，所以蓄力类增益在蓄力施放下拿到全额。",
     "brief.relic" to "遗物：普通遗物按「普通 1.03」口径（三条不重复、compatibilityId 两两不同、能分配到槽池模板）；深夜遗物按「深夜正面」口径，并要求 requiresCurse 的词条各配一条负面诅咒池（{0}）里的诅咒（与存档检查的深夜遗物审计同一规则、同一文案）。不足三条时用可落任一槽池、不参与互斥的占位词条补足后再检查。官方固定遗物整件计入；随整件带进来的条件型效果要手动确认。",
     "brief.runStack" to "叠层：{0}。同一阶梯各层互斥、只取当前层；不同阶梯（封印监牢、黑夜入侵者等）按 categoryPriority 判为互不顶替、可以同时生效——参数推断，未实测。",
     "brief.skillAttack" to "「提升战技攻击力」类（子类别 {0}）只作用于战技（含战技的子弹段），不作用于法术与普通攻击；法术吃到的「提升攻击力（XX・战技）」是战技发动后给自己的全伤害增益（sourceSlot=weaponSkill），名字里的「战技」是来源（notes.userQuestions.Q1）。",
@@ -88,6 +92,10 @@ internal val RANKER_TEXT_TABLE: Map<String, String> = linkedMapOf(
     "characterNames.Undertaker" to "送葬者",
     "characterNames.Wylder" to "追踪者",
     "characterOther" to "其他角色",
+    "chargedToggle.hint" to "打开只计蓄力段（蓄力法术 / 蓄力战技 / 蓄力强攻击），关闭只计非蓄力段；两者是同一招的互斥两侧，不能相加",
+    "chargedToggle.label" to "蓄力",
+    "chargedToggle.onlyCharged" to "这一招只有蓄力段",
+    "chargedToggle.unavailable" to "这一招没有蓄力段",
     "checkConflictDetail" to "{0} 不能同时出现",
     "checkConflictTitle" to "同一互斥池",
     "checkDuplicateDetail" to "同一个效果不能在一件遗物上出现两次：{0}",

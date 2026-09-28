@@ -42,8 +42,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 配置页索引的解析 id：buffs 解析 + 与词条库对照建好的 LoadoutIndex（词条库在应用启动时加载一次，之后不变）。 */
-internal const val RANKER_LOADOUT_PARSER_ID = "ranker.loadout.v1"
+/**
+ * 配置页索引的解析 id：buffs 解析 + 与词条库对照建好的 LoadoutIndex（词条库在应用启动时加载一次，之后不变）。
+ * v2：attackIndex.spells[].magicSubCategories（子类别限定逐段判定时并进法术的每一段）。
+ */
+internal const val RANKER_LOADOUT_PARSER_ID = "ranker.loadout.v2"
 
 /**
  * 「增伤排名」页的全部状态与增量计算（视图只读不算；纯计算在 :gamedata 的 ranker 包）：
@@ -159,6 +162,14 @@ internal class RankerPageState(
     fun setHand(hand: Int) = mutate { means = means.withHand(hand) }
 
     fun setNoFp(value: Boolean) = mutate { means = means.withNoFp(value) }
+
+    /**
+     * 「蓄力」开关：换一侧就是换一批段（与专注值开关同理），手动勾选一并清掉；派生的三项攻击情境随之改变。
+     * 开关禁用（这一招没有蓄力段 / 只有蓄力段）时不改状态。
+     */
+    fun setCharged(value: Boolean) = mutate {
+        if (means.resolve(skills).chargeInfo.switchable) means = means.withCharged(value)
+    }
 
     fun setHit(hit: SkillHit, on: Boolean) = mutate { means = means.withHit(hit, on) }
 

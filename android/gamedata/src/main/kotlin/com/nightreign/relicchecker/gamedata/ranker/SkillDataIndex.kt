@@ -39,7 +39,7 @@ data class SkillWeaponGroup(val wepTypeZh: String, val weapons: List<SkillWeapon
  * skills 数据集的索引（一次建好、不可变）：按 id 查表、可选的输出手段列表、武器来源、选段与分段换算。
  * 收录条件与 Windows 端 buildMeansItems、macOS 端 SkillDataIndex 一致：
  * 战技要有命中段 + 至少一把能带它的武器（v3：固定或局内战技池）+ 至少一种选法算得出非 0 相对值；
- * 法术要有命中段且至少一段带固定值。顺序：战技（数据顺序）在前，法术（数据顺序）在后。
+ * 法术要有命中段且至少一段打得出的（不是 notInvoked）带固定值。顺序：战技（数据顺序）在前，法术（数据顺序）在后。
  */
 class SkillDataIndex(val dataset: SkillDataset) {
     val weaponsById: Map<Int, SkillWeapon> = dataset.weapons.associateByFirst { it.id }
@@ -228,7 +228,11 @@ class SkillDataIndex(val dataset: SkillDataset) {
     fun segments(skill: SkillEntry, weapon: SkillWeapon?): List<SkillSegment> =
         hits(skill, weapon).map { SkillDamageMath.segment(it, weapon, isSpell = false) }
 
-    /** 法术的段：没有 variants，全部段都会打出（法术不做 TAE 过滤，剔 notInvoked 只是防御）。 */
+    /**
+     * 法术的段：没有 variants，页面直接读 spells[].hits，所以先剔掉施法动画不会发射的段（v4 的 notInvoked，
+     * notInvokedReason=noCastSlot，例：兽爪 68201 / 68206、死亡雷击 50402 / 50407）。蓄力 / 不蓄力两侧都还在，
+     * 默认勾选再按两个开关取（[SkillDamageMath.defaultSelection]）。
+     */
     fun spellHits(spell: SpellEntry): List<SkillHit> = invokedHits(spell.hits)
 
     /** 法术：只用 flat 做配比。 */
@@ -241,8 +245,8 @@ class SkillDataIndex(val dataset: SkillDataset) {
 
     companion object {
         /**
-         * 直接从 hits[] 取段时先剔掉 TAE 判定为永远打不出的段（hits[].notInvoked，v3）：它们不在任何
-         * variants[].atkIds 里，只留在 hits[] 备查（Windows invokedHits）。
+         * 直接从 hits[] 取段时先剔掉永远打不出的段（hits[].notInvoked）：战技段（v3）不在任何 variants[].atkIds 里，
+         * 只留在 hits[] 备查；法术段（v4）是施法动画没有任何槽位会发射的段（Windows invokedHits）。
          */
         fun invokedHits(hits: List<SkillHit>): List<SkillHit> =
             if (hits.none { it.notInvoked }) hits else hits.filter { !it.notInvoked }
